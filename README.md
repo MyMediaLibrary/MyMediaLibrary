@@ -1,4 +1,4 @@
-# 📼 Mediatheque
+# 📼 MyMediaLibrary
 
 **[Français](#français) | [English](#english)**
 
@@ -7,7 +7,7 @@
 <a name="français"></a>
 ## 🇫🇷 Français
 
-**Mediatheque** est un tableau de bord auto-hébergé pour visualiser et explorer votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin), et affiche une interface web filtrée dans un unique conteneur Docker.
+**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser et explorer votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin), et affiche une interface web filtrée dans un unique conteneur Docker.
 
 <!-- screenshot -->
 
@@ -67,27 +67,23 @@
 - Docker + Docker Compose
 - Bibliothèque organisée en dossiers avec fichiers `.nfo` Kodi ou Jellyfin
 
-**`compose.yaml` minimal**
-```yaml
-services:
-  mediatheque:
-    image: ghcr.io/magicgg91/mediatheque:latest
-    container_name: mediatheque
-    restart: unless-stopped
-    ports:
-      - "8094:80"
-    volumes:
-      - ./data:/data
-      - /chemin/vers/ma/bibliotheque:/mnt/media/library:ro
-    environment:
-      LIBRARY_PATH: /mnt/media/library
-```
-
 ```bash
+# 1. Créer le dossier
+mkdir mymedialibrary && cd mymedialibrary
+mkdir data
+
+# 2. Télécharger le compose
+curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
+
+# 3. Adapter le volume /library vers ta médiathèque dans compose.yaml
+
+# 4. Lancer
 docker compose up -d
 ```
 
 Accédez à `http://localhost:8094`. Une modale de configuration s'affiche au premier démarrage pour assigner un type à chaque dossier et configurer Jellyseerr.
+
+> **Note :** `LIBRARY_PATH` est fixé à `/library` dans le conteneur. Seul le chemin source du volume est à adapter dans `compose.yaml`.
 
 ---
 
@@ -95,7 +91,7 @@ Accédez à `http://localhost:8094`. Une modale de configuration s'affiche au pr
 
 | Variable | Obligatoire | Défaut | Description |
 |----------|-------------|--------|-------------|
-| `LIBRARY_PATH` | ✅ | — | Chemin racine de la bibliothèque |
+| `LIBRARY_PATH` | ✅ | — | Chemin racine de la bibliothèque (fixé à `/library` dans le conteneur) |
 | `SCAN_CRON` | Non | `0 3 * * *` | Planification cron du scan automatique |
 | `LOG_LEVEL` | Non | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `APP_PASSWORD` | Non | — | Active la protection par mot de passe |
@@ -115,6 +111,21 @@ data/
 
 ---
 
+### 🔄 Mise à jour
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+---
+
+### 🌐 Rendre l'image publique (après le premier push)
+
+Aller sur `github.com/MyMediaLibrary/MyMediaLibrary/pkgs/container/mymedialibrary` → Package settings → Change visibility → **Public**.
+
+---
+
 ### 🤝 Contribution & Licence
 
 Les contributions sont les bienvenues — ouvrez une issue ou une pull request.
@@ -126,7 +137,7 @@ Projet sous licence MIT.
 <a name="english"></a>
 ## 🇬🇧 English
 
-**Mediatheque** is a self-hosted dashboard for visualizing and browsing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), and serves a filterable web interface in a single Docker container.
+**MyMediaLibrary** is a self-hosted dashboard for visualizing and browsing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), and serves a filterable web interface in a single Docker container.
 
 <!-- screenshot -->
 
@@ -186,27 +197,23 @@ Projet sous licence MIT.
 - Docker + Docker Compose
 - Video library organized in folders with Kodi or Jellyfin `.nfo` files
 
-**Minimal `compose.yaml`**
-```yaml
-services:
-  mediatheque:
-    image: ghcr.io/magicgg91/mediatheque:latest
-    container_name: mediatheque
-    restart: unless-stopped
-    ports:
-      - "8094:80"
-    volumes:
-      - ./data:/data
-      - /path/to/my/library:/mnt/media/library:ro
-    environment:
-      LIBRARY_PATH: /mnt/media/library
-```
-
 ```bash
+# 1. Create the folder
+mkdir mymedialibrary && cd mymedialibrary
+mkdir data
+
+# 2. Download the compose file
+curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
+
+# 3. Edit compose.yaml and set the /library volume to your media library path
+
+# 4. Start
 docker compose up -d
 ```
 
 Open `http://localhost:8094`. A setup wizard appears on first launch to assign a type to each folder and optionally configure Jellyseerr.
+
+> **Note:** `LIBRARY_PATH` is set to `/library` inside the container. Only the source path of the volume needs to be updated in `compose.yaml`.
 
 ---
 
@@ -214,7 +221,7 @@ Open `http://localhost:8094`. A setup wizard appears on first launch to assign a
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LIBRARY_PATH` | ✅ | — | Root path of the media library |
+| `LIBRARY_PATH` | ✅ | — | Root path of the media library (fixed to `/library` inside the container) |
 | `SCAN_CRON` | No | `0 3 * * *` | Cron schedule for automatic scans |
 | `LOG_LEVEL` | No | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `APP_PASSWORD` | No | — | Enables password protection |
@@ -231,6 +238,21 @@ data/
 ├── config.json       # Application configuration (folders, Jellyseerr, UI)
 └── scanner.log       # Scanner logs (rotating, 5 MB max, 3 backups)
 ```
+
+---
+
+### 🔄 Updating
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+---
+
+### 🌐 Making the image public (after first push)
+
+Go to `github.com/MyMediaLibrary/MyMediaLibrary/pkgs/container/mymedialibrary` → Package settings → Change visibility → **Public**.
 
 ---
 
