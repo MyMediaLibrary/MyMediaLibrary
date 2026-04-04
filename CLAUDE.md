@@ -101,18 +101,11 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LIBRARY_PATH` | `/library` | Root path (fixed to `/library` in container — adapt volume source in compose.yaml) |
-| `OUTPUT_PATH` | `/data/library.json` | JSON output |
-| `ENABLE_MOVIES` | `true` | Enable movie scanning |
-| `MOVIES_FOLDERS` | `movies` | Comma-separated folder names |
-| `ENABLE_SERIES` | `true` | Enable TV scanning |
-| `SERIES_FOLDERS` | `tv` | Comma-separated folder names |
 | `SCAN_CRON` | `0 3 * * *` | Cron schedule |
 | `LOG_LEVEL` | `INFO` | DEBUG/INFO/WARNING/ERROR |
-| `ENABLE_JELLYSEERR` | `true` | Enable provider enrichment |
-| `JELLYSEERR_URL` | — | Jellyseerr URL |
-| `JELLYSEERR_APIKEY` | — | Jellyseerr API key |
+| `APP_PASSWORD` | — | Optional password protection |
 
-All variables visible in Settings popup (⚙️ in sidebar). Compose-configured = read-only. Otherwise editable, saved to localStorage.
+All other settings (Jellyseerr, folders, UI preferences) are configured directly from the web interface and persisted in `config.json`.
 
 ---
 
