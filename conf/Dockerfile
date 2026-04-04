@@ -1,18 +1,20 @@
 FROM nginx:alpine
 
-ENV TZ=Europe/Paris
-
-RUN apk add --no-cache python3 dcron gettext tzdata
+RUN apk add --no-cache python3 dcron gettext
 
 WORKDIR /app
 
+# Copier le code applicatif dans l'image
+COPY app/ /usr/share/nginx/html/
+COPY conf/nginx.conf /etc/nginx/nginx.conf
 COPY conf/scanner.py /app/scanner.py
 COPY conf/entrypoint.sh /app/entrypoint.sh
-COPY conf/nginx.conf /etc/nginx/conf.d/default.conf
-COPY data/ /data/
 
-RUN chmod +x /app/entrypoint.sh \
- && touch /var/log/scanner.log \
- && touch /data/library.json
+RUN chmod +x /app/entrypoint.sh
 
-CMD ["/app/entrypoint.sh"]
+# /data est le seul volume persistant — config.json, library.json, scanner.log
+VOLUME ["/data"]
+
+EXPOSE 80
+
+ENTRYPOINT ["/app/entrypoint.sh"]

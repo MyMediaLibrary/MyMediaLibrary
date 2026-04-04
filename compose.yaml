@@ -1,15 +1,15 @@
 services:
-  MyMediaLibrary:
-    build:
-      context: .
-      dockerfile: conf/Dockerfile
-    container_name: MyMediaLibrary
-    restart: unless-stopped
+  mymedialibrary:
+    image: ghcr.io/mymedialibrary/mymedialibrary:latest
+    container_name: mymedialibrary
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data
-      - /mnt/media/library:/library:ro
+      - ./data:/data                              # config.json, library.json, scanner.log
+      - /chemin/vers/ta/mediatheque:/library:ro   # adapter ce chemin à ta médiathèque
     environment:
-      LIBRARY_PATH: /library # Library path (must match volume mount above)
-      # APP_PASSWORD: "P@SSW0rd"
+      LIBRARY_PATH: /library   # fixé à /library dans le conteneur — adapter le volume ci-dessus
+      # SCAN_CRON: "0 3 * * *"
+      # LOG_LEVEL: INFO
+      # APP_PASSWORD: ""
+    restart: unless-stopped

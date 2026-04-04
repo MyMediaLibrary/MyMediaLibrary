@@ -662,7 +662,7 @@ let allItems=[], categories=[], groups=[];
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     const now=new Date();
-    a.href=url; a.download='mediatheque-'+now.toISOString().slice(0,10)+'_'+now.toTimeString().slice(0,8).replace(/:/g,'-')+'.csv';
+    a.href=url; a.download='mymedialibrary-'+now.toISOString().slice(0,10)+'_'+now.toTimeString().slice(0,8).replace(/:/g,'-')+'.csv';
     a.click(); URL.revokeObjectURL(url);
   }
   function csvC(v){ const s=String(v||''); return s.includes(';')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s; }
@@ -2146,7 +2146,7 @@ let allItems=[], categories=[], groups=[];
   function _onbStep0HTML() {
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans Mediatheque</div>'
+      + '<div style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
       + '<div style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
       + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil. Repérez les fichiers encombrants, les codecs ou résolutions à remplacer, les contenus déjà disponibles sur vos plateformes de streaming, et suivez l\'évolution de votre collection grâce aux statistiques détaillées.'
       + '</div>'

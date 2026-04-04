@@ -1,8 +1,8 @@
-# Mediatheque — Project Context for Claude Code
+# MyMediaLibrary — Project Context for Claude Code
 
-> Last updated: March 2026 — reflects full session history
+> Last updated: April 2026 — reflects full session history
 
-## What is Mediatheque
+## What is MyMediaLibrary
 
 Self-hosted media library dashboard for Kodi/Jellyfin/Emby users. Scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), fetches streaming provider availability via Jellyseerr, and serves a filterable web interface in a single Docker container on port 8094.
 
@@ -13,7 +13,10 @@ Self-hosted media library dashboard for Kodi/Jellyfin/Emby users. Scans local vi
 ## Repository Structure
 
 ```
-mediatheque/
+MyMediaLibrary/
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml  ← build + push to ghcr.io on every push to main
 ├── CLAUDE.md
 ├── README.md             ← bilingual EN/FR
 ├── .gitignore
@@ -22,8 +25,8 @@ mediatheque/
 │   ├── Dockerfile
 │   ├── scanner.py        ← Python scanner + HTTP API server
 │   ├── entrypoint.sh     ← container startup
-│   └── nginx.conf        ← nginx (envsubst for LIBRARY_PATH)
-└── data/
+│   └── nginx.conf        ← full nginx config (envsubst for LIBRARY_PATH)
+└── app/
     ├── index.html        ← HTML shell only (~23kb)
     ├── app.css           ← all styles (~33kb)
     └── app.js            ← all JavaScript (~78kb, 1612 lines)
@@ -33,8 +36,11 @@ mediatheque/
 
 ## Architecture Decisions
 
+### Image auto-suffisante
+App code (`app/`) is embedded in the Docker image at `/usr/share/nginx/html/`. Only `/data` is a persistent volume (`config.json`, `library.json`, `scanner.log`). The image is published to `ghcr.io/mymedialibrary/mymedialibrary:latest` via GitHub Actions on every push to `main`.
+
 ### File split (index.html / app.css / app.js)
-The original single-file index.html was split into 3 files. `index.html` is the HTML shell only. `app.css` has all styles. `app.js` has all JS. Dockerfile copies full `data/` directory (`COPY data/ /data/`).
+The original single-file index.html was split into 3 files. `index.html` is the HTML shell only. `app.css` has all styles. `app.js` has all JS. Dockerfile copies full `app/` directory (`COPY app/ /usr/share/nginx/html/`).
 
 ### scanner.py
 - **No external DB** — generates `library.json` only
@@ -43,20 +49,23 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 - **Two media types:** `movie` (flat folder) and `tv` (tvshow.nfo + season subfolders)
 - **Parallel enrichment:** ThreadPoolExecutor(5) per category
 - **providers_fetched flag** — distinguishes "no FR providers" from "never fetched"
-- **Rotating log:** 5MB max, 3 backups at `/var/log/scanner.log`
+- **Rotating log:** 5MB max, 3 backups at `/data/scanner.log`
 - **HTTP API server** on `127.0.0.1:8095`: `POST /api/scan/start`, `GET /api/scan/status`, `GET /health`
 - **Exposes `config` block** in library.json with all env vars (except API key — just `jellyseerr_key_set: bool`)
 
 ### nginx.conf
-- `/library.json` — no-cache
+- Full nginx config (worker_processes, events, http blocks) — copied to `/etc/nginx/nginx.conf`
+- `root /usr/share/nginx/html` — serves static app files
+- `/library.json` — `alias /data/library.json` with no-cache headers
 - `/posters/` — serves local poster images from LIBRARY_PATH (rewrite + `merge_slashes off` for `#`, `%`, spaces)
-- `/api/scan` and `/health` — proxy to `127.0.0.1:8095`
+- `/api/scan`, `/api/config`, `/api/auth`, `/api/jellyseerr`, `/health` — proxy to `127.0.0.1:8095`
 - `LIBRARY_PATH` injected via `envsubst` at container startup (requires `gettext` in Dockerfile)
 
 ### entrypoint.sh
-- Runs `envsubst` on nginx.conf before starting nginx
+- Runs `envsubst` on `/etc/nginx/nginx.conf` before starting nginx
 - Writes `/app/scanner_env.sh` (all env vars, chmod 600)
 - Writes `/app/scan_cron.sh` (sources scanner_env.sh then runs scanner)
+- Cron file at `/etc/cron.d/mymedialibrary`
 - Cron calls the wrapper — avoids dcron env inheritance issues on Alpine
 
 ---
@@ -66,7 +75,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 ```json
 {
   "scanned_at": "ISO date",
-  "library_path": "/mnt/media/library",
+  "library_path": "/library",
   "total_items": 1234,
   "categories": ["Movies", "Tv"],
   "config": { "library_path": "...", "enable_movies": true, "movies_folders": "movies", "enable_series": true, "series_folders": "tv", "scan_cron": "0 3 * * *", "log_level": "INFO", "enable_jellyseerr": true, "jellyseerr_url": "...", "jellyseerr_key_set": true },
@@ -91,7 +100,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LIBRARY_PATH` | `/mnt/media/library` | Root path |
+| `LIBRARY_PATH` | `/library` | Root path (fixed to `/library` in container — adapt volume source in compose.yaml) |
 | `OUTPUT_PATH` | `/data/library.json` | JSON output |
 | `ENABLE_MOVIES` | `true` | Enable movie scanning |
 | `MOVIES_FOLDERS` | `movies` | Comma-separated folder names |
@@ -180,6 +189,7 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 ## Known Constraints / Gotchas
 
 - **nginx envsubst**: requires `gettext` in Dockerfile (`apk add gettext`)
+- **nginx.conf path**: full config at `/etc/nginx/nginx.conf` (not `conf.d/default.conf`) — entrypoint runs envsubst on this file
 - **dcron env**: use `/app/scan_cron.sh` wrapper + `/app/scanner_env.sh`
 - **Poster URL encoding**: `poster_rel_path()` encodes each path component — handles `#`, `%`, spaces
 - **providers_fetched**: `false` = never fetched. `[]` + `true` = fetched, no FR providers
@@ -202,20 +212,20 @@ No app-level auth. Use NPM (Nginx Proxy Manager) Access Lists. Note: "Satisfy An
 ## Deployment
 
 ```bash
-# First deploy
-git clone https://github.com/magicgg91/mediatheque.git /opt/stacks/mediatheque
-cd /opt/stacks/mediatheque && nano compose.yaml
-docker compose up -d --build
+# First deploy (image pre-built on ghcr.io)
+mkdir mymedialibrary && cd mymedialibrary
+mkdir data
+curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
+# Edit compose.yaml: set the /library volume to your media library path
+docker compose up -d
 
-# Update conf/ files → rebuild needed
-docker compose down && docker compose up -d --build
-
-# Update data/ files only → no rebuild (volume mounted)
-git pull  # nginx serves ./data/ directly
+# Update
+docker compose pull
+docker compose up -d
 
 # Common commands
-docker compose exec mediatheque python3 /app/scanner.py --reset
-docker compose exec mediatheque python3 /app/scanner.py --quick
+docker compose exec mymedialibrary python3 /app/scanner.py --reset
+docker compose exec mymedialibrary python3 /app/scanner.py --quick
 docker compose logs -f
 ```
 
@@ -224,7 +234,7 @@ docker compose logs -f
 ## Pending Ideas
 
 - **Emby watch status** (vu/non vu) — direct browser call to Emby API via tmdb_id
-- **Duplicate detection** — flag items with identical tmdb_id across categories  
+- **Duplicate detection** — flag items with identical tmdb_id across categories
 - **Audio language filter** — `<audio><language>` already in NFO
 - **Direct link** to Jellyfin/Jellyseerr from a card via tmdb_id
 - **Export Letterboxd/Trakt** — CSV with tmdb_ids
