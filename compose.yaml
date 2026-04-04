@@ -1,0 +1,15 @@
+services:
+  MyMediaLibrary:
+    build:
+      context: .
+      dockerfile: conf/Dockerfile
+    container_name: MyMediaLibrary
+    restart: unless-stopped
+    ports:
+      - "8094:80"
+    volumes:
+      - ./data:/data
+      - /mnt/media/library:/library:ro
+    environment:
+      LIBRARY_PATH: /library # Library path (must match volume mount above)
+      # APP_PASSWORD: "P@SSW0rd"
