@@ -393,7 +393,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
     req = urllib.request.Request(url, headers={
         "X-Api-Key": jsr["apikey"].strip(),
         "Accept": "application/json",
-        "User-Agent": "MediathequeScanner/1.0",
+        "User-Agent": "MyMediaLibraryScanner/1.0",
     })
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
