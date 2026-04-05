@@ -407,34 +407,24 @@ def _jsr_get(path: str, jsr: dict | None = None):
         return _JSR_ERROR
 
 
-PROVIDER_CANONICAL = [
-    ("Netflix",                   [r"netflix"]),
-    ("Canal+",                    [r"canal\+?", r"canalplus"]),
-    ("Amazon Prime",              [r"amazon"]),
-    ("Disney+",                   [r"disney"]),
-    ("Max",                       [r"^max$", r"hbo max"]),
-    ("Apple TV+",                 [r"apple tv"]),
-    ("Paramount+",                [r"paramount"]),
-    ("Animation Digital Network", [r"animation digital", r"\badn\b"]),
-    ("Crunchyroll",               [r"crunchyroll"]),
-    ("Shadowz",                   [r"shadowz"]),
-    ("OCS",                       [r"\bocs\b"]),
-    ("Arte",                      [r"\barte\b"]),
-    ("France TV",                 [r"france.?tv", r"francetv"]),
-    ("Mubi",                      [r"\bmubi\b"]),
-]
-
-_PROVIDER_COMPILED = [
-    (canonical, [re.compile(p, re.IGNORECASE) for p in patterns])
-    for canonical, patterns in PROVIDER_CANONICAL
-]
+PROVIDERS_MAP_PATH = "/data/providers_map.json"
 
 
-def normalize_provider(name: str) -> str | None:
-    for canonical, patterns in _PROVIDER_COMPILED:
-        if any(p.search(name) for p in patterns):
-            return canonical
-    return None
+def load_provider_map() -> dict:
+    if os.path.exists(PROVIDERS_MAP_PATH):
+        try:
+            with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log.warning(f"[providers] Erreur lecture providers_map.json: {e}")
+    else:
+        log.warning("[providers] providers_map.json introuvable, aucune normalisation appliquée")
+    return {}
+
+
+def normalize_provider(name: str, provider_map: dict) -> str:
+    """Return normalized name from map, or raw name if not found."""
+    return provider_map.get(name, name)
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -443,14 +433,17 @@ _fetch_providers_sampled = False  # log raw response once per run
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
 
-def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
+def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, provider_map: dict | None = None):
     """
     Fetch FR streaming providers from Jellyseerr.
     Returns:
       list[dict]   — success (may be empty if no FR providers)
+                     each dict: {raw_name, name (normalized), logo, logo_url}
       _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
+    if provider_map is None:
+        provider_map = {}
     if not tmdb_id:
         return []
     media = "tv" if is_tv else "movie"
@@ -482,17 +475,17 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     if not flatrate and watch_providers:
         log.debug(f"[providers] {media}/{tmdb_id}: no FR flatrate (fr keys: {list(fr.keys()) if fr else 'no FR entry'})")
 
-    seen, result = set(), []
+    seen_canonical, result = set(), []
     for p in flatrate:
         raw_name = p.get("name") or p.get("provider_name") or ""
-        canonical = normalize_provider(raw_name)
-        if not canonical:
-            log.debug(f"[providers] Unrecognized provider name: {raw_name!r}")
+        if not raw_name:
             continue
-        if canonical in seen:
+        log.debug(f"[providers_raw] {media}/{tmdb_id}: {raw_name!r}")
+        canonical = normalize_provider(raw_name, provider_map)
+        if canonical in seen_canonical:
             continue
-        seen.add(canonical)
-        log.debug(f"[providers] {media}/{tmdb_id}: matched {raw_name!r} → {canonical!r}, raw={p}")
+        seen_canonical.add(canonical)
+        log.debug(f"[providers] {media}/{tmdb_id}: {raw_name!r} → {canonical!r}")
         # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
         raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
         if raw_logo and raw_logo.startswith("http"):
@@ -504,7 +497,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
         else:
             log.warning(f"[providers] No logo field for {canonical!r} in {media}/{tmdb_id}, raw={p}")
             logo_url = logo = None
-        result.append({"name": canonical, "logo": logo, "logo_url": logo_url})
+        result.append({"raw_name": raw_name, "name": canonical, "logo": logo, "logo_url": logo_url})
     return result
 
 
@@ -947,12 +940,14 @@ def run_quick(only_category: str | None = None) -> None:
         pass
 
     data = {
-        "scanned_at":     datetime.now().isoformat(),
-        "library_path":   LIBRARY_PATH,
-        "total_items":    len(items),
-        "categories":     all_categories,
-        "items":          items,
-        "providers_meta": prev_data.get("providers_meta") or {},
+        "scanned_at":          datetime.now().isoformat(),
+        "library_path":        LIBRARY_PATH,
+        "total_items":         len(items),
+        "categories":          all_categories,
+        "items":               items,
+        "providers_meta":      prev_data.get("providers_meta") or {},
+        "providers_raw_meta":  prev_data.get("providers_raw_meta") or {},
+        "providers_raw":       prev_data.get("providers_raw") or [],
         "config": {
             "library_path": LIBRARY_PATH,
             "scan_cron":    os.environ.get("SCAN_CRON", "0 3 * * *"),
@@ -1025,7 +1020,11 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     enriched = 0
 
-    # providers_meta maps provider name → {logo, logo_url} — stored once at top level
+    # Load provider map (file-based normalization, reloaded each scan)
+    provider_map = load_provider_map()
+    log.info(f"[providers] providers_map.json chargé ({len(provider_map)} entrées)")
+
+    # providers_meta maps normalized name → {logo, logo_url} — stored at top level
     # Seed from existing data (migration: items may still have {name, logo} objects)
     providers_meta: dict = data.get("providers_meta") or {}
     for item in items:
@@ -1034,10 +1033,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 logo_url = p.get("logo")  # old format stored full URL in "logo"
                 providers_meta[p["name"]] = {"logo": None, "logo_url": logo_url}
 
+    # providers_raw_meta maps raw name → {logo, logo_url} — accumulated across scans
+    providers_raw_meta: dict = data.get("providers_raw_meta") or {}
+
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
-            providers = fetch_providers(item["tmdb_id"], is_tv, jsr)
+            providers = fetch_providers(item["tmdb_id"], is_tv, jsr, provider_map)
         except Exception as e:
             log.warning(f"[enrich] Unexpected exception tmdb_id={item.get('tmdb_id')} {item.get('title')!r}: {e}")
             providers = _FETCH_ERROR
@@ -1057,19 +1059,26 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     failed_count += 1
                     failed_ids.append(item.get("tmdb_id", "?"))
                     continue
-                # Update providers_meta (first seen wins for logo paths)
                 for p in providers:
+                    raw  = p["raw_name"]
                     name = p["name"]
+                    logo_entry = {"logo": p.get("logo"), "logo_url": p.get("logo_url")}
+                    # Accumulate raw providers (first logo seen wins)
+                    if raw not in providers_raw_meta or (not providers_raw_meta[raw].get("logo_url") and p.get("logo_url")):
+                        providers_raw_meta[raw] = logo_entry
+                    # Update normalized providers_meta (first seen wins)
                     if name not in providers_meta or (not providers_meta[name].get("logo_url") and p.get("logo_url")):
-                        providers_meta[name] = {"logo": p.get("logo"), "logo_url": p.get("logo_url")}
-                # Store only provider names in item (logos centralized in providers_meta)
+                        providers_meta[name] = logo_entry
+                # Store only normalized names in item (logos centralized in providers_meta)
                 item["providers"]         = [p["name"] for p in providers]
                 item["providers_fetched"] = True
                 enriched += 1
                 log.debug(f"  {item['title']} — {len(providers)} provider(s)")
 
-        data["providers_meta"] = providers_meta
-        data["enriched_at"]    = datetime.now().isoformat()
+        data["providers_meta"]     = providers_meta
+        data["providers_raw_meta"] = providers_raw_meta
+        data["providers_raw"]      = sorted(providers_raw_meta.keys())
+        data["enriched_at"]        = datetime.now().isoformat()
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN]   {cat_name} — {enriched} enrichis jusqu'ici")
 
@@ -1270,6 +1279,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     save_config(cfg)
                     cfg = load_config()
             self._json(200, cfg)
+        elif path == "/api/providers-map":
+            if os.path.exists(PROVIDERS_MAP_PATH):
+                try:
+                    with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
+                        self._json(200, json.load(f))
+                except Exception as e:
+                    self._json(500, {"error": str(e)})
+            else:
+                self._json(200, {})
         else:
             self._json(404, {"error": "not found"})
 
@@ -1287,7 +1305,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             ok = bool(pw) and entered == pw
             self._json(200, {"ok": ok})
             return
-        if path not in ("/api/scan/start", "/api/config", "/api/jellyseerr/test"):
+        if path not in ("/api/scan/start", "/api/config", "/api/jellyseerr/test", "/api/providers-map"):
             self._json(404, {"error": "not found"})
             return
         try:
@@ -1316,6 +1334,16 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if new_level:
                 logging.getLogger().setLevel(getattr(logging, new_level.upper(), logging.INFO))
             self._json(200, {"ok": True})
+
+        elif path == "/api/providers-map":
+            if not isinstance(payload, dict):
+                self._json(400, {"error": "payload must be a JSON object"}); return
+            try:
+                with open(PROVIDERS_MAP_PATH, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                self._json(200, {"ok": True})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
 
         else:
             self._json(404, {"error": "not found"})

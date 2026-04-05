@@ -23,6 +23,24 @@ python3 /app/scanner.py --serve &
 SCANSERVER_PID=$!
 echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
 
+# Create default providers_map.json if absent
+if [ ! -f /data/providers_map.json ]; then
+    cat > /data/providers_map.json << 'PMEOF'
+{
+  "Amazon Prime Video": "Prime Video",
+  "Amazon Video": "Prime Video",
+  "Apple TV Plus": "Apple TV+",
+  "Canal+ Series": "Canal+",
+  "Canal+ Séries": "Canal+",
+  "Canal+ series": "Canal+",
+  "Canal Plus": "Canal+",
+  "Disney Plus": "Disney+",
+  "HBO Max": "Max"
+}
+PMEOF
+    echo "[entrypoint] Created default /data/providers_map.json"
+fi
+
 # Initial scan on startup — also runs migrate_env_to_config() which populates config.json
 echo "[entrypoint] Running initial scan..."
 python3 /app/scanner.py
