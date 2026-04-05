@@ -80,6 +80,16 @@ data/
 
 ---
 
+### 🗂️ Personnaliser la normalisation des providers
+
+Au premier démarrage, `./data/providers_map.json` est créé automatiquement à partir du fichier de référence inclus dans l'image. Ce fichier fait correspondre les noms bruts Jellyseerr (ex. `"Amazon Prime Video"`) aux noms affichés dans l'interface (ex. `"Prime Video"`).
+
+Pour personnaliser : éditer `./data/providers_map.json` sur l'hôte, puis relancer un scan `--enrich`. Le fichier existant n'est jamais écrasé lors des mises à jour de l'image.
+
+Pour contribuer une correction au fichier de référence : ouvrir une PR sur le dépôt GitHub.
+
+---
+
 ### 🤝 Contribution & Licence
 
 Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
@@ -159,6 +169,16 @@ data/
 ├── providers_map.json  # provider name normalization (editable)
 └── scanner.log         # rotating logs (5 MB max, 3 backups)
 ```
+
+---
+
+### 🗂️ Customizing provider normalization
+
+On first start, `./data/providers_map.json` is automatically created from the reference file bundled in the image. This file maps raw Jellyseerr provider names (e.g. `"Amazon Prime Video"`) to the display names shown in the UI (e.g. `"Prime Video"`).
+
+To customize: edit `./data/providers_map.json` on the host, then trigger an `--enrich` scan. The existing file is never overwritten when updating the image.
+
+To contribute a correction to the reference file: open a PR on the GitHub repository.
 
 ---
 

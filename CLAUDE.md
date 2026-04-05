@@ -193,7 +193,7 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 
 File at `/data/providers_map.json` — maps raw Jellyseerr provider names to normalized display names. Created on first container start by `entrypoint.sh` with sensible defaults. Editable by user without rebuild. Exposed via `GET/POST /api/providers-map`.
 
-Default entries: `"Amazon Prime Video" → "Prime Video"`, `"Amazon Video" → "Prime Video"`, `"Apple TV Plus" → "Apple TV+"`, `"Canal+ Series/Séries/series" → "Canal+"`, `"Canal Plus" → "Canal+"`, `"Disney Plus" → "Disney+"`, `"HBO Max" → "Max"`.
+The reference file `app/providers_map.json` is versioned in the repo and embedded in the image via `COPY app/ /usr/share/nginx/html/`. On first container start, `entrypoint.sh` copies it to `/data/providers_map.json` if absent. User customizations are never overwritten on image updates.
 
 Raw names seen during scans are accumulated in `library.json` as `providers_raw` (list) and `providers_raw_meta` (dict with logo URLs) — useful for building the map.
 
