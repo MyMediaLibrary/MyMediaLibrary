@@ -27,12 +27,13 @@ MyMediaLibrary/
 │   ├── entrypoint.sh     ← container startup
 │   └── nginx.conf        ← full nginx config (envsubst for LIBRARY_PATH)
 └── app/
-    ├── index.html        ← HTML shell only (~23kb)
-    ├── app.css           ← all styles (~33kb)
-    ├── app.js            ← all JavaScript (~78kb, 1612 lines)
+    ├── index.html           ← HTML shell only (~23kb)
+    ├── app.css              ← all styles (~33kb)
+    ├── app.js               ← all JavaScript (~78kb, 1612 lines)
+    ├── providers_map.json   ← reference provider map (versioned, copied to /data/ on first start)
     └── i18n/
-        ├── fr.json       ← French translations
-        └── en.json       ← English translations
+        ├── fr.json          ← French translations
+        └── en.json          ← English translations
 ```
 
 ---
@@ -68,6 +69,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 
 ### entrypoint.sh
 - Runs `envsubst` on `/etc/nginx/nginx.conf` before starting nginx
+- Copies `app/providers_map.json` → `/data/providers_map.json` if absent (never overwrites)
 - Writes `/app/scanner_env.sh` (all env vars, chmod 600)
 - Writes `/app/scan_cron.sh` (sources scanner_env.sh then runs scanner)
 - Cron file at `/etc/cron.d/mymedialibrary`
