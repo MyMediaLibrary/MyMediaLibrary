@@ -275,9 +275,9 @@
       </div>
       <!-- SETTINGS TABS -->
       <div style="display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface)">
-        <button class="stab active" onclick="switchStab(this,'stab-library')">📁 Bibliothèque</button>
-        <button class="stab" onclick="switchStab(this,'stab-jellyseerr')">🔍 Jellyseerr</button>
-        <button class="stab" onclick="switchStab(this,'stab-system')">⚙️ Système</button>
+        <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">📁 Bibliothèque</button>
+        <button class="stab" onclick="switchStab(this,'stab-jellyseerr')" data-i18n="settings.tabs.jellyseerr">🔍 Jellyseerr</button>
+        <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">⚙️ Système</button>
       </div>
       <div class="settings-body" style="flex:1;overflow-y:auto;min-height:0">
 
@@ -333,26 +333,33 @@
         <div id="stab-system" class="stab-panel" style="display:none">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label">Couleur d'accent</label>
+              <label class="settings-label" data-i18n="settings.system.language">Langue</label>
+              <select id="cfgLanguage" class="settings-input" style="width:auto" onchange="saveSettings()">
+                <option value="fr">🇫🇷 Français</option>
+                <option value="en">🇬🇧 English</option>
+              </select>
+            </div>
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.accent">Couleur d'accent</label>
               <div class="settings-color-wrap">
                 <input type="color" id="cfgAccentColor" value="#7c6aff" oninput="applyAccent(this.value)" onchange="saveSettings()"/>
                 <button class="settings-color-reset" onclick="resetAccent()">Réinitialiser</button>
               </div>
             </div>
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label">Synopsis au survol</label>
+              <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
-            <div class="settings-note" style="margin-bottom:12px">Affiche le synopsis lors du survol d'une tuile</div>
+            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
           </div>
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:6px">
-              <label class="settings-label">Scan automatique (cron)</label>
+              <label class="settings-label" data-i18n="settings.system.cron">Scan automatique (cron)</label>
               <input type="text" id="cfgScanCron" class="settings-input" placeholder="0 3 * * *" style="width:130px" oninput="updateCronHint()"/>
             </div>
             <div id="cfgCronHint" class="settings-note" style="margin-bottom:12px"></div>
             <div class="settings-row">
-              <label class="settings-label">Niveau de log</label>
+              <label class="settings-label" data-i18n="settings.system.log_level">Niveau de log</label>
               <select id="cfgLogLevel" class="settings-input" style="width:auto" onchange="saveSettings()">
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
@@ -360,8 +367,8 @@
                 <option value="ERROR">ERROR</option>
               </select>
             </div>
-            <div class="settings-note" style="margin-top:8px">
-              📄 Logs accessibles sur l'hôte : <code>./data/scanner.log</code>
+            <div class="settings-note" style="margin-top:8px" data-i18n="settings.system.log_path">
+              📄 Logs accessibles sur l'hôte : ./data/scanner.log
             </div>
           </div>
         </div>
