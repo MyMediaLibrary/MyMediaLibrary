@@ -110,7 +110,10 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 | `LIBRARY_PATH` | `/library` | Root path (fixed to `/library` in container — adapt volume source in compose.yaml) |
 | `SCAN_CRON` | `0 3 * * *` | Cron schedule |
 | `LOG_LEVEL` | `INFO` | DEBUG/INFO/WARNING/ERROR |
-| `APP_PASSWORD` | — | Optional password protection |
+| `ENABLE_JELLYSEERR` | `true` | Enable provider enrichment |
+| `JELLYSEERR_URL` | — | Jellyseerr URL |
+| `JELLYSEERR_APIKEY` | — | Jellyseerr API key |
+| `APP_PASSWORD` | — | Optional password protection (enables login screen) |
 
 All other settings (Jellyseerr, folders, UI preferences) are configured directly from the web interface and persisted in `config.json`.
 
@@ -220,7 +223,7 @@ Raw names seen during scans are accumulated in `library.json` as `providers_raw`
 ---
 
 ## Authentication
-No app-level auth. Use NPM (Nginx Proxy Manager) Access Lists. Note: "Satisfy Any" has issues with NPM's forced `deny all`. Recommended: Basic Auth only for external, or VPN/Tailscale.
+Optional password protection via `APP_PASSWORD` environment variable. When set, the frontend shows a login screen; credentials are checked via `POST /api/auth`. Without `APP_PASSWORD`, the app is accessible without authentication — use a reverse proxy (NPM, Traefik) or VPN/Tailscale for network-level protection.
 
 ---
 
