@@ -1,6 +1,6 @@
 # Mediatheque — Project Context for Claude Code
 
-> Last updated: March 2026 — reflects full session history
+> Last updated: April 2026 — reflects full session history
 
 ## What is Mediatheque
 
@@ -50,6 +50,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 ### nginx.conf
 - `/library.json` — no-cache
 - `/posters/` — serves local poster images from LIBRARY_PATH (rewrite + `merge_slashes off` for `#`, `%`, spaces)
+- `/api/auth` — password check endpoint, proxies to `127.0.0.1:8095`
 - `/api/scan` and `/health` — proxy to `127.0.0.1:8095`
 - `LIBRARY_PATH` injected via `envsubst` at container startup (requires `gettext` in Dockerfile)
 
@@ -102,6 +103,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 | `ENABLE_JELLYSEERR` | `true` | Enable provider enrichment |
 | `JELLYSEERR_URL` | — | Jellyseerr URL |
 | `JELLYSEERR_APIKEY` | — | Jellyseerr API key |
+| `APP_PASSWORD` | — | Optional password protection (enables login screen) |
 
 All variables visible in Settings popup (⚙️ in sidebar). Compose-configured = read-only. Otherwise editable, saved to localStorage.
 
@@ -195,7 +197,7 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 ---
 
 ## Authentication
-No app-level auth. Use NPM (Nginx Proxy Manager) Access Lists. Note: "Satisfy Any" has issues with NPM's forced `deny all`. Recommended: Basic Auth only for external, or VPN/Tailscale.
+Optional password protection via `APP_PASSWORD` environment variable. When set, the frontend shows a login screen; credentials are checked via `POST /api/auth`. Without `APP_PASSWORD`, the app is accessible without authentication — use a reverse proxy (NPM, Traefik) or VPN/Tailscale for network-level protection.
 
 ---
 
