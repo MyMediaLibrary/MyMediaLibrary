@@ -11,15 +11,12 @@
 
 ### ✨ Fonctionnalités
 
-- Vue tuiles et tableau, tri, recherche en temps réel, export CSV
-- Filtres par type, catégorie, résolution, codec, provider streaming
-- Parsing `.nfo` : titre, année, résolution, codec, HDR, durée, synopsis, affiches locales
-- Enrichissement streaming via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) (Netflix, Prime, Disney+…)
-- Statistiques : camemberts, histogramme par année/décennie, courbe d'évolution mensuelle
-- Configuration par l'interface, persistée dans `config.json` (pas de base de données)
-- Scan déclenchable depuis l'UI avec logs en temps réel, endpoint `/health`
-- Thème clair/sombre, couleur d'accent, mot de passe optionnel
-- Layout responsive avec navigation mobile
+- **Bibliothèque** — vue tuiles et tableau, filtres (type, résolution, codec, provider streaming), recherche, tri, export CSV
+- **Métadonnées** — parsing `.nfo` Kodi/Jellyfin : titre, année, résolution, codec, HDR, durée, synopsis, affiches locales
+- **Providers streaming** — enrichissement via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) avec normalisation configurable (`data/providers_map.json`)
+- **Statistiques** — camemberts, histogramme par année/décennie, courbe d'évolution mensuelle
+- **Interface bilingue** — FR/EN, sélection à la première ouverture et depuis les paramètres, sans rechargement
+- **Zéro configuration** — assistant au premier démarrage, tout persisté dans `config.json`, aucune base de données
 
 ---
 
@@ -32,13 +29,13 @@ mkdir mymedialibrary && cd mymedialibrary && mkdir data
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 ```
 
-Éditer `compose.yaml` et remplacer `/chemin/vers/ta/mediatheque` par le chemin réel de ta bibliothèque, puis :
+Éditer `compose.yaml`, remplacer `/chemin/vers/ta/mediatheque` par le chemin réel, puis :
 
 ```bash
 docker compose up -d
 ```
 
-Accéder à `http://localhost:8094`. Une modale de configuration s'affiche au premier démarrage.
+Accéder à `http://localhost:8094`. Un assistant de configuration s'affiche au premier démarrage.
 
 **`compose.yaml`**
 ```yaml
@@ -49,8 +46,8 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data
-      - /chemin/vers/ta/mediatheque:/library:ro
+      - ./data:/data                             # config.json, library.json, scanner.log
+      - /chemin/vers/ta/mediatheque:/library:ro  # ta médiathèque en lecture seule
     environment:
       LIBRARY_PATH: /library
       # SCAN_CRON: "0 3 * * *"
@@ -75,10 +72,21 @@ docker compose pull && docker compose up -d
 
 ```
 data/
-├── library.json   # index de la bibliothèque
-├── config.json    # configuration (dossiers, Jellyseerr, UI)
-└── scanner.log    # logs rotatifs (5 Mo max, 3 sauvegardes)
+├── library.json        # index de la bibliothèque (généré par le scanner)
+├── config.json         # configuration (dossiers, Jellyseerr, UI, langue)
+├── providers_map.json  # normalisation des noms de providers (éditable)
+└── scanner.log         # logs rotatifs (5 Mo max, 3 sauvegardes)
 ```
+
+---
+
+### 🗂️ Personnaliser la normalisation des providers
+
+Au premier démarrage, `./data/providers_map.json` est créé automatiquement à partir du fichier de référence inclus dans l'image. Ce fichier fait correspondre les noms bruts Jellyseerr (ex. `"Amazon Prime Video"`) aux noms affichés dans l'interface (ex. `"Prime Video"`).
+
+Pour personnaliser : éditer `./data/providers_map.json` sur l'hôte, puis relancer un scan `--enrich`. Le fichier existant n'est jamais écrasé lors des mises à jour de l'image.
+
+Pour contribuer une correction au fichier de référence : ouvrir une PR sur le dépôt GitHub.
 
 ---
 
@@ -95,15 +103,12 @@ Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
 
 ### ✨ Features
 
-- Grid and table views, sorting, real-time search, CSV export
-- Filters by type, category, resolution, codec, streaming provider
-- `.nfo` parsing: title, year, resolution, codec, HDR, runtime, synopsis, local posters
-- Streaming enrichment via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) (Netflix, Prime, Disney+…)
-- Statistics: pie charts, year/decade bar chart, monthly growth timeline
-- UI-driven configuration persisted in `config.json` (no database)
-- Scan triggered from the UI with real-time logs, `/health` endpoint
-- Light/dark theme, custom accent color, optional password
-- Responsive layout with mobile navigation
+- **Library** — grid and table views, filters (type, resolution, codec, streaming provider), search, sort, CSV export
+- **Metadata** — Kodi/Jellyfin `.nfo` parsing: title, year, resolution, codec, HDR, runtime, synopsis, local posters
+- **Streaming providers** — enrichment via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) with configurable normalization (`data/providers_map.json`)
+- **Statistics** — pie charts, year/decade bar chart, monthly growth timeline
+- **Bilingual UI** — FR/EN, selected at first launch and from settings, no page reload required
+- **Zero config** — setup wizard on first launch, everything persisted in `config.json`, no database
 
 ---
 
@@ -116,7 +121,7 @@ mkdir mymedialibrary && cd mymedialibrary && mkdir data
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 ```
 
-Edit `compose.yaml` and replace `/chemin/vers/ta/mediatheque` with your actual library path, then:
+Edit `compose.yaml`, replace `/path/to/your/library` with your actual path, then:
 
 ```bash
 docker compose up -d
@@ -133,8 +138,8 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data
-      - /path/to/your/library:/library:ro
+      - ./data:/data                        # config.json, library.json, scanner.log
+      - /path/to/your/library:/library:ro   # your media library, read-only
     environment:
       LIBRARY_PATH: /library
       # SCAN_CRON: "0 3 * * *"
@@ -159,10 +164,21 @@ docker compose pull && docker compose up -d
 
 ```
 data/
-├── library.json   # library index
-├── config.json    # configuration (folders, Jellyseerr, UI)
-└── scanner.log    # rotating logs (5 MB max, 3 backups)
+├── library.json        # library index (generated by the scanner)
+├── config.json         # configuration (folders, Jellyseerr, UI, language)
+├── providers_map.json  # provider name normalization (editable)
+└── scanner.log         # rotating logs (5 MB max, 3 backups)
 ```
+
+---
+
+### 🗂️ Customizing provider normalization
+
+On first start, `./data/providers_map.json` is automatically created from the reference file bundled in the image. This file maps raw Jellyseerr provider names (e.g. `"Amazon Prime Video"`) to the display names shown in the UI (e.g. `"Prime Video"`).
+
+To customize: edit `./data/providers_map.json` on the host, then trigger an `--enrich` scan. The existing file is never overwritten when updating the image.
+
+To contribute a correction to the reference file: open a PR on the GitHub repository.
 
 ---
 

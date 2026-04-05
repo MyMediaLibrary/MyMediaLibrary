@@ -412,13 +412,9 @@ PROVIDERS_MAP_PATH = "/data/providers_map.json"
 
 def load_provider_map() -> dict:
     if os.path.exists(PROVIDERS_MAP_PATH):
-        try:
-            with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            log.warning(f"[providers] Erreur lecture providers_map.json: {e}")
-    else:
-        log.warning("[providers] providers_map.json introuvable, aucune normalisation appliquée")
+        with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    log.warning("[providers] providers_map.json introuvable dans /data/, aucune normalisation appliquée")
     return {}
 
 
