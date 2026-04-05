@@ -29,7 +29,10 @@ MyMediaLibrary/
 └── app/
     ├── index.html        ← HTML shell only (~23kb)
     ├── app.css           ← all styles (~33kb)
-    └── app.js            ← all JavaScript (~78kb, 1612 lines)
+    ├── app.js            ← all JavaScript (~78kb, 1612 lines)
+    └── i18n/
+        ├── fr.json       ← French translations
+        └── en.json       ← English translations
 ```
 
 ---
@@ -49,8 +52,10 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 - **Two media types:** `movie` (flat folder) and `tv` (tvshow.nfo + season subfolders)
 - **Parallel enrichment:** ThreadPoolExecutor(5) per category
 - **providers_fetched flag** — distinguishes "no FR providers" from "never fetched"
+- **Provider normalization via file** — `load_provider_map()` reads `/data/providers_map.json` at scan start. Raw provider names pass through as-is if not in the map. No hard-coded regex.
+- **providers_raw / providers_raw_meta** — raw provider names accumulated across scans in `library.json` (for map building)
 - **Rotating log:** 5MB max, 3 backups at `/data/scanner.log`
-- **HTTP API server** on `127.0.0.1:8095`: `POST /api/scan/start`, `GET /api/scan/status`, `GET /health`
+- **HTTP API server** on `127.0.0.1:8095`: `POST /api/scan/start`, `GET /api/scan/status`, `GET /health`, `GET /api/providers-map`, `POST /api/providers-map`
 - **Exposes `config` block** in library.json with all env vars (except API key — just `jellyseerr_key_set: bool`)
 
 ### nginx.conf
@@ -58,7 +63,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 - `root /usr/share/nginx/html` — serves static app files
 - `/library.json` — `alias /data/library.json` with no-cache headers
 - `/posters/` — serves local poster images from LIBRARY_PATH (rewrite + `merge_slashes off` for `#`, `%`, spaces)
-- `/api/scan`, `/api/config`, `/api/auth`, `/api/jellyseerr`, `/health` — proxy to `127.0.0.1:8095`
+- `/api/scan`, `/api/config`, `/api/auth`, `/api/jellyseerr`, `/api/providers-map`, `/health` — proxy to `127.0.0.1:8095`
 - `LIBRARY_PATH` injected via `envsubst` at container startup (requires `gettext` in Dockerfile)
 
 ### entrypoint.sh
@@ -79,6 +84,8 @@ The original single-file index.html was split into 3 files. `index.html` is the 
   "total_items": 1234,
   "categories": ["Movies", "Tv"],
   "config": { "library_path": "...", "enable_movies": true, "movies_folders": "movies", "enable_series": true, "series_folders": "tv", "scan_cron": "0 3 * * *", "log_level": "INFO", "enable_jellyseerr": true, "jellyseerr_url": "...", "jellyseerr_key_set": true },
+  "providers_raw": ["Netflix", "Amazon Prime Video", "Canal+ Séries"],
+  "providers_raw_meta": { "Netflix": { "logo": "https://...", "logo_url": "https://..." } },
   "items": [{
     "id": 0, "path": "movies/My.Movie.(2023)", "title": "My Movie", "raw": "My.Movie.(2023)",
     "year": "2023", "category": "Movies", "type": "movie",
@@ -152,9 +159,17 @@ let serverConfig={};  // from library.json config block
 - Sidebar resizable via drag handle (custom JS)
 - **Mobile (≤768px):** sidebar hidden, fixed topbar (logo + filter/theme/settings buttons) + fixed bottom nav (3 tabs) + slide-down filter panel
 
+### i18n System
+- Translation files: `app/i18n/fr.json` and `app/i18n/en.json`
+- Engine: `loadTranslations(lang)` fetches `/i18n/{lang}.json`, `t(key, vars)` resolves dot-notation keys with `{placeholder}` substitution, `applyTranslations()` updates `[data-i18n]` DOM elements
+- Language stored in `config.system.language` (persisted in `config.json`)
+- Applied at startup in `loadLibrary()` without page reload; changeable from Settings > Système tab
+- **Auto-toggle on onboarding step 0:** `_langTimer` (setInterval 5s) alternates FR↔EN display until user clicks a language button. Cleared by `onbNext()`.
+- State variables: `TRANSLATIONS = {}`, `CURRENT_LANG = 'fr'`
+
 ### Settings Modal
-- 4 tabs: Bibliothèque / Scan / Jellyseerr / Système
-- Système tab has: synopsis toggle (`enablePlot`), log level
+- 4 tabs: Bibliothèque / Jellyseerr / Système
+- Système tab has: language selector (`cfgLanguage`), synopsis toggle (`enablePlot`), accent color, log level
 - "Enregistrer" button only shown when editable fields exist
 - Compose-configured fields → read-only with note
 
@@ -174,8 +189,13 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 
 ---
 
-## Provider Whitelist (normalized)
-`Amazon Prime`, `Netflix`, `Max`, `Disney+`, `Paramount+`, `Apple TV+`, `Animation Digital Network`, `Crunchyroll`
+## providers_map.json
+
+File at `/data/providers_map.json` — maps raw Jellyseerr provider names to normalized display names. Created on first container start by `entrypoint.sh` with sensible defaults. Editable by user without rebuild. Exposed via `GET/POST /api/providers-map`.
+
+Default entries: `"Amazon Prime Video" → "Prime Video"`, `"Amazon Video" → "Prime Video"`, `"Apple TV Plus" → "Apple TV+"`, `"Canal+ Series/Séries/series" → "Canal+"`, `"Canal Plus" → "Canal+"`, `"Disney Plus" → "Disney+"`, `"HBO Max" → "Max"`.
+
+Raw names seen during scans are accumulated in `library.json` as `providers_raw` (list) and `providers_raw_meta` (dict with logo URLs) — useful for building the map.
 
 ---
 
@@ -194,6 +214,8 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 - **Duplicate IDs**: avoid having the same HTML id in both sidebar and mobile panel — use `querySelectorAll` for mobile stats bar
 - **`<style>` in index.html**: there are no inline styles — all in app.css
 - **`<script>` in index.html**: `<script src="app.js"></script>` before `</body>`, no defer needed
+- **`select.has-value`**: CSS class applied dynamically to selects when they have a chosen value — uses `border-color: var(--accent)`
+- **i18n files path**: served as static assets from `/i18n/fr.json` and `/i18n/en.json` (under `/usr/share/nginx/html/i18n/`)
 
 ---
 
