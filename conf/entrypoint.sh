@@ -3,15 +3,15 @@
 
 OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 
-echo "=== Mediatheque ==="
+echo "=== MyMediaLibrary ==="
 echo "LIBRARY_PATH : ${LIBRARY_PATH:-/mnt/media/library}"
 echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "SCAN_CRON    : ${SCAN_CRON:-0 3 * * *} (env fallback, overridden by config.json)"
 echo ""
 
 # Generate nginx.conf with env vars substituted
-envsubst '${LIBRARY_PATH}' < /etc/nginx/conf.d/default.conf > /tmp/nginx_rendered.conf
-cp /tmp/nginx_rendered.conf /etc/nginx/conf.d/default.conf
+envsubst '${LIBRARY_PATH}' < /etc/nginx/nginx.conf > /tmp/nginx_rendered.conf
+cp /tmp/nginx_rendered.conf /etc/nginx/nginx.conf
 
 # Start nginx in background
 nginx -g "daemon off;" &
@@ -22,6 +22,12 @@ echo "[entrypoint] Nginx started (pid $NGINX_PID)"
 python3 /app/scanner.py --serve &
 SCANSERVER_PID=$!
 echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
+
+# Copy providers_map.json from image to /data/ if absent (user customizations take priority)
+if [ ! -f /data/providers_map.json ]; then
+    cp /usr/share/nginx/html/providers_map.json /data/providers_map.json
+    echo "[entrypoint] providers_map.json copié depuis l'image vers /data/"
+fi
 
 # Initial scan on startup — also runs migrate_env_to_config() which populates config.json
 echo "[entrypoint] Running initial scan..."
@@ -60,7 +66,7 @@ WRAPEOF
 chmod +x "$WRAPPER"
 
 # Write crontab — uses scan_cron from config.json
-CRON_FILE="/etc/cron.d/mediatheque"
+CRON_FILE="/etc/cron.d/mymedialibrary"
 printf '%s root %s\n' "$SCAN_CRON" "$WRAPPER" > "$CRON_FILE"
 chmod 0644 "$CRON_FILE"
 echo "[entrypoint] Cron scheduled: ${SCAN_CRON} → ${WRAPPER}"

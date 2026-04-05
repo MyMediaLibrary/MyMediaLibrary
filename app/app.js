@@ -1,4 +1,37 @@
 
+// ── I18N ─────────────────────────────────────────────
+let TRANSLATIONS = {};
+let CURRENT_LANG = 'fr';
+
+async function loadTranslations(lang) {
+  try {
+    const res = await fetch(`/i18n/${lang}.json?_=` + Date.now());
+    if (!res.ok) return;
+    TRANSLATIONS = await res.json();
+    CURRENT_LANG = lang;
+  } catch(e) { console.warn('i18n load error:', e); }
+}
+
+function t(key, vars = {}) {
+  const keys = key.split('.');
+  let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
+  if (typeof val !== 'string') return key;
+  Object.entries(vars).forEach(([k, v]) => { val = val.replace(`{${k}}`, v); });
+  return val;
+}
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+}
+
 let allItems=[], categories=[], groups=[];
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
@@ -82,6 +115,13 @@ let allItems=[], categories=[], groups=[];
   async function loadLibrary() {
     await loadConfig();
 
+    // Load translations for the configured language
+    const lang = appConfig.system?.language || 'fr';
+    if (lang !== CURRENT_LANG || !Object.keys(TRANSLATIONS).length) {
+      await loadTranslations(lang);
+    }
+    applyTranslations();
+
     // First-run: no folder has been assigned a type yet → show onboarding
     const folders = appConfig.folders || [];
     const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
@@ -108,8 +148,8 @@ let allItems=[], categories=[], groups=[];
       pNames.forEach((n,i)=>{ providerColorMap[n]=PALETTE[(i+5)%PALETTE.length]; });
       const d=new Date(data.scanned_at);
       document.getElementById('scanInfo').innerHTML=
-        'Dernier scan : <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+'</span><br>'+
-        '<span>'+data.total_items+'</span> elements indexes';
+        t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+d.toLocaleDateString(CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR')+' '+d.toLocaleTimeString(CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR',{hour:'2-digit',minute:'2-digit'})+'</span><br>'+
+        '<span>'+data.total_items+'</span> '+t('library.indexed', {n: data.total_items}).replace('{n} ','');
       if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
       if (data.config) serverConfig = data.config;
       renderStorageBar();
@@ -121,9 +161,9 @@ let allItems=[], categories=[], groups=[];
       render();
     } catch(e) {
       console.error('loadLibrary error:', e);
-      const _emsg = String(e).includes('404') ? 'Veuillez lancer un scan' : escH(String(e));
-      document.getElementById('library').innerHTML='<div class="empty"><p>Bibliotheque introuvable</p><small>'+_emsg+'</small></div>';
-      document.getElementById('scanInfo').textContent='Erreur de chargement';
+      const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
+      document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
+      document.getElementById('scanInfo').textContent=t('library.scan_error');
     }
   }
 
@@ -317,15 +357,15 @@ let allItems=[], categories=[], groups=[];
     if (!providers.length){sec.style.display='none';return;}
     const resetCls='provider-pill provider-pill-reset'+(activeProvider==='all'?' active':'');
     const noneCls='provider-pill'+(activeProvider==='__none__'?' active':'');
-    let pills='<div class="'+resetCls+'" onclick="resetProvider()">Tous</div>'
-      +'<div class="'+noneCls+'" onclick="clickProvider(this)" data-provider="__none__" title="Sans plateforme reconnue">Aucun</div>';
+    let pills='<div class="'+resetCls+'" onclick="resetProvider()">'+t('filters.all')+'</div>'
+      +'<div class="'+noneCls+'" onclick="clickProvider(this)" data-provider="__none__" title="Sans plateforme reconnue">'+t('filters.none')+'</div>';
     providers.forEach(function(p){
       const cls='provider-pill'+(activeProvider===p.name?' active':'');
       const logo=p.logo?'<img src="'+escH(p.logo)+'" alt=""/>':'';
       pills+='<div class="'+cls+'" onclick="clickProvider(this)" data-provider="'+escH(p.name)+'" title="'+p.count+' element'+(p.count>1?'s':'')+'">'
         +logo+'<span>'+escH(p.name)+'</span></div>';
     });
-    const phtml='<div class="storage-block"><div class="storage-title">Streaming (FR)</div><div class="provider-filter">'+pills+'</div></div>';
+    const phtml='<div class="storage-block"><div class="storage-title">'+t('filters.streaming_fr')+'</div><div class="provider-filter">'+pills+'</div></div>';
     sec.style.display='block';
     sec.innerHTML=phtml;
     // mirror to top bar
@@ -341,13 +381,13 @@ let allItems=[], categories=[], groups=[];
     const codecs = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
     if (!codecs.length) { sec.style.display='none'; return; }
     const resetCls = 'provider-pill provider-pill-reset'+(activeCodec==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetCodec()">Tous</div>';
+    let pills = '<div class="'+resetCls+'" onclick="resetCodec()">'+t('filters.all')+'</div>';
     codecs.forEach(c => {
       const cls = 'provider-pill'+(activeCodec===c?' active':'');
       pills += '<div class="'+cls+'" onclick="clickCodec(this)" data-codec="'+escH(c)+'">'        +'<span class="badge badge-codec" style="margin-left:0">'+escH(c)+'</span>'        +'<span style="margin-left:4px;font-size:11px">'+counts[c]+'</span></div>';
     });
     sec.style.display = 'block';
-    sec.innerHTML = '<div class="storage-block"><div class="storage-title">Codec</div><div class="provider-filter">'+pills+'</div></div>';
+    sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+t('filters.codec')+'</div><div class="provider-filter">'+pills+'</div></div>';
 
   }
 
@@ -372,13 +412,13 @@ let allItems=[], categories=[], groups=[];
     const resolutions = ORDER.filter(r => counts[r]);
     if (!resolutions.length) { sec.style.display='none'; return; }
     const resetCls = 'provider-pill provider-pill-reset'+(activeResolution==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetResolution()">Tous</div>';
+    let pills = '<div class="'+resetCls+'" onclick="resetResolution()">'+t('filters.all')+'</div>';
     resolutions.forEach(r => {
       const cls = 'provider-pill'+(activeResolution===r?' active':'');
       pills += '<div class="'+cls+'" onclick="clickResolution(this)" data-res="'+r+'">'        +'<span class="res-badge res-'+r+'">'+r+'</span>'        +'<span style="margin-left:4px;font-size:11px">'+counts[r]+'</span>'        +'</div>';
     });
     sec.style.display='block';
-    sec.innerHTML='<div class="storage-block"><div class="storage-title">Résolution</div><div class="provider-filter">'+pills+'</div></div>';
+    sec.innerHTML='<div class="storage-block"><div class="storage-title">'+t('filters.resolution')+'</div><div class="provider-filter">'+pills+'</div></div>';
     // mirror to top bar
 
   }
@@ -662,7 +702,7 @@ let allItems=[], categories=[], groups=[];
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     const now=new Date();
-    a.href=url; a.download='mediatheque-'+now.toISOString().slice(0,10)+'_'+now.toTimeString().slice(0,8).replace(/:/g,'-')+'.csv';
+    a.href=url; a.download='mymedialibrary-'+now.toISOString().slice(0,10)+'_'+now.toTimeString().slice(0,8).replace(/:/g,'-')+'.csv';
     a.click(); URL.revokeObjectURL(url);
   }
   function csvC(v){ const s=String(v||''); return s.includes(';')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s; }
@@ -1646,10 +1686,11 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);
     _rw('cfgEnableSeries',  appConfig.enable_series  ?? true);
 
-    // Scan cron / log level — from appConfig.system (editable, stored in config.json)
+    // Scan cron / log level / language — from appConfig.system (editable, stored in config.json)
     const sys = appConfig.system || {};
     _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
+    _rw('cfgLanguage',  sys.language   || 'fr');
     updateCronHint();
 
     // Jellyseerr — editable from appConfig
@@ -1662,7 +1703,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function _hasEditableFields() {
-    const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel',
+    const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
                  'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
@@ -1720,22 +1761,29 @@ let allItems=[], categories=[], groups=[];
     const provVis = gatherProviderVisibility();
     if (provVis !== undefined) partial.providers_visible = provVis;
 
-    // Scan cron / log level → system block
+    // Scan cron / log level / language → system block
     const cron = get('cfgScanCron');
     const logLevel = get('cfgLogLevel');
-    if (cron !== null || logLevel !== null) {
+    const lang = get('cfgLanguage');
+    if (cron !== null || logLevel !== null || lang !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
       if (logLevel !== null) partial.system.log_level = logLevel;
+      if (lang !== null)     partial.system.language  = lang;
     }
 
     try {
       console.log('[saveSettings] payload:', JSON.stringify(partial));
       await saveConfig(partial);
       await loadConfig();
+      // Apply language change immediately if changed
+      if (lang !== null && lang !== CURRENT_LANG) {
+        await loadTranslations(lang);
+        applyTranslations();
+      }
       onFilter();
       const btn = document.getElementById('settingsSaveBtn');
-      if (btn) { const orig = btn.textContent; btn.textContent = '✓ Sauvegardé'; setTimeout(()=>{ btn.textContent=orig; }, 1800); }
+      if (btn) { const orig = btn.textContent; btn.textContent = t('settings.saved'); setTimeout(()=>{ btn.textContent=orig; }, 1800); }
     } catch(e) {
       alert('Erreur lors de la sauvegarde : ' + e.message);
       return;
@@ -2090,6 +2138,59 @@ let allItems=[], categories=[], groups=[];
   let _onbStep = 0;
   let _onbJsr = { enabled: false, url: '', key: '' };
   let _onbLogSeen = 0;
+  let _langTimer = null;
+  let _onbLang = 'fr';
+
+  const _ONB_TEXTS = {
+    fr: {
+      title: 'Bienvenue dans MyMediaLibrary',
+      desc: 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil. Repérez les fichiers encombrants, les codecs ou résolutions à remplacer, les contenus déjà disponibles sur vos plateformes de streaming, et suivez l\'évolution de votre collection.',
+      start: 'Commencer →',
+    },
+    en: {
+      title: 'Welcome to MyMediaLibrary',
+      desc: 'Visualize and explore your movie and TV library at a glance. Spot large files, outdated codecs or resolutions, content already available on your streaming platforms, and track your collection\'s growth with detailed statistics.',
+      start: 'Get started →',
+    },
+  };
+
+  function _updateOnbLangDisplay(lang) {
+    const txt = _ONB_TEXTS[lang] || _ONB_TEXTS.fr;
+    const el = (id) => document.getElementById(id);
+    if (el('onbWelcomeTitle')) el('onbWelcomeTitle').textContent = txt.title;
+    if (el('onbWelcomeDesc'))  el('onbWelcomeDesc').textContent  = txt.desc;
+    if (el('onbWelcomeStart')) el('onbWelcomeStart').textContent = txt.start;
+    ['onbLangFr','onbLangEn'].forEach(id => {
+      const btn = el(id);
+      if (btn) {
+        const active = (id === 'onbLangFr' && lang === 'fr') || (id === 'onbLangEn' && lang === 'en');
+        btn.style.background    = active ? 'var(--accent)' : 'var(--surface)';
+        btn.style.borderColor   = active ? 'var(--accent)' : 'var(--border)';
+        btn.style.color         = active ? '#fff' : 'var(--muted)';
+      }
+    });
+  }
+
+  function _startLangToggle() {
+    _updateOnbLangDisplay(_onbLang);
+    clearInterval(_langTimer);
+    let showing = _onbLang;
+    _langTimer = setInterval(() => {
+      showing = showing === 'fr' ? 'en' : 'fr';
+      _updateOnbLangDisplay(showing);
+    }, 5000);
+  }
+
+  async function selectOnbLang(lang) {
+    clearInterval(_langTimer);
+    _langTimer = null;
+    _onbLang = lang;
+    _updateOnbLangDisplay(lang);
+    if (lang !== CURRENT_LANG) {
+      await loadTranslations(lang);
+      applyTranslations();
+    }
+  }
 
   function showOnboarding() {
     _onbStep = 0;
@@ -2118,7 +2219,7 @@ let allItems=[], categories=[], groups=[];
 
     const panel = document.getElementById('onbPanel');
     if (!panel) return;
-    if      (_onbStep === 0) panel.innerHTML = _onbStep0HTML();
+    if      (_onbStep === 0) { panel.innerHTML = _onbStep0HTML(); _startLangToggle(); }
     else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
     else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
     else                     panel.innerHTML = _onbStep3HTML();
@@ -2137,36 +2238,45 @@ let allItems=[], categories=[], groups=[];
     if (prev) prev.style.display = _onbStep > 1 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (_onbStep === 3) { next.textContent = '🚀 Lancer le scan'; next.onclick = onbLaunchScan; }
-      else                { next.textContent = 'Suivant →';          next.onclick = onbNext; }
+      if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
+      else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
     }
-    if (skip) skip.style.display = _onbStep === 2 ? '' : 'none';
+    if (skip) { skip.textContent = t('nav.skip'); skip.style.display = _onbStep === 2 ? '' : 'none'; }
   }
 
   function _onbStep0HTML() {
+    const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans Mediatheque</div>'
-      + '<div style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
-      + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil. Repérez les fichiers encombrants, les codecs ou résolutions à remplacer, les contenus déjà disponibles sur vos plateformes de streaming, et suivez l\'évolution de votre collection grâce aux statistiques détaillées.'
+      // Language selector
+      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
+        + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
+        + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
       + '</div>'
-      + '<button onclick="onbNext()" style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">Commencer →</button>'
+      // Auto-toggling content
+      + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
+      + '<div id="onbWelcomeDesc" style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
+      + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
+      + '</div>'
+      + '<button onclick="onbNext()" style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'
+        + '<span id="onbWelcomeStart">Commencer →</span>'
+      + '</button>'
       + '</div>';
   }
 
   function _onbStep1HTML() {
     const folders = appConfig.folders || [];
     let html = '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">Configurez vos dossiers</div>'
-      + '<div style="font-size:13px;color:var(--muted)">Assignez un type à chaque dossier de la bibliothèque.</div>'
+      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_folders_title')+'</div>'
+      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_folders_desc')+'</div>'
       + '</div>';
     if (!folders.length) {
-      return html + '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px 0">Aucun dossier détecté dans LIBRARY_PATH.</div>';
+      return html + '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px 0">'+t('onboarding.no_folders')+'</div>';
     }
     const unconfigured = folders.filter(f => !f.missing && !(f._onbType || f.type)).length;
     if (unconfigured > 0) {
       html += '<div style="font-size:12px;color:#f7b731;margin-bottom:10px">'
-        + '⚠ ' + unconfigured + ' dossier' + (unconfigured>1?'s':'') + ' non configuré' + (unconfigured>1?'s':'') + ' — seront ignorés au scan.</div>';
+        + '⚠ ' + t('onboarding.unconfigured', {n: unconfigured, s: unconfigured>1?'s':''}) + '</div>';
     }
     html += '<div style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;padding-right:2px">';
     folders.forEach((f, idx) => {
@@ -2175,12 +2285,12 @@ let allItems=[], categories=[], groups=[];
       html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);'+(isMissing?'opacity:.45':'')+'">'
         + '<span style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escH(f.name)+'">'+escH(f.name)+'</span>'
         + (isMissing
-          ? '<span style="font-size:11px;color:#f97316">Introuvable</span>'
-          : '<select style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" onchange="_onbFolderChange('+idx+',this.value)">'
-            + '<option value="">— choisir —</option>'
-            + '<option value="movie"'+(cur==='movie'?' selected':'')+'>Films</option>'
-            + '<option value="tv"'+(cur==='tv'?' selected':'')+'>Séries</option>'
-            + '<option value="ignore"'+(cur==='ignore'?' selected':'')+'>Ignorer</option>'
+          ? '<span style="font-size:11px;color:#f97316">'+t('onboarding.folder_missing')+'</span>'
+          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" onchange="_onbFolderChange('+idx+',this.value);this.classList.toggle(\'has-value\',!!this.value)">'
+            + '<option value="">'+t('onboarding.folder_choose')+'</option>'
+            + '<option value="movie"'+(cur==='movie'?' selected':'')+'>'+t('onboarding.folder_movie')+'</option>'
+            + '<option value="tv"'+(cur==='tv'?' selected':'')+'>'+t('onboarding.folder_tv')+'</option>'
+            + '<option value="ignore"'+(cur==='ignore'?' selected':'')+'>'+t('onboarding.folder_ignore')+'</option>'
             + '</select>')
         + '</div>';
     });
@@ -2204,18 +2314,18 @@ let allItems=[], categories=[], groups=[];
 
   function _onbStep2HTML() {
     return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">Enrichissement streaming</div>'
-      + '<div style="font-size:13px;color:var(--muted)">Optionnel — affiche les providers FR (Netflix, Canal+…) sur chaque titre.</div>'
+      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_jsr_title')+'</div>'
+      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_jsr_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
-      + '<div class="settings-row"><label class="settings-label">Activer Jellyseerr</label>'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
-      + '<div class="settings-row"><label class="settings-label">URL</label>'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
         + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"/></div>'
-      + '<div class="settings-row"><label class="settings-label">API Key</label>'
-        + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="Votre API key" value="'+escH(_onbJsr.key)+'"/></div>'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
+        + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"/></div>'
       + '<div class="settings-row">'
-        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()" style="padding:5px 14px;font-size:12px">Tester la connexion</button>'
+        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()" style="padding:5px 14px;font-size:12px">'+t('onboarding.jsr_test')+'</button>'
         + '<span id="onbJsrTestResult" style="font-size:12px;margin-left:10px;color:var(--muted)"></span>'
       + '</div>'
       + '</div>';
@@ -2227,16 +2337,16 @@ let allItems=[], categories=[], groups=[];
     const nTv      = folders.filter(f => !f.missing && (f._onbType||f.type)==='tv').length;
     const nIgnored = folders.filter(f => !f.missing && ((f._onbType||f.type)==='ignore' || !(f._onbType||f.type))).length;
     const rows = [];
-    if (nMovies)  rows.push('<b>'+nMovies+'</b> dossier'+(nMovies>1?'s':'')+' Films');
-    if (nTv)      rows.push('<b>'+nTv+'</b> dossier'+(nTv>1?'s':'')+' Séries');
-    if (nIgnored) rows.push('<b>'+nIgnored+'</b> ignoré'+(nIgnored>1?'s':''));
+    if (nMovies)  rows.push('<b>'+nMovies+'</b> '+t(nMovies>1?'onboarding.summary_movies_pl':'onboarding.summary_movies',{n:nMovies}).replace(nMovies+' ',''));
+    if (nTv)      rows.push('<b>'+nTv+'</b> '+t(nTv>1?'onboarding.summary_tv_pl':'onboarding.summary_tv',{n:nTv}).replace(nTv+' ',''));
+    if (nIgnored) rows.push('<b>'+nIgnored+'</b> '+t(nIgnored>1?'onboarding.summary_ignored_pl':'onboarding.summary_ignored',{n:nIgnored}).replace(nIgnored+' ',''));
     return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">Prêt à scanner</div>'
-      + '<div style="font-size:13px;color:var(--muted)">Vérifiez la configuration avant de lancer le scan initial.</div>'
+      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_scan_title')+'</div>'
+      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_scan_desc')+'</div>'
       + '</div>'
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
-      + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">Aucun dossier configuré</span>')+'</div>'
-      + '<div>🔍 Jellyseerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">activé — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">désactivé</span>')+'</div>'
+      + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
+      + '<div>🔍 Jellyseerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
       + '</div>';
   }
 
@@ -2261,6 +2371,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onbNext() {
+    if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
     if (_onbStep === 2) _captureOnbJsr();
     if (_onbStep < 3) { _onbStep++; _onbRender(); }
   }
@@ -2279,7 +2390,7 @@ let allItems=[], categories=[], groups=[];
 
   async function onbLaunchScan() {
     const btn = document.getElementById('onbNextBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Enregistrement…'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('onboarding.saving'); }
 
     // Build folder list: apply _onbType overrides, set visible accordingly
     const folders = (appConfig.folders || []).map(f => {
@@ -2295,13 +2406,14 @@ let allItems=[], categories=[], groups=[];
       enable_movies: folders.some(f => f.type === 'movie'),
       enable_series: folders.some(f => f.type === 'tv'),
       jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) },
+      system: { language: _onbLang },
     };
 
     try {
       await saveConfig(partial);
     } catch(e) {
-      alert('Erreur lors de la sauvegarde : ' + e.message);
-      if (btn) { btn.disabled = false; btn.textContent = '🚀 Lancer le scan'; }
+      alert(t('settings.save_error', {msg: e.message}));
+      if (btn) { btn.disabled = false; btn.textContent = t('nav.launch_scan'); }
       return;
     }
 
@@ -2315,12 +2427,12 @@ let allItems=[], categories=[], groups=[];
     if (panel) panel.innerHTML = '<div style="padding:8px 0">'
       + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
         + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
-        + '<span style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:16px">Scan en cours…</span>'
+        + '<span style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
       + '</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
         + '<button onclick="document.getElementById(\'onboardingOverlay\').style.display=\'none\';loadLibrary();" '
-          + 'style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">Accéder à la bibliothèque →</button>'
+          + 'style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'+t('onboarding.open_library')+'</button>'
       + '</div>'
       + '</div>';
     const stepsEl = document.getElementById('onbSteps');

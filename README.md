@@ -1,4 +1,4 @@
-# 📼 Mediatheque
+# 📼 MyMediaLibrary
 
 **[Français](#français) | [English](#english)**
 
@@ -7,100 +7,64 @@
 <a name="français"></a>
 ## 🇫🇷 Français
 
-**Mediatheque** est un tableau de bord auto-hébergé pour visualiser et explorer votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin), et affiche une interface web filtrée dans un unique conteneur Docker.
-
-<!-- screenshot -->
+**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin), et affiche une interface web filtrée dans un unique conteneur Docker.
 
 ### ✨ Fonctionnalités
 
-**Bibliothèque**
-- Vue tuiles et tableau, tri multi-colonnes, recherche en temps réel
-- Lazy loading par lots de 100 éléments
-- Export CSV de la sélection courante
-
-**Filtres**
-- Type (Films / Séries), catégorie, résolution, codec, provider streaming
-- Persistance des filtres entre sessions (localStorage)
-
-**Métadonnées**
-- Parsing automatique des `.nfo` Kodi/Jellyfin : titre, année, résolution, codec, HDR, durée, synopsis
-- Affiches locales (`poster.jpg` / `poster.png`)
-- Détection automatique de la résolution, codec et HDR depuis le NFO vidéo
-
-**Providers streaming**
-- Enrichissement via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) : disponibilité sur Netflix, Prime Video, Disney+, etc.
-- Logos TMDB, filtre par provider, indicateur "non disponible sur les plateformes"
-
-**Statistiques**
-- Camemberts switchables taille/nombre : groupes, catégories, résolution, codec, providers
-- Histogramme des ajouts par année ou décennie
-- Courbe d'évolution mensuelle de la collection
-
-**Configuration**
-- Découverte automatique des dossiers au premier démarrage
-- Typage Films / Séries / Ignorer directement depuis l'interface
-- Configuration persistée dans `config.json` (pas de base de données)
-- Visibilité par dossier paramétrable
-
-**Paramètres**
-- Thème clair / sombre, couleur d'accent personnalisable
-- Synopsis au survol (activable / désactivable)
-- Niveau de log, planification cron du scan automatique
-
-**Authentification**
-- Mot de passe optionnel via variable d'environnement (`APP_PASSWORD`)
-
-**Opérations**
-- Déclenchement de scan depuis l'interface avec panneau de logs en temps réel
-- Modes `--quick` (sans réseau), `--full` (forcer tous les providers), `--enrich` (défaut)
-- Logs rotatifs dans `./data/scanner.log`, endpoint `/health`
-
-**Mobile**
-- Layout responsive, bottom navigation, panneau filtres slide-down
-- Vue tableau adaptée mobile avec colonne info condensée
+- **Bibliothèque** — vue tuiles et tableau, filtres (type, résolution, codec, provider streaming), recherche, tri, export CSV
+- **Métadonnées** — parsing `.nfo` Kodi/Jellyfin : titre, année, résolution, codec, HDR, durée, synopsis, affiches locales
+- **Providers streaming** — enrichissement via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) avec normalisation configurable (`data/providers_map.json`)
+- **Statistiques** — camemberts, histogramme par année/décennie, courbe d'évolution mensuelle
+- **Interface bilingue** — FR/EN, sélection à la première ouverture et depuis les paramètres, sans rechargement
+- **Zéro configuration** — assistant au premier démarrage, tout persisté dans `config.json`, aucune base de données
 
 ---
 
-### 🚀 Démarrage rapide
+### 🚀 Installation
 
-**Prérequis**
-- Docker + Docker Compose
-- Bibliothèque organisée en dossiers avec fichiers `.nfo` Kodi ou Jellyfin
+**Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo` Kodi/Jellyfin.
 
-**`compose.yaml` minimal**
-```yaml
-services:
-  mediatheque:
-    image: ghcr.io/magicgg91/mediatheque:latest
-    container_name: mediatheque
-    restart: unless-stopped
-    ports:
-      - "8094:80"
-    volumes:
-      - ./data:/data
-      - /chemin/vers/ma/bibliotheque:/mnt/media/library:ro
-    environment:
-      LIBRARY_PATH: /mnt/media/library
+```bash
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
+curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 ```
+
+Éditer `compose.yaml`, remplacer `/chemin/vers/ta/mediatheque` par le chemin réel, puis :
 
 ```bash
 docker compose up -d
 ```
 
-Accédez à `http://localhost:8094`. Une modale de configuration s'affiche au premier démarrage pour assigner un type à chaque dossier et configurer Jellyseerr.
+Accéder à `http://localhost:8094`. Un assistant de configuration s'affiche au premier démarrage.
+
+**`compose.yaml`**
+```yaml
+services:
+  mymedialibrary:
+    image: ghcr.io/mymedialibrary/mymedialibrary:latest
+    container_name: mymedialibrary
+    ports:
+      - "8094:80"
+    volumes:
+      - ./data:/data                             # config.json, library.json, scanner.log
+      - /chemin/vers/ta/mediatheque:/library:ro  # ta médiathèque en lecture seule
+    environment:
+      LIBRARY_PATH: /library
+      # SCAN_CRON: "0 3 * * *"
+      # LOG_LEVEL: INFO
+      # APP_PASSWORD: ""
+    restart: unless-stopped
+```
+
+> `LIBRARY_PATH` est fixé à `/library` dans le conteneur — seul le chemin source du volume est à adapter.
 
 ---
 
-### ⚙️ Variables d'environnement
+### 🔄 Mise à jour
 
-| Variable | Obligatoire | Défaut | Description |
-|----------|-------------|--------|-------------|
-| `LIBRARY_PATH` | ✅ | — | Chemin racine de la bibliothèque |
-| `SCAN_CRON` | Non | `0 3 * * *` | Planification cron du scan automatique |
-| `LOG_LEVEL` | Non | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `APP_PASSWORD` | Non | — | Active la protection par mot de passe |
-
-> Les autres paramètres (Jellyseerr, dossiers, UI) sont configurables directement depuis l'interface et persistés dans `config.json`.
+```bash
+docker compose pull && docker compose up -d
+```
 
 ---
 
@@ -108,118 +72,91 @@ Accédez à `http://localhost:8094`. Une modale de configuration s'affiche au pr
 
 ```
 data/
-├── library.json      # Index de la bibliothèque (généré par le scanner)
-├── config.json       # Configuration de l'application (dossiers, Jellyseerr, UI)
-└── scanner.log       # Logs du scanner (rotatif, 5 Mo max, 3 sauvegardes)
+├── library.json        # index de la bibliothèque (généré par le scanner)
+├── config.json         # configuration (dossiers, Jellyseerr, UI, langue)
+├── providers_map.json  # normalisation des noms de providers (éditable)
+└── scanner.log         # logs rotatifs (5 Mo max, 3 sauvegardes)
 ```
+
+---
+
+### 🗂️ Personnaliser la normalisation des providers
+
+Au premier démarrage, `./data/providers_map.json` est créé automatiquement à partir du fichier de référence inclus dans l'image. Ce fichier fait correspondre les noms bruts Jellyseerr (ex. `"Amazon Prime Video"`) aux noms affichés dans l'interface (ex. `"Prime Video"`).
+
+Pour personnaliser : éditer `./data/providers_map.json` sur l'hôte, puis relancer un scan `--enrich`. Le fichier existant n'est jamais écrasé lors des mises à jour de l'image.
+
+Pour contribuer une correction au fichier de référence : ouvrir une PR sur le dépôt GitHub.
 
 ---
 
 ### 🤝 Contribution & Licence
 
-Les contributions sont les bienvenues — ouvrez une issue ou une pull request.
-
-Projet sous licence MIT.
+Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
 
 ---
 
 <a name="english"></a>
 ## 🇬🇧 English
 
-**Mediatheque** is a self-hosted dashboard for visualizing and browsing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), and serves a filterable web interface in a single Docker container.
-
-<!-- screenshot -->
+**MyMediaLibrary** is a self-hosted dashboard for visualizing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), and serves a filterable web interface in a single Docker container.
 
 ### ✨ Features
 
-**Library**
-- Grid and table views, multi-column sorting, real-time search
-- Lazy loading in batches of 100 items
-- CSV export of the current filtered selection
-
-**Filters**
-- Type (Movies / Series), category, resolution, codec, streaming provider
-- Filter state persisted across sessions (localStorage)
-
-**Metadata**
-- Automatic `.nfo` parsing (Kodi/Jellyfin): title, year, resolution, codec, HDR, runtime, synopsis
-- Local poster display (`poster.jpg` / `poster.png`)
-- Resolution, codec, and HDR auto-detected from video NFO
-
-**Streaming providers**
-- Enrichment via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr): availability on Netflix, Prime Video, Disney+, etc.
-- TMDB logos, per-provider filter, "not available" indicator
-
-**Statistics**
-- Switchable size/count pie charts: groups, categories, resolution, codec, providers
-- Bar chart of additions by year or decade
-- Monthly collection growth timeline
-
-**Configuration**
-- Automatic folder discovery on first launch
-- Assign Films / Series / Ignore types directly from the UI
-- Settings persisted in `config.json` (no database)
-- Per-folder visibility control
-
-**Settings**
-- Light / dark theme, custom accent color
-- Synopsis on hover (toggle)
-- Log level, automatic scan cron schedule
-
-**Authentication**
-- Optional password protection via `APP_PASSWORD` environment variable
-
-**Operations**
-- Scan triggered from the UI with real-time log panel
-- Modes `--quick` (no network), `--full` (force all providers), `--enrich` (default)
-- Rotating logs at `./data/scanner.log`, `/health` endpoint
-
-**Mobile**
-- Responsive layout, bottom navigation, slide-down filter panel
-- Mobile-optimized table view with condensed info column
+- **Library** — grid and table views, filters (type, resolution, codec, streaming provider), search, sort, CSV export
+- **Metadata** — Kodi/Jellyfin `.nfo` parsing: title, year, resolution, codec, HDR, runtime, synopsis, local posters
+- **Streaming providers** — enrichment via [Jellyseerr](https://github.com/Fallenbagel/jellyseerr) with configurable normalization (`data/providers_map.json`)
+- **Statistics** — pie charts, year/decade bar chart, monthly growth timeline
+- **Bilingual UI** — FR/EN, selected at first launch and from settings, no page reload required
+- **Zero config** — setup wizard on first launch, everything persisted in `config.json`, no database
 
 ---
 
-### 🚀 Quick start
+### 🚀 Installation
 
-**Requirements**
-- Docker + Docker Compose
-- Video library organized in folders with Kodi or Jellyfin `.nfo` files
+**Requirements:** Docker + Docker Compose, library with Kodi/Jellyfin `.nfo` files.
 
-**Minimal `compose.yaml`**
-```yaml
-services:
-  mediatheque:
-    image: ghcr.io/magicgg91/mediatheque:latest
-    container_name: mediatheque
-    restart: unless-stopped
-    ports:
-      - "8094:80"
-    volumes:
-      - ./data:/data
-      - /path/to/my/library:/mnt/media/library:ro
-    environment:
-      LIBRARY_PATH: /mnt/media/library
+```bash
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
+curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 ```
+
+Edit `compose.yaml`, replace `/path/to/your/library` with your actual path, then:
 
 ```bash
 docker compose up -d
 ```
 
-Open `http://localhost:8094`. A setup wizard appears on first launch to assign a type to each folder and optionally configure Jellyseerr.
+Open `http://localhost:8094`. A setup wizard appears on first launch.
+
+**`compose.yaml`**
+```yaml
+services:
+  mymedialibrary:
+    image: ghcr.io/mymedialibrary/mymedialibrary:latest
+    container_name: mymedialibrary
+    ports:
+      - "8094:80"
+    volumes:
+      - ./data:/data                        # config.json, library.json, scanner.log
+      - /path/to/your/library:/library:ro   # your media library, read-only
+    environment:
+      LIBRARY_PATH: /library
+      # SCAN_CRON: "0 3 * * *"
+      # LOG_LEVEL: INFO
+      # APP_PASSWORD: ""
+    restart: unless-stopped
+```
+
+> `LIBRARY_PATH` is fixed to `/library` inside the container — only the volume source path needs to be updated.
 
 ---
 
-### ⚙️ Environment variables
+### 🔄 Updating
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LIBRARY_PATH` | ✅ | — | Root path of the media library |
-| `SCAN_CRON` | No | `0 3 * * *` | Cron schedule for automatic scans |
-| `LOG_LEVEL` | No | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `APP_PASSWORD` | No | — | Enables password protection |
-
-> All other settings (Jellyseerr, folders, UI preferences) are configurable from the web interface and persisted in `config.json`.
+```bash
+docker compose pull && docker compose up -d
+```
 
 ---
 
@@ -227,15 +164,24 @@ Open `http://localhost:8094`. A setup wizard appears on first launch to assign a
 
 ```
 data/
-├── library.json      # Library index (generated by the scanner)
-├── config.json       # Application configuration (folders, Jellyseerr, UI)
-└── scanner.log       # Scanner logs (rotating, 5 MB max, 3 backups)
+├── library.json        # library index (generated by the scanner)
+├── config.json         # configuration (folders, Jellyseerr, UI, language)
+├── providers_map.json  # provider name normalization (editable)
+└── scanner.log         # rotating logs (5 MB max, 3 backups)
 ```
+
+---
+
+### 🗂️ Customizing provider normalization
+
+On first start, `./data/providers_map.json` is automatically created from the reference file bundled in the image. This file maps raw Jellyseerr provider names (e.g. `"Amazon Prime Video"`) to the display names shown in the UI (e.g. `"Prime Video"`).
+
+To customize: edit `./data/providers_map.json` on the host, then trigger an `--enrich` scan. The existing file is never overwritten when updating the image.
+
+To contribute a correction to the reference file: open a PR on the GitHub repository.
 
 ---
 
 ### 🤝 Contributing & License
 
-Contributions are welcome — open an issue or pull request.
-
-This project is MIT licensed.
+Contributions welcome — open an issue or PR. MIT licensed.
