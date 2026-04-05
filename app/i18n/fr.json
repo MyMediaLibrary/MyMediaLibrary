@@ -1,0 +1,168 @@
+{
+  "onboarding": {
+    "title": "Bienvenue dans MyMediaLibrary",
+    "description": "Visualisez et explorez votre bibliothèque de films et séries en un coup d'œil. Repérez les fichiers encombrants, les codecs ou résolutions à remplacer, les contenus déjà disponibles sur vos plateformes de streaming, et suivez l'évolution de votre collection grâce aux statistiques détaillées.",
+    "start": "Commencer →",
+    "step_folders_title": "Configurez vos dossiers",
+    "step_folders_desc": "Assignez un type à chaque dossier de la bibliothèque.",
+    "no_folders": "Aucun dossier détecté dans LIBRARY_PATH.",
+    "unconfigured": "{n} dossier{s} non configuré{s} — seront ignorés au scan.",
+    "folder_missing": "Introuvable",
+    "folder_choose": "— choisir —",
+    "folder_movie": "Films",
+    "folder_tv": "Séries",
+    "folder_ignore": "Ignorer",
+    "step_jsr_title": "Enrichissement streaming",
+    "step_jsr_desc": "Optionnel — affiche les providers FR (Netflix, Canal+…) sur chaque titre.",
+    "jsr_enable": "Activer Jellyseerr",
+    "jsr_url": "URL",
+    "jsr_apikey": "API Key",
+    "jsr_test": "Tester la connexion",
+    "step_scan_title": "Prêt à scanner",
+    "step_scan_desc": "Vérifiez la configuration avant de lancer le scan initial.",
+    "no_configured": "Aucun dossier configuré",
+    "jsr_active": "activé",
+    "jsr_inactive": "désactivé",
+    "scanning": "Scan en cours…",
+    "open_library": "Accéder à la bibliothèque →",
+    "summary_movies": "{n} dossier Films",
+    "summary_movies_pl": "{n} dossiers Films",
+    "summary_tv": "{n} dossier Séries",
+    "summary_tv_pl": "{n} dossiers Séries",
+    "summary_ignored": "{n} ignoré",
+    "summary_ignored_pl": "{n} ignorés",
+    "saving": "Enregistrement…"
+  },
+  "nav": {
+    "next": "Suivant →",
+    "launch_scan": "🚀 Lancer le scan",
+    "skip": "Passer",
+    "prev": "← Précédent",
+    "library": "📚 Bibliothèque",
+    "stats": "📊 Statistiques",
+    "scan": "Scanner"
+  },
+  "filters": {
+    "all": "Tous",
+    "none": "Aucun",
+    "streaming_fr": "Streaming (FR)",
+    "codec": "Codec",
+    "resolution": "Résolution",
+    "sort_by": "Trier par",
+    "type": "Type",
+    "search": "Rechercher...",
+    "type_all": "Tous",
+    "type_movies": "🎬 Films",
+    "type_tv": "📺 Séries"
+  },
+  "sort": {
+    "title_asc": "Titre A-Z",
+    "title_desc": "Titre Z-A",
+    "year_desc": "Année ↓",
+    "year_asc": "Année ↑",
+    "size_desc": "Taille ↓",
+    "size_asc": "Taille ↑",
+    "added_desc": "Récent"
+  },
+  "library": {
+    "loading": "Chargement...",
+    "not_found": "Bibliothèque introuvable",
+    "run_scan": "Veuillez lancer un scan",
+    "scan_error": "Erreur de chargement",
+    "last_scan": "Dernier scan :",
+    "indexed": "{n} éléments indexés",
+    "no_results": "Aucun résultat",
+    "seasons": "{n}S",
+    "episodes": "{n}ep",
+    "no_provider": "Non disponible en streaming FR"
+  },
+  "settings": {
+    "title": "⚙️ Paramètres",
+    "save": "Enregistrer",
+    "close": "Fermer",
+    "saved": "✓ Sauvegardé",
+    "save_error": "Erreur lors de la sauvegarde : {msg}",
+    "tabs": {
+      "library": "📁 Bibliothèque",
+      "jellyseerr": "🔍 Jellyseerr",
+      "system": "⚙️ Système"
+    },
+    "library": {
+      "path": "Chemin bibliothèque",
+      "enable_movies": "Afficher les Films",
+      "enable_series": "Afficher les Séries",
+      "folders": "Dossiers détectés",
+      "folder_types": {
+        "movie": "Films",
+        "tv": "Séries",
+        "ignore": "Ignorer",
+        "null": "— type —"
+      },
+      "missing": "Dossier introuvable",
+      "env_defined": "Défini via compose.yaml"
+    },
+    "jellyseerr": {
+      "enable": "Activer",
+      "url": "URL",
+      "apikey": "Clé API",
+      "test": "Tester la connexion",
+      "providers_visible": "Visibilité des providers",
+      "visible": "Visible",
+      "hidden": "Masqué"
+    },
+    "system": {
+      "language": "Langue",
+      "accent": "Couleur d'accent",
+      "accent_reset": "Réinitialiser",
+      "synopsis": "Synopsis au survol",
+      "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
+      "cron": "Scan automatique (cron)",
+      "log_level": "Niveau de log",
+      "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log"
+    },
+    "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml."
+  },
+  "scan": {
+    "start": "Scanner",
+    "running": "Scan en cours...",
+    "done": "Scan terminé ✓",
+    "open_library": "Accéder à la bibliothèque",
+    "mode_enrich": "Enrich",
+    "mode_enrich_desc": "Filesystem + enrichissement manquants (défaut)",
+    "mode_quick": "Quick",
+    "mode_quick_desc": "Filesystem uniquement, sans enrichissement",
+    "mode_full": "Full",
+    "mode_full_desc": "Filesystem + refresh complet de toutes les métadonnées"
+  },
+  "stats": {
+    "total": "Total",
+    "movies": "Films",
+    "series": "Séries",
+    "size": "Taille",
+    "by_year": "Par année",
+    "by_decade": "Par décennie",
+    "evolution": "Évolution",
+    "groups": "Groupes",
+    "categories": "Catégories",
+    "resolution": "Résolution",
+    "codec": "Codec",
+    "providers": "Providers"
+  },
+  "auth": {
+    "protected": "Accès protégé",
+    "password": "Mot de passe",
+    "enter": "Entrer",
+    "wrong": "Mot de passe incorrect"
+  },
+  "common": {
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "elements": "{n} éléments"
+  },
+  "mobile": {
+    "library": "Biblio",
+    "stats": "Stats"
+  }
+}
