@@ -418,9 +418,32 @@ def load_provider_map() -> dict:
     return {}
 
 
+def clean_provider_name(name: str) -> str:
+    """Defensive cleaning before provider map lookup."""
+    s = name.strip()
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(r'\s*Amazon Channel$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s*Apple TV Channel$', '', s, flags=re.IGNORECASE).strip()
+    return s
+
+
 def normalize_provider(name: str, provider_map: dict) -> str:
     """Return normalized name from map, or raw name if not found."""
-    return provider_map.get(name, name)
+    # Exact match
+    if name in provider_map:
+        return provider_map[name]
+    # Defensive cleaning fallback (double spaces, trailing suffixes)
+    cleaned = clean_provider_name(name)
+    if cleaned != name:
+        if cleaned in provider_map:
+            return provider_map[cleaned]
+        # Case-insensitive fallback
+        cleaned_l = cleaned.lower()
+        for k, v in provider_map.items():
+            if k.lower() == cleaned_l:
+                return v
+    log.warning(f"[providers] Unmapped provider: {name!r}")
+    return name
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -1323,8 +1346,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             cfg = load_config()
+            log.info(f"[config] Received: {json.dumps(payload)}")
             merged = deep_merge(cfg, payload)
             save_config(merged)
+            log.info(f"[config] Saved: {json.dumps(merged)}")
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
