@@ -53,7 +53,9 @@
     "search": "Rechercher...",
     "type_all": "Tous",
     "type_movies": "🎬 Films",
-    "type_tv": "📺 Séries"
+    "type_tv": "📺 Séries",
+    "by_group": "Par groupe",
+    "by_category": "Par catégorie"
   },
   "sort": {
     "title_asc": "Titre A-Z",
@@ -74,7 +76,9 @@
     "no_results": "Aucun résultat",
     "seasons": "{n}S",
     "episodes": "{n}ep",
-    "no_provider": "Non disponible en streaming FR"
+    "no_provider": "Non disponible en streaming FR",
+    "files": "{n} fichier",
+    "files_pl": "{n} fichiers"
   },
   "settings": {
     "title": "⚙️ Paramètres",
@@ -92,6 +96,10 @@
       "enable_movies": "Afficher les Films",
       "enable_series": "Afficher les Séries",
       "folders": "Dossiers détectés",
+      "folder_col_name": "Dossier",
+      "folder_col_type": "Type",
+      "folder_col_visible": "Visible",
+      "folder_unconfigured": "{n} dossier{s} non configuré{s} — assignez un type pour les inclure dans la bibliothèque.",
       "folder_types": {
         "movie": "Films",
         "tv": "Séries",
@@ -132,7 +140,13 @@
     "mode_quick": "Quick",
     "mode_quick_desc": "Filesystem uniquement, sans enrichissement",
     "mode_full": "Full",
-    "mode_full_desc": "Filesystem + refresh complet de toutes les métadonnées"
+    "mode_full_desc": "Filesystem + refresh complet de toutes les métadonnées",
+    "log_title": "Log du dernier scan",
+    "log_loading": "Chargement…",
+    "log_error": "Impossible de charger le log.",
+    "status_running": " — en cours…",
+    "status_done": " — terminé ✓",
+    "status_error": " — erreur"
   },
   "stats": {
     "total": "Total",
@@ -146,7 +160,37 @@
     "categories": "Catégories",
     "resolution": "Résolution",
     "codec": "Codec",
-    "providers": "Providers"
+    "providers": "Providers",
+    "elements": "Éléments",
+    "files": "Fichiers",
+    "disk": "Disque",
+    "global_library": "Bibliothèque globale",
+    "release_years": "Années de sortie",
+    "years": "Années",
+    "decades": "Décennies",
+    "monthly_evolution": "Évolution mensuelle des ajouts",
+    "size_added": "Taille ajoutée",
+    "items_added": "Nombre d'éléments ajoutés",
+    "all": "Tout",
+    "months_12": "12 mois",
+    "days_30": "30 jours",
+    "not_enough_data": "Pas assez de données.",
+    "not_enough_dated": "Pas assez de données horodatées.",
+    "not_enough_period": "Pas assez de données pour cette période.",
+    "by_size": "Taille",
+    "by_count": "Nombre",
+    "no_provider_data": "Aucune donnée provider.",
+    "streaming_availability": "Disponibilité streaming (FR)",
+    "streaming_by_group": "Streaming par groupe",
+    "by_group": "Répartition par groupe",
+    "by_category": "Répartition par catégorie",
+    "total_indexed": "Total indexé",
+    "avg_per_month": "Moy. / mois",
+    "period": "Période",
+    "items_count": "{n} élément",
+    "items_count_pl": "{n} éléments",
+    "entry": "entrée",
+    "entries": "entrées"
   },
   "auth": {
     "protected": "Accès protégé",
@@ -164,5 +208,17 @@
   "mobile": {
     "library": "Biblio",
     "stats": "Stats"
+  },
+  "table": {
+    "title": "Titre",
+    "year": "Année",
+    "group": "Groupe",
+    "category": "Catégorie",
+    "resolution": "Résolution",
+    "codec": "Codec",
+    "size": "Taille",
+    "files": "Fichiers",
+    "added": "Ajouté le",
+    "streaming": "Streaming"
   }
 }

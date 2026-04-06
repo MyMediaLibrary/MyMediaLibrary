@@ -30,7 +30,7 @@ MyMediaLibrary/
     ├── index.html           ← HTML shell only (~23kb)
     ├── app.css              ← all styles (~33kb)
     ├── app.js               ← all JavaScript (~78kb, 1612 lines)
-    ├── providers_map.json   ← reference provider map (versioned, copied to /data/ on first start)
+    ├── providers.json       ← unified provider config: {mapping: {raw→canonical}, logos: {name→filename}}
     └── i18n/
         ├── fr.json          ← French translations
         └── en.json          ← English translations
@@ -53,7 +53,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 - **Two media types:** `movie` (flat folder) and `tv` (tvshow.nfo + season subfolders)
 - **Parallel enrichment:** ThreadPoolExecutor(5) per category
 - **providers_fetched flag** — distinguishes "no FR providers" from "never fetched"
-- **Provider normalization via file** — `load_provider_map()` reads `/data/providers_map.json` at scan start. Raw provider names pass through as-is if not in the map. No hard-coded regex.
+- **Provider normalization via file** — `load_provider_map()` reads `/usr/share/nginx/html/providers.json` (section `mapping`) at scan start. Raw provider names pass through as-is if not in the map. No hard-coded regex.
 - **providers_raw / providers_raw_meta** — raw provider names accumulated across scans in `library.json` (for map building)
 - **Rotating log:** 5MB max, 3 backups at `/data/scanner.log`
 - **HTTP API server** on `127.0.0.1:8095`: `POST /api/scan/start`, `GET /api/scan/status`, `GET /health`, `GET /api/providers-map`, `POST /api/providers-map`
@@ -69,7 +69,7 @@ The original single-file index.html was split into 3 files. `index.html` is the 
 
 ### entrypoint.sh
 - Runs `envsubst` on `/etc/nginx/nginx.conf` before starting nginx
-- Copies `app/providers_map.json` → `/data/providers_map.json` if absent (never overwrites)
+- `providers.json` is bundled in the image at `/usr/share/nginx/html/providers.json` — no copy to `/data/` needed
 - Writes `/app/scanner_env.sh` (all env vars, chmod 600)
 - Writes `/app/scan_cron.sh` (sources scanner_env.sh then runs scanner)
 - Cron file at `/etc/cron.d/mymedialibrary`
@@ -194,13 +194,21 @@ Grid view: batches of 100 via `IntersectionObserver`. `_lazyItems`, `_lazyPage`,
 
 ---
 
-## providers_map.json
+## providers.json
 
-File at `/data/providers_map.json` — maps raw Jellyseerr provider names to normalized display names. Created on first container start by `entrypoint.sh` with sensible defaults. Editable by user without rebuild. Exposed via `GET/POST /api/providers-map`.
+Unified file at `app/providers.json` — embedded in the Docker image at `/usr/share/nginx/html/providers.json`.
 
-The reference file `app/providers_map.json` is versioned in the repo and embedded in the image via `COPY app/ /usr/share/nginx/html/`. On first container start, `entrypoint.sh` copies it to `/data/providers_map.json` if absent. User customizations are never overwritten on image updates.
+Structure:
+```json
+{
+  "mapping": { "raw name": "canonical name", ... },
+  "logos":   { "canonical name": "filename.png", ... }
+}
+```
 
-Raw names seen during scans are accumulated in `library.json` as `providers_raw` (list) and `providers_raw_meta` (dict with logo URLs) — useful for building the map.
+- **`mapping`** — used by `scanner.py` at scan start (`load_provider_map()`) to normalize raw Jellyseerr provider names to display names
+- **`logos`** — used by `app.js` (`loadProvidersLogos()`) to resolve local logo paths under `/assets/providers/`
+- Exposed via `GET/POST /api/providers-map` (returns/updates the `mapping` section only)
 
 ---
 
