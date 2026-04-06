@@ -90,6 +90,14 @@ Pour contribuer une correction au fichier de référence : ouvrir une PR sur le 
 
 ---
 
+### 🔒 Authentification
+
+Si `APP_PASSWORD` est défini, le mot de passe est demandé avant l'affichage de l'interface, y compris lors de la configuration initiale.
+
+Sans `APP_PASSWORD`, l'interface est accessible sans authentification — utilisez un reverse proxy (NPM, Traefik) ou un VPN/Tailscale pour une protection réseau.
+
+---
+
 ### 🤝 Contribution & Licence
 
 Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
@@ -179,6 +187,14 @@ On first start, `./data/providers_map.json` is automatically created from the re
 To customize: edit `./data/providers_map.json` on the host, then trigger an `--enrich` scan. The existing file is never overwritten when updating the image.
 
 To contribute a correction to the reference file: open a PR on the GitHub repository.
+
+---
+
+### 🔒 Authentication
+
+If `APP_PASSWORD` is set, the password is prompted before the interface is shown, including during the initial setup wizard.
+
+Without `APP_PASSWORD`, the interface is accessible without authentication — use a reverse proxy (NPM, Traefik) or VPN/Tailscale for network-level protection.
 
 ---
 

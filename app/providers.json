@@ -1,0 +1,17 @@
+[
+  { "name": "Netflix",                    "logo": "netflix.png" },
+  { "name": "Canal+",                     "logo": "canal+.png" },
+  { "name": "Prime Video",               "logo": "prime-video.png" },
+  { "name": "Disney+",                   "logo": "disney+.png" },
+  { "name": "Paramount+",                "logo": "paramount+.png" },
+  { "name": "Max",                       "logo": "max.png" },
+  { "name": "HBO Max",                   "logo": "hbo-max.png" },
+  { "name": "Apple TV+",                 "logo": "apple-tv+.png" },
+  { "name": "ADN",                       "logo": "adn.png" },
+  { "name": "Crunchyroll",               "logo": "crunchyroll.png" },
+  { "name": "Arte",                      "logo": "arte.png" },
+  { "name": "France TV",                 "logo": "france-tv.png" },
+  { "name": "Mubi",                      "logo": "mubi.png" },
+  { "name": "OCS",                       "logo": "ocs.png" },
+  { "name": "Shadowz",                   "logo": "shadowz.png" }
+]

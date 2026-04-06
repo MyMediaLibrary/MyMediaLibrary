@@ -15,7 +15,7 @@ async function loadTranslations(lang) {
 function t(key, vars = {}) {
   const keys = key.split('.');
   let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
-  if (typeof val !== 'string') return key;
+  if (typeof val !== 'string') { console.warn('Missing translation key:', key); return key; }
   Object.entries(vars).forEach(([k, v]) => { val = val.replace(`{${k}}`, v); });
   return val;
 }
@@ -35,11 +35,27 @@ function applyTranslations() {
 let allItems=[], categories=[], groups=[];
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
+  let PROVIDERS_LOGOS = [];        // [{name, logo}] — from /providers.json (local assets)
+
+  async function loadProvidersLogos() {
+    try {
+      const res = await fetch('/providers.json?_=' + Date.now());
+      if (res.ok) PROVIDERS_LOGOS = await res.json();
+    } catch(e) { console.warn('providers.json load error:', e); }
+  }
+
+  function getProviderLogo(name) {
+    const p = PROVIDERS_LOGOS.find(p => p.name === name);
+    return p ? `/assets/providers/${p.logo}` : null;
+  }
+
   // Helpers: handle both string providers (new) and {name,logo} objects (legacy)
   function _pname(p){ return (p && typeof p==='object') ? (p.name||'') : (p||''); }
   function _plogo(p){
     const name = _pname(p);
-    return PROVIDERS_META[name]?.logo_url || (p && typeof p==='object' ? p.logo : null) || providerCatalog[name] || '';
+    const logo = getProviderLogo(name) || PROVIDERS_META[name]?.logo_url || (p && typeof p==='object' ? p.logo : null) || providerCatalog[name] || '';
+    if (!logo) console.warn('Unmapped provider:', name);
+    return logo;
   }
 
   // Visibility prefs (null = all visible; Set = specific visible names)
@@ -113,7 +129,7 @@ let allItems=[], categories=[], groups=[];
 
   // ── LOAD ─────────────────────────────────────────────
   async function loadLibrary() {
-    await loadConfig();
+    await Promise.all([loadConfig(), loadProvidersLogos()]);
 
     // Load translations for the configured language
     const lang = appConfig.system?.language || 'fr';
@@ -1772,23 +1788,14 @@ let allItems=[], categories=[], groups=[];
       if (lang !== null)     partial.system.language  = lang;
     }
 
+    console.log('Selected language:', lang);
     try {
       console.log('[saveSettings] payload:', JSON.stringify(partial));
       await saveConfig(partial);
-      await loadConfig();
-      // Apply language change immediately if changed
-      if (lang !== null && lang !== CURRENT_LANG) {
-        await loadTranslations(lang);
-        applyTranslations();
-      }
-      onFilter();
-      const btn = document.getElementById('settingsSaveBtn');
-      if (btn) { const orig = btn.textContent; btn.textContent = t('settings.saved'); setTimeout(()=>{ btn.textContent=orig; }, 1800); }
+      window.location.reload();
     } catch(e) {
       alert('Erreur lors de la sauvegarde : ' + e.message);
-      return;
     }
-    closeSettings();
   }
 
   // ── SETTINGS — FOLDERS ───────────────────────────────
@@ -2178,7 +2185,7 @@ let allItems=[], categories=[], groups=[];
     _langTimer = setInterval(() => {
       showing = showing === 'fr' ? 'en' : 'fr';
       _updateOnbLangDisplay(showing);
-    }, 5000);
+    }, 3000);
   }
 
   async function selectOnbLang(lang) {
@@ -2194,12 +2201,15 @@ let allItems=[], categories=[], groups=[];
 
   function showOnboarding() {
     _onbStep = 0;
+    _onbLang = CURRENT_LANG;
     _onbJsr = {
       enabled: appConfig.jellyseerr?.enabled ?? false,
       url:     appConfig.jellyseerr?.url     || '',
       key:     '',
     };
     _onbLogSeen = 0;
+    // Prefetch both i18n files so lang switching is instant (browser caches them)
+    ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
     const ov = document.getElementById('onboardingOverlay');
     if (ov) { ov.style.display = 'flex'; _onbRender(); }
   }
