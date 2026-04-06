@@ -407,14 +407,15 @@ def _jsr_get(path: str, jsr: dict | None = None):
         return _JSR_ERROR
 
 
-PROVIDERS_MAP_PATH = "/data/providers_map.json"
+PROVIDERS_JSON_PATH = "/usr/share/nginx/html/providers.json"
 
 
 def load_provider_map() -> dict:
-    if os.path.exists(PROVIDERS_MAP_PATH):
-        with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    log.warning("[providers] providers_map.json introuvable dans /data/, aucune normalisation appliquée")
+    if os.path.exists(PROVIDERS_JSON_PATH):
+        with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("mapping", {}) if isinstance(data, dict) else {}
+    log.warning("[providers] providers.json introuvable, aucune normalisation appliquée")
     return {}
 
 
@@ -1041,7 +1042,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     # Load provider map (file-based normalization, reloaded each scan)
     provider_map = load_provider_map()
-    log.info(f"[providers] providers_map.json chargé ({len(provider_map)} entrées)")
+    log.info(f"[providers] providers.json mapping chargé ({len(provider_map)} entrées)")
 
     # providers_meta maps normalized name → {logo, logo_url} — stored at top level
     # Seed from existing data (migration: items may still have {name, logo} objects)
@@ -1299,10 +1300,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     cfg = load_config()
             self._json(200, cfg)
         elif path == "/api/providers-map":
-            if os.path.exists(PROVIDERS_MAP_PATH):
+            if os.path.exists(PROVIDERS_JSON_PATH):
                 try:
-                    with open(PROVIDERS_MAP_PATH, encoding="utf-8") as f:
-                        self._json(200, json.load(f))
+                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
+                        data = json.load(f)
+                        self._json(200, data.get("mapping", {}) if isinstance(data, dict) else {})
                 except Exception as e:
                     self._json(500, {"error": str(e)})
             else:
@@ -1360,8 +1362,13 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             try:
-                with open(PROVIDERS_MAP_PATH, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                data = {}
+                if os.path.exists(PROVIDERS_JSON_PATH):
+                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
+                        data = json.load(f)
+                data["mapping"] = payload
+                with open(PROVIDERS_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
                 self._json(200, {"ok": True})
             except Exception as e:
                 self._json(500, {"error": str(e)})

@@ -16,7 +16,7 @@ function t(key, vars = {}) {
   const keys = key.split('.');
   let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
   if (typeof val !== 'string') { console.warn('Missing translation key:', key); return key; }
-  Object.entries(vars).forEach(([k, v]) => { val = val.replace(`{${k}}`, v); });
+  Object.entries(vars).forEach(([k, v]) => { val = val.split(`{${k}}`).join(String(v)); });
   return val;
 }
 
@@ -35,18 +35,21 @@ function applyTranslations() {
 let allItems=[], categories=[], groups=[];
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
-  let PROVIDERS_LOGOS = [];        // [{name, logo}] — from /providers.json (local assets)
+  let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
 
   async function loadProvidersLogos() {
     try {
       const res = await fetch('/providers.json?_=' + Date.now());
-      if (res.ok) PROVIDERS_LOGOS = await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        PROVIDERS_LOGOS = (data && data.logos) ? data.logos : {};
+      }
     } catch(e) { console.warn('providers.json load error:', e); }
   }
 
   function getProviderLogo(name) {
-    const p = PROVIDERS_LOGOS.find(p => p.name === name);
-    return p ? `/assets/providers/${p.logo}` : null;
+    const logo = PROVIDERS_LOGOS[name];
+    return logo ? `/assets/providers/${logo}` : null;
   }
 
   // Helpers: handle both string providers (new) and {name,logo} objects (legacy)
@@ -276,10 +279,10 @@ let allItems=[], categories=[], groups=[];
       ? items.length+'<span style="font-size:11px;font-weight:400;color:var(--muted)"> / '+allItems.length+'</span>'
       : items.length;
     document.getElementById('statsBar').innerHTML=
-      '<div class="stat"><div class="stat-val">'+elemLabel+'</div><div class="stat-label">Éléments</div></div>'+
-      '<div class="stat"><div class="stat-val">'+cats+'</div><div class="stat-label">Catégories</div></div>'+
-      '<div class="stat"><div class="stat-val">'+files.toLocaleString('fr-FR')+'</div><div class="stat-label">Fichiers</div></div>'+
-      '<div class="stat"><div class="stat-val">'+fmtSize(bytes)+'</div><div class="stat-label">Disque</div></div>';
+      '<div class="stat"><div class="stat-val">'+elemLabel+'</div><div class="stat-label">'+t('stats.elements')+'</div></div>'+
+      '<div class="stat"><div class="stat-val">'+cats+'</div><div class="stat-label">'+t('stats.categories')+'</div></div>'+
+      '<div class="stat"><div class="stat-val">'+files.toLocaleString('fr-FR')+'</div><div class="stat-label">'+t('stats.files')+'</div></div>'+
+      '<div class="stat"><div class="stat-val">'+fmtSize(bytes)+'</div><div class="stat-label">'+t('stats.disk')+'</div></div>';
     document.querySelectorAll('#mobileStatsBar').forEach(el=>{ el.innerHTML=document.getElementById('statsBar').innerHTML; });
 
   }
@@ -298,7 +301,7 @@ let allItems=[], categories=[], groups=[];
       baseItems('group').forEach(i=>{ const g=i.group||'Autres'; byG[g]=(byG[g]||0)+(i.size_b||0); });
       const totalG=Object.values(byG).reduce((s,v)=>s+v,0);
       html+=barBlock(byG, totalG, activeGroup, groupColorMap,
-        'Par groupe', 'clickGroup', 'resetGroup');
+        t('filters.by_group'), 'clickGroup', 'resetGroup');
     }
 
     // --- CATEGORY BAR (scoped to active group) ---
@@ -306,7 +309,7 @@ let allItems=[], categories=[], groups=[];
     baseItems('cat').forEach(i=>{ byC[i.category]=(byC[i.category]||0)+(i.size_b||0); });
     const totalC=Object.values(byC).reduce((s,v)=>s+v,0);
     html+=barBlock(byC, totalC, activeCat, catColorMap,
-      hasGroups ? 'Par categorie' : 'Par categorie', 'clickCat', 'resetCat');
+      t('filters.by_category'), 'clickCat', 'resetCat');
 
     sec.style.display='block';
     sec.innerHTML=html;
@@ -317,7 +320,7 @@ let allItems=[], categories=[], groups=[];
     if (!total) return '';
     const sorted=Object.entries(byKey).sort((a,b)=>b[1]-a[1]);
     const resetCls='leg leg-reset'+(activeKey==='all'?' active':'');
-    let pills='<div class="'+resetCls+'" onclick="'+resetFn+'()">Tout</div>';
+    let pills='<div class="'+resetCls+'" onclick="'+resetFn+'()">'+t('filters.all')+'</div>';
     sorted.forEach(([k,v])=>{
       const col=cmap[k]||'#888';
       const cls='leg'+(activeKey===k?' active':'');
@@ -549,7 +552,7 @@ let allItems=[], categories=[], groups=[];
     let items=filterItems();
     renderStats(items);
     const c=document.getElementById('library');
-    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>Aucun resultat</p><small>Essayez d\'autres filtres.</small></div>'; return; }
+    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p></div>'; return; }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
@@ -599,7 +602,7 @@ let allItems=[], categories=[], groups=[];
     if (!visP.length) {
       if (!hasProv) {
         if (item.providers_fetched !== true) return '';
-        return '<div class="tl-providers"><div class="tl-provider tl-provider-none" title="Non disponible en streaming FR">🚫</div></div>';
+        return '<div class="tl-providers"><div class="tl-provider tl-provider-none" title="'+t('library.no_provider')+'">🚫</div></div>';
       }
       return ''; // has providers but all hidden by visibility prefs
     }
@@ -624,7 +627,7 @@ let allItems=[], categories=[], groups=[];
           +'<span class="tl-cat">'+escH(item.category)+'</span>'
           +'<span class="tl-size">'+escH(item.size)+'</span>'
           +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
-          +(item.type==='tv'&&item.season_count?'<span class="tl-cat">'+item.season_count+'S</span>':'')+(item.type==='tv'&&item.episode_count?'<span class="tl-cat">'+item.episode_count+'ep</span>':'')+(item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1?'<span class="tl-cat">'+item.file_count+' fichier'+(item.file_count>1?'s':'')+'</span>':'')
+          +(item.type==='tv'&&item.season_count?'<span class="tl-cat">'+item.season_count+'S</span>':'')+(item.type==='tv'&&item.episode_count?'<span class="tl-cat">'+item.episode_count+'ep</span>':'')+(item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1?'<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>':'')
         +'</div>'
         + providersBlock(item)
       +'</div>'
@@ -638,7 +641,7 @@ let allItems=[], categories=[], groups=[];
     const hasProv = item.providers && item.providers.length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
-      return '<span title="Non disponible en streaming FR" style="font-size:14px">🚫</span>';
+      return '<span title="'+t('library.no_provider')+'" style="font-size:14px">🚫</span>';
     }
     return '<div class="tbl-providers">'
       +_itemVisProviders(item).map(p=>{
@@ -679,19 +682,19 @@ let allItems=[], categories=[], groups=[];
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
-        +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?item.file_count+' fichier'+(item.file_count>1?'s':''):'-')+'</td>'
+        +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
         +'<td class="col-date">'+(item.added_at?fmtDate(item.added_at):'-')+'</td>'
         +(hp?'<td class="col-providers">'+tblProvidersHTML(item)+'</td>':'')
         +'</tr>';
     }).join('');
     return '<table class="media-table"><thead><tr>'
       +(hp?'<th style="width:44px"></th>':'')
-      +th('title','Titre')+th('year','Année')
-      +(hg?th('group','Groupe'):'')
-      +th('category','Catégorie')
-      +'<th>Résolution</th><th>Codec</th>'
-      +th('size','Taille')+th('files','Fichiers')+th('added','Ajouté le')
-      +(hp?'<th>Streaming</th>':'')
+      +th('title',t('table.title'))+th('year',t('table.year'))
+      +(hg?th('group',t('table.group')):'')
+      +th('category',t('table.category'))
+      +'<th>'+t('table.resolution')+'</th><th>'+t('table.codec')+'</th>'
+      +th('size',t('table.size'))+th('files',t('table.files'))+th('added',t('table.added'))
+      +(hp?'<th>'+t('table.streaming')+'</th>':'')
       +'</tr></thead><tbody>'+rows+'</tbody></table>';
   }
 
@@ -758,7 +761,7 @@ let allItems=[], categories=[], groups=[];
   function buildStats(items) {
     items = items || allItems;
     const isFiltered = items.length < allItems.length;
-    if (!items.length) return '<p style="color:var(--muted);padding:40px">Aucun élément correspondant aux filtres.</p>';
+    if (!items.length) return '<p style="color:var(--muted);padding:40px">'+t('library.no_results')+'</p>';
 
     const totalBytes = items.reduce((s,i)=>s+(i.size_b||0),0);
     const totalFiles = items.reduce((s,i)=>s+(i.file_count||0),0);
@@ -789,7 +792,7 @@ let allItems=[], categories=[], groups=[];
       slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+(R*0.52)+'" fill="var(--surface)"/>';
       // center label
       slices += '<text x="'+CX+'" y="'+(CY-7)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">'+entries.length+'</text>';
-      slices += '<text x="'+CX+'" y="'+(CY+8)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+(entries.length>1?'entrées':'entrée')+'</text>';
+      slices += '<text x="'+CX+'" y="'+(CY+8)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+(entries.length>1?t('stats.entries'):t('stats.entry'))+'</text>';
 
       const svg = '<svg viewBox="0 0 '+SIZE+' '+SIZE+'" width="'+SIZE+'" height="'+SIZE+'" style="flex-shrink:0">'+slices+'</svg>';
       const legend = '<div class="pie-legend">'+entries.slice(0,12).map(([k,v],idx)=>{
@@ -871,7 +874,7 @@ let allItems=[], categories=[], groups=[];
     });
 
     function crossTable(rowEntries, rowColorFn, transpose) {
-      if(!provNames.length) return '<p style="font-size:12px;color:var(--muted)">Aucune donnée provider.</p>';
+      if(!provNames.length) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
       if (transpose) {
         // providers as rows, groups/cats as columns
         const colKeys = rowEntries.map(([k])=>k);
@@ -921,7 +924,7 @@ let allItems=[], categories=[], groups=[];
 
     function makeCurve(keys, vals, color, gradId, labelFn, titleFn) {
       const maxV=Math.max(...vals,0);
-      if(!maxV||keys.length<2) return '<p style="font-size:12px;color:var(--muted)">Pas assez de données.</p>';
+      if(!maxV||keys.length<2) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
       const W=800,H=140,PL=52,PR=16,PT=16,PB=28;
       const iW=W-PL-PR, iH=H-PT-PB, n=keys.length;
       const xs=keys.map((_,i2)=>PL+(n>1?i2/(n-1)*iW:iW/2));
@@ -975,10 +978,10 @@ let allItems=[], categories=[], groups=[];
         keys=mkeys;
       }
       const idx=useDaily?allByDay:allByMonth;
-      if(keys.length<2) return '<p style="font-size:12px;color:var(--muted)">Pas assez de données pour cette période.</p>';
-      return '<div class="curve-label">Nombre d\u0027\u00e9l\u00e9ments ajout\u00e9s</div>'
+      if(keys.length<2) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_period')+'</p>';
+      return '<div class="curve-label">'+t('stats.items_added')+'</div>'
         +makeCurve(keys,keys.map(k=>(idx[k]||{count:0}).count),'var(--accent)','cg1',v=>Math.round(v),v=>v+' ajout'+(v>1?'s':''))
-        +'<div class="curve-label" style="margin-top:20px">Taille ajoutée</div>'
+        +'<div class="curve-label" style="margin-top:20px">'+t('stats.size_added')+'</div>'
         +makeCurve(keys,keys.map(k=>(idx[k]||{size:0}).size),'#4ecdc4','cg2',v=>fmtSize(Math.round(v)),v=>fmtSize(v));
     }
 
@@ -990,13 +993,13 @@ let allItems=[], categories=[], groups=[];
     const curveHtml=hasDates ? (
       '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px" id="curveControls">'
         +'<div class="pie-switch">'
-          +'<button class="pie-switch-btn"        data-period="all"  onclick="setCurvePeriod(this)">Tout</button>'
-          +'<button class="pie-switch-btn active" data-period="12m"  onclick="setCurvePeriod(this)">12 mois</button>'
-          +'<button class="pie-switch-btn"        data-period="30d"  onclick="setCurvePeriod(this)">30 jours</button>'
+          +'<button class="pie-switch-btn"        data-period="all"  onclick="setCurvePeriod(this)">'+t('stats.all')+'</button>'
+          +'<button class="pie-switch-btn active" data-period="12m"  onclick="setCurvePeriod(this)">'+t('stats.months_12')+'</button>'
+          +'<button class="pie-switch-btn"        data-period="30d"  onclick="setCurvePeriod(this)">'+t('stats.days_30')+'</button>'
         +'</div>'
       +'</div>'
       +'<div id="curveCharts">'+buildCurveForPeriod('12m')+'</div>'
-    ) : '<p style="font-size:12px;color:var(--muted)">Pas assez de données horodatées.</p>';
+    ) : '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_dated')+'</p>';
 
     // ── Build HTML ─────────────────────────────────────────
     const hasGroups=groups.length>0;
@@ -1013,8 +1016,8 @@ let allItems=[], categories=[], groups=[];
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
           +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
           +'<div class="pie-switch">'
-            +'<button class="pie-switch-btn active" id="'+id+'BtnSize"  data-pie="'+id+'" data-unit="size"  onclick="statSwitchPie(this)">Taille</button>'
-            +'<button class="pie-switch-btn"        id="'+id+'BtnCount" data-pie="'+id+'" data-unit="count" onclick="statSwitchPie(this)">Nombre</button>'
+            +'<button class="pie-switch-btn active" id="'+id+'BtnSize"  data-pie="'+id+'" data-unit="size"  onclick="statSwitchPie(this)">'+t('stats.by_size')+'</button>'
+            +'<button class="pie-switch-btn"        id="'+id+'BtnCount" data-pie="'+id+'" data-unit="count" onclick="statSwitchPie(this)">'+t('stats.by_count')+'</button>'
           +'</div>'
         +'</div>'
         +'<div id="'+id+'PieSize">'+pieSize+'</div>'
@@ -1048,8 +1051,8 @@ let allItems=[], categories=[], groups=[];
     ];
     const provColorFnWithNone=(k,i)=> k==='Aucun' ? '#555577' : provColors[i%provColors.length];
     const provPieHtml=provCountEntries.length
-      ? switchablePie('prov','Providers', provSizeEntries, provCountEntries, provColorFnWithNone)
-      : '<p style="font-size:12px;color:var(--muted)">Aucune donnée provider.</p>';
+      ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone)
+      : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
 
     // Cross tables
     const crossGroupRows = Object.entries(provByGroup).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
@@ -1077,12 +1080,12 @@ let allItems=[], categories=[], groups=[];
       ).join('');
 
       const globalEncart = '<div class="stats-block">'
-        + '<div class="stats-block-title">Bibliothèque globale</div>'
+        + '<div class="stats-block-title">'+t('stats.global_library')+'</div>'
         + '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px">'
-          + '<div class="stat-row"><div class="stat-row-label">Films</div><div class="stat-row-val">'+globalMovies+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">Séries</div><div class="stat-row-val">'+globalSeries+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">Total</div><div class="stat-row-val">'+allItems.length+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">Disque</div><div class="stat-row-val">'+fmtSize(globalBytes)+'</div></div>'
+          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.movies')+'</div><div class="stat-row-val">'+globalMovies+'</div></div>'
+          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.series')+'</div><div class="stat-row-val">'+globalSeries+'</div></div>'
+          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.total')+'</div><div class="stat-row-val">'+allItems.length+'</div></div>'
+          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.disk')+'</div><div class="stat-row-val">'+fmtSize(globalBytes)+'</div></div>'
         + '</div>'
         + catBars
         + '</div>';
@@ -1100,7 +1103,7 @@ let allItems=[], categories=[], groups=[];
 
       function makeBarChart(data, labelFn, color) {
         const entries=Object.entries(data).sort((a,b)=>a[0]-b[0]);
-        if(!entries.length) return '<p style="font-size:12px;color:var(--muted)">Pas de données.</p>';
+        if(!entries.length) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
         const maxV=Math.max(...entries.map(([,v])=>v));
         const W=800,H=120,PB=24,PT=8,PL=36,PR=8;
         const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
@@ -1128,10 +1131,10 @@ let allItems=[], categories=[], groups=[];
 
       const yearDecadeHtml = '<div class="stats-block">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
-          + '<div class="stats-block-title" style="margin:0;padding:0;border:none">Années de sortie</div>'
+          + '<div class="stats-block-title" style="margin:0;padding:0;border:none">'+t('stats.release_years')+'</div>'
           + '<div class="pie-switch">'
-            + '<button class="pie-switch-btn active" id="yearBtnYear" onclick="switchYearView(this,\'year\')">Années</button>'
-            + '<button class="pie-switch-btn" id="yearBtnDecade" onclick="switchYearView(this,\'decade\')">Décennies</button>'
+            + '<button class="pie-switch-btn active" id="yearBtnYear" onclick="switchYearView(this,\'year\')">'+t('stats.years')+'</button>'
+            + '<button class="pie-switch-btn" id="yearBtnDecade" onclick="switchYearView(this,\'decade\')">'+t('stats.decades')+'</button>'
           + '</div>'
         + '</div>'
         + '<div id="yearViewYear">'+yearChart+'</div>'
@@ -1146,16 +1149,16 @@ let allItems=[], categories=[], groups=[];
     return ''
       // 1. Pie charts
       +'<div class="stats-row">'
-        +(hasGroups ? switchablePie('grp','Groupes', groupEntriesSize, groupEntriesCount, groupColorFn) : '')
-        +switchablePie('cat','Catégories', catEntriesSize, catEntriesCount, catColorFn)
-        +(resEntriesSize.length ? switchablePie('res','Résolution', resEntriesSize, resEntriesCount, resColorFn) : '')
-        +(codecEntriesSize.length ? switchablePie('codec','Codec', codecEntriesSize, codecEntriesCount, codecColorFn) : '')
+        +(hasGroups ? switchablePie('grp',t('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn) : '')
+        +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn)
+        +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn) : '')
+        +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn) : '')
         +provPieHtml
       +'</div>'
       // 2. Années / décennies
       +'<div style="margin-bottom:0">'+yearDecadeHtml+'</div>'
       // 3. Courbes d'évolution
-      +'<div class="stats-block"><div class="stats-block-title">Évolution mensuelle des ajouts</div>'+curveHtml+'</div>';
+      +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 
   // ── ACCENT COLOR ─────────────────────────────────────
@@ -1226,7 +1229,7 @@ let allItems=[], categories=[], groups=[];
     });
     const groupEntries = Object.entries(byGroup).sort((a,b)=>b[1].size-a[1].size);
     const maxGSize = groupEntries[0]?.[1].size || 1;
-    html += '<div class="modal-section"><div class="modal-section-title">Répartition par groupe</div>';
+    html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.by_group')+'</div>';
     html += '<div class="hbar-list">';
     groupEntries.forEach(([g,d],i) => {
       const col = groupColorMap[g] || PALETTE[i%PALETTE.length];
@@ -1234,7 +1237,7 @@ let allItems=[], categories=[], groups=[];
       html += '<div class="hbar-item">'
         +'<div class="hbar-label" title="'+escH(g)+'">'+escH(g)+'</div>'
         +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
-        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+d.count+' éléments</span></div>'
+        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</span></div>'
         +'</div>';
     });
     html += '</div></div>';
@@ -1247,7 +1250,7 @@ let allItems=[], categories=[], groups=[];
     });
     const catEntries = Object.entries(byCat).sort((a,b)=>b[1].size-a[1].size);
     const maxCSize = catEntries[0]?.[1].size || 1;
-    html += '<div class="modal-section"><div class="modal-section-title">Répartition par catégorie</div>';
+    html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.by_category')+'</div>';
     html += '<div class="hbar-list">';
     catEntries.forEach(([c,d],i) => {
       const col = catColorMap[c] || PALETTE[i%PALETTE.length];
@@ -1255,7 +1258,7 @@ let allItems=[], categories=[], groups=[];
       html += '<div class="hbar-item">'
         +'<div class="hbar-label" title="'+escH(c)+'">'+escH(c)+'</div>'
         +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
-        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+d.count+' éléments</span></div>'
+        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</span></div>'
         +'</div>';
     });
     html += '</div></div>';
@@ -1271,7 +1274,7 @@ let allItems=[], categories=[], groups=[];
     const provEntries = Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
     if (provEntries.length) {
       const maxPC = provEntries[0][1].count || 1;
-      html += '<div class="modal-section"><div class="modal-section-title">Disponibilité streaming (FR)</div>';
+      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.streaming_availability')+'</div>';
       html += '<div class="hbar-list">';
       provEntries.forEach(([name,d]) => {
         const pct = (d.count/maxPC*100).toFixed(1);
@@ -1279,13 +1282,13 @@ let allItems=[], categories=[], groups=[];
         html += '<div class="hbar-item">'
           +'<div class="hbar-label">'+logo+escH(name)+'</div>'
           +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:var(--accent)"></div></div>'
-          +'<div class="hbar-val">'+d.count+' élément'+(d.count>1?'s':'')+'</div>'
+          +'<div class="hbar-val">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</div>'
           +'</div>';
       });
       html += '</div></div>';
 
       // ── Section 4: Providers par groupe ──
-      html += '<div class="modal-section"><div class="modal-section-title">Streaming par groupe</div>';
+      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.streaming_by_group')+'</div>';
       html += '<div class="stats-grid">';
       groupEntries.forEach(([g]) => {
         const gItems = allItems.filter(i=>(i.group||'Autres')===g);
@@ -1380,11 +1383,11 @@ let allItems=[], categories=[], groups=[];
 
       const totalAdded=counts.reduce((s,v)=>s+v,0);
       const avgPerMonth=(totalAdded/n).toFixed(1);
-      html += '<div class="modal-section"><div class="modal-section-title">Évolution mensuelle des ajouts</div>';
+      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.monthly_evolution')+'</div>';
       html += '<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">'
-        +'<div class="stat-row"><div class="stat-row-label">Total indexé</div><div class="stat-row-val">'+totalAdded+'</div></div>'
-        +'<div class="stat-row"><div class="stat-row-label">Moy. / mois</div><div class="stat-row-val">'+avgPerMonth+'</div></div>'
-        +'<div class="stat-row"><div class="stat-row-label">Période</div><div class="stat-row-val" style="font-size:12px">'+monthEntries[0][0]+' → '+monthEntries[n-1][0]+'</div></div>'
+        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.total_indexed')+'</div><div class="stat-row-val">'+totalAdded+'</div></div>'
+        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.avg_per_month')+'</div><div class="stat-row-val">'+avgPerMonth+'</div></div>'
+        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.period')+'</div><div class="stat-row-val" style="font-size:12px">'+monthEntries[0][0]+' → '+monthEntries[n-1][0]+'</div></div>'
         +'</div>';
       html += '<div class="chart-wrap"><svg class="chart-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+svgContent+'</svg></div>';
       html += '</div>';
@@ -1531,8 +1534,8 @@ let allItems=[], categories=[], groups=[];
   function openLogViewer() {
     const panel = document.getElementById('scanLogPanel');
     const body = document.getElementById('scanLogBody');
-    document.getElementById('scanLogTitle').textContent = 'Log du dernier scan';
-    body.innerHTML = '<div class="log-line" style="color:var(--muted)">Chargement…</div>';
+    document.getElementById('scanLogTitle').textContent = t('scan.log_title');
+    body.innerHTML = '<div class="log-line" style="color:var(--muted)">'+t('scan.log_loading')+'</div>';
     setScanStatus('');
     panel.classList.add('viewer');
     panel.classList.add('open');
@@ -1552,7 +1555,7 @@ let allItems=[], categories=[], groups=[];
         });
         body.scrollTop = body.scrollHeight;
       })
-      .catch(() => { body.innerHTML = '<div class="log-err">Impossible de charger le log.</div>'; });
+      .catch(() => { body.innerHTML = '<div class="log-err">'+t('scan.log_error')+'</div>'; });
   }
 
   function appendScanLog(line, cls) {
@@ -1569,9 +1572,9 @@ let allItems=[], categories=[], groups=[];
     dot.className = 'scan-status-dot ' + (status || '');
     const title = document.getElementById('scanLogTitle');
     const mode = SCAN_MODE_LABELS[_scanMode] || _scanMode;
-    const suffix = status === 'running' ? ' — en cours…'
-                 : status === 'done'    ? ' — terminé ✓'
-                 : status === 'error'   ? ' — erreur'
+    const suffix = status === 'running' ? t('scan.status_running')
+                 : status === 'done'    ? t('scan.status_done')
+                 : status === 'error'   ? t('scan.status_error')
                  : '';
     title.textContent = 'Scan — ' + mode + suffix;
   }
@@ -1794,7 +1797,7 @@ let allItems=[], categories=[], groups=[];
       await saveConfig(partial);
       window.location.reload();
     } catch(e) {
-      alert('Erreur lors de la sauvegarde : ' + e.message);
+      alert(t('settings.save_error', {msg: e.message}));
     }
   }
 
@@ -1821,29 +1824,30 @@ let allItems=[], categories=[], groups=[];
     let html = '';
     if (unknownCount > 0) {
       html += '<div class="settings-note" style="border-left:3px solid #f7b731;padding-left:10px;margin-bottom:10px">'
-        + '⚠ ' + unknownCount + ' dossier' + (unknownCount>1?'s':'') + ' non configuré' + (unknownCount>1?'s':'')
-        + ' — assignez un type pour les inclure dans la bibliothèque.</div>';
+        + '⚠ ' + t('settings.library.folder_unconfigured', {n: unknownCount, s: unknownCount>1?'s':''}) + '</div>';
     }
     html += '<table style="width:100%;border-collapse:collapse;font-size:13px">'
       + '<thead><tr>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">Dossier</th>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">Type</th>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">Visible</th>'
+        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_name')+'</th>'
+        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_type')+'</th>'
+        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_visible')+'</th>'
       + '</tr></thead><tbody>';
     folders.forEach((f, idx) => {
       const isMissing = !!f.missing;
       const typeOpts = [
-        ['movie', 'Films'], ['tv', 'Séries'], ['null', 'Ignorer'],
+        ['movie', t('settings.library.folder_types.movie')],
+        ['tv', t('settings.library.folder_types.tv')],
+        ['null', t('settings.library.folder_types.ignore')],
       ].map(([v, lbl]) =>
         '<option value="'+v+'"'+(String(f.type)===v?' selected':'')+'>'+lbl+'</option>'
       ).join('');
       html += '<tr style="border-top:1px solid var(--border)'+(isMissing?';opacity:0.5':'')+'">'
         + '<td style="padding:6px 8px;font-family:monospace;font-size:12px">'+escH(f.name)
-          + (isMissing ? '<span style="display:inline;margin-left:6px;font-size:10px;color:#f97316;font-style:italic">Introuvable</span>' : '')
+          + (isMissing ? '<span style="display:inline;margin-left:6px;font-size:10px;color:#f97316;font-style:italic">'+t('settings.library.missing')+'</span>' : '')
           + '</td>'
         + '<td style="padding:6px 8px">'
           + (isMissing
-            ? '<span style="color:var(--muted);font-size:12px">'+(f.type==='movie'?'Films':f.type==='tv'?'Séries':'—')+'</span>'
+            ? '<span style="color:var(--muted);font-size:12px">'+(f.type==='movie'?t('settings.library.folder_types.movie'):f.type==='tv'?t('settings.library.folder_types.tv'):'—')+'</span>'
             : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type" onchange="onFolderTypeChange(this)">'
               + typeOpts + '</select>')
           + '</td>'
@@ -2134,7 +2138,7 @@ let allItems=[], categories=[], groups=[];
       } else {
         if (err) { err.style.display = 'block'; }
         input.value = ''; input.focus();
-        btn.disabled = false; btn.textContent = 'Entrer';
+        btn.disabled = false; btn.textContent = t('auth.enter');
       }
     } catch(e) {
       btn.disabled = false; btn.textContent = 'Entrer';

@@ -23,11 +23,7 @@ python3 /app/scanner.py --serve &
 SCANSERVER_PID=$!
 echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
 
-# Copy providers_map.json from image to /data/ if absent (user customizations take priority)
-if [ ! -f /data/providers_map.json ]; then
-    cp /usr/share/nginx/html/providers_map.json /data/providers_map.json
-    echo "[entrypoint] providers_map.json copié depuis l'image vers /data/"
-fi
+# providers.json is bundled in the nginx html dir — no copy needed
 
 # Initial scan on startup — also runs migrate_env_to_config() which populates config.json
 echo "[entrypoint] Running initial scan..."
