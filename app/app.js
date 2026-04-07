@@ -620,7 +620,7 @@ let allItems=[], categories=[], groups=[];
     return '<div class="tl-card"'+(plotText?' onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
       + posterBlock(item)
       +'<div class="tl-body">'
-        +'<div class="tl-title">'+escH(item.title)+'</div>'
+        +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
           +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
           +(item.group?'<span class="tl-cat" style="color:#a78bfa">'+escH(item.group)+'</span>':'')
@@ -1687,11 +1687,10 @@ let allItems=[], categories=[], groups=[];
     if (!_field('cfgLibraryPath')) return;
     const sc = serverConfig;
 
-    // Accent color (localStorage pref)
+    // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
-      const s = JSON.parse(localStorage.getItem('mediaSettings') || '{}');
-      accentEl.value = s.accentColor || _DEFAULT_ACCENT;
+      accentEl.value = appConfig.ui?.accent_color || _DEFAULT_ACCENT;
     }
 
     // enablePlot — from appConfig
@@ -1751,9 +1750,6 @@ let allItems=[], categories=[], groups=[];
     if (accentEl && !accentEl.readOnly) {
       partial.ui = partial.ui||{};
       partial.ui.accent_color = accentEl.value;
-      const s = JSON.parse(localStorage.getItem('mediaSettings') || '{}');
-      s.accentColor = accentEl.value;
-      localStorage.setItem('mediaSettings', JSON.stringify(s));
     }
 
     const em = get('cfgEnableMovies');

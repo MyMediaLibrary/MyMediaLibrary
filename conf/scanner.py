@@ -91,16 +91,22 @@ def normalize_codec(raw: str | None) -> str | None:
     return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
 
 
+# NFO parse stats — reset at each run_quick() call, reported as grouped summary
+_nfo_stats: dict = {"ok": 0, "failed": 0}
+
+
 def _parse_nfo_xml(nfo_path: Path) -> ET.Element | None:
     """
     Parse a NFO file tolerantly:
     1. Try standard ElementTree.parse().
     2. On "junk after document element", read raw bytes, find the root close tag,
        truncate there, and retry — handles NFO files with extra content after </root>.
-    3. Log non-._* failures as WARNING.
+    3. Log non-._* failures as DEBUG (summary reported at end of scan).
     """
     try:
-        return ET.parse(nfo_path).getroot()
+        root = ET.parse(nfo_path).getroot()
+        _nfo_stats["ok"] += 1
+        return root
     except ET.ParseError as e:
         err = str(e)
         # Strategy: read raw content and truncate at first root closing tag
@@ -118,16 +124,18 @@ def _parse_nfo_xml(nfo_path: Path) -> ET.Element | None:
                     truncated = text[:idx + len(close)]
                     root = ET.fromstring(truncated)
                     log.debug(f"NFO truncated-parse OK ({nfo_path.name}): {err}")
+                    _nfo_stats["ok"] += 1
                     return root
         except Exception:
             pass
-        # Final fallback: log as WARNING (not just debug) for non-macOS files
         if not nfo_path.name.startswith("._"):
-            log.warning(f"NFO parse failed ({nfo_path}): {err}")
+            _nfo_stats["failed"] += 1
+            log.debug(f"NFO parse failed ({nfo_path}): {err}")
         return None
     except Exception as e:
         if not nfo_path.name.startswith("._"):
-            log.warning(f"NFO read error ({nfo_path}): {e}")
+            _nfo_stats["failed"] += 1
+            log.debug(f"NFO read error ({nfo_path}): {e}")
         return None
 
 
@@ -363,7 +371,8 @@ def poster_rel_path(media_dir: Path, root: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 _JSR_NOT_CONFIGURED = object()  # sentinel: Jellyseerr not configured/disabled
-_JSR_ERROR          = object()  # sentinel: HTTP/network error
+_JSR_ERROR          = object()  # sentinel: HTTP/network error (transient — do not mark providers_fetched)
+_JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — item not in Jellyseerr
 
 
 def _jsr_cfg() -> dict:
@@ -400,6 +409,9 @@ def _jsr_get(path: str, jsr: dict | None = None):
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors='replace')[:300]
+        if e.code in (404, 500) and "Unable to retrieve" in body:
+            log.info(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
+            return _JSR_NOT_FOUND
         log.warning(f"Jellyseerr HTTP {e.code} for {path}: {body}")
         return _JSR_ERROR
     except Exception as e:
@@ -471,6 +483,8 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, pr
 
     if resp is _JSR_NOT_CONFIGURED:
         return []
+    if resp is _JSR_NOT_FOUND:
+        return _JSR_NOT_FOUND
     if resp is _JSR_ERROR:
         return _FETCH_ERROR
 
@@ -581,15 +595,27 @@ def sync_folders(root: Path, cfg: dict) -> bool:
     for name in sorted(fs_dirs):
         if name not in cfg_folders:
             cfg_folders[name] = {"name": name, "type": None, "visible": False}
-            log.warning(f"[sync_folders] New folder detected (type unknown): {name}")
             changed = True
 
-    # Warn about unconfigured folders
-    for folder in cfg_folders.values():
-        if folder.get("type") is None and not folder.get("missing"):
-            log.warning(f"[sync_folders] Folder has no configured type: {folder['name']}")
-
     cfg["folders"] = list(cfg_folders.values())
+
+    # Single grouped INFO for unconfigured folders (replaces per-folder warnings)
+    unconfigured = sorted(
+        f["name"] for f in cfg_folders.values()
+        if f.get("type") is None and not f.get("missing")
+    )
+    if unconfigured:
+        log.info(f"[sync_folders] {len(unconfigured)} folder(s) skipped (no type configured): {', '.join(unconfigured)}")
+
+    # Warn only when movies/series are enabled but no matching folder is configured
+    enable_movies = cfg.get("enable_movies", True)
+    enable_series = cfg.get("enable_series", True)
+    configured_types = {f.get("type") for f in cfg_folders.values()}
+    if enable_movies and "movie" not in configured_types:
+        log.warning("[sync_folders] Movies enabled but no 'movie' folder configured")
+    if enable_series and "tv" not in configured_types:
+        log.warning("[sync_folders] Series enabled but no 'tv' folder configured")
+
     return changed
 
 
@@ -883,6 +909,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
 def run_quick(only_category: str | None = None) -> None:
     import time as _time
     _t0 = _time.monotonic()
+    _nfo_stats["ok"] = 0
+    _nfo_stats["failed"] = 0
     scope = f" [category: {only_category}]" if only_category else ""
     log.info(f"[SCAN] Starting filesystem+NFO scan{scope}")
 
@@ -902,7 +930,11 @@ def run_quick(only_category: str | None = None) -> None:
 
     categories = build_categories_from_config(cfg)
     if not categories:
-        log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
+        is_first_scan = not Path(OUTPUT_PATH).exists()
+        if is_first_scan:
+            log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+        else:
+            log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
         return
 
     log.info(f"[SCAN] {len(categories)} configured category(ies): {', '.join(c['name'] for c in categories)}")
@@ -984,6 +1016,10 @@ def run_quick(only_category: str | None = None) -> None:
     elapsed = _time.monotonic() - _t0
     log.info(f"[SCAN] Filesystem scan done — {len(items)} items total")
     log.info(f"[SCAN] Writing library.json — {len(items)} items ({size_str})")
+    if _nfo_stats["failed"] > 0:
+        log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
+    else:
+        log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
     log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
 
 
@@ -1066,14 +1102,23 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         time.sleep(0.05)
         return item, providers
 
-    failed_count = 0
-    failed_ids   = []
+    failed_count    = 0
+    failed_ids      = []
+    not_found_count = 0
+    not_found_ids   = []
     for cat_name, cat_items in sorted(by_cat.items()):
         log.info(f"  Enriching: {cat_name} ({len(cat_items)} items)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
                 item, providers = future.result()
+                if providers is _JSR_NOT_FOUND:
+                    # Item not in Jellyseerr — mark as fetched (no FR providers)
+                    item["providers"]         = []
+                    item["providers_fetched"] = True
+                    not_found_count += 1
+                    not_found_ids.append(item.get("tmdb_id", "?"))
+                    continue
                 if providers is _FETCH_ERROR:
                     # Jellyseerr unreachable — leave providers_fetched False, retry next run
                     failed_count += 1
@@ -1103,11 +1148,18 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         log.info(f"[SCAN]   {cat_name} — {enriched} enriched so far")
 
     elapsed = _time.monotonic() - _t0
+    if not_found_count:
+        ids_str = ", ".join(str(i) for i in not_found_ids[:20])
+        suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
+        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — tmdb_ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
         log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — tmdb_ids: {ids_str}{suffix}")
-    log.info(f"[SCAN] Enrichment completed in {elapsed:.1f}s — {enriched} OK / {failed_count} errors")
+    parts = [f"{enriched} OK"]
+    if not_found_count: parts.append(f"{not_found_count} not found in Jellyseerr")
+    if failed_count:    parts.append(f"{failed_count} errors")
+    log.info(f"[SCAN] Enrichment completed in {elapsed:.1f}s — {' / '.join(parts)}")
 
 
 # ---------------------------------------------------------------------------
