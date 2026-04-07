@@ -92,6 +92,47 @@ Tous les autres paramètres (dossiers, Jellyseerr, UI) sont configurables depuis
 
 ---
 
+### 📂 Structure de la bibliothèque
+
+Le scanner lit directement les sous-dossiers de `LIBRARY_PATH`. Chaque sous-dossier correspond à un **dossier** configurable (Films, Séries, Anime…).
+
+**Exemple de structure recommandée :**
+
+```
+/mnt/media/library/          ← LIBRARY_PATH
+├── movies/
+│   ├── The Dark Knight (2008)/
+│   │   ├── The Dark Knight (2008).mkv
+│   │   └── The Dark Knight (2008).nfo
+│   └── Inception (2010)/
+│       └── Inception (2010).mkv
+├── tv/
+│   └── Breaking Bad/
+│       ├── Season 01/
+│       │   └── Breaking.Bad.S01E01.mkv
+│       └── tvshow.nfo
+└── anime/
+    └── Demon Slayer/
+```
+
+**Options de montage Docker :**
+
+```yaml
+# Option A — bibliothèque sur le même hôte
+volumes:
+  - /mnt/media/library:/library:ro
+  - ./data:/data
+
+# Option B — montage réseau (NFS, SMB)
+volumes:
+  - /mnt/nas/media:/library:ro
+  - ./data:/data
+```
+
+Les fichiers `.nfo` (format Kodi/Jellyfin) sont lus automatiquement pour extraire titre, année, synopsis, résolution, codec et durée. Sans `.nfo`, le titre est extrait du nom de dossier.
+
+---
+
 ### 🗂️ Providers streaming
 
 La normalisation des noms de providers (ex. `"Amazon Prime Video"` → `"Prime Video"`) et les logos associés sont définis dans `app/providers.json`, inclus dans l'image Docker.
@@ -199,6 +240,47 @@ data/
 | `APP_PASSWORD` | ❌ | — | Optional password (enables login screen) |
 
 All other settings (folders, Jellyseerr, UI preferences) are configurable from the web interface and persisted in `config.json`.
+
+---
+
+### 📂 Library structure
+
+The scanner reads the subdirectories of `LIBRARY_PATH` directly. Each subdirectory is a configurable **folder** (Movies, Series, Anime…).
+
+**Recommended structure:**
+
+```
+/mnt/media/library/          ← LIBRARY_PATH
+├── movies/
+│   ├── The Dark Knight (2008)/
+│   │   ├── The Dark Knight (2008).mkv
+│   │   └── The Dark Knight (2008).nfo
+│   └── Inception (2010)/
+│       └── Inception (2010).mkv
+├── tv/
+│   └── Breaking Bad/
+│       ├── Season 01/
+│       │   └── Breaking.Bad.S01E01.mkv
+│       └── tvshow.nfo
+└── anime/
+    └── Demon Slayer/
+```
+
+**Docker volume options:**
+
+```yaml
+# Option A — library on the same host
+volumes:
+  - /mnt/media/library:/library:ro
+  - ./data:/data
+
+# Option B — network mount (NFS, SMB)
+volumes:
+  - /mnt/nas/media:/library:ro
+  - ./data:/data
+```
+
+`.nfo` files (Kodi/Jellyfin format) are read automatically to extract title, year, synopsis, resolution, codec, and runtime. Without `.nfo`, the title is derived from the folder name.
 
 ---
 

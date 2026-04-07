@@ -9,6 +9,13 @@ echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "SCAN_CRON    : ${SCAN_CRON:-0 3 * * *} (env fallback, overridden by config.json)"
 echo ""
 
+# Create /app/.secrets if missing (stores Jellyseerr API key securely)
+if [ ! -f /app/.secrets ]; then
+  echo '{}' > /app/.secrets
+  chmod 600 /app/.secrets
+  echo "[entrypoint] Created /app/.secrets"
+fi
+
 # Generate nginx.conf with env vars substituted
 envsubst '${LIBRARY_PATH}' < /etc/nginx/nginx.conf > /tmp/nginx_rendered.conf
 cp /tmp/nginx_rendered.conf /etc/nginx/nginx.conf
