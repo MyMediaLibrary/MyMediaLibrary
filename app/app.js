@@ -620,7 +620,7 @@ let allItems=[], categories=[], groups=[];
     return '<div class="tl-card"'+(plotText?' onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
       + posterBlock(item)
       +'<div class="tl-body">'
-        +'<div class="tl-title">'+escH(item.title)+'</div>'
+        +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
           +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
           +(item.group?'<span class="tl-cat" style="color:#a78bfa">'+escH(item.group)+'</span>':'')

@@ -323,15 +323,15 @@
     .tl-count{font-size:11px;font-weight:400}
     .tl-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;align-items:start}
     .tl-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-      display:flex;flex-direction:row;gap:0;position:relative;min-height:130px;
+      display:flex;flex-direction:row;gap:0;position:relative;height:130px;overflow:hidden;
       transition:border-color var(--transition),background var(--transition)}
     .tl-card:hover{background:var(--card-h);border-color:var(--accent-40)}
     .tl-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);z-index:1}
     .tl-poster{width:70px;min-width:70px;background:var(--surface);flex-shrink:0;overflow:hidden;align-self:stretch}
     .tl-poster img{width:100%;height:100%;object-fit:cover;display:block}
-    .tl-poster-ph{width:100%;height:100%;min-height:130px;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--border)}
+    .tl-poster-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--border)}
     .tl-body{padding:12px 14px;display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
-    .tl-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;line-height:1.3}
+    .tl-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
     .tl-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .tl-date{font-size:11px;color:var(--accent);font-weight:500}
     .tl-cat{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--tag-bg);border-radius:3px;padding:2px 6px}
