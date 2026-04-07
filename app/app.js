@@ -183,9 +183,10 @@ let allItems=[], categories=[], groups=[];
       const pNames=[...new Set(allItems.flatMap(i=>(i.providers||[]).map(_pname)))].filter(Boolean).sort();
       pNames.forEach((n,i)=>{ providerColorMap[n]=PALETTE[(i+5)%PALETTE.length]; });
       const d=new Date(data.scanned_at);
+      const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
       document.getElementById('scanInfo').innerHTML=
-        t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+d.toLocaleDateString(CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR')+' '+d.toLocaleTimeString(CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR',{hour:'2-digit',minute:'2-digit'})+'</span><br>'+
-        '<span>'+data.total_items+'</span> '+t('library.indexed', {n: data.total_items}).replace('{n} ','');
+        t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+
+        d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
       if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
       if (data.config) serverConfig = data.config;
       renderStorageBar();
@@ -1202,15 +1203,24 @@ let allItems=[], categories=[], groups=[];
   function toggleTheme() {
     const html = document.documentElement;
     const isLight = html.getAttribute('data-theme') === 'light';
-    html.setAttribute('data-theme', isLight ? 'dark' : 'light');
+    const newTheme = isLight ? 'dark' : 'light';
+    html.setAttribute('data-theme', newTheme);
     const icon = document.getElementById('themeIcon');
-    if (isLight) {
-      // back to dark → sun icon
-      icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
-    } else {
-      // light mode → moon icon
-      icon.innerHTML = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+    if (icon) {
+      if (newTheme === 'dark') {
+        icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+      } else {
+        icon.innerHTML = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+      }
     }
+    // Persist to config.json and update in-memory appConfig
+    appConfig.ui = appConfig.ui || {};
+    appConfig.ui.theme = newTheme;
+    saveConfig({ ui: { theme: newTheme } }).catch(() => {
+      // Revert on failure
+      html.setAttribute('data-theme', isLight ? 'light' : 'dark');
+      appConfig.ui.theme = isLight ? 'light' : 'dark';
+    });
   }
 
   // ── STATS MODAL ──────────────────────────────────────
