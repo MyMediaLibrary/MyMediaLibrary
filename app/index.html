@@ -339,9 +339,16 @@
               </select>
             </div>
             <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.theme">Thème</label>
+              <select id="cfgTheme" class="settings-input" style="width:auto">
+                <option value="dark" data-i18n="settings.system.theme_dark">Sombre</option>
+                <option value="light" data-i18n="settings.system.theme_light">Clair</option>
+              </select>
+            </div>
+            <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.accent">Couleur d'accent</label>
               <div class="settings-color-wrap">
-                <input type="color" id="cfgAccentColor" value="#7c6aff" oninput="applyAccent(this.value)" onchange="saveSettings()"/>
+                <input type="color" id="cfgAccentColor"/>
                 <button class="settings-color-reset" onclick="resetAccent()" data-i18n="settings.system.accent_reset">Réinitialiser</button>
               </div>
             </div>
@@ -369,6 +376,16 @@
             <div class="settings-note" style="margin-top:8px" data-i18n="settings.system.log_path">
               📄 Logs accessibles sur l'hôte : ./data/scanner.log
             </div>
+          </div>
+          <div class="settings-group" style="padding-top:4px">
+            <div class="settings-row">
+              <label class="settings-label" data-i18n="settings.system.version">Version</label>
+              <div style="font-family:monospace;font-size:12px;color:var(--muted)">
+                <span id="appVersionStr">—</span>
+                <span id="appCommitStr" style="opacity:.6;margin-left:6px"></span>
+              </div>
+            </div>
+            <div class="settings-note" style="margin-top:4px"><span id="appBuildDate"></span></div>
           </div>
         </div>
 

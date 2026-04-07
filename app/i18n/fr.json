@@ -120,8 +120,12 @@
     },
     "system": {
       "language": "Langue",
+      "theme": "Thème",
+      "theme_dark": "Sombre",
+      "theme_light": "Clair",
       "accent": "Couleur d'accent",
       "accent_reset": "Réinitialiser",
+      "version": "Version",
       "synopsis": "Synopsis au survol",
       "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
       "cron": "Scan automatique (cron)",
