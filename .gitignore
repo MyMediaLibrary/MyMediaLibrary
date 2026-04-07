@@ -1,0 +1,41 @@
+# Private documentation
+CLAUDE.md
+claude.md
+*.private.md
+
+# Data directory (user data, never versioned)
+data/
+/data
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Logs
+*.log
+
+# Docker volumes
+volumes/
+
+# Env files
+.env
+.env.local
+
+# Temp files
+*.tmp
+.cache/

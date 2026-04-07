@@ -55,7 +55,7 @@
     "type_movies": "🎬 Films",
     "type_tv": "📺 Séries",
     "by_group": "Par groupe",
-    "by_category": "Par catégorie"
+    "by_category": "Par dossier"
   },
   "sort": {
     "title_asc": "Titre A-Z",
@@ -157,7 +157,7 @@
     "by_decade": "Par décennie",
     "evolution": "Évolution",
     "groups": "Groupes",
-    "categories": "Catégories",
+    "categories": "Dossiers",
     "resolution": "Résolution",
     "codec": "Codec",
     "providers": "Providers",
@@ -183,7 +183,7 @@
     "streaming_availability": "Disponibilité streaming (FR)",
     "streaming_by_group": "Streaming par groupe",
     "by_group": "Répartition par groupe",
-    "by_category": "Répartition par catégorie",
+    "by_category": "Répartition par dossier",
     "total_indexed": "Total indexé",
     "avg_per_month": "Moy. / mois",
     "period": "Période",
@@ -213,7 +213,7 @@
     "title": "Titre",
     "year": "Année",
     "group": "Groupe",
-    "category": "Catégorie",
+    "category": "Dossier",
     "resolution": "Résolution",
     "codec": "Codec",
     "size": "Taille",
