@@ -1687,11 +1687,10 @@ let allItems=[], categories=[], groups=[];
     if (!_field('cfgLibraryPath')) return;
     const sc = serverConfig;
 
-    // Accent color (localStorage pref)
+    // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
-      const s = JSON.parse(localStorage.getItem('mediaSettings') || '{}');
-      accentEl.value = s.accentColor || _DEFAULT_ACCENT;
+      accentEl.value = appConfig.ui?.accent_color || _DEFAULT_ACCENT;
     }
 
     // enablePlot — from appConfig
@@ -1751,9 +1750,6 @@ let allItems=[], categories=[], groups=[];
     if (accentEl && !accentEl.readOnly) {
       partial.ui = partial.ui||{};
       partial.ui.accent_color = accentEl.value;
-      const s = JSON.parse(localStorage.getItem('mediaSettings') || '{}');
-      s.accentColor = accentEl.value;
-      localStorage.setItem('mediaSettings', JSON.stringify(s));
     }
 
     const em = get('cfgEnableMovies');
