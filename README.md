@@ -101,32 +101,55 @@ Le scanner lit directement les sous-dossiers de `LIBRARY_PATH`. Chaque sous-doss
 ```
 /mnt/media/library/          ← LIBRARY_PATH
 ├── movies/
-│   ├── The Dark Knight (2008)/
-│   │   ├── The Dark Knight (2008).mkv
-│   │   └── The Dark Knight (2008).nfo
-│   └── Inception (2010)/
-│       └── Inception (2010).mkv
-├── tv/
-│   └── Breaking Bad/
-│       ├── Season 01/
-│       │   └── Breaking.Bad.S01E01.mkv
-│       └── tvshow.nfo
-└── anime/
-    └── Demon Slayer/
+│   ├── Film1 (2010)/
+│   │   ├── Film1.mkv
+│   │   └── Film1.nfo
+│   ├── Film2 (2014)/
+│   │   ├── Film2.mkv
+│   │   └── Film2.nfo
+│   └── ...
+├── series/
+│   ├── Serie1/
+│   │   ├── tvshow.nfo
+│   │   ├── Season 01/
+│   │   │   ├── Serie1 - S01E01.mkv
+│   │   │   └── Serie1 - S01E01.nfo
+│   │   └── Season 02/
+│   │       └── ...
+│   └── ...
+├── anime/
+│   ├── Anime1/
+│   │   ├── tvshow.nfo
+│   │   ├── Anime1 - E01.mkv
+│   │   └── Anime1 - E01.nfo
+│   └── ...
+└── documentaries/
+    ├── Doc1/
+    │   ├── Doc1.mkv
+    │   └── Doc1.nfo
+    └── ...
 ```
 
-**Options de montage Docker :**
+**Option A — bibliothèque sur le même hôte :**
 
 ```yaml
-# Option A — bibliothèque sur le même hôte
 volumes:
   - /mnt/media/library:/library:ro
   - ./data:/data
+environment:
+  LIBRARY_PATH: /library
+```
 
-# Option B — montage réseau (NFS, SMB)
+**Option B — plusieurs sources montées séparément :**
+
+```yaml
 volumes:
-  - /mnt/nas/media:/library:ro
+  - /nas1/movies:/library/movies:ro
+  - /nas2/series:/library/series:ro
+  - /local/anime:/library/anime:ro
   - ./data:/data
+environment:
+  LIBRARY_PATH: /library
 ```
 
 Les fichiers `.nfo` (format Kodi/Jellyfin) sont lus automatiquement pour extraire titre, année, synopsis, résolution, codec et durée. Sans `.nfo`, le titre est extrait du nom de dossier.
@@ -250,34 +273,57 @@ The scanner reads the subdirectories of `LIBRARY_PATH` directly. Each subdirecto
 **Recommended structure:**
 
 ```
-/mnt/media/library/          ← LIBRARY_PATH
+/path/to/media/              ← LIBRARY_PATH
 ├── movies/
-│   ├── The Dark Knight (2008)/
-│   │   ├── The Dark Knight (2008).mkv
-│   │   └── The Dark Knight (2008).nfo
-│   └── Inception (2010)/
-│       └── Inception (2010).mkv
-├── tv/
-│   └── Breaking Bad/
-│       ├── Season 01/
-│       │   └── Breaking.Bad.S01E01.mkv
-│       └── tvshow.nfo
-└── anime/
-    └── Demon Slayer/
+│   ├── Film1 (2010)/
+│   │   ├── Film1.mkv
+│   │   └── Film1.nfo
+│   ├── Film2 (2014)/
+│   │   ├── Film2.mkv
+│   │   └── Film2.nfo
+│   └── ...
+├── series/
+│   ├── Serie1/
+│   │   ├── tvshow.nfo
+│   │   ├── Season 01/
+│   │   │   ├── Serie1 - S01E01.mkv
+│   │   │   └── Serie1 - S01E01.nfo
+│   │   └── Season 02/
+│   │       └── ...
+│   └── ...
+├── anime/
+│   ├── Anime1/
+│   │   ├── tvshow.nfo
+│   │   ├── Anime1 - E01.mkv
+│   │   └── Anime1 - E01.nfo
+│   └── ...
+└── documentaries/
+    ├── Doc1/
+    │   ├── Doc1.mkv
+    │   └── Doc1.nfo
+    └── ...
 ```
 
-**Docker volume options:**
+**Option A — library on the same host:**
 
 ```yaml
-# Option A — library on the same host
 volumes:
-  - /mnt/media/library:/library:ro
+  - /path/to/media:/library:ro
   - ./data:/data
+environment:
+  LIBRARY_PATH: /library
+```
 
-# Option B — network mount (NFS, SMB)
+**Option B — multiple sources mounted separately:**
+
+```yaml
 volumes:
-  - /mnt/nas/media:/library:ro
+  - /nas1/movies:/library/movies:ro
+  - /nas2/series:/library/series:ro
+  - /local/anime:/library/anime:ro
   - ./data:/data
+environment:
+  LIBRARY_PATH: /library
 ```
 
 `.nfo` files (Kodi/Jellyfin format) are read automatically to extract title, year, synopsis, resolution, codec, and runtime. Without `.nfo`, the title is derived from the folder name.

@@ -1701,9 +1701,6 @@ let allItems=[], categories=[], groups=[];
     if (!_field('cfgLibraryPath')) return;
     const sc = serverConfig;
 
-    // Theme — from appConfig
-    _rw('cfgTheme', appConfig.ui?.theme || 'dark');
-
     // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
@@ -1748,7 +1745,7 @@ let allItems=[], categories=[], groups=[];
 
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
-                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight','cfgTheme'];
+                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
 
@@ -1771,9 +1768,6 @@ let allItems=[], categories=[], groups=[];
 
     const ep = get('cfgEnablePlot');
     if (ep !== null) { partial.ui = partial.ui||{}; partial.ui.synopsis_on_hover = ep; }
-
-    const theme = get('cfgTheme');
-    if (theme !== null) { partial.ui = partial.ui||{}; partial.ui.theme = theme; }
 
     const accentEl = _field('cfgAccentColor');
     if (accentEl && !accentEl.readOnly) {
@@ -2190,19 +2184,38 @@ let allItems=[], categories=[], groups=[];
     },
   };
 
-  function _updateOnbLangDisplay(lang) {
-    const txt = _ONB_TEXTS[lang] || _ONB_TEXTS.fr;
+  function _updateOnbLangDisplay(displayLang) {
+    const txt = _ONB_TEXTS[displayLang] || _ONB_TEXTS.fr;
     const el = (id) => document.getElementById(id);
     if (el('onbWelcomeTitle')) el('onbWelcomeTitle').textContent = txt.title;
     if (el('onbWelcomeDesc'))  el('onbWelcomeDesc').textContent  = txt.desc;
     if (el('onbWelcomeStart')) el('onbWelcomeStart').textContent = txt.start;
     ['onbLangFr','onbLangEn'].forEach(id => {
       const btn = el(id);
-      if (btn) {
-        const active = (id === 'onbLangFr' && lang === 'fr') || (id === 'onbLangEn' && lang === 'en');
-        btn.style.background    = active ? 'var(--accent)' : 'var(--surface)';
-        btn.style.borderColor   = active ? 'var(--accent)' : 'var(--border)';
-        btn.style.color         = active ? '#fff' : 'var(--muted)';
+      if (!btn) return;
+      const isDisplayed = (id === 'onbLangFr' && displayLang === 'fr') || (id === 'onbLangEn' && displayLang === 'en');
+      const isSelected  = _onbLang !== null && ((id === 'onbLangFr' && _onbLang === 'fr') || (id === 'onbLangEn' && _onbLang === 'en'));
+      if (isSelected) {
+        // Manual selection: filled background
+        btn.style.background  = 'var(--accent)';
+        btn.style.borderColor = 'var(--accent)';
+        btn.style.color       = '#fff';
+        btn.style.boxShadow   = '';
+        btn.style.transform   = '';
+      } else if (isDisplayed) {
+        // Auto-highlight: border only, transparent background
+        btn.style.background  = 'transparent';
+        btn.style.borderColor = 'var(--accent)';
+        btn.style.color       = 'var(--text)';
+        btn.style.boxShadow   = '0 0 0 3px rgba(124,106,255,.15)';
+        btn.style.transform   = 'scale(1.04)';
+      } else {
+        // Default
+        btn.style.background  = 'var(--surface)';
+        btn.style.borderColor = 'var(--border)';
+        btn.style.color       = 'var(--muted)';
+        btn.style.boxShadow   = '';
+        btn.style.transform   = '';
       }
     });
   }
@@ -2290,16 +2303,22 @@ let allItems=[], categories=[], groups=[];
       if (skip) skip.style.display = 'none';
       return;
     }
-    if (prev) prev.style.display = _onbStep > 1 ? '' : 'none';
+    if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
     if (next) {
       next.style.display = '';
       if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
+      // Step 2: disable next until Jellyseerr test passes
       if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
+      else if (_onbStep === 2) { next.disabled = true; }
       else next.disabled = false;
     }
-    if (skip) { skip.textContent = t('nav.skip'); skip.style.display = _onbStep === 2 ? '' : 'none'; }
+    if (skip) {
+      skip.textContent = t('nav.skip');
+      skip.style.display = _onbStep === 2 ? '' : 'none';
+      if (_onbStep === 2) _updateOnbSkipStyle(skip);
+    }
   }
 
   function _onbStep0HTML() {
@@ -2380,12 +2399,35 @@ let allItems=[], categories=[], groups=[];
     _onbJsr = { enabled, url, key };
   }
 
+  function _updateOnbSkipStyle(btn) {
+    if (!btn) return;
+    const enabled = document.getElementById('onbJsrEnabled')?.checked ?? _onbJsr.enabled;
+    if (enabled) {
+      // Jellyseerr on → Skip grayed (but clickable)
+      btn.style.background  = 'transparent';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color       = 'var(--muted)';
+    } else {
+      // Jellyseerr off → Skip highlighted (violet)
+      btn.style.background  = 'var(--accent)';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color       = '#fff';
+    }
+  }
+
   function _onbJsrToggle() {
     const enabled = document.getElementById('onbJsrEnabled')?.checked;
     ['onbJsrUrl', 'onbJsrKey', 'onbJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
+    // Update skip button style + reset next button (test no longer valid)
+    _updateOnbSkipStyle(document.getElementById('onbSkipBtn'));
+    const next = document.getElementById('onbNextBtn');
+    if (next) next.disabled = true;
+    // Clear previous test result
+    const res = document.getElementById('onbJsrTestResult');
+    if (res) { res.textContent = ''; }
   }
 
   function _onbStep2HTML() {
@@ -2439,8 +2481,14 @@ let allItems=[], categories=[], groups=[];
     try {
       const r = await fetch('/api/jellyseerr/test');
       const d = await r.json();
-      if (d.ok) { res.textContent = '✓ ' + t('onboarding.jsr_ok'); res.style.color = '#34d399'; }
-      else      { res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail')); res.style.color = '#f97316'; }
+      if (d.ok) {
+        res.textContent = '✓ ' + t('onboarding.jsr_ok'); res.style.color = '#34d399';
+        // Enable Next button — test passed
+        const next = document.getElementById('onbNextBtn');
+        if (next) next.disabled = false;
+      } else {
+        res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail')); res.style.color = '#f97316';
+      }
     } catch(e) { res.textContent = '✗ ' + t('onboarding.jsr_fail'); res.style.color = '#f97316'; }
     finally { if (btn) btn.disabled = false; }
   }
@@ -2452,13 +2500,14 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onbPrev() {
-    if (_onbStep > 1) { _onbStep--; _onbRender(); }
+    if (_onbStep >= 1) { _onbStep--; _onbRender(); }
   }
 
   function onbSkip() {
-    // Only shown on step 2
+    // Only shown on step 2 — Skip means disable Jellyseerr
     if (_onbStep === 2) {
       _captureOnbJsr();
+      _onbJsr.enabled = false;
       _onbStep = 3; _onbRender();
     }
   }
