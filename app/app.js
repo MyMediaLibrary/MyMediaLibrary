@@ -131,6 +131,21 @@ let allItems=[], categories=[], groups=[];
   let groupColorMap={}, catColorMap={};
 
   // ── LOAD ─────────────────────────────────────────────
+  async function loadVersion() {
+    try {
+      const r = await fetch('/version.json?_='+Date.now());
+      if (!r.ok) return;
+      const v = await r.json();
+      const el = id => document.getElementById(id);
+      if (el('appVersionStr')) el('appVersionStr').textContent = 'v' + (v.version || 'dev');
+      if (el('appCommitStr') && v.commit && v.commit !== 'dev') el('appCommitStr').textContent = '(' + v.commit + ')';
+      if (el('appBuildDate') && v.build_date) {
+        const d = new Date(v.build_date);
+        el('appBuildDate').textContent = d.toLocaleDateString(CURRENT_LANG === 'fr' ? 'fr-FR' : 'en-US', {year:'numeric',month:'long',day:'numeric'});
+      }
+    } catch(_) {}
+  }
+
   async function loadLibrary() {
     await Promise.all([loadConfig(), loadProvidersLogos()]);
 
@@ -218,6 +233,7 @@ let allItems=[], categories=[], groups=[];
 
       // UI prefs
       enablePlot       = appConfig.ui?.synopsis_on_hover ?? false;
+      if (appConfig.ui?.theme)        document.documentElement.setAttribute('data-theme', appConfig.ui.theme);
       if (appConfig.ui?.accent_color) applyAccent(appConfig.ui.accent_color);
 
       // Apply default_sort if no session sort saved
@@ -1177,10 +1193,6 @@ let allItems=[], categories=[], groups=[];
     if (el && el.value !== color) el.value = color;
   }
   function resetAccent() {
-    applyAccent(_DEFAULT_ACCENT);
-    const s = JSON.parse(localStorage.getItem('mediaSettings') || '{}');
-    delete s.accentColor;
-    localStorage.setItem('mediaSettings', JSON.stringify(s));
     const el = document.getElementById('cfgAccentColor');
     if (el) el.value = _DEFAULT_ACCENT;
   }
@@ -1687,6 +1699,9 @@ let allItems=[], categories=[], groups=[];
     if (!_field('cfgLibraryPath')) return;
     const sc = serverConfig;
 
+    // Theme — from appConfig
+    _rw('cfgTheme', appConfig.ui?.theme || 'dark');
+
     // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
@@ -1722,7 +1737,7 @@ let allItems=[], categories=[], groups=[];
 
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
-                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight'];
+                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight','cfgTheme'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
 
@@ -1745,6 +1760,9 @@ let allItems=[], categories=[], groups=[];
 
     const ep = get('cfgEnablePlot');
     if (ep !== null) { partial.ui = partial.ui||{}; partial.ui.synopsis_on_hover = ep; }
+
+    const theme = get('cfgTheme');
+    if (theme !== null) { partial.ui = partial.ui||{}; partial.ui.theme = theme; }
 
     const accentEl = _field('cfgAccentColor');
     if (accentEl && !accentEl.readOnly) {
@@ -1787,9 +1805,7 @@ let allItems=[], categories=[], groups=[];
       if (lang !== null)     partial.system.language  = lang;
     }
 
-    console.log('Selected language:', lang);
     try {
-      console.log('[saveSettings] payload:', JSON.stringify(partial));
       await saveConfig(partial);
       window.location.reload();
     } catch(e) {
@@ -1990,6 +2006,7 @@ let allItems=[], categories=[], groups=[];
 
   function openSettings() {
     loadSettings();
+    loadVersion();
     renderProviderToggles();
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');
@@ -2147,6 +2164,7 @@ let allItems=[], categories=[], groups=[];
   let _onbLogSeen = 0;
   let _langTimer = null;
   let _onbLang = 'fr';
+  let _onbTheme = 'dark';
 
   const _ONB_TEXTS = {
     fr: {
@@ -2199,9 +2217,23 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
+  function selectOnbTheme(theme) {
+    _onbTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    ['onbThemeDark','onbThemeLight'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const active = (id === 'onbThemeDark' && theme === 'dark') || (id === 'onbThemeLight' && theme === 'light');
+      btn.style.background   = active ? 'var(--accent)' : 'var(--surface)';
+      btn.style.borderColor  = active ? 'var(--accent)' : 'var(--border)';
+      btn.style.color        = active ? '#fff' : 'var(--muted)';
+    });
+  }
+
   function showOnboarding() {
     _onbStep = 0;
     _onbLang = CURRENT_LANG;
+    _onbTheme = appConfig.ui?.theme || 'dark';
     _onbJsr = {
       enabled: appConfig.jellyseerr?.enabled ?? false,
       url:     appConfig.jellyseerr?.url     || '',
@@ -2256,12 +2288,18 @@ let allItems=[], categories=[], groups=[];
 
   function _onbStep0HTML() {
     const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
+    const isDark = _onbTheme === 'dark';
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
       // Language selector
-      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
+      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:12px">'
         + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
         + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
+      + '</div>'
+      // Theme selector
+      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
+        + '<button id="onbThemeDark" onclick="selectOnbTheme(\'dark\')" style="'+btnBase+';'+(isDark?'background:var(--accent);border-color:var(--accent);color:#fff':'background:var(--surface);color:var(--muted)')+'">🌙 '+t('settings.system.theme_dark')+'</button>'
+        + '<button id="onbThemeLight" onclick="selectOnbTheme(\'light\')" style="'+btnBase+';'+(!isDark?'background:var(--accent);border-color:var(--accent);color:#fff':'background:var(--surface);color:var(--muted)')+'">☀️ '+t('settings.system.theme_light')+'</button>'
       + '</div>'
       // Auto-toggling content
       + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
@@ -2417,6 +2455,7 @@ let allItems=[], categories=[], groups=[];
       enable_series: folders.some(f => f.type === 'tv'),
       jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) },
       system: { language: _onbLang },
+      ui: { theme: _onbTheme },
     };
 
     try {

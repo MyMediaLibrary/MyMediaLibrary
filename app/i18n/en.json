@@ -120,8 +120,12 @@
     },
     "system": {
       "language": "Language",
+      "theme": "Theme",
+      "theme_dark": "Dark",
+      "theme_light": "Light",
       "accent": "Accent color",
       "accent_reset": "Reset",
+      "version": "Version",
       "synopsis": "Synopsis on hover",
       "synopsis_hint": "Shows the synopsis when hovering over a card",
       "cron": "Automatic scan (cron)",
