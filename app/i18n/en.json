@@ -55,7 +55,7 @@
     "type_movies": "🎬 Movies",
     "type_tv": "📺 Series",
     "by_group": "By group",
-    "by_category": "By category"
+    "by_category": "By folder"
   },
   "sort": {
     "title_asc": "Title A-Z",
@@ -157,7 +157,7 @@
     "by_decade": "By decade",
     "evolution": "Evolution",
     "groups": "Groups",
-    "categories": "Categories",
+    "categories": "Folders",
     "resolution": "Resolution",
     "codec": "Codec",
     "providers": "Providers",
@@ -183,7 +183,7 @@
     "streaming_availability": "Streaming availability (FR)",
     "streaming_by_group": "Streaming by group",
     "by_group": "By group",
-    "by_category": "By category",
+    "by_category": "By folder",
     "total_indexed": "Total indexed",
     "avg_per_month": "Avg / month",
     "period": "Period",
@@ -213,7 +213,7 @@
     "title": "Title",
     "year": "Year",
     "group": "Group",
-    "category": "Category",
+    "category": "Folder",
     "resolution": "Resolution",
     "codec": "Codec",
     "size": "Size",

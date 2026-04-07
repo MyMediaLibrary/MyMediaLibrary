@@ -937,7 +937,7 @@ def run_quick(only_category: str | None = None) -> None:
             log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
         return
 
-    log.info(f"[SCAN] {len(categories)} configured category(ies): {', '.join(c['name'] for c in categories)}")
+    log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
     items = []
