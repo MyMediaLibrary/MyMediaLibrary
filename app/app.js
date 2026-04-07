@@ -136,13 +136,15 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/version.json?_='+Date.now());
       if (!r.ok) return;
       const v = await r.json();
-      const el = id => document.getElementById(id);
-      if (el('appVersionStr')) el('appVersionStr').textContent = 'v' + (v.version || 'dev');
-      if (el('appCommitStr') && v.commit && v.commit !== 'dev') el('appCommitStr').textContent = '(' + v.commit + ')';
-      if (el('appBuildDate') && v.build_date) {
+      const el = document.getElementById('appVersionStr');
+      if (!el) return;
+      const parts = ['v' + (v.version || 'dev')];
+      if (v.commit && v.commit !== 'dev') parts.push(v.commit);
+      if (v.build_date) {
         const d = new Date(v.build_date);
-        el('appBuildDate').textContent = d.toLocaleDateString(CURRENT_LANG === 'fr' ? 'fr-FR' : 'en-US', {year:'numeric',month:'long',day:'numeric'});
+        parts.push(d.toLocaleDateString(CURRENT_LANG === 'fr' ? 'fr-FR' : 'en-US', {year:'numeric',month:'long',day:'numeric'}));
       }
+      el.textContent = parts.join(' • ');
     } catch(_) {}
   }
 
@@ -2217,17 +2219,9 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
-  function selectOnbTheme(theme) {
-    _onbTheme = theme;
-    document.documentElement.setAttribute('data-theme', theme);
-    ['onbThemeDark','onbThemeLight'].forEach(id => {
-      const btn = document.getElementById(id);
-      if (!btn) return;
-      const active = (id === 'onbThemeDark' && theme === 'dark') || (id === 'onbThemeLight' && theme === 'light');
-      btn.style.background   = active ? 'var(--accent)' : 'var(--surface)';
-      btn.style.borderColor  = active ? 'var(--accent)' : 'var(--border)';
-      btn.style.color        = active ? '#fff' : 'var(--muted)';
-    });
+  function toggleOnboardingTheme() {
+    _onbTheme = _onbTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', _onbTheme);
   }
 
   function showOnboarding() {
@@ -2288,18 +2282,12 @@ let allItems=[], categories=[], groups=[];
 
   function _onbStep0HTML() {
     const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
-    const isDark = _onbTheme === 'dark';
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
       // Language selector
-      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:12px">'
+      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
         + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
         + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
-      + '</div>'
-      // Theme selector
-      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
-        + '<button id="onbThemeDark" onclick="selectOnbTheme(\'dark\')" style="'+btnBase+';'+(isDark?'background:var(--accent);border-color:var(--accent);color:#fff':'background:var(--surface);color:var(--muted)')+'">🌙 '+t('settings.system.theme_dark')+'</button>'
-        + '<button id="onbThemeLight" onclick="selectOnbTheme(\'light\')" style="'+btnBase+';'+(!isDark?'background:var(--accent);border-color:var(--accent);color:#fff':'background:var(--surface);color:var(--muted)')+'">☀️ '+t('settings.system.theme_light')+'</button>'
       + '</div>'
       // Auto-toggling content
       + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
