@@ -7,7 +7,7 @@
 <a name="français"></a>
 ## 🇫🇷 Français
 
-**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin), et affiche une interface web filtrée dans un unique conteneur Docker.
+**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et séries. Il scanne vos fichiers vidéo locaux, lit les métadonnées depuis les fichiers `.nfo` (format Kodi/Jellyfin/Emby), et affiche une interface web filtrée dans un unique conteneur Docker.
 
 ### ✨ Fonctionnalités
 
@@ -117,7 +117,7 @@ Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
 <a name="english"></a>
 ## 🇬🇧 English
 
-**MyMediaLibrary** is a self-hosted dashboard for visualizing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin format), and serves a filterable web interface in a single Docker container.
+**MyMediaLibrary** is a self-hosted dashboard for visualizing your movie and TV library. It scans local video files, reads metadata from `.nfo` files (Kodi/Jellyfin/Emby format), and serves a filterable web interface in a single Docker container.
 
 ### ✨ Features
 
