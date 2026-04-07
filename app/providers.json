@@ -58,20 +58,15 @@
     "Universal+ Amazon Channel": "Autres"
   },
   "logos": {
-    "Netflix": "netflix.png",
-    "Canal+": "canal+.png",
-    "Prime Video": "prime-video.png",
-    "Disney+": "disney+.png",
-    "Paramount+": "paramount+.png",
-    "Max": "max.png",
-    "HBO Max": "hbo-max.png",
-    "Apple TV+": "apple-tv+.png",
-    "ADN": "adn.png",
-    "Crunchyroll": "crunchyroll.png",
-    "Arte": "arte.png",
-    "France TV": "france-tv.png",
-    "Mubi": "mubi.png",
-    "OCS": "ocs.png",
-    "Shadowz": "shadowz.png"
+    "Netflix": "netflix.webp",
+    "Canal+": "canalplus.webp",
+    "Prime Video": "primevideo.webp",
+    "Disney+": "disneyplus.webp",
+    "Paramount+": "paramountplus.webp",
+    "HBO Max": "hbomax.webp",
+    "Apple TV+": "appletv.webp",
+    "ADN": "adn.webp",
+    "Crunchyroll": "crunchyroll.webp",
+    "Autres": "other_play.webp"
   }
 }
