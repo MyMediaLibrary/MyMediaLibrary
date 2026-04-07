@@ -415,7 +415,7 @@ def load_provider_map() -> dict:
         with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
             data = json.load(f)
             return data.get("mapping", {}) if isinstance(data, dict) else {}
-    log.warning("[providers] providers.json introuvable, aucune normalisation appliquée")
+    log.warning("[providers] providers.json not found, no normalization applied")
     return {}
 
 
@@ -564,7 +564,7 @@ def sync_folders(root: Path, cfg: dict) -> bool:
             if d.is_dir() and not d.name.startswith((".", "@"))
         }
     except Exception as e:
-        log.warning(f"[sync_folders] Impossible de lister {root}: {e}")
+        log.warning(f"[sync_folders] Cannot list {root}: {e}")
         return False
 
     changed = False
@@ -581,13 +581,13 @@ def sync_folders(root: Path, cfg: dict) -> bool:
     for name in sorted(fs_dirs):
         if name not in cfg_folders:
             cfg_folders[name] = {"name": name, "type": None, "visible": False}
-            log.warning(f"[sync_folders] Nouveau dossier détecté (type inconnu): {name}")
+            log.warning(f"[sync_folders] New folder detected (type unknown): {name}")
             changed = True
 
     # Warn about unconfigured folders
     for folder in cfg_folders.values():
         if folder.get("type") is None and not folder.get("missing"):
-            log.warning(f"[sync_folders] Dossier sans type configuré: {folder['name']}")
+            log.warning(f"[sync_folders] Folder has no configured type: {folder['name']}")
 
     cfg["folders"] = list(cfg_folders.values())
     return changed
@@ -657,7 +657,7 @@ def migrate_env_to_config() -> None:
 
     if changed:
         save_config(cfg)
-        log.info("[MIGRATION] Variables d'env migrées vers config.json")
+        log.info("[MIGRATION] Env vars migrated to config.json")
 
 
 # ---------------------------------------------------------------------------
@@ -883,12 +883,12 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
 def run_quick(only_category: str | None = None) -> None:
     import time as _time
     _t0 = _time.monotonic()
-    scope = f" [catégorie: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] Démarrage scan filesystem+NFO{scope}")
+    scope = f" [category: {only_category}]" if only_category else ""
+    log.info(f"[SCAN] Starting filesystem+NFO scan{scope}")
 
     root = Path(LIBRARY_PATH)
     if not root.exists():
-        log.error(f"[SCAN] Library path introuvable: {LIBRARY_PATH}")
+        log.error(f"[SCAN] Library path not found: {LIBRARY_PATH}")
         return
 
     # One-time migration of legacy env vars → config.json
@@ -902,10 +902,10 @@ def run_quick(only_category: str | None = None) -> None:
 
     categories = build_categories_from_config(cfg)
     if not categories:
-        log.warning("[SCAN] Aucun dossier configuré avec type 'movie' ou 'tv' dans config.json")
+        log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
         return
 
-    log.info(f"[SCAN] {len(categories)} catégorie(s) configurée(s) : {', '.join(c['name'] for c in categories)}")
+    log.info(f"[SCAN] {len(categories)} configured category(ies): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
     items = []
@@ -919,7 +919,7 @@ def run_quick(only_category: str | None = None) -> None:
 
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Dossier catégorie introuvable: {cat_dir}")
+            log.warning(f"[SCAN] Category folder not found: {cat_dir}")
             continue
 
         cat_items_before = len(items)
@@ -938,7 +938,7 @@ def run_quick(only_category: str | None = None) -> None:
 
         count = len(items) - cat_items_before
         cat_counts[cat["name"]] = count
-        log.info(f'[SCAN] Catégorie "{cat["name"]}" : {count} items trouvés')
+        log.info(f'[SCAN] Category "{cat["name"]}": {count} items found')
 
     # When filtering, preserve items from other categories
     if only_category:
@@ -982,9 +982,9 @@ def run_quick(only_category: str | None = None) -> None:
     except Exception:
         size_str = "?"
     elapsed = _time.monotonic() - _t0
-    log.info(f"[SCAN] Filesystem scan terminé — {len(items)} items au total")
-    log.info(f"[SCAN] Écriture library.json — {len(items)} items ({size_str})")
-    log.info(f"[SCAN] Scan filesystem terminé en {elapsed:.1f}s")
+    log.info(f"[SCAN] Filesystem scan done — {len(items)} items total")
+    log.info(f"[SCAN] Writing library.json — {len(items)} items ({size_str})")
+    log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
 
 
 
@@ -996,15 +996,15 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     import time as _time
     _t0 = _time.monotonic()
     label = "force" if force else "missing only"
-    scope = f" [catégorie: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] Démarrage enrichissement Jellyseerr ({label}){scope}")
+    scope = f" [category: {only_category}]" if only_category else ""
+    log.info(f"[SCAN] Starting Jellyseerr enrichment ({label}){scope}")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("[SCAN] Jellyseerr désactivé dans config.json — enrichissement ignoré")
+        log.warning("[SCAN] Jellyseerr disabled in config.json — skipping enrichment")
         return
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("[SCAN] Jellyseerr URL ou apikey manquant dans config.json — enrichissement ignoré")
+        log.warning("[SCAN] Jellyseerr URL or apikey missing in config.json — skipping enrichment")
         return
 
     try:
@@ -1027,10 +1027,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     to_enrich = [i for i in items if needs_enrich(i)]
     skipped   = len(items) - len(to_enrich)
-    log.info(f"[SCAN] Enrichissement Jellyseerr : {len(to_enrich)} items à traiter, {skipped} ignorés ({_ENRICH_WORKERS} workers)")
+    log.info(f"[SCAN] Jellyseerr enrichment: {len(to_enrich)} items to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        log.info("[SCAN] Rien à enrichir.")
+        log.info("[SCAN] Nothing to enrich.")
         return
 
     from collections import defaultdict
@@ -1042,7 +1042,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     # Load provider map (file-based normalization, reloaded each scan)
     provider_map = load_provider_map()
-    log.info(f"[providers] providers.json mapping chargé ({len(provider_map)} entrées)")
+    log.info(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
 
     # providers_meta maps normalized name → {logo, logo_url} — stored at top level
     # Seed from existing data (migration: items may still have {name, logo} objects)
@@ -1100,14 +1100,14 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         data["providers_raw"]      = sorted(providers_raw_meta.keys())
         data["enriched_at"]        = datetime.now().isoformat()
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN]   {cat_name} — {enriched} enrichis jusqu'ici")
+        log.info(f"[SCAN]   {cat_name} — {enriched} enriched so far")
 
     elapsed = _time.monotonic() - _t0
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
-        suffix  = f" … (+{len(failed_ids)-20} autres)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) non enrichis (Jellyseerr error) — tmdb_ids: {ids_str}{suffix}")
-    log.info(f"[SCAN] Enrichissement terminé en {elapsed:.1f}s — {enriched} OK / {failed_count} erreurs")
+        suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
+        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — tmdb_ids: {ids_str}{suffix}")
+    log.info(f"[SCAN] Enrichment completed in {elapsed:.1f}s — {enriched} OK / {failed_count} errors")
 
 
 # ---------------------------------------------------------------------------
@@ -1193,7 +1193,7 @@ def _run_scan_bg(mode: str):
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
                           started_at=datetime.now(timezone.utc).isoformat(),
-                          ended_at=None, log=[f"[server] Démarrage : {' '.join(cmd)}"])
+                          ended_at=None, log=[f"[server] Starting: {' '.join(cmd)}"])
 
     try:
         proc = subprocess.Popen(cmd, env=env,
@@ -1214,7 +1214,7 @@ def _run_scan_bg(mode: str):
         with _srv_lock:
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
             _srv_state["status"]   = "done" if rc == 0 else "error"
-            _srv_state["log"].append(f"[server] Terminé (code {rc})")
+            _srv_state["log"].append(f"[server] Done (code {rc})")
     except Exception as e:
         with _srv_lock:
             _srv_state["status"]   = "error"
@@ -1256,7 +1256,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     lines = f.readlines()
                 tail = "".join(lines[-500:])
             except Exception as e:
-                tail = f"[Erreur lecture log: {e}]"
+                tail = f"[Error reading log: {e}]"
             body = tail.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -1271,13 +1271,13 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # Test Jellyseerr connectivity
             jsr = _jsr_cfg()
             if not jsr["enabled"] or not jsr["url"] or not jsr["apikey"]:
-                self._json(200, {"ok": False, "error": "Jellyseerr non configuré (activer et renseigner URL + API key)"})
+                self._json(200, {"ok": False, "error": "Jellyseerr not configured (enable and set URL + API key)"})
                 return
             resp = _jsr_get("/settings/main", jsr)
             if resp is _JSR_NOT_CONFIGURED:
-                self._json(200, {"ok": False, "error": "Non configuré"})
+                self._json(200, {"ok": False, "error": "Not configured"})
             elif resp is _JSR_ERROR:
-                self._json(200, {"ok": False, "error": "Connexion échouée — vérifier URL et API key"})
+                self._json(200, {"ok": False, "error": "Connection failed — check URL and API key"})
             else:
                 version = resp.get("applicationVersion") or resp.get("version") or "?"
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
@@ -1337,10 +1337,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/scan/start":
             mode = (payload.get("mode", "default") if isinstance(payload, dict) else "default").lower()
             if mode not in VALID_MODES:
-                self._json(400, {"error": f"mode invalide : {mode}"}); return
+                self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(409, {"error": "scan déjà en cours"}); return
+                    self._json(409, {"error": "scan already running"}); return
             threading.Thread(target=_run_scan_bg, args=(mode,), daemon=True).start()
             self._json(200, {"ok": True, "mode": mode})
 
@@ -1379,7 +1379,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 def serve():
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
-    log.info("[server] En écoute sur 127.0.0.1:8095")
+    log.info("[server] Listening on 127.0.0.1:8095")
     server.serve_forever()
 
 
@@ -1427,7 +1427,7 @@ def main():
     else:
         mode_label = "--enrich (default)"
     log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Démarrage scan {mode_label}")
+    log.info(f"[SCAN] Starting scan {mode_label}")
     log.info(f"[SCAN] ═══════════════════════════════════")
 
     if args.quick:
@@ -1442,7 +1442,7 @@ def main():
 
     elapsed = _time.monotonic() - _t_main
     log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Scan complet terminé en {elapsed:.1f}s")
+    log.info(f"[SCAN] Full scan completed in {elapsed:.1f}s")
     log.info(f"[SCAN] ═══════════════════════════════════")
 
 
