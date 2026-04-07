@@ -18,6 +18,8 @@
     "jsr_url": "URL",
     "jsr_apikey": "API Key",
     "jsr_test": "Tester la connexion",
+    "jsr_ok": "Connexion OK",
+    "jsr_fail": "Échec de connexion",
     "step_scan_title": "Prêt à scanner",
     "step_scan_desc": "Vérifiez la configuration avant de lancer le scan initial.",
     "no_configured": "Aucun dossier configuré",

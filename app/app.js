@@ -1732,9 +1732,18 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
     _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
     _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
+    toggleJsrFields();
 
     renderFoldersUI();
     renderProviderToggles();
+  }
+
+  function toggleJsrFields() {
+    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
+    ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
+    });
   }
 
   function _hasEditableFields() {
@@ -2199,10 +2208,13 @@ let allItems=[], categories=[], groups=[];
   }
 
   function _startLangToggle() {
-    _updateOnbLangDisplay(_onbLang);
+    // Visual-only: highlight current language; if none selected yet use CURRENT_LANG
+    _updateOnbLangDisplay(_onbLang || CURRENT_LANG);
     clearInterval(_langTimer);
-    let showing = _onbLang;
+    let showing = CURRENT_LANG;
     _langTimer = setInterval(() => {
+      // Only auto-toggle display while no manual selection made
+      if (_onbLang !== null) { clearInterval(_langTimer); _langTimer = null; return; }
       showing = showing === 'fr' ? 'en' : 'fr';
       _updateOnbLangDisplay(showing);
     }, 3000);
@@ -2213,9 +2225,16 @@ let allItems=[], categories=[], groups=[];
     _langTimer = null;
     _onbLang = lang;
     _updateOnbLangDisplay(lang);
+    // Enable Commencer button now that a language was manually selected
+    const btn = document.getElementById('onbCommencerBtn');
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
     if (lang !== CURRENT_LANG) {
       await loadTranslations(lang);
       applyTranslations();
+      // Re-update display after translations loaded (button text may have changed)
+      _updateOnbLangDisplay(lang);
+      const startSpan = document.getElementById('onbWelcomeStart');
+      if (startSpan) startSpan.textContent = (_ONB_TEXTS[lang] || _ONB_TEXTS.fr).start;
     }
   }
 
@@ -2226,7 +2245,7 @@ let allItems=[], categories=[], groups=[];
 
   function showOnboarding() {
     _onbStep = 0;
-    _onbLang = CURRENT_LANG;
+    _onbLang = null;
     _onbTheme = appConfig.ui?.theme || 'dark';
     _onbJsr = {
       enabled: appConfig.jellyseerr?.enabled ?? false,
@@ -2276,6 +2295,9 @@ let allItems=[], categories=[], groups=[];
       next.style.display = '';
       if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
+      // Step 1: disable next until at least 1 folder has movie/tv type
+      if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
+      else next.disabled = false;
     }
     if (skip) { skip.textContent = t('nav.skip'); skip.style.display = _onbStep === 2 ? '' : 'none'; }
   }
@@ -2294,7 +2316,7 @@ let allItems=[], categories=[], groups=[];
       + '<div id="onbWelcomeDesc" style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
       + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
       + '</div>'
-      + '<button onclick="onbNext()" style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'
+      + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
         + '<span id="onbWelcomeStart">Commencer →</span>'
       + '</button>'
       + '</div>';
@@ -2334,11 +2356,21 @@ let allItems=[], categories=[], groups=[];
     return html;
   }
 
+  function _onbValidateStep1() {
+    const next = document.getElementById('onbNextBtn');
+    if (!next) return;
+    const hasMedia = (appConfig.folders || []).some(f =>
+      !f.missing && ['movie', 'tv'].includes(f._onbType !== undefined ? f._onbType : (f.type || ''))
+    );
+    next.disabled = !hasMedia;
+  }
+
   function _onbFolderChange(idx, val) {
     if (appConfig.folders[idx]) {
       appConfig.folders[idx]._onbType = val;
       if (val && val !== 'ignore') appConfig.folders[idx].visible = true;
     }
+    _onbValidateStep1();
   }
 
   function _captureOnbJsr() {
@@ -2348,20 +2380,30 @@ let allItems=[], categories=[], groups=[];
     _onbJsr = { enabled, url, key };
   }
 
+  function _onbJsrToggle() {
+    const enabled = document.getElementById('onbJsrEnabled')?.checked;
+    ['onbJsrUrl', 'onbJsrKey', 'onbJsrTestBtn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
+    });
+  }
+
   function _onbStep2HTML() {
+    const dis = _onbJsr.enabled ? '' : ' disabled';
+    const disOp = _onbJsr.enabled ? '' : ';opacity:.45';
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_jsr_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_jsr_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
-        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"/></div>'
+        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
-        + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"/></div>'
+        + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row">'
-        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()" style="padding:5px 14px;font-size:12px">'+t('onboarding.jsr_test')+'</button>'
+        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
         + '<span id="onbJsrTestResult" style="font-size:12px;margin-left:10px;color:var(--muted)"></span>'
       + '</div>'
       + '</div>';
@@ -2397,13 +2439,10 @@ let allItems=[], categories=[], groups=[];
     try {
       const r = await fetch('/api/jellyseerr/test');
       const d = await r.json();
-      if (d.ok) { res.textContent = '✓'; res.style.color = '#34d399'; }
-      else      { res.textContent = '✗'; res.style.color = '#f97316'; }
-    } catch(e) { res.textContent = '✗'; res.style.color = '#f97316'; }
-    finally {
-      if (btn) btn.disabled = false;
-      setTimeout(() => { if (res) res.textContent = ''; }, 3000);
-    }
+      if (d.ok) { res.textContent = '✓ ' + t('onboarding.jsr_ok'); res.style.color = '#34d399'; }
+      else      { res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail')); res.style.color = '#f97316'; }
+    } catch(e) { res.textContent = '✗ ' + t('onboarding.jsr_fail'); res.style.color = '#f97316'; }
+    finally { if (btn) btn.disabled = false; }
   }
 
   function onbNext() {

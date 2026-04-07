@@ -36,10 +36,11 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-LIBRARY_PATH = os.environ.get("LIBRARY_PATH", "/mnt/media/library")
-OUTPUT_PATH  = os.environ.get("OUTPUT_PATH",  "/data/library.json")
-CONFIG_PATH  = os.environ.get("CONFIG_PATH",  "/data/config.json")
-LOG_LEVEL    = os.environ.get("LOG_LEVEL",    "INFO")
+LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
+OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
+CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
+SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
+LOG_LEVEL     = os.environ.get("LOG_LEVEL",     "INFO")
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -375,14 +376,36 @@ _JSR_ERROR          = object()  # sentinel: HTTP/network error (transient — do
 _JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — item not in Jellyseerr
 
 
+def _load_secrets() -> dict:
+    """Load /app/.secrets (JSON). Returns {} if missing or unreadable."""
+    try:
+        with open(SECRETS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_secrets(data: dict) -> None:
+    """Write secrets dict to SECRETS_PATH with mode 600."""
+    try:
+        with open(SECRETS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.chmod(SECRETS_PATH, 0o600)
+    except Exception as e:
+        log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
+
+
 def _jsr_cfg() -> dict:
-    """Read Jellyseerr settings from config.json."""
+    """Read Jellyseerr settings. API key comes from /app/.secrets, rest from config.json."""
     cfg = load_config()
     jsr = cfg.get("jellyseerr", {})
+    secrets = _load_secrets()
+    # Prefer secrets file for apikey; fall back to config.json (legacy / migration)
+    apikey = secrets.get("jellyseerr_apikey") or jsr.get("apikey", "")
     return {
         "enabled": jsr.get("enabled", False),
         "url":     jsr.get("url", "").rstrip("/"),
-        "apikey":  jsr.get("apikey", ""),
+        "apikey":  apikey,
     }
 
 
@@ -637,8 +660,13 @@ def migrate_env_to_config() -> None:
         jsr["url"]     = env_url
         jsr["enabled"] = env_jsr_on.lower() == "true" if env_jsr_on else True
         changed = True
-    if env_apikey and not jsr.get("apikey"):
-        jsr["apikey"] = env_apikey
+    secrets = _load_secrets()
+    if env_apikey and not secrets.get("jellyseerr_apikey") and not jsr.get("apikey"):
+        secrets["jellyseerr_apikey"] = env_apikey
+        _save_secrets(secrets)
+        log.info("[migrate] Jellyseerr API key migrated to /app/.secrets")
+    # Remove apikey from config.json if still present (migration cleanup)
+    if jsr.pop("apikey", None):
         changed = True
 
     # enable_movies / enable_series
@@ -778,7 +806,6 @@ _DEFAULT_CONFIG: dict = {
     "jellyseerr": {
         "enabled": False,
         "url": "",
-        "apikey": "",
     },
     "providers_visible": [],
     "ui": {
@@ -1350,7 +1377,14 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     sync_folders(root, cfg)
                     save_config(cfg)
                     cfg = load_config()
-            self._json(200, cfg)
+            # Mask API key — never expose the real value to the frontend
+            import copy
+            out = copy.deepcopy(cfg)
+            if out.get("jellyseerr", {}).get("apikey"):
+                out["jellyseerr"]["apikey"] = "***"
+            elif _load_secrets().get("jellyseerr_apikey"):
+                out.setdefault("jellyseerr", {})["apikey"] = "***"
+            self._json(200, out)
         elif path == "/api/providers-map":
             if os.path.exists(PROVIDERS_JSON_PATH):
                 try:
@@ -1401,9 +1435,23 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             cfg = load_config()
             log.info(f"[config] Received: {json.dumps(payload)}")
+            # Extract apikey before merging — store in secrets, not config.json
+            new_apikey = None
+            if isinstance(payload.get("jellyseerr"), dict) and "apikey" in payload["jellyseerr"]:
+                new_apikey = payload["jellyseerr"].pop("apikey")
+                if not payload["jellyseerr"]:
+                    payload.pop("jellyseerr", None)
             merged = deep_merge(cfg, payload)
+            # Ensure apikey never persists in config.json
+            if "jellyseerr" in merged:
+                merged["jellyseerr"].pop("apikey", None)
             save_config(merged)
-            log.info(f"[config] Saved: {json.dumps(merged)}")
+            if new_apikey is not None and new_apikey != "***":
+                secrets = _load_secrets()
+                secrets["jellyseerr_apikey"] = new_apikey
+                _save_secrets(secrets)
+                log.info("[config] Jellyseerr API key saved to secrets")
+            log.info(f"[config] Saved")
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
