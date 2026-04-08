@@ -35,6 +35,8 @@ volumes/
 # Env files
 .env
 .env.local
+.secret
+.secrets
 
 # Temp files
 *.tmp
