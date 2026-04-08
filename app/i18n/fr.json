@@ -49,6 +49,7 @@
     "none": "Aucun",
     "n_selected": "{n} sélectionnés",
     "clear": "Tout effacer",
+    "no_provider": "Aucun provider",
     "streaming_fr": "Streaming (FR)",
     "codec": "Codec vidéo",
     "audio_codec": "Codec audio",

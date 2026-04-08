@@ -423,10 +423,13 @@ let allItems=[], categories=[], groups=[];
     }
   });
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay }) {
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const keys = Object.keys(counts).sort((a, b) => {
+      if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
+      return counts[b] - counts[a];
+    });
     if (!keys.length) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
 
@@ -471,6 +474,8 @@ let allItems=[], categories=[], groups=[];
   function renderProviderFilter() {
     const base = baseItems('provider');
     const counts = {};
+    const noneCount = base.filter(i => !i.providers || !i.providers.length).length;
+    if (noneCount > 0) counts['__none__'] = noneCount;
     base.forEach(i => (i.providers||[]).forEach(p => {
       const name = _pname(p); if (!name || !_provVisible(name)) return;
       counts[name] = (counts[name]||0) + 1;
@@ -479,7 +484,8 @@ let allItems=[], categories=[], groups=[];
       const sec = document.getElementById(cid);
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
-        activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter', getDisplay: k => k });
+        activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
+        getDisplay: k => k === '__none__' ? t('filters.no_provider') : k, pinFirst: '__none__' });
     });
   }
 
@@ -578,7 +584,10 @@ let allItems=[], categories=[], groups=[];
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
     if (enableJellyseerr && activeProviders.size > 0) {
-      items=items.filter(i=>(i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p))));
+      items=items.filter(i=>{
+        if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+        return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+      });
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
     if (activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
@@ -598,7 +607,10 @@ let allItems=[], categories=[], groups=[];
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
     if (except!=='provider' && activeProviders.size > 0) {
-      items=items.filter(i=>(i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p))));
+      items=items.filter(i=>{
+        if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+        return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+      });
     }
     if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
     if (except!=='codec'       && activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
