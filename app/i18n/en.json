@@ -60,7 +60,9 @@
     "type_movies": "🎬 Movies",
     "type_tv": "📺 Series",
     "by_group": "By group",
-    "by_category": "By folder"
+    "by_category": "By folder",
+    "audio_codec": "Audio codec",
+    "unknown": "Unknown"
   },
   "sort": {
     "title_asc": "Title A-Z",
@@ -168,7 +170,8 @@
     "groups": "Groups",
     "categories": "Folders",
     "resolution": "Resolution",
-    "codec": "Codec",
+    "codec": "Video codec",
+    "audio_codec_chart_title": "Audio codec",
     "providers": "Providers",
     "elements": "Items",
     "files": "Files",
@@ -224,7 +227,7 @@
     "group": "Group",
     "category": "Folder",
     "resolution": "Resolution",
-    "codec": "Codec",
+    "codec": "Video codec",
     "size": "Size",
     "files": "Files",
     "added": "Added",
