@@ -503,42 +503,6 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  function renderAudioCodecFilter() {
-    const sec = document.getElementById('audioCodecSection');
-    if (!sec) return;
-    let base = baseItems('audioCodec');
-    const counts = {};
-    const displayMap = {};  // normalized → display label
-    base.forEach(i => {
-      const ac = i.audio_codec || 'UNKNOWN';
-      counts[ac] = (counts[ac]||0)+1;
-      if (!displayMap[ac]) displayMap[ac] = i.audio_codec_display ?? getAudioCodecDisplay(i.audio_codec);
-    });
-    const codecs = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
-    if (!codecs.length) { sec.style.display='none'; return; }
-    const resetCls = 'provider-pill provider-pill-reset'+(activeAudioCodec==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetAudioCodec()">'+t('filters.all')+'</div>';
-    codecs.forEach(c => {
-      const label = c === 'UNKNOWN' ? t('filters.unknown') : escH(displayMap[c] || c);
-      const cls = 'provider-pill'+(activeAudioCodec===c?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickAudioCodec(\''+escH(c)+'\')">'
-        +'<span class="badge badge-codec" style="margin-left:0">'+label+'</span>'
-        +'<span style="margin-left:4px;font-size:11px">'+counts[c]+'</span></div>';
-    });
-    sec.style.display = 'block';
-    sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+t('filters.audio_codec')+'</div><div class="provider-filter">'+pills+'</div></div>';
-  }
-
-  function clickAudioCodec(v) {
-    activeAudioCodec = activeAudioCodec === v ? 'all' : v;
-    onFilter();
-  }
-
-  function resetAudioCodec() {
-    activeAudioCodec = 'all';
-    onFilter();
-  }
-
   function renderResolutionFilter() {
     const sec = document.getElementById('resolutionSection');
     if (!sec) return;
