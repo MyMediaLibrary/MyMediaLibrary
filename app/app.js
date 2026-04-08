@@ -166,6 +166,12 @@ let allItems=[], categories=[], groups=[];
       }
       el.textContent = parts.join(' • ');
     } catch(_) {}
+    // Update doc link language
+    const docLink = document.getElementById('settingsDocLink');
+    if (docLink) {
+      const lang = appConfig.system?.language || CURRENT_LANG || 'fr';
+      docLink.href = '/docs/' + (lang === 'en' ? 'en' : 'fr') + '.md';
+    }
   }
 
   async function loadLibrary() {
@@ -440,17 +446,19 @@ let allItems=[], categories=[], groups=[];
     else if (activeSet.size === 1) triggerLabel = escH(getDisplay([...activeSet][0]));
     else triggerLabel = t('filters.n_selected', { n: activeSet.size });
 
+    const clearBtn = hasValue
+      ? '<span class="filter-dropdown-inline-clear" onclick="event.stopPropagation();' + clearFn + '()">✕</span>'
+      : '';
+
     let html = '<div class="storage-block">'
       + '<div class="storage-title">' + escH(label) + '</div>'
       + '<div class="filter-dropdown">'
       + '<div class="filter-dropdown-trigger' + (hasValue ? ' has-value' : '') + '" onclick="toggleDropdown(\'' + containerId + '\')">'
       + '<span class="filter-dropdown-label">' + triggerLabel + '</span>'
+      + clearBtn
       + '<svg class="filter-dropdown-chevron' + (isOpen ? ' open' : '') + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
       + '</div>'
       + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>';
-    if (hasValue) {
-      html += '<div class="filter-dropdown-clear" onclick="event.stopPropagation();' + clearFn + '()">' + t('filters.clear') + '</div>';
-    }
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
       html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
@@ -842,7 +850,41 @@ let allItems=[], categories=[], groups=[];
   // sanitizeStr: safe for JS string literals inside HTML attributes (onclick, onmouseenter…)
   const sanitizeStr = s => (s||'').replace(/\r?\n/g,' ').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\u2028/g,' ').replace(/\u2029/g,' ');
 
-  document.getElementById('searchInput').addEventListener('input',()=>{ onFilter(); });
+  document.getElementById('searchInput').addEventListener('input', function() {
+    const btn = document.getElementById('searchClear');
+    if (btn) btn.style.display = this.value.length > 0 ? 'block' : 'none';
+    onFilter();
+  });
+
+  function clearSearch() {
+    const inp = document.getElementById('searchInput');
+    const btn = document.getElementById('searchClear');
+    if (inp) inp.value = '';
+    if (btn) btn.style.display = 'none';
+    onFilter();
+  }
+
+  function onMobileSearchInput(val) {
+    const desktop = document.getElementById('searchInput');
+    if (desktop) desktop.value = val;
+    const btn = document.getElementById('searchClearMobile');
+    if (btn) btn.style.display = val.length > 0 ? 'block' : 'none';
+    const btnD = document.getElementById('searchClear');
+    if (btnD) btnD.style.display = val.length > 0 ? 'block' : 'none';
+    onFilter();
+  }
+
+  function clearSearchMobile() {
+    const mob = document.getElementById('searchInputMobile');
+    const desktop = document.getElementById('searchInput');
+    const btnM = document.getElementById('searchClearMobile');
+    const btnD = document.getElementById('searchClear');
+    if (mob) mob.value = '';
+    if (desktop) desktop.value = '';
+    if (btnM) btnM.style.display = 'none';
+    if (btnD) btnD.style.display = 'none';
+    onFilter();
+  }
   document.getElementById('sortSelect').addEventListener('change',render);
 
 

@@ -39,3 +39,6 @@ volumes/
 # Temp files
 *.tmp
 .cache/
+
+# Generated at build time
+app/version.json
