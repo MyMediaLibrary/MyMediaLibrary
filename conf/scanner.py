@@ -92,29 +92,59 @@ def normalize_codec(raw: str | None) -> str | None:
     return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
 
 
-AUDIO_CODEC_CANONICAL = {
-    "ac3": "AC-3", "ac-3": "AC-3", "dolby digital": "AC-3", "a_ac3": "AC-3",
-    "eac3": "EAC-3", "eac-3": "EAC-3", "e-ac-3": "EAC-3",
-    "dolby digital plus": "EAC-3", "dolby digital+": "EAC-3", "a_eac3": "EAC-3",
-    "dts-hd ma": "DTS-HD MA", "dtshd": "DTS-HD MA", "dts-hd": "DTS-HD MA",
-    "dts hd ma": "DTS-HD MA", "a_dtshd": "DTS-HD MA",
-    "dts": "DTS",
-    "truehd": "TrueHD", "dolby truehd": "TrueHD",
-    "dolby atmos truehd": "TrueHD", "a_truehd": "TrueHD",
-    "atmos": "TrueHD",
-    "aac": "AAC", "aac-lc": "AAC", "a_aac": "AAC",
-    "flac": "FLAC", "a_flac": "FLAC",
-    "mp3": "MP3", "mpeg audio": "MP3", "a_mpeg/l3": "MP3",
-    "pcm": "PCM", "lpcm": "PCM", "a_pcm/int/lit": "PCM", "a_pcm/int/big": "PCM",
-    "opus": "Opus", "a_opus": "Opus",
-    "vorbis": "Vorbis", "a_vorbis": "Vorbis",
-}
+def _load_audiocodec_mapping() -> dict:
+    """Load audiocodec_mapping.json from image path or dev-local fallback."""
+    paths = [
+        "/usr/share/nginx/html/audiocodec_mapping.json",
+        os.path.join(os.path.dirname(__file__), "../app/audiocodec_mapping.json"),
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data = json.load(f)
+                log.debug(f"[audiocodec] Mapping loaded from {p} ({len(data.get('priority', []))} entries)")
+                return data
+            except Exception as e:
+                log.warning(f"[audiocodec] Failed to load {p}: {e}")
+    log.warning("[audiocodec] audiocodec_mapping.json not found — all codecs will be UNKNOWN")
+    return {"priority": [], "mapping": {}, "fallback": {"normalized": "UNKNOWN", "display": "Unknown"}}
 
-def normalize_audio_codec(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    canonical = AUDIO_CODEC_CANONICAL.get(raw.lower().strip())
-    return canonical if canonical else raw.upper().strip()
+
+AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
+
+# Pre-compute normalized keys for fast lookup: strip dashes/spaces/uppercase
+_AC_NORM = re.compile(r"[-\s]")
+def _ac_key(s: str) -> str:
+    return _AC_NORM.sub("", s.upper())
+
+_AC_LOOKUP: list[tuple[str, dict]] = [
+    (_ac_key(k), AUDIOCODEC_MAPPING["mapping"][k])
+    for k in AUDIOCODEC_MAPPING.get("priority", [])
+    if k in AUDIOCODEC_MAPPING.get("mapping", {})
+]
+
+
+def normalize_audio_codec(raw: str | None) -> dict:
+    """
+    Normalize an audio codec string to three levels:
+      'raw'        — original value as-is (for debug)
+      'normalized' — canonical constant used for filters/stats (e.g. 'ATMOS', 'EAC3')
+      'display'    — human-readable label used in the UI (e.g. 'Dolby Atmos')
+
+    Matching follows the priority order in audiocodec_mapping.json.
+    Tolerance: case-insensitive, dashes and spaces ignored (EAC-3 == EAC3).
+    """
+    fb = AUDIOCODEC_MAPPING.get("fallback", {"normalized": "UNKNOWN", "display": "Unknown"})
+    if not raw or not raw.strip():
+        return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
+
+    value_key = _ac_key(raw.strip())
+    for entry_key, entry in _AC_LOOKUP:
+        if value_key == entry_key:
+            return {"raw": raw, "normalized": entry["normalized"], "display": entry["display"]}
+
+    return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
 
 
 # NFO parse stats — reset at each run_quick() call, reported as grouped summary
@@ -230,7 +260,10 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
     raw_audio = (_xml_text(audio, "codec") if audio is not None else None) \
                 or _xml_text(root, "audio_codec", "audiocodec")
     if raw_audio:
-        result["audio_codec"] = normalize_audio_codec(raw_audio)
+        ac = normalize_audio_codec(raw_audio)
+        result["audio_codec_raw"]     = ac["raw"]
+        result["audio_codec"]         = ac["normalized"]
+        result["audio_codec_display"] = ac["display"]
 
     return result
 
@@ -366,14 +399,17 @@ def find_episode_nfo(series_dir: Path) -> dict:
                     audio_el = root.find(".//fileinfo/streamdetails/audio")
                     raw_audio = (_xml_text(audio_el, "codec") if audio_el is not None else None) \
                                 or _xml_text(root, "audio_codec", "audiocodec")
+                    ac = normalize_audio_codec(raw_audio)
                     return {
-                        "width":       w,
-                        "height":      h,
-                        "resolution":  classify_resolution(w, h),
-                        "codec":       normalize_codec(raw_codec),
-                        "hdr":         bool(hdr_raw and hdr_raw.strip()),
-                        "runtime_min": runtime_min,
-                        "audio_codec": normalize_audio_codec(raw_audio),
+                        "width":              w,
+                        "height":             h,
+                        "resolution":         classify_resolution(w, h),
+                        "codec":              normalize_codec(raw_codec),
+                        "hdr":                bool(hdr_raw and hdr_raw.strip()),
+                        "runtime_min":        runtime_min,
+                        "audio_codec_raw":    ac["raw"],
+                        "audio_codec":        ac["normalized"],
+                        "audio_codec_display": ac["display"],
                     }
         except Exception as e:
             log.debug(f"Episode NFO extract error ({nfo_file}): {e}")
@@ -963,8 +999,10 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "runtime_min":       nfo_meta.get("runtime_min") or prev.get("runtime_min"),
         "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
         "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
-        "codec":             nfo_meta.get("codec")       or prev.get("codec"),
-        "audio_codec":       nfo_meta.get("audio_codec") or prev.get("audio_codec"),
+        "codec":              nfo_meta.get("codec")              or prev.get("codec"),
+        "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
+        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
+        "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
         "hdr":               nfo_meta.get("hdr", False),
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
@@ -1087,12 +1125,9 @@ def run_quick(only_category: str | None = None) -> None:
         log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
     audio_dist: dict = {}
     for item in items:
-        ac = item.get("audio_codec")
+        ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
-    null_ac = audio_dist.pop(None, 0)
     parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    if null_ac:
-        parts.append(f"null×{null_ac}")
     log.info(f"[SCAN] Audio codecs: {' / '.join(parts) if parts else 'none'}")
     log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
 

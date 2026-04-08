@@ -36,6 +36,7 @@ let allItems=[], categories=[], groups=[];
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
   let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
+  let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
 
   async function loadProvidersLogos() {
     try {
@@ -45,6 +46,21 @@ let allItems=[], categories=[], groups=[];
         PROVIDERS_LOGOS = (data && data.logos) ? data.logos : {};
       }
     } catch(e) { console.warn('providers.json load error:', e); }
+  }
+
+  async function loadAudioCodecMapping() {
+    try {
+      const res = await fetch('/audiocodec_mapping.json?_=' + Date.now());
+      if (res.ok) audioCodecMapping = await res.json();
+    } catch(e) { console.warn('audiocodec_mapping.json load error:', e); }
+  }
+
+  function getAudioCodecDisplay(normalized) {
+    if (!normalized || normalized === 'UNKNOWN')
+      return audioCodecMapping.fallback?.display ?? 'Unknown';
+    const entry = Object.values(audioCodecMapping.mapping ?? {})
+      .find(e => e.normalized === normalized);
+    return entry?.display ?? normalized;
   }
 
   function getProviderLogo(name) {
@@ -151,7 +167,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   async function loadLibrary() {
-    await Promise.all([loadConfig(), loadProvidersLogos()]);
+    await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping()]);
 
     // Load translations for the configured language
     const lang = appConfig.system?.language || 'fr';
@@ -447,27 +463,23 @@ let allItems=[], categories=[], groups=[];
     if (!sec) return;
     let base = baseItems('audioCodec');
     const counts = {};
-    let nullCount = 0;
+    const displayMap = {};  // normalized → display label
     base.forEach(i => {
-      if (i.audio_codec) counts[i.audio_codec] = (counts[i.audio_codec]||0)+1;
-      else nullCount++;
+      const ac = i.audio_codec || 'UNKNOWN';
+      counts[ac] = (counts[ac]||0)+1;
+      if (!displayMap[ac]) displayMap[ac] = i.audio_codec_display ?? getAudioCodecDisplay(i.audio_codec);
     });
     const codecs = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
-    if (!codecs.length && !nullCount) { sec.style.display='none'; return; }
+    if (!codecs.length) { sec.style.display='none'; return; }
     const resetCls = 'provider-pill provider-pill-reset'+(activeAudioCodec==='all'?' active':'');
     let pills = '<div class="'+resetCls+'" onclick="resetAudioCodec()">'+t('filters.all')+'</div>';
     codecs.forEach(c => {
+      const label = c === 'UNKNOWN' ? t('filters.unknown') : escH(displayMap[c] || c);
       const cls = 'provider-pill'+(activeAudioCodec===c?' active':'');
       pills += '<div class="'+cls+'" onclick="clickAudioCodec(\''+escH(c)+'\')">'
-        +'<span class="badge badge-codec" style="margin-left:0">'+escH(c)+'</span>'
+        +'<span class="badge badge-codec" style="margin-left:0">'+label+'</span>'
         +'<span style="margin-left:4px;font-size:11px">'+counts[c]+'</span></div>';
     });
-    if (nullCount > 0) {
-      const cls = 'provider-pill'+(activeAudioCodec==='null'?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickAudioCodec(\'null\')">'
-        +'<span class="badge badge-codec" style="margin-left:0">'+t('filters.unknown')+'</span>'
-        +'<span style="margin-left:4px;font-size:11px">'+nullCount+'</span></div>';
-    }
     sec.style.display = 'block';
     sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+t('filters.audio_codec')+'</div><div class="provider-filter">'+pills+'</div></div>';
   }
@@ -562,10 +574,7 @@ let allItems=[], categories=[], groups=[];
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
     if (activeCodec!=='all')     items=items.filter(i=>i.codec===activeCodec);
-    if (activeAudioCodec!=='all') {
-      if (activeAudioCodec==='null') items=items.filter(i=>!i.audio_codec);
-      else items=items.filter(i=>i.audio_codec===activeAudioCodec);
-    }
+    if (activeAudioCodec!=='all') items=items.filter(i=>(i.audio_codec||'UNKNOWN')===activeAudioCodec);
     return applySearch(items, q);
   }
 
@@ -586,10 +595,7 @@ let allItems=[], categories=[], groups=[];
     }
     if (except!=='resolution' && activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
     if (except!=='codec'      && activeCodec!=='all')      items=items.filter(i=>i.codec===activeCodec);
-    if (except!=='audioCodec' && activeAudioCodec!=='all') {
-      if (activeAudioCodec==='null') items=items.filter(i=>!i.audio_codec);
-      else items=items.filter(i=>i.audio_codec===activeAudioCodec);
-    }
+    if (except!=='audioCodec' && activeAudioCodec!=='all') items=items.filter(i=>(i.audio_codec||'UNKNOWN')===activeAudioCodec);
     return applySearch(items, q);
   }
 
@@ -907,9 +913,11 @@ let allItems=[], categories=[], groups=[];
     const AUDIO_CODEC_COLORS = ['#06b6d4','#f97316','#a3e635','#e879f9','#fb7185','#34d399','#fbbf24'];
     const byAudioCodec={}, byAudioCodecCount={};
     items.forEach(i=>{
-      if (!i.audio_codec) return;
-      byAudioCodec[i.audio_codec]=(byAudioCodec[i.audio_codec]||0)+(i.size_b||0);
-      byAudioCodecCount[i.audio_codec]=(byAudioCodecCount[i.audio_codec]||0)+1;
+      const ac = i.audio_codec || 'UNKNOWN';
+      if (ac === 'UNKNOWN') return;  // skip unknowns in pie chart
+      const label = i.audio_codec_display ?? getAudioCodecDisplay(i.audio_codec);
+      byAudioCodec[label]=(byAudioCodec[label]||0)+(i.size_b||0);
+      byAudioCodecCount[label]=(byAudioCodecCount[label]||0)+1;
     });
     const audioCodecColorFn=(k,idx)=>AUDIO_CODEC_COLORS[idx%AUDIO_CODEC_COLORS.length];
     const audioCodecEntriesSize  = Object.entries(byAudioCodec).sort((a,b)=>b[1]-a[1]);
