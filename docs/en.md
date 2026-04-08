@@ -17,7 +17,7 @@
 
 ## 1. Overview
 
-**MyMediaLibrary** is a self-hosted dashboard for visualizing a movie and TV library. It runs in a single Docker container (nginx + Python 3 + dcron) with no database.
+**MyMediaLibrary** is a self-hosted dashboard to visualize a movie and TV show library. It runs in a single Docker container with no database.
 
 **Flow:**
 1. The Python scanner reads subdirectories of `LIBRARY_PATH`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
@@ -105,7 +105,7 @@ The scanner reads the **direct subdirectories** of `LIBRARY_PATH`. Each subdirec
 
 ### .nfo files
 
-`.nfo` files (Kodi/Jellyfin format) are read automatically to extract:
+`.nfo` files (Kodi/Jellyfin/Emby format) are read automatically to extract:
 - Title, year, synopsis, runtime
 - Resolution, video codec, audio codec, HDR
 - Local posters (poster.jpg/png adjacent to the .nfo)
@@ -131,8 +131,8 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 **Steps:**
 
-1. **Welcome screen** — app description, "Get started" button
-2. **Folders** — lists subdirectories of `LIBRARY_PATH`, assign a type to each (Movies / Series / Ignore). Unconfigured folders are skipped during scan. The "Next" button is disabled until all folders are configured.
+1. **Welcome screen** — app description, language selection, "Get started" button
+2. **Folders** — lists subdirectories of `LIBRARY_PATH`, assign a type to each (Movies / Series / Ignore). Unconfigured folders are skipped during scan. The "Next" button is disabled until at least 1 folder is configured.
 3. **Jellyseerr** (optional) — URL + API key, connection test button
 4. **Summary + Scan** — shows the configuration, "Launch scan" button that starts the initial scan and redirects to the library when done
 
@@ -156,7 +156,6 @@ Each card displays:
 - Local poster (if available) or placeholder
 - Title + year
 - Resolution (colored badge: 4K, 1080p, 720p…)
-- Video codec
 - Streaming provider logos (if Jellyseerr is enabled)
 - Season/episode count (series)
 - Synopsis on hover (optional, configurable in settings)
@@ -175,7 +174,6 @@ Each card displays:
 - **Type** — All / Movies / Series
 - **Resolution** — All / 4K / 1080p / 720p / SD
 - **Group** — by configured folder
-- **Storage bar** — visual display of disk usage per folder
 
 These filters are rendered as pill buttons (single selection).
 
@@ -252,7 +250,6 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 ### System tab
 
 - Language (FR/EN)
-- Theme (Dark/Light)
 - Accent color (picker + reset)
 - Synopsis on hover (on/off)
 - Auto-scan (cron)
@@ -270,39 +267,6 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 - **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
 - **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
 - **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
-
-### Filter state (app.js)
-
-High-cardinality filters use **JS Sets**:
-
-```js
-let activeCodecs      = new Set();  // selected video codecs
-let activeAudioCodecs = new Set();  // selected audio codecs
-let activeProviders   = new Set();  // selected providers (+ '__none__')
-```
-
-The sentinel `'__none__'` in `activeProviders` represents items with no provider.
-
-Low-cardinality filters use scalars (`'all'` or a value string).
-
-### Dropdowns (renderFilterDropdown)
-
-Generic function `renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst })`:
-- `containerId`: target DOM element ID
-- `counts`: `{ key: number }` occurrence object
-- `activeSet`: the JS Set holding active state
-- `toggleFn` / `clearFn`: global function names (strings) used in inline `onclick` handlers
-- `pinFirst`: key to pin at the top (e.g. `'__none__'`)
-
-Only one dropdown is open at a time (`openDropdown` global). Closing on outside click is handled via `document.addEventListener('click', ...)`.
-
-### audio_codec field
-
-The Python scanner writes the field in **snake_case**: `audio_codec`. In `app.js`, always use `item.audio_codec` (never `item.audioCodec`).
-
-### Desktop + mobile rendering
-
-Each dropdown filter targets both its containers directly (e.g. `codecSection` + `codecSectionMobile`). The `syncMobileFilters()` function only syncs pill-based filters (storage, resolution).
 
 ### Internationalisation
 
