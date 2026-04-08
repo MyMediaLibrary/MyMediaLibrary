@@ -47,8 +47,11 @@
   "filters": {
     "all": "Tous",
     "none": "Aucun",
+    "n_selected": "{n} sélectionnés",
+    "clear": "Tout effacer",
     "streaming_fr": "Streaming (FR)",
-    "codec": "Codec",
+    "codec": "Codec vidéo",
+    "audio_codec": "Codec audio",
     "resolution": "Résolution",
     "sort_by": "Trier par",
     "type": "Type",

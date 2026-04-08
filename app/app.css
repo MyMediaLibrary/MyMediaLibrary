@@ -320,6 +320,35 @@
     .provider-pill-reset{background:var(--surface);font-size:11px}
     .provider-pill-reset.active{background:var(--accent)}
 
+    /* DROPDOWN FILTERS */
+    .filter-dropdown{position:relative;width:100%}
+    .filter-dropdown-trigger{display:flex;align-items:center;justify-content:space-between;
+      cursor:pointer;padding:6px 10px;border-radius:8px;
+      border:1px solid var(--border);background:var(--tag-bg);font-size:12px;color:var(--muted);
+      font-family:'Syne',sans-serif;font-weight:600;letter-spacing:.03em;
+      transition:border-color var(--transition),color var(--transition);user-select:none}
+    .filter-dropdown-trigger:hover{color:var(--text);border-color:var(--accent-40)}
+    .filter-dropdown-trigger.has-value{border-color:var(--accent);color:var(--text)}
+    .filter-dropdown-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .filter-dropdown-chevron{flex-shrink:0;margin-left:6px;transition:transform var(--transition)}
+    .filter-dropdown-chevron.open{transform:rotate(180deg)}
+    .filter-dropdown-panel{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:120;
+      background:var(--bg-card,var(--card));border:1px solid var(--border);border-radius:8px;
+      box-shadow:0 8px 24px rgba(0,0,0,.25);overflow:hidden;
+      animation:dd-in .12s ease}
+    @keyframes dd-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+    .filter-dropdown-clear{padding:7px 12px;font-size:11px;color:var(--accent);cursor:pointer;
+      font-family:'Syne',sans-serif;font-weight:700;border-bottom:1px solid var(--border);
+      transition:background var(--transition)}
+    .filter-dropdown-clear:hover{background:var(--accent-08)}
+    .filter-dropdown-option{display:flex;align-items:center;gap:8px;padding:7px 12px;
+      cursor:pointer;font-size:12px;color:var(--text);transition:background var(--transition)}
+    .filter-dropdown-option:hover{background:var(--card-h)}
+    .filter-dropdown-option input[type=checkbox]{flex-shrink:0;accent-color:var(--accent);
+      width:13px;height:13px;cursor:pointer;pointer-events:none}
+    .filter-dropdown-option-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .filter-dropdown-option-count{color:var(--muted);font-size:11px;white-space:nowrap}
+
     /* TIMELINE GROUPS (used by library grid grouping if needed) */
     .tl-group{margin-bottom:32px}
     .tl-group-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;
