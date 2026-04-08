@@ -17,7 +17,7 @@
 
 ## 1. Vue d'ensemble
 
-**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker (nginx + Python 3 + dcron) sans base de données.
+**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker sans base de données.
 
 **Flux :**
 1. Le scanner Python lit les sous-dossiers de `LIBRARY_PATH`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
@@ -105,7 +105,7 @@ Le scanner lit les **sous-dossiers directs** de `LIBRARY_PATH`. Chaque sous-doss
 
 ### Fichiers .nfo
 
-Les fichiers `.nfo` (format Kodi/Jellyfin) sont lus automatiquement pour extraire :
+Les fichiers `.nfo` (format Kodi/Jellyfin/Emby) sont lus automatiquement pour extraire :
 - Titre, année, synopsis, durée
 - Résolution, codec vidéo, codec audio, HDR
 - Affiches locales (poster.jpg/png adjacent au .nfo)
@@ -131,10 +131,10 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 **Étapes :**
 
-1. **Écran d'accueil** — description de l'application, bouton "Commencer"
+1. **Écran d'accueil** — description de l'application, choix de la langue, bouton "Commencer".
 2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'au moins un dossier est non configuré.
-3. **Jellyseerr** (optionnel) — URL + clé API, bouton de test de connexion
-4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin
+3. **Jellyseerr** (optionnel) — URL + clé API, bouton de test de connexion.
+4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin.
 
 ---
 
@@ -156,7 +156,6 @@ Chaque tuile affiche :
 - Poster local (si disponible) ou placeholder
 - Titre + année
 - Résolution (badge coloré : 4K, 1080p, 720p…)
-- Codec vidéo
 - Logos des providers streaming (si Jellyseerr activé)
 - Nombre de saisons/épisodes (séries)
 - Synopsis au survol (optionnel, activable dans les paramètres)
@@ -164,7 +163,7 @@ Chaque tuile affiche :
 ### Thème et langue
 
 - Thème clair/sombre, persisté via un toggle dans la sidebar (icône soleil/lune)
-- Langue FR/EN sélectionnable dans les paramètres système, sans rechargement
+- Langue FR/EN sélectionnable dans les paramètres système
 
 ---
 
@@ -175,7 +174,6 @@ Chaque tuile affiche :
 - **Type** — Tous / Films / Séries
 - **Résolution** — Toutes / 4K / 1080p / 720p / SD
 - **Groupe** — par dossier configuré
-- **Barre de stockage** — affichage visuel de l'espace occupé par dossier
 
 Ces filtres sont rendus comme des boutons pills (sélection unique).
 
@@ -186,10 +184,6 @@ Ces filtres sont rendus comme des boutons pills (sélection unique).
 - **Codec audio** — AAC, AC3, EAC3, TrueHD…
 
 Ces filtres utilisent un dropdown avec checkboxes. La sélection est multiple (logique OR : un item passe s'il correspond à **au moins un** des codecs/providers sélectionnés). L'état sélectionné est persisté dans `localStorage`.
-
-#### Option "Aucun provider"
-
-Dans le filtre Streaming, une option spéciale **"Aucun provider"** est disponible en premier. Elle filtre les items qui n'ont aucun provider streaming associé.
 
 #### Compteurs dynamiques
 
@@ -252,7 +246,6 @@ Accessible via l'icône ⚙️ en bas de la sidebar.
 ### Onglet Système
 
 - Langue (FR/EN)
-- Thème (Sombre/Clair)
 - Couleur d'accent (sélecteur + reset)
 - Synopsis au survol (on/off)
 - Scan automatique (cron)
@@ -271,38 +264,6 @@ Accessible via l'icône ⚙️ en bas de la sidebar.
 - **Scanner** : Python (`scanner/scan.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
 - **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
 
-### État des filtres (app.js)
-
-Les filtres haute cardinalité utilisent des **Set JS** :
-
-```js
-let activeCodecs      = new Set();  // codecs vidéo sélectionnés
-let activeAudioCodecs = new Set();  // codecs audio sélectionnés
-let activeProviders   = new Set();  // providers sélectionnés (+ '__none__')
-```
-
-Le sentinel `'__none__'` dans `activeProviders` représente les items sans aucun provider.
-
-Les filtres basse cardinalité utilisent des scalaires (`'all'` ou valeur).
-
-### Dropdowns (renderFilterDropdown)
-
-Fonction générique `renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst })` :
-- `containerId` : ID de l'élément DOM cible
-- `counts` : objet `{ clé: nombre }` des occurrences
-- `activeSet` : le Set JS de l'état actif
-- `toggleFn` / `clearFn` : noms de fonctions globales (string) utilisés dans les `onclick` inline
-- `pinFirst` : clé à épingler en premier (ex. `'__none__'`)
-
-Un seul dropdown est ouvert à la fois (`openDropdown` global). La fermeture se fait sur clic extérieur via `document.addEventListener('click', ...)`.
-
-### Champ audio_codec
-
-Le scanner Python écrit le champ en **snake_case** : `audio_codec`. Dans `app.js`, toujours utiliser `item.audio_codec` (jamais `item.audioCodec`).
-
-### Rendu desktop + mobile
-
-Chaque filtre dropdown cible ses deux conteneurs directement (ex. `codecSection` + `codecSectionMobile`). La fonction `syncMobileFilters()` ne synchronise que les filtres en pills (stockage, résolution).
 
 ### Internationalisation
 
