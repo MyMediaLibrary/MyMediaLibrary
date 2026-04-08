@@ -496,7 +496,7 @@ let allItems=[], categories=[], groups=[];
   function renderAudioCodecFilter() {
     const base = baseItems('audioCodec');
     const counts = {};
-    base.forEach(i => { if (i.audioCodec) counts[i.audioCodec] = (counts[i.audioCodec]||0)+1; });
+    base.forEach(i => { if (i.audio_codec) counts[i.audio_codec] = (counts[i.audio_codec]||0)+1; });
     ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
         activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k });
@@ -573,8 +573,8 @@ let allItems=[], categories=[], groups=[];
 
   function onFilter() {
     renderStorageBar();
-    renderProviderFilter();
     renderResolutionFilter();
+    renderProviderFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
     renderStats(filterItems());
@@ -618,7 +618,7 @@ let allItems=[], categories=[], groups=[];
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
     if (activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audioCodec??'UNKNOWN'));
+    if (activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
     return applySearch(items, q);
   }
 
@@ -638,7 +638,7 @@ let allItems=[], categories=[], groups=[];
     }
     if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
     if (except!=='codec'       && activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (except!=='audioCodec'  && activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audioCodec??'UNKNOWN'));
+    if (except!=='audioCodec'  && activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
     return applySearch(items, q);
   }
 
