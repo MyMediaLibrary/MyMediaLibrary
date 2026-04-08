@@ -86,14 +86,16 @@ let allItems=[], categories=[], groups=[];
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true;
-  let activeGroup='all', activeCat='all', activeProvider='all', activeResolution='all', activeType='all', activeCodec='all', activeAudioCodec='all';
+  let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
+  let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
 
   function saveState() {
     try {
       localStorage.setItem('mediaState', JSON.stringify({
-        activeGroup, activeCat, activeProvider, activeResolution, activeType, activeCodec, activeAudioCodec,
+        activeGroup, activeCat, activeResolution, activeType,
+        activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -104,13 +106,13 @@ let allItems=[], categories=[], groups=[];
   function restoreState() {
     try {
       const s = JSON.parse(localStorage.getItem('mediaState') || '{}');
-      if (s.activeType)       activeType       = s.activeType;
-      if (s.activeGroup)      activeGroup      = s.activeGroup;
-      if (s.activeCat)        activeCat        = s.activeCat;
-      if (s.activeProvider)   activeProvider   = s.activeProvider;
-      if (s.activeResolution) activeResolution = s.activeResolution;
-      if (s.activeCodec)      activeCodec      = s.activeCodec;
-      if (s.activeAudioCodec) activeAudioCodec = s.activeAudioCodec;
+      if (s.activeType)                       activeType        = s.activeType;
+      if (s.activeGroup)                      activeGroup       = s.activeGroup;
+      if (s.activeCat)                        activeCat         = s.activeCat;
+      if (Array.isArray(s.activeProviders))   activeProviders   = new Set(s.activeProviders);
+      if (s.activeResolution)                 activeResolution  = s.activeResolution;
+      if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
+      if (Array.isArray(s.activeAudioCodecs)) activeAudioCodecs = new Set(s.activeAudioCodecs);
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -390,72 +392,115 @@ let allItems=[], categories=[], groups=[];
   function resetGroup() { activeGroup='all'; activeCat='all'; onFilter(); }
   function clickCat(k)  { activeCat=activeCat===k?'all':k; onFilter(); }
   function resetCat()   { activeCat='all'; onFilter(); }
-  function clickProvider(el){ const k=el.dataset.provider; activeProvider=activeProvider===k?'all':k; onFilter(); }
-  function resetProvider(){ activeProvider='all'; onFilter(); }
+  // ── DROPDOWN FILTER INFRASTRUCTURE ───────────────────
+  let openDropdown = null;
+
+  function toggleDropdown(containerId) {
+    const wasOpen = openDropdown === containerId;
+    if (openDropdown) {
+      const panel = document.querySelector('#' + openDropdown + ' .filter-dropdown-panel');
+      const chevron = document.querySelector('#' + openDropdown + ' .filter-dropdown-chevron');
+      if (panel) panel.style.display = 'none';
+      if (chevron) chevron.classList.remove('open');
+      openDropdown = null;
+    }
+    if (!wasOpen) {
+      const panel = document.querySelector('#' + containerId + ' .filter-dropdown-panel');
+      const chevron = document.querySelector('#' + containerId + ' .filter-dropdown-chevron');
+      if (panel) panel.style.display = 'block';
+      if (chevron) chevron.classList.add('open');
+      openDropdown = containerId;
+    }
+  }
+
+  document.addEventListener('click', function(e) {
+    if (openDropdown && !e.target.closest('.filter-dropdown')) {
+      const panel = document.querySelector('#' + openDropdown + ' .filter-dropdown-panel');
+      const chevron = document.querySelector('#' + openDropdown + ' .filter-dropdown-chevron');
+      if (panel) panel.style.display = 'none';
+      if (chevron) chevron.classList.remove('open');
+      openDropdown = null;
+    }
+  });
+
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay }) {
+    const sec = document.getElementById(containerId);
+    if (!sec) return;
+    const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    if (!keys.length) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+
+    const isOpen = openDropdown === containerId;
+    const hasValue = activeSet.size > 0;
+    let triggerLabel;
+    if (!hasValue) triggerLabel = t('filters.all');
+    else if (activeSet.size === 1) triggerLabel = escH(getDisplay([...activeSet][0]));
+    else triggerLabel = t('filters.n_selected', { n: activeSet.size });
+
+    let html = '<div class="storage-block">'
+      + '<div class="storage-title">' + escH(label) + '</div>'
+      + '<div class="filter-dropdown">'
+      + '<div class="filter-dropdown-trigger' + (hasValue ? ' has-value' : '') + '" onclick="toggleDropdown(\'' + containerId + '\')">'
+      + '<span class="filter-dropdown-label">' + triggerLabel + '</span>'
+      + '<svg class="filter-dropdown-chevron' + (isOpen ? ' open' : '') + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
+      + '</div>'
+      + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>';
+    if (hasValue) {
+      html += '<div class="filter-dropdown-clear" onclick="event.stopPropagation();' + clearFn + '()">' + t('filters.clear') + '</div>';
+    }
+    keys.forEach(function(key) {
+      const checked = activeSet.has(key);
+      html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
+        + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
+        + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
+        + '<span class="filter-dropdown-option-count">(' + counts[key] + ')</span>'
+        + '</div>';
+    });
+    html += '</div></div></div>';
+    sec.innerHTML = html;
+  }
+
+  function toggleProviderFilter(key) { if (activeProviders.has(key)) activeProviders.delete(key); else activeProviders.add(key); onFilter(); }
+  function clearProviderFilter() { activeProviders.clear(); onFilter(); }
+  function toggleCodecFilter(key) { if (activeCodecs.has(key)) activeCodecs.delete(key); else activeCodecs.add(key); onFilter(); }
+  function clearCodecFilter() { activeCodecs.clear(); onFilter(); }
+  function toggleAudioCodecFilter(key) { if (activeAudioCodecs.has(key)) activeAudioCodecs.delete(key); else activeAudioCodecs.add(key); onFilter(); }
+  function clearAudioCodecFilter() { activeAudioCodecs.clear(); onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
-  function normalizeProvider(name) {
-    return name || null; // normalization done in scanner.py
+  function renderProviderFilter() {
+    const base = baseItems('provider');
+    const counts = {};
+    base.forEach(i => (i.providers||[]).forEach(p => {
+      const name = _pname(p); if (!name || !_provVisible(name)) return;
+      counts[name] = (counts[name]||0) + 1;
+    }));
+    ['providerSection', 'providerSectionMobile', 'providerSectionTop'].forEach(function(cid) {
+      const sec = document.getElementById(cid);
+      if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
+        activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter', getDisplay: k => k });
+    });
   }
 
-  function renderProviderFilter() {
-    const sec=document.getElementById('providerSection');
-    if (!enableJellyseerr) { sec.style.display='none'; const st=document.getElementById('providerSectionTop'); if(st) st.style.display='none'; return; }
-    let base=baseItems('provider');
-    const byP={};
-    base.forEach(i=>(i.providers||[]).forEach(p=>{
-      const name=_pname(p); if (!name || !_provVisible(name)) return;
-      if (!byP[name]) byP[name]={count:0, name, logo:_plogo(p)};
-      byP[name].count++;
-      if (!byP[name].logo) byP[name].logo=_plogo(p);
-    }));
-    const providers=Object.values(byP).sort((a,b)=>b.count-a.count);
-    if (!providers.length){sec.style.display='none';return;}
-    const resetCls='provider-pill provider-pill-reset'+(activeProvider==='all'?' active':'');
-    const noneCls='provider-pill'+(activeProvider==='__none__'?' active':'');
-    let pills='<div class="'+resetCls+'" onclick="resetProvider()">'+t('filters.all')+'</div>'
-      +'<div class="'+noneCls+'" onclick="clickProvider(this)" data-provider="__none__" title="Sans plateforme reconnue">'+t('filters.none')+'</div>';
-    providers.forEach(function(p){
-      const cls='provider-pill'+(activeProvider===p.name?' active':'');
-      const logo=p.logo?'<img src="'+escH(p.logo)+'" alt=""/>':'';
-      pills+='<div class="'+cls+'" onclick="clickProvider(this)" data-provider="'+escH(p.name)+'" title="'+p.count+' element'+(p.count>1?'s':'')+'">'
-        +logo+'<span>'+escH(p.name)+'</span></div>';
-    });
-    const phtml='<div class="storage-block"><div class="storage-title">'+t('filters.streaming_fr')+'</div><div class="provider-filter">'+pills+'</div></div>';
-    sec.style.display='block';
-    sec.innerHTML=phtml;
-    // mirror to top bar
-    const secTop=document.getElementById('providerSectionTop');
-    if (secTop) { secTop.innerHTML=phtml; secTop.style.display='block'; }
-  }
   function renderCodecFilter() {
-    const sec = document.getElementById('codecSection');
-    if (!sec) return;
-    let base = baseItems('codec');
+    const base = baseItems('codec');
     const counts = {};
     base.forEach(i => { if (i.codec) counts[i.codec] = (counts[i.codec]||0)+1; });
-    const codecs = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
-    if (!codecs.length) { sec.style.display='none'; return; }
-    const resetCls = 'provider-pill provider-pill-reset'+(activeCodec==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetCodec()">'+t('filters.all')+'</div>';
-    codecs.forEach(c => {
-      const cls = 'provider-pill'+(activeCodec===c?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickCodec(this)" data-codec="'+escH(c)+'">'        +'<span class="badge badge-codec" style="margin-left:0">'+escH(c)+'</span>'        +'<span style="margin-left:4px;font-size:11px">'+counts[c]+'</span></div>';
+    ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k });
     });
-    sec.style.display = 'block';
-    sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+t('filters.codec')+'</div><div class="provider-filter">'+pills+'</div></div>';
-
   }
 
-  function clickCodec(el) {
-    const k = el.dataset.codec;
-    activeCodec = activeCodec === k ? 'all' : k;
-    onFilter();
-  }
-
-  function resetCodec() {
-    activeCodec = 'all';
-    onFilter();
+  function renderAudioCodecFilter() {
+    const base = baseItems('audioCodec');
+    const counts = {};
+    base.forEach(i => { if (i.audioCodec) counts[i.audioCodec] = (counts[i.audioCodec]||0)+1; });
+    ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
+        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k });
+    });
   }
 
   function renderAudioCodecFilter() {
@@ -568,13 +613,12 @@ let allItems=[], categories=[], groups=[];
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
-    if (enableJellyseerr) {
-      if (activeProvider==='__none__') items=items.filter(i=>!(i.providers&&i.providers.length));
-      else if (activeProvider!=='all') items=items.filter(i=>(i.providers||[]).some(p=>_pname(p)===activeProvider&&_provVisible(_pname(p))));
+    if (enableJellyseerr && activeProviders.size > 0) {
+      items=items.filter(i=>(i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p))));
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
-    if (activeCodec!=='all')     items=items.filter(i=>i.codec===activeCodec);
-    if (activeAudioCodec!=='all') items=items.filter(i=>(i.audio_codec||'UNKNOWN')===activeAudioCodec);
+    if (activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+    if (activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audioCodec??'UNKNOWN'));
     return applySearch(items, q);
   }
 
@@ -589,13 +633,12 @@ let allItems=[], categories=[], groups=[];
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
-    if (except!=='provider') {
-      if (activeProvider==='__none__') items=items.filter(i=>!(i.providers&&i.providers.length));
-      else if (activeProvider!=='all') items=items.filter(i=>(i.providers||[]).some(p=>_pname(p)===activeProvider&&_provVisible(_pname(p))));
+    if (except!=='provider' && activeProviders.size > 0) {
+      items=items.filter(i=>(i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p))));
     }
-    if (except!=='resolution' && activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
-    if (except!=='codec'      && activeCodec!=='all')      items=items.filter(i=>i.codec===activeCodec);
-    if (except!=='audioCodec' && activeAudioCodec!=='all') items=items.filter(i=>(i.audio_codec||'UNKNOWN')===activeAudioCodec);
+    if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
+    if (except!=='codec'       && activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+    if (except!=='audioCodec'  && activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audioCodec??'UNKNOWN'));
     return applySearch(items, q);
   }
 
@@ -1738,7 +1781,8 @@ let allItems=[], categories=[], groups=[];
     const dSearch = document.getElementById('searchInput');
     if (mSearch && dSearch && mSearch.value !== dSearch.value) mSearch.value = dSearch.value;
     // Mirror filter sections to mobile panel
-    ['storageSection','providerSection','resolutionSection','codecSection','audioCodecSection'].forEach(id => {
+    // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
+    ['storageSection','resolutionSection'].forEach(id => {
       const src = document.getElementById(id);
       const dst = document.getElementById(id + 'Mobile');
       if (src && dst) dst.innerHTML = src.innerHTML;
