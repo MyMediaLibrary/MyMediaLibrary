@@ -92,6 +92,31 @@ def normalize_codec(raw: str | None) -> str | None:
     return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
 
 
+AUDIO_CODEC_CANONICAL = {
+    "ac3": "AC-3", "ac-3": "AC-3", "dolby digital": "AC-3", "a_ac3": "AC-3",
+    "eac3": "EAC-3", "eac-3": "EAC-3", "e-ac-3": "EAC-3",
+    "dolby digital plus": "EAC-3", "dolby digital+": "EAC-3", "a_eac3": "EAC-3",
+    "dts-hd ma": "DTS-HD MA", "dtshd": "DTS-HD MA", "dts-hd": "DTS-HD MA",
+    "dts hd ma": "DTS-HD MA", "a_dtshd": "DTS-HD MA",
+    "dts": "DTS",
+    "truehd": "TrueHD", "dolby truehd": "TrueHD",
+    "dolby atmos truehd": "TrueHD", "a_truehd": "TrueHD",
+    "atmos": "TrueHD",
+    "aac": "AAC", "aac-lc": "AAC", "a_aac": "AAC",
+    "flac": "FLAC", "a_flac": "FLAC",
+    "mp3": "MP3", "mpeg audio": "MP3", "a_mpeg/l3": "MP3",
+    "pcm": "PCM", "lpcm": "PCM", "a_pcm/int/lit": "PCM", "a_pcm/int/big": "PCM",
+    "opus": "Opus", "a_opus": "Opus",
+    "vorbis": "Vorbis", "a_vorbis": "Vorbis",
+}
+
+def normalize_audio_codec(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    canonical = AUDIO_CODEC_CANONICAL.get(raw.lower().strip())
+    return canonical if canonical else raw.upper().strip()
+
+
 # NFO parse stats — reset at each run_quick() call, reported as grouped summary
 _nfo_stats: dict = {"ok": 0, "failed": 0}
 
@@ -198,6 +223,14 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
                     pass
         except (ValueError, TypeError):
             pass
+
+    # Audio codec from <fileinfo><streamdetails><audio><codec>
+    # fallback to <audio_codec> / <audiocodec> at root level
+    audio = root.find(".//fileinfo/streamdetails/audio")
+    raw_audio = (_xml_text(audio, "codec") if audio is not None else None) \
+                or _xml_text(root, "audio_codec", "audiocodec")
+    if raw_audio:
+        result["audio_codec"] = normalize_audio_codec(raw_audio)
 
     return result
 
@@ -330,6 +363,9 @@ def find_episode_nfo(series_dir: Path) -> dict:
                     if ep_rt:
                         try: runtime_min = int(float(ep_rt))
                         except (ValueError, TypeError): pass
+                    audio_el = root.find(".//fileinfo/streamdetails/audio")
+                    raw_audio = (_xml_text(audio_el, "codec") if audio_el is not None else None) \
+                                or _xml_text(root, "audio_codec", "audiocodec")
                     return {
                         "width":       w,
                         "height":      h,
@@ -337,6 +373,7 @@ def find_episode_nfo(series_dir: Path) -> dict:
                         "codec":       normalize_codec(raw_codec),
                         "hdr":         bool(hdr_raw and hdr_raw.strip()),
                         "runtime_min": runtime_min,
+                        "audio_codec": normalize_audio_codec(raw_audio),
                     }
         except Exception as e:
             log.debug(f"Episode NFO extract error ({nfo_file}): {e}")
@@ -927,6 +964,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
         "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
         "codec":             nfo_meta.get("codec")       or prev.get("codec"),
+        "audio_codec":       nfo_meta.get("audio_codec") or prev.get("audio_codec"),
         "hdr":               nfo_meta.get("hdr", False),
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
@@ -1047,6 +1085,15 @@ def run_quick(only_category: str | None = None) -> None:
         log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
     else:
         log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
+    audio_dist: dict = {}
+    for item in items:
+        ac = item.get("audio_codec")
+        audio_dist[ac] = audio_dist.get(ac, 0) + 1
+    null_ac = audio_dist.pop(None, 0)
+    parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
+    if null_ac:
+        parts.append(f"null×{null_ac}")
+    log.info(f"[SCAN] Audio codecs: {' / '.join(parts) if parts else 'none'}")
     log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
 
 
