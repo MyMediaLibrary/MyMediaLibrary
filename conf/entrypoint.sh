@@ -6,7 +6,6 @@ OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 echo "=== MyMediaLibrary ==="
 echo "LIBRARY_PATH : ${LIBRARY_PATH:-/mnt/media/library}"
 echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
-echo "SCAN_CRON    : ${SCAN_CRON:-0 3 * * *} (env fallback, overridden by config.json)"
 echo ""
 
 # Create /app/.secrets if missing (stores Jellyseerr API key securely)
@@ -36,17 +35,16 @@ echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
 echo "[entrypoint] Running initial scan..."
 python3 /app/scanner.py
 
-# Read scan_cron from config.json (populated by initial scan via migrate_env_to_config)
-# Falls back to SCAN_CRON env var, then to default
+# Read scan_cron from config.json — sole source of truth
 SCAN_CRON=$(python3 -c "
-import json, os, sys
+import json
 try:
     cfg = json.load(open('/data/config.json'))
     val = cfg.get('system', {}).get('scan_cron') or ''
-    print(val if val else os.environ.get('SCAN_CRON', '0 3 * * *'))
+    print(val if val else '0 3 * * *')
 except Exception:
-    print(os.environ.get('SCAN_CRON', '0 3 * * *'))
-" 2>/dev/null || echo "${SCAN_CRON:-0 3 * * *}")
+    print('0 3 * * *')
+" 2>/dev/null || echo "0 3 * * *")
 
 echo "[entrypoint] Cron schedule: ${SCAN_CRON}"
 
@@ -55,7 +53,6 @@ ENV_FILE="/app/scanner_env.sh"
 cat > "$ENV_FILE" << ENVEOF
 export LIBRARY_PATH="${LIBRARY_PATH:-/mnt/media/library}"
 export OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
-export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 ENVEOF
 chmod 600 "$ENV_FILE"
 

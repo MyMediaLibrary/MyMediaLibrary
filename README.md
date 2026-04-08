@@ -26,8 +26,6 @@ services:
       - /chemin/vers/ta/mediatheque:/library:ro
     environment:
       LIBRARY_PATH: /library
-      # SCAN_CRON: "0 3 * * *"
-      # LOG_LEVEL: INFO
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -39,6 +37,8 @@ docker compose up -d
 ```
 
 Accéder à `http://localhost:8094` — un assistant de configuration s'affiche au premier démarrage.
+
+> Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système**.
 
 ### Mise à jour
 
@@ -74,8 +74,6 @@ services:
       - /path/to/your/library:/library:ro
     environment:
       LIBRARY_PATH: /library
-      # SCAN_CRON: "0 3 * * *"
-      # LOG_LEVEL: INFO
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -87,6 +85,8 @@ docker compose up -d
 ```
 
 Open `http://localhost:8094` — a setup wizard appears on first launch.
+
+> Auto-scan schedule and log level are configured in **Settings > System**.
 
 ### Updating
 

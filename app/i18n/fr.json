@@ -140,7 +140,9 @@
       "log_level": "Niveau de log",
       "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log"
     },
-    "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml."
+    "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml.",
+    "github_link": "Projet GitHub",
+    "doc_link": "Documentation"
   },
   "scan": {
     "start": "Scanner",

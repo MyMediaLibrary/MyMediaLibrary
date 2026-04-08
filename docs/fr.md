@@ -53,8 +53,6 @@ services:
       - /chemin/vers/ta/mediatheque:/library:ro  # médiathèque en lecture seule
     environment:
       LIBRARY_PATH: /library
-      # SCAN_CRON: "0 3 * * *"
-      # LOG_LEVEL: INFO
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -64,11 +62,9 @@ services:
 | Variable | Obligatoire | Défaut | Description |
 |---|---|---|---|
 | `LIBRARY_PATH` | ✅ | — | Chemin racine de la bibliothèque dans le conteneur |
-| `SCAN_CRON` | ❌ | `0 3 * * *` | Planification du scan automatique (cron) |
-| `LOG_LEVEL` | ❌ | `INFO` | Niveau de log (`INFO` / `DEBUG`) |
 | `APP_PASSWORD` | ❌ | — | Mot de passe (active l'écran de connexion) |
 
-Les variables d'environnement sont en lecture seule dans l'interface — elles ne peuvent être modifiées que dans `compose.yaml`.
+Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
 
 ### Mise à jour
 

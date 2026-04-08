@@ -53,8 +53,6 @@ services:
       - /path/to/your/library:/library:ro   # your media library, read-only
     environment:
       LIBRARY_PATH: /library
-      # SCAN_CRON: "0 3 * * *"
-      # LOG_LEVEL: INFO
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -64,11 +62,9 @@ services:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `LIBRARY_PATH` | ✅ | — | Root path of the library inside the container |
-| `SCAN_CRON` | ❌ | `0 3 * * *` | Auto-scan schedule (cron format) |
-| `LOG_LEVEL` | ❌ | `INFO` | Log level (`INFO` / `DEBUG`) |
 | `APP_PASSWORD` | ❌ | — | Password (enables login screen) |
 
-Environment variables are read-only in the interface — they can only be changed in `compose.yaml`.
+Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
 
 ### Updating
 

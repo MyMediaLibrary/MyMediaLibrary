@@ -140,7 +140,9 @@
       "log_level": "Log level",
       "log_path": "📄 Logs available on host: ./data/scanner.log"
     },
-    "env_note": "⚙️ Read-only values are configured via compose.yaml."
+    "env_note": "⚙️ Read-only values are configured via compose.yaml.",
+    "github_link": "GitHub project",
+    "doc_link": "Documentation"
   },
   "scan": {
     "start": "Scan",

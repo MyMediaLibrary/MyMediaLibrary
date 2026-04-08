@@ -9,7 +9,5 @@ services:
       - /chemin/vers/ta/mediatheque:/library:ro   # adapter ce chemin à ta médiathèque
     environment:
       LIBRARY_PATH: /library   # fixé à /library dans le conteneur — adapter le volume ci-dessus
-      # SCAN_CRON: "0 3 * * *"
-      # LOG_LEVEL: INFO
       # APP_PASSWORD: ""
     restart: unless-stopped

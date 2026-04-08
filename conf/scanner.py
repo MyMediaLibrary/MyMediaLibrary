@@ -40,12 +40,17 @@ LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
 OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
-LOG_LEVEL     = os.environ.get("LOG_LEVEL",     "INFO")
-
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+# Apply log_level from config.json if available (may be adjusted later via API too)
+try:
+    with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
+        _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
+    logging.getLogger().setLevel(getattr(logging, _cfg_loglevel.upper(), logging.INFO))
+except Exception:
+    pass
 log = logging.getLogger("scanner")
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
@@ -765,18 +770,10 @@ def migrate_env_to_config() -> None:
             cfg["folders"].append({"name": fname, "type": "tv",    "visible": True})
         changed = True
 
-    # SCAN_CRON + LOG_LEVEL → system block
+    # system block defaults
     sys_cfg = cfg.setdefault("system", {})
-    env_cron = os.environ.get("SCAN_CRON", "")
-    if env_cron and not sys_cfg.get("scan_cron"):
-        sys_cfg["scan_cron"] = env_cron
-        changed = True
     if not sys_cfg.get("scan_cron"):
         sys_cfg["scan_cron"] = "0 3 * * *"
-        changed = True
-    env_loglevel = os.environ.get("LOG_LEVEL", "")
-    if env_loglevel and not sys_cfg.get("log_level"):
-        sys_cfg["log_level"] = env_loglevel
         changed = True
     if not sys_cfg.get("log_level"):
         sys_cfg["log_level"] = "INFO"
@@ -1105,8 +1102,6 @@ def run_quick(only_category: str | None = None) -> None:
         "providers_raw":       prev_data.get("providers_raw") or [],
         "config": {
             "library_path": LIBRARY_PATH,
-            "scan_cron":    os.environ.get("SCAN_CRON", "0 3 * * *"),
-            "log_level":    LOG_LEVEL,
         },
     }
     output_path = Path(OUTPUT_PATH)
