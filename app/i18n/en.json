@@ -57,7 +57,9 @@
     "type_movies": "🎬 Movies",
     "type_tv": "📺 Series",
     "by_group": "By group",
-    "by_category": "By folder"
+    "by_category": "By folder",
+    "audio_codec": "Audio codec",
+    "unknown": "Unknown"
   },
   "sort": {
     "title_asc": "Title A-Z",
@@ -166,6 +168,7 @@
     "categories": "Folders",
     "resolution": "Resolution",
     "codec": "Codec",
+    "audio_codec_chart_title": "Audio codec",
     "providers": "Providers",
     "elements": "Items",
     "files": "Files",
