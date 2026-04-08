@@ -92,6 +92,39 @@ def normalize_codec(raw: str | None) -> str | None:
     return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
 
 
+def _load_audiocodec_mapping() -> dict:
+    """Load audiocodec_mapping.json from image path or dev-local fallback."""
+    paths = [
+        "/usr/share/nginx/html/audiocodec_mapping.json",
+        os.path.join(os.path.dirname(__file__), "../app/audiocodec_mapping.json"),
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data = json.load(f)
+                log.debug(f"[audiocodec] Mapping loaded from {p} ({len(data.get('priority', []))} entries)")
+                return data
+            except Exception as e:
+                log.warning(f"[audiocodec] Failed to load {p}: {e}")
+    log.warning("[audiocodec] audiocodec_mapping.json not found — all codecs will be UNKNOWN")
+    return {"priority": [], "mapping": {}, "fallback": {"normalized": "UNKNOWN", "display": "Unknown"}}
+
+
+AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
+
+# Pre-compute normalized keys for fast lookup: strip dashes/spaces/uppercase
+_AC_NORM = re.compile(r"[-\s]")
+def _ac_key(s: str) -> str:
+    return _AC_NORM.sub("", s.upper())
+
+_AC_LOOKUP: list[tuple[str, dict]] = [
+    (_ac_key(k), AUDIOCODEC_MAPPING["mapping"][k])
+    for k in AUDIOCODEC_MAPPING.get("priority", [])
+    if k in AUDIOCODEC_MAPPING.get("mapping", {})
+]
+
+
 def normalize_audio_codec(raw: str | None) -> dict:
     """
     Normalize an audio codec string to three levels:
@@ -99,49 +132,19 @@ def normalize_audio_codec(raw: str | None) -> dict:
       'normalized' — canonical constant used for filters/stats (e.g. 'ATMOS', 'EAC3')
       'display'    — human-readable label used in the UI (e.g. 'Dolby Atmos')
 
-    Matching is ordered from most specific to most generic to avoid false positives
-    (e.g. 'TRUEHD ATMOS' must not match 'TRUEHD' before 'ATMOS').
+    Matching follows the priority order in audiocodec_mapping.json.
+    Tolerance: case-insensitive, dashes and spaces ignored (EAC-3 == EAC3).
     """
-    unknown = {"raw": raw, "normalized": "UNKNOWN", "display": "Unknown"}
+    fb = AUDIOCODEC_MAPPING.get("fallback", {"normalized": "UNKNOWN", "display": "Unknown"})
     if not raw or not raw.strip():
-        return unknown
+        return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
 
-    # Uppercase + collapse whitespace for comparison
-    k = " ".join(raw.upper().split())
+    value_key = _ac_key(raw.strip())
+    for entry_key, entry in _AC_LOOKUP:
+        if value_key == entry_key:
+            return {"raw": raw, "normalized": entry["normalized"], "display": entry["display"]}
 
-    # 1–2. Atmos variants (most specific — must come before TrueHD and EAC-3)
-    if "TRUEHD" in k and "ATMOS" in k:
-        return {"raw": raw, "normalized": "ATMOS", "display": "Dolby Atmos"}
-    if ("EAC3" in k or "EAC-3" in k) and "ATMOS" in k:
-        return {"raw": raw, "normalized": "ATMOS", "display": "Dolby Atmos"}
-    # 3–5. DTS variants (must come before plain DTS)
-    if "DTS-HD MA" in k or "DTS HD MA" in k:
-        return {"raw": raw, "normalized": "DTS_HD_MA", "display": "DTS-HD MA"}
-    if "DTS-HD HRA" in k or "DTS HD HRA" in k:
-        return {"raw": raw, "normalized": "DTS_HD_HRA", "display": "DTS-HD HRA"}
-    if "DTS-X" in k or k == "DTSX":
-        return {"raw": raw, "normalized": "DTS_X", "display": "DTS:X"}
-    # 6. TrueHD (without Atmos)
-    if "TRUEHD" in k:
-        return {"raw": raw, "normalized": "TRUEHD", "display": "Dolby TrueHD"}
-    # 7. EAC-3 (without Atmos — must come before AC-3)
-    if "EAC-3" in k or "EAC3" in k:
-        return {"raw": raw, "normalized": "EAC3", "display": "Dolby Digital Plus"}
-    # 8. AC-3
-    if "AC-3" in k or k == "AC3":
-        return {"raw": raw, "normalized": "AC3", "display": "Dolby Digital"}
-    # 9–11. DTS variants then plain DTS
-    if "DTS-ES" in k or "DTS EXPRESS" in k or k == "DTS":
-        return {"raw": raw, "normalized": "DTS", "display": "DTS"}
-    # 12–14. Remaining formats
-    if k == "AAC" or k.startswith("AAC-") or k.startswith("AAC "):
-        return {"raw": raw, "normalized": "AAC", "display": "AAC"}
-    if k == "MP3":
-        return {"raw": raw, "normalized": "MP3", "display": "MP3"}
-    if k == "MP2":
-        return {"raw": raw, "normalized": "MP2", "display": "MP2"}
-
-    return unknown
+    return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
 
 
 # NFO parse stats — reset at each run_quick() call, reported as grouped summary
