@@ -149,6 +149,7 @@
     <div class="sidebar-section" id="providerSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="codecSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="audioLanguageSection" style="display:none;width:100%"></div>
   </div>
 
   <!-- BOTTOM: NAV + SCAN + THEME (hidden in top mode) -->
@@ -170,14 +171,11 @@
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="scan-dropdown" id="scanDropdown">
-            <div class="scan-dropdown-item" onclick="selectScanMode('default')">
-              <span class="sd-label" data-i18n="scan.mode_enrich">Enrich</span><span class="sd-desc" data-i18n="scan.mode_enrich_desc">Filesystem + enrichissement manquants (défaut)</span>
-            </div>
             <div class="scan-dropdown-item" onclick="selectScanMode('quick')">
-              <span class="sd-label" data-i18n="scan.mode_quick">Quick</span><span class="sd-desc" data-i18n="scan.mode_quick_desc">Filesystem uniquement, sans enrichissement</span>
+              <span class="sd-label" data-i18n="scan.mode_quick">Scan rapide</span><span class="sd-desc" data-i18n="scan.mode_quick_desc">Fichiers et métadonnées locales uniquement, sans appel réseau</span>
             </div>
             <div class="scan-dropdown-item" onclick="selectScanMode('full')">
-              <span class="sd-label" data-i18n="scan.mode_full">Full</span><span class="sd-desc" data-i18n="scan.mode_full_desc">Filesystem + refresh complet de toutes les métadonnées</span>
+              <span class="sd-label" data-i18n="scan.mode_full">Scan complet</span><span class="sd-desc" data-i18n="scan.mode_full_desc">Resynchronisation complète incluant les disponibilités streaming</span>
             </div>
           </div>
         </div>
@@ -425,6 +423,7 @@
     <div id="providerSectionMobile" style="margin-bottom:8px"></div>
     <div id="codecSectionMobile" style="margin-bottom:8px"></div>
     <div id="audioCodecSectionMobile"></div>
+    <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
   </div>
 
   <!-- MOBILE BOTTOM NAV -->
