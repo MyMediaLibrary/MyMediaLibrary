@@ -231,7 +231,7 @@
     "group": "Group",
     "category": "Folder",
     "resolution": "Resolution",
-    "codec": "Codec",
+    "codec": "Video codec",
     "audio_codec": "Audio codec",
     "audio_languages": "Audio languages",
     "size": "Size",
