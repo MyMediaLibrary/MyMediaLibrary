@@ -35,7 +35,6 @@
     .brand-sub{font-size:11px;color:var(--muted);font-weight:300}
     .scan-info{font-size:11px;color:var(--muted);text-align:right}
     .scan-info span{color:var(--accent);font-weight:500}
-    .header-actions{display:flex;gap:8px;align-items:center}
     .icon-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
       color:var(--muted);padding:8px 12px;cursor:pointer;transition:all var(--transition);
       display:flex;align-items:center;gap:6px;font-family:'Syne',sans-serif;font-size:12px;font-weight:600}
@@ -224,7 +223,6 @@
     .leg-reset.active{background:var(--accent)}
 
     /* TABS */
-    .tabs{display:flex;gap:4px;padding:12px 40px 0;border-bottom:1px solid var(--border)}
     .main-tabs{display:flex;align-items:center;gap:4px;padding:0 16px;border-bottom:1px solid var(--border);
       background:var(--surface);position:sticky;top:0;z-index:50;min-height:46px}
     .main-tabs-left{display:flex;align-items:stretch;gap:4px;flex:1}
@@ -245,8 +243,6 @@
       background-repeat:no-repeat;background-position:right 8px center}
     .tab-sort-select:focus{border-color:var(--accent)}
 
-    /* CONTROLS — kept for legacy layout fallback, now mostly empty */
-    .controls{padding:0 40px 0;display:flex;gap:12px;align-items:center;height:0;overflow:hidden}
     select{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);
       font-family:'Inter',sans-serif;font-size:13px;padding:11px 14px;outline:none;cursor:pointer;
       transition:border-color var(--transition);appearance:none;-webkit-appearance:none;padding-right:32px;
@@ -353,13 +349,7 @@
     .filter-dropdown-option-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .filter-dropdown-option-count{color:var(--muted);font-size:11px;white-space:nowrap}
 
-    /* TIMELINE GROUPS (used by library grid grouping if needed) */
-    .tl-group{margin-bottom:32px}
-    .tl-group-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;
-      letter-spacing:.08em;padding:0 0 10px;border-bottom:1px solid var(--border);margin-bottom:14px;
-      display:flex;align-items:center;justify-content:space-between}
-    .tl-count{font-size:11px;font-weight:400}
-    .tl-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;align-items:start}
+    /* CARDS */
     .tl-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
       display:flex;flex-direction:row;gap:0;position:relative;height:130px;overflow:hidden;
       transition:border-color var(--transition),background var(--transition)}
@@ -439,7 +429,7 @@
       .stats-block-title{font-size:13px!important}
     }
     @media(max-width:600px){
-      header,.stats-bar,.storage-section,.tabs,.controls,.results-info,#library,#library.table-view,#statsPanel{padding-left:16px;padding-right:16px}
+      header,.stats-bar,.storage-section,#library,#library.table-view,#statsPanel{padding-left:16px;padding-right:16px}
     }
     /* ── STATS PANEL ── */
     #statsContent{padding:24px 40px 60px;display:flex;flex-direction:column;gap:40px}
