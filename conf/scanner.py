@@ -14,9 +14,12 @@ Filters (combinable with any mode):
   --category <n>       Restrict scan to a single category name.
 """
 
+import argparse
+import copy
 import http.server
 import json
 import logging
+from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 import os
 import re
@@ -175,8 +178,7 @@ def _parse_nfo_xml(nfo_path: Path) -> ET.Element | None:
             raw = nfo_path.read_bytes()
             text = raw.decode("utf-8", errors="replace")
             # Find root tag name from opening tag
-            import re as _re
-            m = _re.match(r"\s*<(\w+)", text)
+            m = re.match(r"\s*<(\w+)", text)
             if m:
                 root_tag = m.group(1)
                 close = f"</{root_tag}>"
@@ -972,6 +974,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
 
     # --- tmdb_id from NFO (always fresh) ---
     tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
+    size_b = get_dir_size(media_dir)
 
     return {
         "path":              item_path,
@@ -980,8 +983,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "year":              year,
         "category":          cat["name"],
         "type":              cat["type"],
-        "size_b":            get_dir_size(media_dir),
-        "size":              format_size(get_dir_size(media_dir)),
+        "size_b":            size_b,
+        "size":              format_size(size_b),
         "file_count":        count_media_files(media_dir),
         "added_at":          datetime.fromtimestamp(mtime).isoformat(),
         "added_ts":          int(mtime),
@@ -1007,8 +1010,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
 
 
 def run_quick(only_category: str | None = None) -> None:
-    import time as _time
-    _t0 = _time.monotonic()
+    _t0 = time.monotonic()
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
     scope = f" [category: {only_category}]" if only_category else ""
@@ -1111,7 +1113,7 @@ def run_quick(only_category: str | None = None) -> None:
         size_str = f"{size_mb:.1f} MB"
     except Exception:
         size_str = "?"
-    elapsed = _time.monotonic() - _t0
+    elapsed = time.monotonic() - _t0
     log.info(f"[SCAN] Filesystem scan done — {len(items)} items total")
     log.info(f"[SCAN] Writing library.json — {len(items)} items ({size_str})")
     if _nfo_stats["failed"] > 0:
@@ -1133,8 +1135,7 @@ def run_quick(only_category: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def run_enrich(force: bool = False, only_category: str | None = None) -> None:
-    import time as _time
-    _t0 = _time.monotonic()
+    _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
     log.info(f"[SCAN] Starting Jellyseerr enrichment ({label}){scope}")
@@ -1173,7 +1174,6 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         log.info("[SCAN] Nothing to enrich.")
         return
 
-    from collections import defaultdict
     by_cat = defaultdict(list)
     for item in to_enrich:
         by_cat[item["category"]].append(item)
@@ -1251,7 +1251,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN]   {cat_name} — {enriched} enriched so far")
 
-    elapsed = _time.monotonic() - _t0
+    elapsed = time.monotonic() - _t0
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
@@ -1455,7 +1455,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     save_config(cfg)
                     cfg = load_config()
             # Mask API key — never expose the real value to the frontend
-            import copy
             out = copy.deepcopy(cfg)
             if out.get("jellyseerr", {}).get("apikey"):
                 out["jellyseerr"]["apikey"] = "***"
@@ -1565,7 +1564,6 @@ def serve():
 # ---------------------------------------------------------------------------
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser(
         prog="scanner.py",
         description="Media Library Scanner",
@@ -1594,8 +1592,7 @@ def main():
         run_reset()
         return
 
-    import time as _time
-    _t_main = _time.monotonic()
+    _t_main = time.monotonic()
 
     if args.quick:
         mode_label = "--quick"
@@ -1617,7 +1614,7 @@ def main():
         run_quick(only_category=args.category)
         run_enrich(force=False, only_category=args.category)
 
-    elapsed = _time.monotonic() - _t_main
+    elapsed = time.monotonic() - _t_main
     log.info(f"[SCAN] ═══════════════════════════════════")
     log.info(f"[SCAN] Full scan completed in {elapsed:.1f}s")
     log.info(f"[SCAN] ═══════════════════════════════════")

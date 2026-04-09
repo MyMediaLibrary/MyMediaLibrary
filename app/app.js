@@ -1114,11 +1114,7 @@ let allItems=[], categories=[], groups=[];
         keys=Object.keys(allByDay).filter(k=>k>=ck).sort();
       } else {
         let mkeys=Object.keys(allByMonth).sort();
-        if(period==='6m'){
-          const cutoff=new Date(now); cutoff.setMonth(cutoff.getMonth()-6);
-          const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0');
-          mkeys=mkeys.filter(k=>k>=ck);
-        } else if(period==='12m'){
+        if(period==='12m'){
           const cutoff=new Date(now); cutoff.setMonth(cutoff.getMonth()-12);
           const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0');
           mkeys=mkeys.filter(k=>k>=ck);
@@ -1818,9 +1814,6 @@ let allItems=[], categories=[], groups=[];
       });
     });
   }
-
-  // Also mirror to mobile on every filter render
-  const _origRenderStorageBar = renderStorageBar;
 
   // ── SETTINGS ─────────────────────────────────────────
     // serverConfig is populated from library.json in loadLibrary()

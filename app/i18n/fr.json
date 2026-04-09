@@ -62,7 +62,6 @@
     "type_tv": "📺 Séries",
     "by_group": "Par groupe",
     "by_category": "Par dossier",
-    "audio_codec": "Codec audio",
     "unknown": "Inconnu"
   },
   "sort": {
@@ -128,9 +127,6 @@
     },
     "system": {
       "language": "Langue",
-      "theme": "Thème",
-      "theme_dark": "Sombre",
-      "theme_light": "Clair",
       "accent": "Couleur d'accent",
       "accent_reset": "Réinitialiser",
       "version": "Version",
