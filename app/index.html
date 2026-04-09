@@ -311,11 +311,13 @@
             </div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
-              <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"/>
+              <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
+                oninput="_settingsJsrTestOk=false;_updateJsrSaveBtn();document.getElementById('cfgJsrTestResult').textContent=''"/>
             </div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
-              <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"/>
+              <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
+                oninput="_settingsJsrTestOk=false;_updateJsrSaveBtn();document.getElementById('cfgJsrTestResult').textContent=''"/>
             </div>
             <div class="settings-row">
               <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
