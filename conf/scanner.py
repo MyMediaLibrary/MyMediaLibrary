@@ -121,6 +121,119 @@ def _load_audiocodec_mapping() -> dict:
 
 AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
 
+# ---------------------------------------------------------------------------
+# Audio language normalisation
+# ---------------------------------------------------------------------------
+
+ISO_639_1_TO_2: dict[str, str] = {
+    'fr': 'fra', 'en': 'eng', 'de': 'deu', 'es': 'spa',
+    'it': 'ita', 'ja': 'jpn', 'zh': 'zho', 'ko': 'kor',
+    'pt': 'por', 'ru': 'rus', 'ar': 'ara', 'nl': 'nld',
+    'pl': 'pol', 'sv': 'swe', 'da': 'dan', 'fi': 'fin',
+    'nb': 'nor', 'tr': 'tur', 'cs': 'ces', 'hu': 'hun',
+}
+
+# Deprecated/bibliographic ISO 639-2 aliases → canonical terminiologic code
+_ISO_639_2_ALIASES: dict[str, str] = {
+    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron',
+}
+
+_KNOWN_ISO_639_2: frozenset[str] = frozenset({
+    'fra', 'eng', 'deu', 'spa', 'ita', 'jpn', 'zho', 'kor', 'por', 'rus',
+    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'tur', 'ces', 'hun',
+    'ron', 'bul', 'hrv', 'srp', 'ukr', 'heb', 'cat', 'lat', 'hin', 'ben',
+    'vie', 'ind', 'may', 'tha', 'ell', 'slk', 'slv', 'est', 'lav', 'lit',
+    'isl', 'mkd', 'aze', 'geo', 'arm',
+} | set(_ISO_639_2_ALIASES.keys()))
+
+
+def _normalize_lang_code(raw: str) -> str | None:
+    """Normalize a 2- or 3-letter code to ISO 639-2 (3-letter terminiologic). Returns None if unknown."""
+    code = raw.lower().strip()
+    if len(code) == 2:
+        return ISO_639_1_TO_2.get(code)
+    if len(code) == 3:
+        if code in _ISO_639_2_ALIASES:
+            return _ISO_639_2_ALIASES[code]
+        if code in _KNOWN_ISO_639_2:
+            return code
+    return None
+
+
+def _parse_lang_raw(raw: str, item_title: str = '') -> list[str]:
+    """Parse a raw language string (possibly concatenated, e.g. 'freeng') into ISO 639-2 codes."""
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    # Step 1 — split on explicit separators
+    parts = [p.strip() for p in re.split(r'[ ,/|;]+', raw) if p.strip()]
+    if len(parts) > 1:
+        result = []
+        for p in parts:
+            norm = _normalize_lang_code(p)
+            if norm:
+                result.append(norm)
+            else:
+                log.debug(f"[SCAN] Unrecognized audio language token: {p!r} in {item_title!r}")
+        return result
+
+    single = parts[0] if parts else raw
+
+    # Step 2 — try chunks of 3 (e.g. 'freeng' → 'fre'+'eng')
+    if len(single) >= 6 and len(single) % 3 == 0:
+        chunks = [single[i:i+3] for i in range(0, len(single), 3)]
+        codes = [_normalize_lang_code(c) for c in chunks]
+        if all(c is not None for c in codes):
+            return [c for c in codes if c]  # type: ignore[misc]
+
+    # Step 3 — try chunks of 2 (e.g. 'fren' → 'fr'+'en')
+    if len(single) >= 4 and len(single) % 2 == 0:
+        chunks2 = [single[i:i+2] for i in range(0, len(single), 2)]
+        codes2 = [ISO_639_1_TO_2.get(c) for c in chunks2]
+        if all(c is not None for c in codes2):
+            return [c for c in codes2 if c]  # type: ignore[misc]
+
+    # Step 4 — single code
+    norm = _normalize_lang_code(single)
+    if norm:
+        return [norm]
+
+    log.warning(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
+    return []
+
+
+def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
+    """Collect all audio language codes from an NFO root element. Returns sorted ISO 639-2 list."""
+    langs: list[str] = []
+
+    # Primary: <fileinfo><streamdetails><audio>*<language>
+    for audio_el in root.findall(".//fileinfo/streamdetails/audio"):
+        raw = _xml_text(audio_el, "language")
+        if raw:
+            langs.extend(_parse_lang_raw(raw, item_title))
+
+    # Fallback: <audio>*<language> at root level
+    for audio_el in root.findall("audio"):
+        raw = _xml_text(audio_el, "language")
+        if raw:
+            langs.extend(_parse_lang_raw(raw, item_title))
+
+    # Last resort: <languages> at root
+    raw_langs = _xml_text(root, "languages")
+    if raw_langs:
+        langs.extend(_parse_lang_raw(raw_langs, item_title))
+
+    # Deduplicate (preserve order), sort, exclude 'und'
+    seen: set[str] = set()
+    result = []
+    for l in langs:
+        if l not in seen and l != 'und':
+            seen.add(l)
+            result.append(l)
+    return sorted(result)
+
+
 # Pre-compute normalized keys for fast lookup: strip dashes/spaces/uppercase
 _AC_NORM = re.compile(r"[-\s]")
 def _ac_key(s: str) -> str:
@@ -272,6 +385,8 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
         result["audio_codec"]         = ac["normalized"]
         result["audio_codec_display"] = ac["display"]
 
+    result["audio_languages"] = parse_audio_languages(root, result.get("title") or "")
+
     return result
 
 
@@ -417,6 +532,7 @@ def find_episode_nfo(series_dir: Path) -> dict:
                         "audio_codec_raw":    ac["raw"],
                         "audio_codec":        ac["normalized"],
                         "audio_codec_display": ac["display"],
+                        "audio_languages":    parse_audio_languages(root),
                     }
         except Exception as e:
             log.debug(f"Episode NFO extract error ({nfo_file}): {e}")
@@ -1003,6 +1119,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
         "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
         "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
+        "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "hdr":               nfo_meta.get("hdr", False),
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
@@ -1126,6 +1243,13 @@ def run_quick(only_category: str | None = None) -> None:
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
     parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
     log.info(f"[SCAN] Audio codecs: {' / '.join(parts) if parts else 'none'}")
+    lang_dist: dict = {}
+    for item in items:
+        for l in (item.get("audio_languages") or []):
+            lang_dist[l] = lang_dist.get(l, 0) + 1
+    if lang_dist:
+        lparts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
+        log.info(f"[SCAN] Audio languages: {' / '.join(lparts)}")
     log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
 
 

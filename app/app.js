@@ -37,6 +37,7 @@ let allItems=[], categories=[], groups=[];
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
   let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
   let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
+  let audioLanguages = {};         // loaded from /audio_languages.json
 
   async function loadProvidersLogos() {
     try {
@@ -53,6 +54,20 @@ let allItems=[], categories=[], groups=[];
       const res = await fetch('/audiocodec_mapping.json?_=' + Date.now());
       if (res.ok) audioCodecMapping = await res.json();
     } catch(e) { console.warn('audiocodec_mapping.json load error:', e); }
+  }
+
+  async function loadAudioLanguages() {
+    try {
+      const res = await fetch('/audio_languages.json?_=' + Date.now());
+      if (res.ok) audioLanguages = await res.json();
+    } catch(e) { console.warn('audio_languages.json load error:', e); }
+  }
+
+  function getLanguageDisplay(isoCode) {
+    const lang = appConfig?.system?.language ?? 'fr';
+    const entry = audioLanguages[isoCode];
+    if (!entry) return isoCode ? isoCode.toUpperCase() : '?';
+    return entry[lang] ?? entry['en'] ?? isoCode.toUpperCase();
   }
 
   function getAudioCodecDisplay(normalized) {
@@ -88,6 +103,7 @@ let allItems=[], categories=[], groups=[];
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true;
   let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
+  let activeAudioLanguages = new Set();
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
 
@@ -96,6 +112,7 @@ let allItems=[], categories=[], groups=[];
       localStorage.setItem('mediaState', JSON.stringify({
         activeGroup, activeCat, activeResolution, activeType,
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
+        activeAudioLanguages: [...activeAudioLanguages],
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -112,7 +129,8 @@ let allItems=[], categories=[], groups=[];
       if (Array.isArray(s.activeProviders))   activeProviders   = new Set(s.activeProviders);
       if (s.activeResolution)                 activeResolution  = s.activeResolution;
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
-      if (Array.isArray(s.activeAudioCodecs)) activeAudioCodecs = new Set(s.activeAudioCodecs);
+      if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
+      if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -175,7 +193,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   async function loadLibrary() {
-    await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping()]);
+    await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
     const lang = appConfig.system?.language || 'fr';
@@ -183,6 +201,9 @@ let allItems=[], categories=[], groups=[];
       await loadTranslations(lang);
     }
     applyTranslations();
+    // Refresh scan button label with translated mode name
+    const scanLbl = document.getElementById('scanBtnLabel');
+    if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
 
     // First-run: no folder has been assigned a type yet → show onboarding
     const folders = appConfig.folders || [];
@@ -477,6 +498,8 @@ let allItems=[], categories=[], groups=[];
   function clearCodecFilter() { activeCodecs.clear(); onFilter(); }
   function toggleAudioCodecFilter(key) { if (activeAudioCodecs.has(key)) activeAudioCodecs.delete(key); else activeAudioCodecs.add(key); onFilter(); }
   function clearAudioCodecFilter() { activeAudioCodecs.clear(); onFilter(); }
+  function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
+  function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
@@ -514,6 +537,17 @@ let allItems=[], categories=[], groups=[];
     ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
         activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k });
+    });
+  }
+
+  function renderAudioLanguageFilter() {
+    const base = baseItems('audioLanguage');
+    const counts = {};
+    base.forEach(i => { (i.audio_languages||[]).forEach(l => { counts[l] = (counts[l]||0)+1; }); });
+    ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_language'),
+        activeSet: activeAudioLanguages, toggleFn: 'toggleAudioLanguageFilter', clearFn: 'clearAudioLanguageFilter',
+        getDisplay: k => getLanguageDisplay(k) });
     });
   }
 
@@ -555,6 +589,7 @@ let allItems=[], categories=[], groups=[];
     renderProviderFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
+    renderAudioLanguageFilter();
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') renderStatsPanel();
@@ -598,8 +633,9 @@ let allItems=[], categories=[], groups=[];
       });
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
-    if (activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+    if (activeCodecs.size > 0)          items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+    if (activeAudioCodecs.size > 0)     items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+    if (activeAudioLanguages.size > 0)  items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
     return applySearch(items, q);
   }
 
@@ -621,8 +657,9 @@ let allItems=[], categories=[], groups=[];
       });
     }
     if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
-    if (except!=='codec'       && activeCodecs.size > 0)      items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (except!=='audioCodec'  && activeAudioCodecs.size > 0) items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+    if (except!=='codec'         && activeCodecs.size > 0)         items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+    if (except!=='audioCodec'    && activeAudioCodecs.size > 0)    items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+    if (except!=='audioLanguage' && activeAudioLanguages.size > 0) items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
     return applySearch(items, q);
   }
 
@@ -784,6 +821,8 @@ let allItems=[], categories=[], groups=[];
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
+        +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
+        +'<td>'+((item.audio_languages&&item.audio_languages.length)?item.audio_languages.map(l=>getLanguageDisplay(l)).join(' / '):'—')+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
         +'<td class="col-date">'+(item.added_at?fmtDate(item.added_at):'-')+'</td>'
@@ -796,6 +835,7 @@ let allItems=[], categories=[], groups=[];
       +(hg?th('group',t('table.group')):'')
       +th('category',t('table.category'))
       +'<th>'+t('table.resolution')+'</th><th>'+t('table.codec')+'</th>'
+      +'<th>'+t('table.audio_codec')+'</th><th>'+t('table.audio_languages')+'</th>'
       +th('size',t('table.size'))+th('files',t('table.files'))+th('added',t('table.added'))
       +(hp?'<th>'+t('table.streaming')+'</th>':'')
       +'</tr></thead><tbody>'+rows+'</tbody></table>';
@@ -805,7 +845,10 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
-    const headers=['Titre','Annee',hg?'Groupe':null,'Categorie','Resolution','HDR','Codec','Runtime (min)','Taille','Taille (octets)','Fichiers','Ajoute le','Streaming'].filter(Boolean);
+    const lang=appConfig?.system?.language??'fr';
+    const h_audio_codec   = lang==='fr'?'Codec audio':'Audio codec';
+    const h_audio_langs   = lang==='fr'?'Langues audio':'Audio languages';
+    const headers=['Titre','Annee',hg?'Groupe':null,'Categorie','Resolution','HDR','Codec',h_audio_codec,h_audio_langs,'Runtime (min)','Taille','Taille (octets)','Fichiers','Ajoute le','Streaming'].filter(Boolean);
     const rows=items.map(i=>[
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
@@ -813,6 +856,8 @@ let allItems=[], categories=[], groups=[];
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
+      csvC(i.audio_codec_display??i.audio_codec??''),
+      csvC((i.audio_languages??[]).map(l=>getLanguageDisplay(l)).join(', ')),
       i.runtime_min||'',
       csvC(i.size),i.size_b||0,
       i.type==='tv'?((i.season_count||'')+' S / '+(i.episode_count||'')+' Ep'):(i.file_count!==undefined?i.file_count:''),
@@ -1569,20 +1614,23 @@ let allItems=[], categories=[], groups=[];
   }
 
   // ── SCAN ──────────────────────────────────────────────
-  let _scanMode = 'default';
+  let _scanMode = 'quick';
   let _pollTimer = null;
   let _logOffset = 0;
 
   const SCAN_MODE_LABELS = {
-    default: 'Quick + Enrich',
-    quick:   'Quick',
-    enrich:  'Enrich',
-    full:    'Full',
+    quick:   () => t('scan.mode_quick'),
+    full:    () => t('scan.mode_full'),
   };
+
+  function _scanModeLabel(mode) {
+    const fn = SCAN_MODE_LABELS[mode];
+    return fn ? fn() : t('scan.start');
+  }
 
   function selectScanMode(mode) {
     _scanMode = mode;
-    document.getElementById('scanBtnLabel').textContent = SCAN_MODE_LABELS[mode] || 'Scanner';
+    document.getElementById('scanBtnLabel').textContent = _scanModeLabel(mode);
     document.getElementById('scanDropdown').classList.remove('open');
   }
 
@@ -1672,7 +1720,7 @@ let allItems=[], categories=[], groups=[];
   function openScanLog(mode) {
     const panel = document.getElementById('scanLogPanel');
     panel.classList.remove('viewer');
-    document.getElementById('scanLogTitle').textContent = 'Scan — ' + (SCAN_MODE_LABELS[mode] || mode);
+    document.getElementById('scanLogTitle').textContent = 'Scan — ' + _scanModeLabel(mode);
     document.getElementById('scanLogBody').innerHTML = '';
     setScanStatus('running');
     panel.classList.add('open');
@@ -1724,7 +1772,7 @@ let allItems=[], categories=[], groups=[];
     const dot = document.getElementById('scanStatusDot');
     dot.className = 'scan-status-dot ' + (status || '');
     const title = document.getElementById('scanLogTitle');
-    const mode = SCAN_MODE_LABELS[_scanMode] || _scanMode;
+    const mode = _scanModeLabel(_scanMode);
     const suffix = status === 'running' ? t('scan.status_running')
                  : status === 'done'    ? t('scan.status_done')
                  : status === 'error'   ? t('scan.status_error')
