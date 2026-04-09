@@ -6,6 +6,7 @@ WORKDIR /app
 
 # Copier le code applicatif dans l'image
 COPY app/ /usr/share/nginx/html/
+COPY docs/ /usr/share/nginx/html/docs/
 COPY conf/nginx.conf /etc/nginx/nginx.conf
 COPY conf/scanner.py /app/scanner.py
 COPY conf/entrypoint.sh /app/entrypoint.sh
