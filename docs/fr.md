@@ -128,7 +128,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 **Étapes :**
 
 1. **Écran d'accueil** — description de l'application, choix de la langue, bouton "Commencer".
-2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'au moins un dossier est non configuré.
+2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'aucun dossier media (Films ou Séries) n'est configuré.
 3. **Jellyseerr** (optionnel) — URL + clé API, bouton de test de connexion.
 4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin.
 
