@@ -63,7 +63,11 @@
     "by_group": "Par groupe",
     "by_category": "Par dossier",
     "audio_language": "Langue audio",
-    "unknown": "Inconnu"
+    "unknown": "Inconnu",
+    "select_all": "Tout sélectionner",
+    "include": "Inclure",
+    "exclude": "Exclure",
+    "except": "Sauf"
   },
   "sort": {
     "title_asc": "Titre A-Z",
@@ -170,6 +174,8 @@
     "resolution": "Résolution",
     "codec": "Codec vidéo",
     "audio_codec_chart_title": "Codec audio",
+    "audio_languages_chart_title": "Langues audio",
+    "others": "Autres",
     "providers": "Providers",
     "elements": "Éléments",
     "files": "Fichiers",
@@ -225,7 +231,7 @@
     "group": "Groupe",
     "category": "Dossier",
     "resolution": "Résolution",
-    "codec": "Codec vidéo",
+    "codec": "Codec",
     "audio_codec": "Codec audio",
     "audio_languages": "Langues audio",
     "size": "Taille",

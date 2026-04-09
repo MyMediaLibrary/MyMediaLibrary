@@ -104,6 +104,11 @@ let allItems=[], categories=[], groups=[];
   let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
+  let audioCodecExclude = false;
+  let videoCodecExclude = false;
+  let providerExclude = false;
+  let audioLanguageExclude = false;
+  let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
 
@@ -113,6 +118,7 @@ let allItems=[], categories=[], groups=[];
         activeGroup, activeCat, activeResolution, activeType,
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
+        audioCodecExclude, videoCodecExclude, providerExclude, audioLanguageExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -131,6 +137,10 @@ let allItems=[], categories=[], groups=[];
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
+      if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
+      if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
+      if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
+      if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -146,6 +156,7 @@ let allItems=[], categories=[], groups=[];
       renderResolutionFilter();
       renderCodecFilter();
       renderAudioCodecFilter();
+      renderAudioLanguageFilter();
       // Sync type pills
       if (s.activeType) {
         ['#typeFilter','#typeFilterTop'].forEach(sel => {
@@ -450,7 +461,7 @@ let allItems=[], categories=[], groups=[];
     }
   });
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst }) {
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
     const keys = Object.keys(counts).sort((a, b) => {
@@ -464,12 +475,23 @@ let allItems=[], categories=[], groups=[];
     const hasValue = activeSet.size > 0;
     let triggerLabel;
     if (!hasValue) triggerLabel = t('filters.all');
-    else if (activeSet.size === 1) triggerLabel = escH(getDisplay([...activeSet][0]));
-    else triggerLabel = t('filters.n_selected', { n: activeSet.size });
+    else if (excludeMode) {
+      if (activeSet.size === 1) triggerLabel = t('filters.except') + ' ' + escH(getDisplay([...activeSet][0]));
+      else triggerLabel = t('filters.except') + ' ' + t('filters.n_selected', { n: activeSet.size });
+    } else {
+      if (activeSet.size === 1) triggerLabel = escH(getDisplay([...activeSet][0]));
+      else triggerLabel = t('filters.n_selected', { n: activeSet.size });
+    }
 
     const clearBtn = hasValue
       ? '<span class="filter-dropdown-inline-clear" onclick="event.stopPropagation();' + clearFn + '()">✕</span>'
       : '';
+
+    // Select-all state
+    const allSelected = keys.length > 0 && keys.every(k => activeSet.has(k));
+    const noneSelected = keys.every(k => !activeSet.has(k));
+    const indeterminate = !allSelected && !noneSelected;
+    const selectAllId = 'sa_' + containerId;
 
     let html = '<div class="storage-block">'
       + '<div class="storage-title">' + escH(label) + '</div>'
@@ -479,7 +501,20 @@ let allItems=[], categories=[], groups=[];
       + clearBtn
       + '<svg class="filter-dropdown-chevron' + (isOpen ? ' open' : '') + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
       + '</div>'
-      + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>';
+      + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>'
+      + '<div class="filter-dropdown-header">'
+      + '<label class="filter-dropdown-select-all" onclick="event.stopPropagation()">'
+      + '<input type="checkbox" id="' + selectAllId + '"' + (allSelected ? ' checked' : '')
+      + ' onchange="event.stopPropagation();_dropdownSelectAll(\'' + containerId + '\',\'' + clearFn + '\',this.checked)">'
+      + '<span>' + t('filters.select_all') + '</span>'
+      + '</label>';
+    if (onToggleExclude) {
+      html += '<select class="filter-dropdown-mode" onchange="event.stopPropagation();' + onToggleExclude + '(this.value===\'exclude\')" onclick="event.stopPropagation()">'
+        + '<option value="include"' + (excludeMode ? '' : ' selected') + '>' + t('filters.include') + '</option>'
+        + '<option value="exclude"' + (excludeMode ? ' selected' : '') + '>' + t('filters.exclude') + '</option>'
+        + '</select>';
+    }
+    html += '</div>';
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
       html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
@@ -490,6 +525,27 @@ let allItems=[], categories=[], groups=[];
     });
     html += '</div></div></div>';
     sec.innerHTML = html;
+    // Set indeterminate state for select-all checkbox (can't be set in HTML)
+    const saEl = sec.querySelector('#' + selectAllId);
+    if (saEl && indeterminate) saEl.indeterminate = true;
+  }
+
+  function _dropdownSelectAll(containerId, clearFn, checked) {
+    const sec = document.getElementById(containerId);
+    if (!sec) return;
+    if (!checked) { window[clearFn] && window[clearFn](); return; }
+    // Collect all keys from rendered options before any re-render
+    const keys = [...sec.querySelectorAll('.filter-dropdown-option[data-key]')].map(el => el.dataset.key);
+    if (!keys.length) return;
+    // Determine the Set to update by mapping containerId to the active set variable
+    const setMap = {
+      'providerSection': activeProviders, 'providerSectionMobile': activeProviders, 'providerSectionTop': activeProviders,
+      'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
+      'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
+      'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
+    };
+    const activeSet = setMap[containerId];
+    if (activeSet) { keys.forEach(k => activeSet.add(k)); onFilter(); }
   }
 
   function toggleProviderFilter(key) { if (activeProviders.has(key)) activeProviders.delete(key); else activeProviders.add(key); onFilter(); }
@@ -500,6 +556,10 @@ let allItems=[], categories=[], groups=[];
   function clearAudioCodecFilter() { activeAudioCodecs.clear(); onFilter(); }
   function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
   function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
+  function toggleProviderExclude(v) { providerExclude = v; onFilter(); }
+  function toggleVideoCodecExclude(v) { videoCodecExclude = v; onFilter(); }
+  function toggleAudioCodecExclude(v) { audioCodecExclude = v; onFilter(); }
+  function toggleAudioLanguageExclude(v) { audioLanguageExclude = v; onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
@@ -516,7 +576,8 @@ let allItems=[], categories=[], groups=[];
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
-        getDisplay: k => k === '__none__' ? t('filters.no_provider') : k, pinFirst: '__none__' });
+        getDisplay: k => k === '__none__' ? t('filters.no_provider') : k, pinFirst: '__none__',
+        excludeMode: providerExclude, onToggleExclude: 'toggleProviderExclude' });
     });
   }
 
@@ -526,7 +587,8 @@ let allItems=[], categories=[], groups=[];
     base.forEach(i => { if (i.codec) counts[i.codec] = (counts[i.codec]||0)+1; });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
-        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k });
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k,
+        excludeMode: videoCodecExclude, onToggleExclude: 'toggleVideoCodecExclude' });
     });
   }
 
@@ -536,18 +598,27 @@ let allItems=[], categories=[], groups=[];
     base.forEach(i => { if (i.audio_codec) counts[i.audio_codec] = (counts[i.audio_codec]||0)+1; });
     ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
-        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k });
+        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k,
+        excludeMode: audioCodecExclude, onToggleExclude: 'toggleAudioCodecExclude' });
     });
   }
 
   function renderAudioLanguageFilter() {
     const base = baseItems('audioLanguage');
     const counts = {};
-    base.forEach(i => { (i.audio_languages||[]).forEach(l => { counts[l] = (counts[l]||0)+1; }); });
+    base.forEach(i => { (i.audio_languages ?? []).forEach(l => { counts[l] = (counts[l] ?? 0) + 1; }); });
+    if (Object.keys(counts).length === 0) {
+      ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
+        const sec = document.getElementById(cid);
+        if (sec) sec.style.display = 'none';
+      });
+      return;
+    }
     ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_language'),
         activeSet: activeAudioLanguages, toggleFn: 'toggleAudioLanguageFilter', clearFn: 'clearAudioLanguageFilter',
-        getDisplay: k => getLanguageDisplay(k) });
+        getDisplay: k => getLanguageDisplay(k),
+        excludeMode: audioLanguageExclude, onToggleExclude: 'toggleAudioLanguageExclude' });
     });
   }
 
@@ -627,15 +698,42 @@ let allItems=[], categories=[], groups=[];
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
     if (enableJellyseerr && activeProviders.size > 0) {
-      items=items.filter(i=>{
-        if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
-        return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
-      });
+      if (providerExclude) {
+        items=items.filter(i=>{
+          const visProv = _itemVisProviders(i).map(_pname);
+          const hasNone = !visProv.length;
+          if (activeProviders.has('__none__') && hasNone) return false;
+          return !visProv.some(p=>activeProviders.has(p));
+        });
+      } else {
+        items=items.filter(i=>{
+          if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+          return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+        });
+      }
     }
     if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
-    if (activeCodecs.size > 0)          items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (activeAudioCodecs.size > 0)     items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
-    if (activeAudioLanguages.size > 0)  items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+    if (activeCodecs.size > 0) {
+      if (videoCodecExclude) {
+        items=items.filter(i=>!activeCodecs.has(i.codec??'UNKNOWN'));
+      } else {
+        items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+      }
+    }
+    if (activeAudioCodecs.size > 0) {
+      if (audioCodecExclude) {
+        items=items.filter(i=>!activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+      } else {
+        items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+      }
+    }
+    if (activeAudioLanguages.size > 0) {
+      if (audioLanguageExclude) {
+        items=items.filter(i=>!(Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l))));
+      } else {
+        items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+      }
+    }
     return applySearch(items, q);
   }
 
@@ -651,15 +749,42 @@ let allItems=[], categories=[], groups=[];
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
     if (except!=='provider' && activeProviders.size > 0) {
-      items=items.filter(i=>{
-        if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
-        return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
-      });
+      if (providerExclude) {
+        items=items.filter(i=>{
+          const visProv = _itemVisProviders(i).map(_pname);
+          const hasNone = !visProv.length;
+          if (activeProviders.has('__none__') && hasNone) return false;
+          return !visProv.some(p=>activeProviders.has(p));
+        });
+      } else {
+        items=items.filter(i=>{
+          if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+          return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+        });
+      }
     }
     if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
-    if (except!=='codec'         && activeCodecs.size > 0)         items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
-    if (except!=='audioCodec'    && activeAudioCodecs.size > 0)    items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
-    if (except!=='audioLanguage' && activeAudioLanguages.size > 0) items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+    if (except!=='codec' && activeCodecs.size > 0) {
+      if (videoCodecExclude) {
+        items=items.filter(i=>!activeCodecs.has(i.codec??'UNKNOWN'));
+      } else {
+        items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+      }
+    }
+    if (except!=='audioCodec' && activeAudioCodecs.size > 0) {
+      if (audioCodecExclude) {
+        items=items.filter(i=>!activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+      } else {
+        items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+      }
+    }
+    if (except!=='audioLanguage' && activeAudioLanguages.size > 0) {
+      if (audioLanguageExclude) {
+        items=items.filter(i=>!(Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l))));
+      } else {
+        items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+      }
+    }
     return applySearch(items, q);
   }
 
@@ -716,16 +841,17 @@ let allItems=[], categories=[], groups=[];
   function sortByCol(col){ tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render(); }
 
   function sortItemsTable(items) {
-    if (!tSortCol) return items;
+    const col = tSortCol ?? 'title';
+    const dir = tSortCol ? tSortDir : 1;
     return [...items].sort((a,b)=>{
-      switch(tSortCol){
-        case 'title':    return (a.title||'').localeCompare(b.title||'')*tSortDir;
-        case 'year':     return ((a.year||'0')-(b.year||'0'))*tSortDir;
-        case 'size':     return ((a.size_b||0)-(b.size_b||0))*tSortDir;
-        case 'files':    return ((a.file_count||0)-(b.file_count||0))*tSortDir;
-        case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*tSortDir;
-        case 'category': return (a.category||'').localeCompare(b.category||'')*tSortDir;
-        case 'group':    return (a.group||'').localeCompare(b.group||'')*tSortDir;
+      switch(col){
+        case 'title':    return (a.title||'').localeCompare(b.title||'')*dir;
+        case 'year':     return ((a.year||'0')-(b.year||'0'))*dir;
+        case 'size':     return ((a.size_b||0)-(b.size_b||0))*dir;
+        case 'files':    return ((a.file_count||0)-(b.file_count||0))*dir;
+        case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*dir;
+        case 'category': return (a.category||'').localeCompare(b.category||'')*dir;
+        case 'group':    return (a.group||'').localeCompare(b.group||'')*dir;
       }
       return 0;
     });
@@ -845,10 +971,7 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
-    const lang=appConfig?.system?.language??'fr';
-    const h_audio_codec   = lang==='fr'?'Codec audio':'Audio codec';
-    const h_audio_langs   = lang==='fr'?'Langues audio':'Audio languages';
-    const headers=['Titre','Annee',hg?'Groupe':null,'Categorie','Resolution','HDR','Codec',h_audio_codec,h_audio_langs,'Runtime (min)','Taille','Taille (octets)','Fichiers','Ajoute le','Streaming'].filter(Boolean);
+    const headers=[t('table.title'),t('table.year'),hg?t('table.group'):null,t('table.category'),t('table.resolution'),'HDR',t('table.codec'),t('table.audio_codec'),t('table.audio_languages'),'Runtime (min)',t('table.size'),'Size (B)',t('table.files'),t('table.added'),t('table.streaming')].filter(Boolean);
     const rows=items.map(i=>[
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
@@ -1028,6 +1151,25 @@ let allItems=[], categories=[], groups=[];
     const audioCodecColorFn=(k,idx)=>AUDIO_CODEC_COLORS[idx%AUDIO_CODEC_COLORS.length];
     const audioCodecEntriesSize  = Object.entries(byAudioCodec).sort((a,b)=>b[1]-a[1]);
     const audioCodecEntriesCount = Object.entries(byAudioCodecCount).sort((a,b)=>b[1]-a[1]);
+
+    // ── Audio Languages ──────────────────────────────────
+    const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
+    const byAudioLang={};
+    items.forEach(i=>(i.audio_languages??[]).forEach(l=>{
+      byAudioLang[l]=(byAudioLang[l]||0)+1;
+    }));
+    const audioLangTotal = Object.values(byAudioLang).reduce((a,b)=>a+b,0);
+    const audioLangThreshold = audioLangTotal * 0.01;
+    const audioLangMain={};
+    let audioLangOthersCount=0;
+    Object.entries(byAudioLang).sort((a,b)=>b[1]-a[1]).forEach(([code,count])=>{
+      if (count >= audioLangThreshold) audioLangMain[getLanguageDisplay(code)] = count;
+      else audioLangOthersCount += count;
+    });
+    if (audioLangOthersCount > 0) audioLangMain[t('stats.others')] = audioLangOthersCount;
+    const hasLangData = Object.keys(audioLangMain).length > 0;
+    const audioLangEntries = Object.entries(audioLangMain).sort((a,b)=>b[1]-a[1]);
+    const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
 
     // ── Resolution ───────────────────────────────────────
     const RES_ORDER = ['4K','1080p','720p','SD'];
@@ -1346,6 +1488,7 @@ let allItems=[], categories=[], groups=[];
         +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn) : '')
         +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn) : '')
         +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn) : '')
+        +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntries, audioLangEntries, audioLangColorFn) : '')
         +provPieHtml
       +'</div>'
       // 2. Années / décennies
@@ -1926,6 +2069,20 @@ let allItems=[], categories=[], groups=[];
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
+    if (!enabled) {
+      _settingsJsrTestOk = false;
+      const res = document.getElementById('cfgJsrTestResult');
+      if (res) res.textContent = '';
+    }
+    _updateJsrSaveBtn();
+  }
+
+  function _updateJsrSaveBtn() {
+    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    if (!saveBtn) return;
+    // Can save if: Jellyseerr disabled, OR test passed
+    saveBtn.disabled = !!(enabled && !_settingsJsrTestOk);
   }
 
   function _hasEditableFields() {
@@ -2176,14 +2333,17 @@ let allItems=[], categories=[], groups=[];
       const data = await r.json();
       if (data.ok) {
         res.textContent = '✓'; res.style.color = '#34d399';
+        _settingsJsrTestOk = true;
       } else {
         res.textContent = '✗'; res.style.color = '#f97316';
+        _settingsJsrTestOk = false;
       }
     } catch(e) {
       res.textContent = '✗'; res.style.color = '#f97316';
+      _settingsJsrTestOk = false;
     } finally {
       if (btn) btn.disabled = false;
-      setTimeout(() => { if (res) res.textContent = ''; }, 3000);
+      _updateJsrSaveBtn();
     }
   }
 
@@ -2195,12 +2355,14 @@ let allItems=[], categories=[], groups=[];
   }
 
   function openSettings() {
+    _settingsJsrTestOk = false;
     loadSettings();
     loadVersion();
     renderProviderToggles();
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');
     if (btn) btn.style.display = 'block'; // always show — config.json is always writable
+    _updateJsrSaveBtn();
   }
 
   function closeSettings() {
@@ -2280,9 +2442,15 @@ let allItems=[], categories=[], groups=[];
   });
 
   // ── SIDEBAR RESIZE ───────────────────────────────────
+  const SIDEBAR_MIN = 300;
+  const SIDEBAR_MAX = 500;
   (function(){
     const sidebar = document.getElementById('sidebar');
     const resizer = document.getElementById('sidebarResizer');
+    // Apply saved sidebar width with constraints
+    const savedWidth = parseInt(localStorage.getItem('sidebarWidth') ?? '320');
+    const clampedWidth = Math.min(Math.max(savedWidth, SIDEBAR_MIN), SIDEBAR_MAX);
+    sidebar.style.width = clampedWidth + 'px';
     let startX, startW;
     resizer.addEventListener('mousedown', function(e){
       startX = e.clientX;
@@ -2291,8 +2459,10 @@ let allItems=[], categories=[], groups=[];
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
       function onMove(e){
-        const w = Math.min(420, Math.max(200, startW + e.clientX - startX));
+        const newWidth = startW + e.clientX - startX;
+        const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, newWidth));
         sidebar.style.width = w + 'px';
+        localStorage.setItem('sidebarWidth', w);
       }
       function onUp(){
         resizer.classList.remove('dragging');

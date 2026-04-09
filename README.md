@@ -11,6 +11,15 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 
 **→ [Documentation complète](docs/fr.md)**
 
+### Fonctionnalités
+
+- **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques (résolution, codec vidéo/audio, HDR)
+- **Filtres avancés** : filtrage multi-critères par dossier, type, résolution, provider streaming, codec vidéo, codec audio et langue audio — avec persistance entre sessions
+- **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
+- **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, providers, langues audio)
+- **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
+- **Interface bilingue** : UI entièrement disponible en français et en anglais, thème clair/sombre, sidebar redimensionnable
+
 ### Démarrage rapide
 
 ```yaml
@@ -58,6 +67,15 @@ Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
 Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` files (Kodi/Jellyfin), serves a filterable web interface, runs in a single Docker container.
 
 **→ [Full documentation](docs/en.md)**
+
+### Features
+
+- **Unified library**: browse your movies and TV shows in grid or table view, with posters, metadata, and technical details (resolution, video/audio codec, HDR)
+- **Advanced filters**: multi-criteria filtering by folder, type, resolution, streaming provider, video codec, audio codec, and audio language — persisted between sessions
+- **Streaming availability**: Jellyseerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
+- **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
+- **Configurable scan**: quick scan (local only) or full scan (with Jellyseerr), schedulable via cron, configurable from the UI
+- **Bilingual interface**: fully available in French and English, light/dark theme, resizable sidebar
 
 ### Quick start
 
