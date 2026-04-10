@@ -71,6 +71,32 @@ let allItems=[], categories=[], groups=[];
     return entry[lang] ?? entry['en'] ?? isoCode.toUpperCase();
   }
 
+  function normalizeAudioLanguageCode(raw) {
+    if (typeof raw !== 'string') return null;
+    const code = raw.toLowerCase().trim();
+    if (!code) return null;
+    if (code === 'fr' || code === 'fra' || code === 'fre') return 'fra';
+    return code;
+  }
+
+  function simplifyAudioLanguages(codes) {
+    if (!Array.isArray(codes)) return 'VO';
+    const normalized = new Set();
+    codes.forEach(code => {
+      const norm = normalizeAudioLanguageCode(code);
+      if (norm) normalized.add(norm);
+    });
+    if (normalized.size === 1 && normalized.has('fra')) return 'VF';
+    if (normalized.has('fra') && normalized.size > 1) return 'MULTI';
+    return 'VO';
+  }
+
+  function getAudioLanguageSimple(item) {
+    const mapped = item?.audio_languages_simple;
+    if (mapped === 'VF' || mapped === 'VO' || mapped === 'MULTI') return mapped;
+    return simplifyAudioLanguages(item?.audio_languages ?? []);
+  }
+
   function getAudioCodecDisplay(normalized) {
     if (!normalized || normalized === 'UNKNOWN')
       return audioCodecMapping.fallback?.display ?? 'Unknown';
@@ -231,6 +257,9 @@ let allItems=[], categories=[], groups=[];
       const data = await r.json();
       libraryExportSource = data;
       allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
+      allItems.forEach(i => {
+        if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
+      });
       // providers_meta: canonical logo source (new format)
       PROVIDERS_META = data.providers_meta || {};
       // Legacy fallback: old library.json used providers_catalog or embedded {name,logo} objects
@@ -660,7 +689,10 @@ let allItems=[], categories=[], groups=[];
   function renderAudioLanguageFilter() {
     const base = baseItems('audioLanguage');
     const counts = {};
-    base.forEach(i => { (i.audio_languages ?? []).forEach(l => { counts[l] = (counts[l] ?? 0) + 1; }); });
+    base.forEach(i => {
+      const key = getAudioLanguageSimple(i);
+      counts[key] = (counts[key] ?? 0) + 1;
+    });
     if (Object.keys(counts).length === 0) {
       ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
         const sec = document.getElementById(cid);
@@ -671,7 +703,7 @@ let allItems=[], categories=[], groups=[];
     ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_language'),
         activeSet: activeAudioLanguages, toggleFn: 'toggleAudioLanguageFilter', clearFn: 'clearAudioLanguageFilter',
-        getDisplay: k => getLanguageDisplay(k),
+        getDisplay: k => k,
         excludeMode: audioLanguageExclude, onToggleExclude: 'toggleAudioLanguageExclude' });
     });
   }
@@ -783,9 +815,9 @@ let allItems=[], categories=[], groups=[];
     }
     if (activeAudioLanguages.size > 0) {
       if (audioLanguageExclude) {
-        items=items.filter(i=>!(Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l))));
+        items=items.filter(i=>!activeAudioLanguages.has(getAudioLanguageSimple(i)));
       } else {
-        items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+        items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
     return applySearch(items, q);
@@ -834,9 +866,9 @@ let allItems=[], categories=[], groups=[];
     }
     if (except!=='audioLanguage' && activeAudioLanguages.size > 0) {
       if (audioLanguageExclude) {
-        items=items.filter(i=>!(Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l))));
+        items=items.filter(i=>!activeAudioLanguages.has(getAudioLanguageSimple(i)));
       } else {
-        items=items.filter(i=>Array.isArray(i.audio_languages)&&i.audio_languages.some(l=>activeAudioLanguages.has(l)));
+        items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
     return applySearch(items, q);
@@ -1209,15 +1241,16 @@ let allItems=[], categories=[], groups=[];
     // ── Audio Languages ──────────────────────────────────
     const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
     const byAudioLang={};
-    items.forEach(i=>(i.audio_languages??[]).forEach(l=>{
-      byAudioLang[l]=(byAudioLang[l]||0)+1;
-    }));
+    items.forEach(i=>{
+      const key = getAudioLanguageSimple(i);
+      byAudioLang[key]=(byAudioLang[key]||0)+1;
+    });
     const audioLangTotal = Object.values(byAudioLang).reduce((a,b)=>a+b,0);
     const audioLangThreshold = audioLangTotal * 0.01;
     const audioLangMain={};
     let audioLangOthersCount=0;
-    Object.entries(byAudioLang).sort((a,b)=>b[1]-a[1]).forEach(([code,count])=>{
-      if (count >= audioLangThreshold) audioLangMain[getLanguageDisplay(code)] = count;
+    Object.entries(byAudioLang).sort((a,b)=>b[1]-a[1]).forEach(([label,count])=>{
+      if (count >= audioLangThreshold) audioLangMain[label] = count;
       else audioLangOthersCount += count;
     });
     if (audioLangOthersCount > 0) audioLangMain[t('stats.others')] = audioLangOthersCount;
