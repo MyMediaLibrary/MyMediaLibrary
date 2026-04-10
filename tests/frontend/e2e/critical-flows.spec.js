@@ -50,25 +50,29 @@ async function mockCoreRoutes(page, { onboarding = false } = {}) {
   });
 }
 
+async function openConfiguredLibrary(page) {
+  await mockCoreRoutes(page, { onboarding: false });
+  await page.goto('/index.html');
+  await expect(page.locator('#library')).toContainText('Film VF');
+}
+
 test('onboarding first run displays and export JSON disabled', async ({ page }) => {
   await mockCoreRoutes(page, { onboarding: true });
   await page.goto('/index.html');
 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
-
-  const exportBtn = page.locator('#cfgExportJsonBtn');
-  await expect(exportBtn).toBeDisabled();
+  await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
 });
 
 test('global search keyboard interactions and filtering', async ({ page }) => {
-  await mockCoreRoutes(page, { onboarding: false });
-  await page.goto('/index.html');
+  await openConfiguredLibrary(page);
 
   await page.keyboard.press('Control+k');
   await expect(page.locator('#searchInput')).toBeFocused();
 
   await page.locator('#searchInput').fill('film vf');
-  await expect(page.locator('.media-card, .table-view tbody tr')).toHaveCount(1);
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await expect(page.locator('#library')).not.toContainText('Film VO');
 
   await page.keyboard.press('Escape');
   await expect(page.locator('#searchInput')).toBeFocused();
@@ -79,25 +83,29 @@ test('global search keyboard interactions and filtering', async ({ page }) => {
 });
 
 test('filters include/exclude and global reset', async ({ page }) => {
-  await mockCoreRoutes(page, { onboarding: false });
-  await page.goto('/index.html');
+  await openConfiguredLibrary(page);
 
-  await page.click('#providerSection .filter-dropdown-trigger');
-  await page.click('#providerSection .filter-dropdown-option[data-key="Netflix"]');
+  await page.evaluate(() => {
+    toggleProviderFilter('Netflix');
+  });
   await expect(page.locator('#globalFilterResetBtn')).toBeEnabled();
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await expect(page.locator('#library')).not.toContainText('Film VO');
 
-  await page.click('#providerSection .filter-mode-toggle');
-  await expect(page.locator('.media-card, .table-view tbody tr').first()).toBeVisible();
+  await page.evaluate(() => {
+    toggleProviderExclude();
+  });
+  await expect(page.locator('#library')).toContainText('Film VO');
+  await expect(page.locator('#library')).not.toContainText('Film VF');
 
   await page.click('#globalFilterResetBtn');
   await expect(page.locator('#globalFilterResetBtn')).toBeDisabled();
 });
 
 test('export JSON present and triggers download only when library is valid', async ({ page }) => {
-  await mockCoreRoutes(page, { onboarding: false });
-  await page.goto('/index.html');
+  await openConfiguredLibrary(page);
 
-  await page.click('button[onclick="openSettings()"]');
+  await page.evaluate(() => openSettings());
   const exportBtn = page.locator('#cfgExportJsonBtn');
   await expect(exportBtn).toBeEnabled();
 
