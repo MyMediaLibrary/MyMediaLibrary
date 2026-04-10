@@ -399,6 +399,31 @@
       background:var(--surface);border-bottom:1px solid var(--border);
       padding:10px 16px;align-items:center;justify-content:space-between;gap:8px}
     .mobile-topbar-title{font-family:'Syne',sans-serif;font-weight:800;font-size:15px}
+    .mobile-topbar-btn{min-width:0;padding:8px 10px}
+    .mobile-topbar-btn span{font-size:11px;white-space:nowrap}
+    .mobile-actions-menu{display:none;position:fixed;top:52px;right:12px;z-index:220;
+      background:var(--surface);border:1px solid var(--border);border-radius:12px;
+      min-width:220px;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden}
+    .mobile-actions-menu.open{display:flex;flex-direction:column}
+    .mobile-actions-item{background:none;border:none;border-bottom:1px solid var(--border);
+      color:var(--text);text-align:left;padding:12px 14px;cursor:pointer;font-family:'Inter',sans-serif;
+      font-size:13px}
+    .mobile-actions-item:last-child{border-bottom:none}
+    .mobile-actions-item:hover{background:var(--card-h)}
+    .mobile-actions-item:disabled{opacity:.5;cursor:not-allowed}
+    .mobile-sheet-backdrop{position:fixed;inset:0;z-index:260;background:rgba(0,0,0,.45);
+      display:none;align-items:flex-end;padding:0}
+    .mobile-sheet-backdrop.open{display:flex}
+    .mobile-sheet{background:var(--surface);border-top:1px solid var(--border);
+      border-radius:16px 16px 0 0;padding:16px;width:100%;display:flex;flex-direction:column;gap:10px;
+      box-shadow:0 -8px 24px rgba(0,0,0,.35)}
+    .mobile-sheet-title{font-family:'Syne',sans-serif;font-weight:700;font-size:15px}
+    .mobile-scan-choice{background:var(--card);border:1px solid var(--border);border-radius:12px;
+      color:var(--text);padding:14px;display:flex;flex-direction:column;gap:4px;text-align:left;cursor:pointer}
+    .mobile-scan-choice:hover{border-color:var(--accent)}
+    .mobile-scan-choice:disabled{opacity:.5;cursor:not-allowed}
+    .mobile-scan-choice-title{font-family:'Syne',sans-serif;font-weight:700;font-size:14px}
+    .mobile-scan-choice-desc{font-size:12px;color:var(--muted)}
     .mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;
       background:var(--surface);border-top:1px solid var(--border);
       padding:8px 0 env(safe-area-inset-bottom,8px)}

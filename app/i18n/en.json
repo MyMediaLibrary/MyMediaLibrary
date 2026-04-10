@@ -227,8 +227,15 @@
     "elements": "{n} items"
   },
   "mobile": {
+    "actions_menu": "Actions menu",
+    "actions_short": "⋯",
+    "filters": "Filters",
     "library": "Library",
-    "stats": "Stats"
+    "stats": "Stats",
+    "scan_library": "Scan library",
+    "scan_quick_desc": "Quickly detects recent changes.",
+    "scan_full_desc": "Reruns a full media library analysis.",
+    "toggle_theme": "Dark / light theme"
   },
   "table": {
     "title": "Title",

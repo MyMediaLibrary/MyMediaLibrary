@@ -2036,6 +2036,7 @@ let allItems=[], categories=[], groups=[];
   let _scanMode = 'quick';
   let _pollTimer = null;
   let _logOffset = 0;
+  let _isScanning = false;
 
   const SCAN_MODE_LABELS = {
     quick:   () => t('scan.mode_quick'),
@@ -2051,6 +2052,20 @@ let allItems=[], categories=[], groups=[];
     _scanMode = mode;
     document.getElementById('scanBtnLabel').textContent = _scanModeLabel(mode);
     document.getElementById('scanDropdown').classList.remove('open');
+  }
+
+  function setScanControlsState(isScanning) {
+    _isScanning = !!isScanning;
+    ['scanMainBtn', 'scanArrowBtn', 'mobileScanEntryBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
+      .forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = _isScanning;
+      });
+    if (_isScanning) {
+      document.getElementById('scanDropdown')?.classList.remove('open');
+      closeMobileActionsMenu();
+      closeMobileScanSheet();
+    }
   }
 
   function toggleScanDropdown(e) {
@@ -2071,10 +2086,12 @@ let allItems=[], categories=[], groups=[];
     document.getElementById('scanDropdown')?.classList.remove('open');
   });
 
-  function triggerScan() {
-    const btn = document.getElementById('scanMainBtn');
-    const arrow = document.getElementById('scanArrowBtn');
-    btn.disabled = true; arrow.disabled = true;
+  function triggerScan(mode = _scanMode) {
+    if (_isScanning) return;
+    selectScanMode(mode);
+    closeMobileActionsMenu();
+    closeMobileScanSheet();
+    setScanControlsState(true);
     _logOffset = 0;
     openScanLog(_scanMode);
 
@@ -2086,9 +2103,16 @@ let allItems=[], categories=[], groups=[];
     .then(r => r.json())
     .then(data => {
       if (data.error) {
+        if (/already running/i.test(String(data.error))) {
+          appendScanLog('[Info] ' + data.error, 'log-line');
+          setScanStatus('running');
+          setScanControlsState(true);
+          startPoll();
+          return;
+        }
         appendScanLog('[Erreur] ' + data.error, 'log-err');
         setScanStatus('error');
-        btn.disabled = false; arrow.disabled = false;
+        setScanControlsState(false);
         return;
       }
       startPoll();
@@ -2096,7 +2120,7 @@ let allItems=[], categories=[], groups=[];
     .catch(err => {
       appendScanLog('[Erreur réseau] ' + err, 'log-err');
       setScanStatus('error');
-      btn.disabled = false; arrow.disabled = false;
+      setScanControlsState(false);
     });
   }
 
@@ -2120,12 +2144,10 @@ let allItems=[], categories=[], groups=[];
           appendScanLog(l, cls);
         });
         setScanStatus(data.status);
+        setScanControlsState(data.status === 'running');
         if (data.status !== 'running') {
           clearInterval(_pollTimer);
           _pollTimer = null;
-          const btn = document.getElementById('scanMainBtn');
-          const arrow = document.getElementById('scanArrowBtn');
-          btn.disabled = false; arrow.disabled = false;
           // Reload library.json on success
           if (data.status === 'done') {
             setTimeout(() => loadLibrary(), 800);
@@ -2133,7 +2155,7 @@ let allItems=[], categories=[], groups=[];
           }
         }
       })
-      .catch(() => {});
+      .catch(() => { setScanControlsState(false); });
   }
 
   function openScanLog(mode) {
@@ -2199,6 +2221,17 @@ let allItems=[], categories=[], groups=[];
     title.textContent = 'Scan — ' + mode + suffix;
   }
 
+  function syncScanState() {
+    fetch('/api/scan/status')
+      .then(r => r.json())
+      .then(data => {
+        const running = data?.status === 'running';
+        setScanControlsState(running);
+        if (running) startPoll();
+      })
+      .catch(() => setScanControlsState(false));
+  }
+
   // ── CURVE PERIOD SWITCH ──────────────────────────────
   let _buildCurveForPeriodGlobal = ()=>'';
   function setCurvePeriod(btn) {
@@ -2212,12 +2245,48 @@ let allItems=[], categories=[], groups=[];
 
   // ── MOBILE NAV ───────────────────────────────────────
   let currentMobileTab = 'library';
+  let mobileActionsMenuOpen = false;
+  let mobileScanSheetOpen = false;
+
+  function toggleMobileActionsMenu(event) {
+    if (event) event.stopPropagation();
+    mobileActionsMenuOpen = !mobileActionsMenuOpen;
+    const menu = document.getElementById('mobileActionsMenu');
+    const btn = document.getElementById('mobileActionsBtn');
+    if (menu) menu.classList.toggle('open', mobileActionsMenuOpen);
+    if (btn) btn.style.color = mobileActionsMenuOpen ? 'var(--accent)' : '';
+  }
+
+  function closeMobileActionsMenu() {
+    mobileActionsMenuOpen = false;
+    const menu = document.getElementById('mobileActionsMenu');
+    const btn = document.getElementById('mobileActionsBtn');
+    if (menu) menu.classList.remove('open');
+    if (btn) btn.style.color = '';
+  }
+
+  function openMobileScanSheet() {
+    if (_isScanning) return;
+    closeMobileActionsMenu();
+    mobileScanSheetOpen = true;
+    document.getElementById('mobileScanSheet')?.classList.add('open');
+  }
+
+  function closeMobileScanSheet() {
+    mobileScanSheetOpen = false;
+    document.getElementById('mobileScanSheet')?.classList.remove('open');
+  }
+
+  function closeMobileScanSheetIfBackdrop(event) {
+    if (event.target === event.currentTarget) closeMobileScanSheet();
+  }
 
   function isMobile() { return window.innerWidth <= 768; }
 
   let mobileFiltersOpen = false;
 
   function toggleMobileFilters() {
+    closeMobileActionsMenu();
     mobileFiltersOpen = !mobileFiltersOpen;
     const panel = document.getElementById('mobileFiltersPanel');
     const btn   = document.getElementById('mobileFilterBtn');
@@ -2648,6 +2717,8 @@ let allItems=[], categories=[], groups=[];
   }
 
   function openSettings() {
+    closeMobileActionsMenu();
+    closeMobileScanSheet();
     _settingsJsrTestOk = false;
     loadSettings();
     loadVersion();
@@ -2719,13 +2790,21 @@ let allItems=[], categories=[], groups=[];
   }
 
   // ── KEYBOARD SHORTCUTS ──────────────────────────────
-  // Close mobile filters on outside tap
+  // Close mobile popovers on outside tap
   document.addEventListener('click', e => {
-    if (!mobileFiltersOpen) return;
-    const panel = document.getElementById('mobileFiltersPanel');
-    const btn   = document.getElementById('mobileFilterBtn');
-    if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
-      closeMobileFilters();
+    if (mobileFiltersOpen) {
+      const panel = document.getElementById('mobileFiltersPanel');
+      const btn   = document.getElementById('mobileFilterBtn');
+      if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
+        closeMobileFilters();
+      }
+    }
+    if (mobileActionsMenuOpen) {
+      const menu = document.getElementById('mobileActionsMenu');
+      const btn = document.getElementById('mobileActionsBtn');
+      if (menu && !menu.contains(e.target) && btn && !btn.contains(e.target)) {
+        closeMobileActionsMenu();
+      }
     }
   });
 
@@ -2770,6 +2849,8 @@ let allItems=[], categories=[], groups=[];
       if (escapeSearchInteraction()) return;
       const overlay = document.getElementById('settingsOverlay');
       if (overlay && overlay.style.display !== 'none') closeSettings();
+      closeMobileActionsMenu();
+      if (mobileScanSheetOpen) closeMobileScanSheet();
     }
   });
 
@@ -3276,6 +3357,7 @@ let allItems=[], categories=[], groups=[];
 
   function initApp() {
     loadLibrary();
+    syncScanState();
   }
 
   checkAuth();
