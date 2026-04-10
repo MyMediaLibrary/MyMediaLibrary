@@ -135,7 +135,7 @@ ISO_639_1_TO_2: dict[str, str] = {
 
 # Deprecated/bibliographic ISO 639-2 aliases → canonical terminiologic code
 _ISO_639_2_ALIASES: dict[str, str] = {
-    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron', 'nob': 'nor',
+    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron',
 }
 
 _KNOWN_ISO_639_2: frozenset[str] = frozenset({
