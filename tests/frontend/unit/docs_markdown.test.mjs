@@ -61,3 +61,11 @@ test('supports in-page anchors with heading ids and same-tab links', () => {
   assert.match(html, /<a href="#1-vue-densemble">Aller à la section<\/a>/);
   assert.doesNotMatch(html, /target="_blank"/);
 });
+
+
+test('renders inline code entities without double escaping', () => {
+  const html = parseMarkdown('Utiliser `<tag attr="x">` et `a & b`.');
+  assert.match(html, /<code>&lt;tag attr=&quot;x&quot;&gt;<\/code>/);
+  assert.match(html, /<code>a &amp; b<\/code>/);
+  assert.doesNotMatch(html, /&amp;lt;tag/);
+});

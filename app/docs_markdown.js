@@ -36,7 +36,7 @@
 
     safe = safe.replace(/`([^`]+)`/g, (_, code) => {
       const token = `@@CODE_${codeTokens.length}@@`;
-      codeTokens.push(`<code>${escapeHtml(code)}</code>`);
+      codeTokens.push(`<code>${code}</code>`);
       return token;
     });
 
