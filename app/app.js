@@ -154,10 +154,19 @@ let allItems=[], categories=[], groups=[];
   let visibleCategories = null;
   let visibleProviders  = null;
   const PROVIDER_OTHERS_KEY = '__others__';
+  const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
   function _catVisible(cat)  { return !visibleCategories || visibleCategories.has(cat); }
-  function _provVisible(prov){ return !visibleProviders  || visibleProviders.has(prov); }
+  function _isOthersProviderName(prov) {
+    if (!prov) return false;
+    return PROVIDER_OTHERS_ALIASES.has(String(prov).trim().toLowerCase());
+  }
+  function _provVisible(prov){
+    if (_isOthersProviderName(prov) || prov === PROVIDER_OTHERS_KEY) return true;
+    return !visibleProviders  || visibleProviders.has(prov);
+  }
   function _providerGroupKey(prov) {
     if (!prov) return null;
+    if (_isOthersProviderName(prov)) return PROVIDER_OTHERS_KEY;
     return _provVisible(prov) ? prov : PROVIDER_OTHERS_KEY;
   }
   function _providerGroupLabel(key) {
@@ -2623,7 +2632,9 @@ let allItems=[], categories=[], groups=[];
   function renderProviderToggles() {
     const container = document.getElementById('cfgProviderToggles');
     if (!container) return;
-    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))].sort();
+    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+      .filter(p => !_isOthersProviderName(p))
+      .sort();
     const hasHidden = _hasHiddenProviders();
     if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">Aucun provider disponible.</div>'; return; }
     let html = '';
@@ -2646,7 +2657,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   function gatherProviderVisibility() {
-    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))].sort();
+    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+      .filter(p => !_isOthersProviderName(p))
+      .sort();
     const checked = [];
     document.querySelectorAll('.prov-visibility-toggle').forEach(el => {
       if (el.checked) checked.push(el.dataset.prov);
