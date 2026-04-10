@@ -185,7 +185,7 @@
     .settings-color-wrap input[type="color"]{width:36px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;padding:2px;appearance:none;-webkit-appearance:none}
     .settings-color-wrap .settings-color-reset{font-size:11px;color:var(--muted);cursor:pointer;text-decoration:underline dotted;background:none;border:none;padding:0;font-family:'Inter',sans-serif}
     .settings-color-wrap .settings-color-reset:hover{color:var(--accent)}
-    .toggle-switch{position:relative;width:36px;height:20px;flex-shrink:0}
+    .toggle-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0;vertical-align:middle}
     .toggle-switch input{opacity:0;width:0;height:0}
     .toggle-switch-slider{position:absolute;inset:0;background:var(--border);border-radius:20px;
       cursor:pointer;transition:.2s}
