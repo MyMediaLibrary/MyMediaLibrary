@@ -320,10 +320,8 @@ let allItems=[], categories=[], groups=[];
     const scanLbl = document.getElementById('scanBtnLabel');
     if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
 
-    // First-run: no folder has been assigned a type yet → show onboarding
-    const folders = appConfig.folders || [];
-    const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
-    if (!hasConfigured) {
+    // Backend is the source of truth for onboarding state.
+    if (appConfig.needs_onboarding) {
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
@@ -332,12 +330,6 @@ let allItems=[], categories=[], groups=[];
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
-      if (r.status === 404) {
-        libraryExportSource = null;
-        updateExportJsonButtonState();
-        showOnboarding();
-        return;
-      }
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       libraryExportSource = data;
