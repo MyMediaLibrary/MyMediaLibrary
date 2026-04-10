@@ -808,14 +808,57 @@ let allItems=[], categories=[], groups=[];
     return document.getElementById('searchInput')?.value.toLowerCase().trim() || '';
   }
 
+  function normalizeSearchText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, ' ')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function searchTokens(query) {
+    const normalized = normalizeSearchText(query);
+    return normalized ? normalized.split(' ').filter(Boolean) : [];
+  }
+
+  function getItemSearchFields(item) {
+    const providers = (item.providers || []).map(_pname).filter(Boolean).join(' ');
+    const audioSimple = getAudioLanguageSimple(item);
+    const audioSimpleAliases = audioSimple === 'VF'
+      ? 'vf french francais fr'
+      : (audioSimple === 'VO' ? 'vo original' : 'multi multilingual multilang');
+    return [
+      item.title,
+      item.year,
+      item.audio_codec,
+      item.audio_codec_display,
+      item.audio_codec_raw,
+      item.codec,
+      item.resolution,
+      audioSimple,
+      audioSimpleAliases,
+      providers
+    ];
+  }
+
+  const _itemSearchCache = new WeakMap();
+  function getItemSearchIndex(item) {
+    if (_itemSearchCache.has(item)) return _itemSearchCache.get(item);
+    const idx = normalizeSearchText(getItemSearchFields(item).join(' '));
+    _itemSearchCache.set(item, idx);
+    return idx;
+  }
+
   function applySearch(items, q) {
     if (!q) return items;
-    return items.filter(i=>
-      (i.title||'').toLowerCase().includes(q)||
-      (i.raw||'').toLowerCase().includes(q)||
-      (i.year||'').includes(q)||
-      (i.category||'').toLowerCase().includes(q)||
-      (i.group||'').toLowerCase().includes(q));
+    const tokens = searchTokens(q);
+    if (!tokens.length) return items;
+    return items.filter(i => {
+      const idx = getItemSearchIndex(i);
+      return tokens.every(tok => idx.includes(tok));
+    });
   }
 
   function filterItems() {
@@ -2571,8 +2614,40 @@ let allItems=[], categories=[], groups=[];
     }
   });
 
+  function focusGlobalSearch() {
+    if (isMobile()) {
+      if (!mobileFiltersOpen) toggleMobileFilters();
+      const mInput = document.getElementById('searchInputMobile');
+      if (mInput) {
+        setTimeout(() => mInput.focus(), 0);
+        return;
+      }
+    }
+    const dInput = document.getElementById('searchInput');
+    if (dInput) dInput.focus();
+  }
+
+  function escapeSearchInteraction() {
+    const active = document.activeElement;
+    const dInput = document.getElementById('searchInput');
+    const mInput = document.getElementById('searchInputMobile');
+    if (active === dInput || active === mInput) {
+      active.blur();
+      if (mobileFiltersOpen) closeMobileFilters();
+      return true;
+    }
+    return false;
+  }
+
   document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      focusGlobalSearch();
+      return;
+    }
+
     if (e.key === 'Escape') {
+      if (escapeSearchInteraction()) return;
       const overlay = document.getElementById('settingsOverlay');
       if (overlay && overlay.style.display !== 'none') closeSettings();
     }
