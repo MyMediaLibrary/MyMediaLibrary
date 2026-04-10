@@ -6,6 +6,7 @@ const items = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../fixtures
 
 function configuredPayload() {
   return {
+    needs_onboarding: false,
     ui: { language: 'fr' },
     jellyseerr: { enabled: true },
     folders: [{ name: 'Cinema', type: 'movie', visible: true, missing: false }],
@@ -14,6 +15,7 @@ function configuredPayload() {
 
 function onboardingPayload() {
   return {
+    needs_onboarding: true,
     ui: { language: 'fr' },
     jellyseerr: { enabled: false },
     folders: [{ name: 'Cinema', type: '', visible: true, missing: false }],
@@ -135,4 +137,51 @@ test('export JSON present and triggers download only when library is valid', asy
     expectedDate: window.__mmlExpectedExportDate,
   }));
   expect(exportMeta.filename).toBe(`mymedialibrary-export-${exportMeta.expectedDate}.json`);
+});
+
+
+test('backend onboarding flag ignores stale localStorage/sessionStorage flags', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('onboardingDone', 'true');
+    localStorage.setItem('mediaState', JSON.stringify({ onboardingDismissed: true }));
+    sessionStorage.setItem('onboardingStep', 'done');
+  });
+  await mockCoreRoutes(page, { onboarding: true });
+  await page.goto('/index.html');
+
+  await expect(page.locator('#onboardingOverlay')).toBeVisible();
+});
+
+test('configured app stays on main screen across reloads', async ({ page }) => {
+  await openConfiguredLibrary(page);
+  await expect(page.locator('#onboardingOverlay')).toBeHidden();
+
+  await page.reload();
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await expect(page.locator('#onboardingOverlay')).toBeHidden();
+});
+
+test('resetting persisted config makes onboarding visible again', async ({ page }) => {
+  let onboarding = false;
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: onboarding ? onboardingPayload() : configuredPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+
+  await page.goto('/index.html');
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await expect(page.locator('#onboardingOverlay')).toBeHidden();
+
+  onboarding = true;
+  await page.reload();
+  await expect(page.locator('#onboardingOverlay')).toBeVisible();
 });
