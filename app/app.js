@@ -72,6 +72,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   function normalizeAudioLanguageCode(raw) {
+    if (window.MMLLogic?.normalizeAudioLanguageCode) {
+      return window.MMLLogic.normalizeAudioLanguageCode(raw);
+    }
     if (typeof raw !== 'string') return null;
     const code = raw.toLowerCase().trim();
     if (!code) return null;
@@ -80,6 +83,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   function simplifyAudioLanguages(codes) {
+    if (window.MMLLogic?.simplifyAudioLanguages) {
+      return window.MMLLogic.simplifyAudioLanguages(codes);
+    }
     if (!Array.isArray(codes)) return 'UNKNOWN';
     const normalized = new Set();
     codes.forEach(code => {
@@ -570,6 +576,23 @@ let allItems=[], categories=[], groups=[];
   });
 
   function hasActiveFilters() {
+    if (window.MMLLogic?.hasActiveFilters) {
+      return window.MMLLogic.hasActiveFilters({
+        activeType,
+        activeGroup,
+        activeCat,
+        activeResolution,
+        activeProviders,
+        activeCodecs,
+        activeAudioCodecs,
+        activeAudioLanguages,
+        providerExclude,
+        videoCodecExclude,
+        audioCodecExclude,
+        audioLanguageExclude,
+        searchQuery: getSearchQuery(),
+      });
+    }
     return activeType !== 'all'
       || activeGroup !== 'all'
       || activeCat !== 'all'
@@ -874,7 +897,22 @@ let allItems=[], categories=[], groups=[];
 
   function getItemSearchFields(item) {
     const providers = getProviderNames(item).join(' ');
-    const audioSimple = getAudioLanguageSimple(item);
+    const runtimeItem = {
+      title: item.title,
+      year: item.year,
+      audio_codec: getNormalizedAudioCodec(item),
+      audio_codec_display: getAudioCodecLabel(item),
+      audio_codec_raw: item.audio_codec_raw,
+      codec: getNormalizedVideoCodec(item),
+      resolution: getNormalizedResolution(item),
+      audio_languages_simple: getAudioLanguageSimple(item),
+      audio_languages: item.audio_languages,
+      providers: providers ? providers.split(' ') : []
+    };
+    if (window.MMLLogic?.getItemSearchFields) {
+      return window.MMLLogic.getItemSearchFields(runtimeItem);
+    }
+    const audioSimple = runtimeItem.audio_languages_simple;
     const audioSimpleAliases = audioSimple === 'VF'
       ? 'vf french francais fr'
       : (audioSimple === 'VO'
@@ -882,14 +920,16 @@ let allItems=[], categories=[], groups=[];
         : (audioSimple === 'MULTI'
           ? 'multi multilingual multilang'
           : 'unknown inconnu'));
+    const videoCodecAliases = runtimeItem.codec === 'H.265' ? 'hevc x265 h265' : (runtimeItem.codec === 'H.264' ? 'avc x264 h264' : '');
     return [
-      item.title,
-      item.year,
-      getNormalizedAudioCodec(item),
-      getAudioCodecLabel(item),
-      item.audio_codec_raw,
-      getNormalizedVideoCodec(item),
-      getNormalizedResolution(item),
+      runtimeItem.title,
+      runtimeItem.year,
+      runtimeItem.audio_codec,
+      runtimeItem.audio_codec_display,
+      runtimeItem.audio_codec_raw,
+      runtimeItem.codec,
+      videoCodecAliases,
+      runtimeItem.resolution,
       audioSimple,
       audioSimpleAliases,
       providers
