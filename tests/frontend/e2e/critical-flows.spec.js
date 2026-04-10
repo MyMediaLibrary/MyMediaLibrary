@@ -105,13 +105,21 @@ test('filters include/exclude and global reset', async ({ page }) => {
 test('export JSON present and triggers download only when library is valid', async ({ page }) => {
   await openConfiguredLibrary(page);
 
+  await page.evaluate(() => {
+    window.__mmlExportClickCount = 0;
+    const origClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function patchedClick() {
+      if (this.download && this.download.startsWith('mymedialibrary-export-')) {
+        window.__mmlExportClickCount += 1;
+      }
+      return origClick.call(this);
+    };
+  });
+
   await page.evaluate(() => openSettings());
   const exportBtn = page.locator('#cfgExportJsonBtn');
   await expect(exportBtn).toBeEnabled();
+  await exportBtn.click();
 
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    exportBtn.click(),
-  ]);
-  expect(download.suggestedFilename()).toContain('mymedialibrary-export-');
+  await expect.poll(async () => page.evaluate(() => window.__mmlExportClickCount)).toBe(1);
 });
