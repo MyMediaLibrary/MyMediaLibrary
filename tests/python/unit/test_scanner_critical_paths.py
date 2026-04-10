@@ -17,6 +17,7 @@ class LanguageNormalizationCriticalTest(unittest.TestCase):
             ("freru", ["fra", "rus"], "MULTI"),
             ("engfre", ["eng", "fra"], "MULTI"),
             ("jpneng", ["jpn", "eng"], "VO"),
+            ("und", ["und"], "UNKNOWN"),
             ("", [], "UNKNOWN"),
             (None, [], "UNKNOWN"),
         ]
@@ -44,6 +45,20 @@ class LanguageNormalizationCriticalTest(unittest.TestCase):
         )
         self.assertEqual(scanner.parse_audio_languages(xml), ["fra", "rus"])
         self.assertEqual(scanner.simplify_audio_languages(scanner.parse_audio_languages(xml)), "MULTI")
+
+    def test_und_language_is_treated_as_unknown_without_polluting_parsed_codes(self):
+        xml = ET.fromstring(
+            """
+            <movie>
+              <fileinfo><streamdetails>
+                <audio><language>und</language></audio>
+              </streamdetails></fileinfo>
+            </movie>
+            """
+        )
+        parsed = scanner.parse_audio_languages(xml)
+        self.assertEqual(parsed, [])
+        self.assertEqual(scanner.simplify_audio_languages(parsed), "UNKNOWN")
 
 
 class AudioCodecNormalizationCriticalTest(unittest.TestCase):
