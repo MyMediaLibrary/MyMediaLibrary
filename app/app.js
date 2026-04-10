@@ -3049,12 +3049,27 @@ let allItems=[], categories=[], groups=[];
     },
   };
 
+  function _onbDocLang() {
+    return _onbLang === 'en' ? 'en' : 'fr';
+  }
+
+  function _onbDocHref() {
+    return '/docs.html?lang=' + _onbDocLang();
+  }
+
+  function _updateOnbDocLink() {
+    const link = document.getElementById('onbDocLink');
+    if (!link) return;
+    link.href = _onbDocHref();
+  }
+
   function _updateOnbLangDisplay(displayLang) {
     const txt = _ONB_TEXTS[displayLang] || _ONB_TEXTS.fr;
     const el = (id) => document.getElementById(id);
     if (el('onbWelcomeTitle')) el('onbWelcomeTitle').textContent = txt.title;
     if (el('onbWelcomeDesc'))  el('onbWelcomeDesc').textContent  = txt.desc;
     if (el('onbWelcomeStart')) el('onbWelcomeStart').textContent = txt.start;
+    _updateOnbDocLink();
     ['onbLangFr','onbLangEn'].forEach(id => {
       const btn = el(id);
       if (!btn) return;
@@ -3206,11 +3221,8 @@ let allItems=[], categories=[], groups=[];
           + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-.95-2.69-.95-.36-.91-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.81.06 1.24.84 1.24.84.72 1.23 1.89.87 2.35.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.96 0-.88.32-1.6.84-2.16-.08-.2-.36-1.02.08-2.12 0 0 .69-.22 2.26.82A7.73 7.73 0 0 1 8 4.08c.68 0 1.37.09 2.01.27 1.57-1.04 2.26-.82 2.26-.82.44 1.1.16 1.92.08 2.12.52.56.84 1.28.84 2.16 0 3.08-1.88 3.75-3.67 3.95.29.25.54.73.54 1.47v2.18c0 .22.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
           + '<span>GitHub</span>'
         + '</a>'
-        + '<a href="/docs.html?lang=fr" style="'+quickLinkBase+'">'
-          + '<span>📘 Doc FR</span>'
-        + '</a>'
-        + '<a href="/docs.html?lang=en" style="'+quickLinkBase+'">'
-          + '<span>📗 Doc EN</span>'
+        + '<a id="onbDocLink" href="'+_onbDocHref()+'" style="'+quickLinkBase+'">'
+          + '<span>📘 Documentation</span>'
         + '</a>'
       + '</div>'
       + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
