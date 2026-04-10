@@ -44,3 +44,7 @@ volumes/
 
 # Generated at build time
 app/version.json
+
+# Node
+node_modules/
+playwright-report/

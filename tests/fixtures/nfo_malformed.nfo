@@ -1,0 +1,16 @@
+<movie>
+  <title>Broken File</title>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <width>3840</width>
+        <height>2160</height>
+        <codec>hevc</codec>
+      </video>
+      <audio>
+        <language>freru</language>
+      </audio>
+    </streamdetails>
+  </fileinfo>
+</movie>
+<garbage>
