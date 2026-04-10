@@ -1034,7 +1034,7 @@ let allItems=[], categories=[], groups=[];
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
-        +'<td>'+((item.audio_languages&&item.audio_languages.length)?item.audio_languages.map(l=>getLanguageDisplay(l)).join(' / '):'—')+'</td>'
+        +'<td>'+escH(getAudioLanguageSimple(item))+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
         +'<td class="col-date">'+(item.added_at?fmtDate(item.added_at):'-')+'</td>'
@@ -1057,7 +1057,7 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
-    const headers=[t('table.title'),t('table.year'),hg?t('table.group'):null,t('table.category'),t('table.resolution'),'HDR',t('table.codec'),t('table.audio_codec'),t('table.audio_languages'),'Runtime (min)',t('table.size'),'Size (B)',t('table.files'),t('table.added'),t('table.streaming')].filter(Boolean);
+    const headers=[t('table.title'),t('table.year'),hg?t('table.group'):null,t('table.category'),t('table.resolution'),'HDR',t('table.codec'),t('table.audio_codec'),t('table.audio_languages')+' (simple)',t('table.audio_languages')+' (raw)','Runtime (min)',t('table.size'),'Size (B)',t('table.files'),t('table.added'),t('table.streaming')].filter(Boolean);
     const rows=items.map(i=>[
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
@@ -1066,7 +1066,8 @@ let allItems=[], categories=[], groups=[];
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
       csvC(i.audio_codec_display??i.audio_codec??''),
-      csvC((i.audio_languages??[]).map(l=>getLanguageDisplay(l)).join(', ')),
+      csvC(getAudioLanguageSimple(i)),
+      csvC((i.audio_languages??[]).join(', ')),
       i.runtime_min||'',
       csvC(i.size),i.size_b||0,
       i.type==='tv'?((i.season_count||'')+' S / '+(i.episode_count||'')+' Ep'):(i.file_count!==undefined?i.file_count:''),
