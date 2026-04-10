@@ -2350,16 +2350,8 @@ let allItems=[], categories=[], groups=[];
       const res = document.getElementById('cfgJsrTestResult');
       if (res) res.textContent = '';
     }
-    _updateJsrSaveBtn();
   }
 
-  function _updateJsrSaveBtn() {
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
-    const saveBtn = document.getElementById('settingsSaveBtn');
-    if (!saveBtn) return;
-    // Can save if: Jellyseerr disabled, OR test passed
-    saveBtn.disabled = !!(enabled && !_settingsJsrTestOk);
-  }
 
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
@@ -2597,29 +2589,54 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  async function testJellyseerr() {
-    const btn = document.getElementById('cfgJsrTestBtn');
-    const res = document.getElementById('cfgJsrTestResult');
-    if (!res) return;
+  async function _runJellyseerrConnectionTest(btn, res, onSuccess) {
+    if (!res) return false;
     res.textContent = '…';
     res.style.color = 'var(--muted)';
     if (btn) btn.disabled = true;
     try {
       const r = await fetch('/api/jellyseerr/test');
-      const data = await r.json();
-      if (data.ok) {
-        res.textContent = '✓'; res.style.color = '#34d399';
-        _settingsJsrTestOk = true;
-      } else {
-        res.textContent = '✗'; res.style.color = '#f97316';
-        _settingsJsrTestOk = false;
+      const d = await r.json();
+      if (d.ok) {
+        res.textContent = '✓ ' + t('onboarding.jsr_ok');
+        res.style.color = '#34d399';
+        if (typeof onSuccess === 'function') onSuccess();
+        return true;
       }
-    } catch(e) {
-      res.textContent = '✗'; res.style.color = '#f97316';
-      _settingsJsrTestOk = false;
+      res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail'));
+      res.style.color = '#f97316';
+      return false;
+    } catch (e) {
+      res.textContent = '✗ ' + t('onboarding.jsr_fail');
+      res.style.color = '#f97316';
+      return false;
     } finally {
       if (btn) btn.disabled = false;
-      _updateJsrSaveBtn();
+    }
+  }
+
+  async function testJellyseerr() {
+    const btn = document.getElementById('cfgJsrTestBtn');
+    const res = document.getElementById('cfgJsrTestResult');
+    if (!res) return;
+
+    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked ?? false;
+    const url = (document.getElementById('cfgJellyseerrUrl')?.value || '').trim();
+    const key = (document.getElementById('cfgJellyseerrKey')?.value || '').trim();
+
+    try {
+      await saveConfig({
+        jellyseerr: {
+          enabled,
+          url,
+          ...(key ? { apikey: key } : {}),
+        },
+      });
+      _settingsJsrTestOk = await _runJellyseerrConnectionTest(btn, res);
+    } catch (e) {
+      _settingsJsrTestOk = false;
+      res.textContent = '✗ ' + (e?.message || t('onboarding.jsr_fail'));
+      res.style.color = '#f97316';
     }
   }
 
@@ -2637,8 +2654,10 @@ let allItems=[], categories=[], groups=[];
     renderProviderToggles();
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');
-    if (btn) btn.style.display = 'block'; // always show — config.json is always writable
-    _updateJsrSaveBtn();
+    if (btn) {
+      btn.style.display = 'block'; // always show — config.json is always writable
+      btn.disabled = false;
+    }
   }
 
   function closeSettings() {
@@ -3144,21 +3163,10 @@ let allItems=[], categories=[], groups=[];
     if (!res) return;
     _captureOnbJsr();
     await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) } });
-    res.textContent = '…'; res.style.color = 'var(--muted)';
-    if (btn) btn.disabled = true;
-    try {
-      const r = await fetch('/api/jellyseerr/test');
-      const d = await r.json();
-      if (d.ok) {
-        res.textContent = '✓ ' + t('onboarding.jsr_ok'); res.style.color = '#34d399';
-        // Enable Next button — test passed
-        const next = document.getElementById('onbNextBtn');
-        if (next) next.disabled = false;
-      } else {
-        res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail')); res.style.color = '#f97316';
-      }
-    } catch(e) { res.textContent = '✗ ' + t('onboarding.jsr_fail'); res.style.color = '#f97316'; }
-    finally { if (btn) btn.disabled = false; }
+    await _runJellyseerrConnectionTest(btn, res, () => {
+      const next = document.getElementById('onbNextBtn');
+      if (next) next.disabled = false;
+    });
   }
 
   function onbNext() {
