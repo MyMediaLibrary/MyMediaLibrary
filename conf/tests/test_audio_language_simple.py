@@ -40,6 +40,7 @@ class ParseAudioLanguageRawTest(unittest.TestCase):
         self.assertEqual(scanner._parse_lang_raw('engfre'), ['eng', 'fra'])
         self.assertEqual(scanner._parse_lang_raw('jpneng'), ['jpn', 'eng'])
         self.assertEqual(scanner._parse_lang_raw('freijo'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('freijoeng'), ['fra', 'eng'])
         self.assertEqual(scanner._parse_lang_raw('fregsw'), ['fra', 'gsw'])
         self.assertEqual(scanner._parse_lang_raw('frefrenob'), ['fra', 'fra', 'nob'])
 
@@ -66,6 +67,11 @@ class ParseAudioLanguageRawTest(unittest.TestCase):
         import xml.etree.ElementTree as ET
         xml = ET.fromstring("<movie><audio><language>frefrenob</language></audio></movie>")
         self.assertEqual(scanner.parse_audio_languages(xml), ['fra', 'nob'])
+
+    def test_parse_concatenated_keeps_unknown_chunks_and_recovers(self):
+        recognized, unknown = scanner._parse_concatenated_lang_codes('freijoeng')
+        self.assertEqual(recognized, ['fra', 'eng'])
+        self.assertEqual(unknown, ['ijo'])
 
     def test_simplified_mapping_with_parsed_values(self):
         self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('fre')), 'VF')
