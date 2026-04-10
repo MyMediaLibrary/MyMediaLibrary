@@ -135,91 +135,151 @@ ISO_639_1_TO_2: dict[str, str] = {
 
 # Deprecated/bibliographic ISO 639-2 aliases → canonical terminiologic code
 _ISO_639_2_ALIASES: dict[str, str] = {
-    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron',
+    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron', 'nob': 'nor',
 }
 
 _KNOWN_ISO_639_2: frozenset[str] = frozenset({
     'fra', 'eng', 'deu', 'spa', 'ita', 'jpn', 'zho', 'kor', 'por', 'rus',
-    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'tur', 'ces', 'hun',
+    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'gsw', 'tur', 'ces', 'hun',
     'ron', 'bul', 'hrv', 'srp', 'ukr', 'heb', 'cat', 'lat', 'hin', 'ben',
     'vie', 'ind', 'may', 'tha', 'ell', 'slk', 'slv', 'est', 'lav', 'lit',
     'isl', 'mkd', 'aze', 'geo', 'arm',
-} | set(_ISO_639_2_ALIASES.keys()))
+})
+
+LANGUAGE_NAME_ALIASES: dict[str, str] = {
+    'french': 'fra', 'francais': 'fra', 'français': 'fra',
+    'english': 'eng',
+    'japanese': 'jpn',
+    'german': 'deu',
+    'spanish': 'spa',
+    'italian': 'ita',
+}
+
+RELEASE_LANGUAGE_ALIASES: dict[str, str] = {
+    'vf': 'fra', 'vff': 'fra', 'truefrench': 'fra',
+    'jp': 'jpn',
+}
+
+SPECIAL_LANGUAGE_MARKERS: frozenset[str] = frozenset({'vo', 'multi'})
+
+LANGUAGE_ALIASES_TO_CANONICAL: dict[str, str] = {
+    **{k: v for k, v in ISO_639_1_TO_2.items()},
+    **{k: v for k, v in _ISO_639_2_ALIASES.items()},
+    **{k: _ISO_639_2_ALIASES.get(k, k) for k in _KNOWN_ISO_639_2},
+    **LANGUAGE_NAME_ALIASES,
+    **RELEASE_LANGUAGE_ALIASES,
+}
+
+_SEGMENTABLE_ALIASES: tuple[str, ...] = tuple(
+    sorted((k for k in LANGUAGE_ALIASES_TO_CANONICAL.keys() if len(k) >= 3), key=len, reverse=True)
+)
+_SEGMENTABLE_LENGTHS: tuple[int, ...] = tuple(sorted({len(k) for k in _SEGMENTABLE_ALIASES}, reverse=True))
+_ALIASES_BY_LENGTH: dict[int, dict[str, str]] = {}
+for _alias in _SEGMENTABLE_ALIASES:
+    _ALIASES_BY_LENGTH.setdefault(len(_alias), {})[_alias] = LANGUAGE_ALIASES_TO_CANONICAL[_alias]
+_SEGMENTABLE_TWO_LETTER_ALIASES: dict[str, str] = {
+    k: v for k, v in LANGUAGE_ALIASES_TO_CANONICAL.items() if len(k) == 2
+}
 
 
 def _normalize_lang_code(raw: str) -> str | None:
-    """Normalize a 2- or 3-letter code to ISO 639-2 (3-letter terminiologic). Returns None if unknown."""
+    """Normalize one language token to ISO 639-2 (3-letter code)."""
     code = raw.lower().strip()
     if code == 'und':
         # ISO 639-2 "und" = undetermined/unknown language
         return 'und'
-    if len(code) == 2:
-        return ISO_639_1_TO_2.get(code)
-    if len(code) == 3:
-        if code in _ISO_639_2_ALIASES:
-            return _ISO_639_2_ALIASES[code]
-        if code in _KNOWN_ISO_639_2:
-            return code
-    return None
+    return LANGUAGE_ALIASES_TO_CANONICAL.get(code)
 
 
-def _parse_concatenated_lang_codes(raw: str) -> list[str] | None:
-    """Parse a separator-less string into known 2/3-letter language codes.
+def _parse_concatenated_lang_codes(raw: str) -> tuple[list[str], list[str]]:
+    """Iteratively parse separator-less values and keep recognized chunks.
 
     Returns:
-      - list of normalized ISO 639-2 codes when a full parse is possible
-      - None when no reliable segmentation was found
+      (recognized_iso_codes, unknown_chunks)
     """
     token = re.sub(r"\s+", "", (raw or "").lower())
     if not token:
-        return []
+        return ([], [])
 
-    # Non-recursive dynamic programming to avoid RecursionError on malformed
-    # very long strings. We keep the same preference as before (3-letter token
-    # before 2-letter token) when rebuilding the solution.
+    recognized: list[str] = []
+    unknown_chunks: list[str] = []
+    unknown_buf: list[str] = []
+
+    idx = 0
     n = len(token)
-    can_parse = [False] * (n + 1)
-    can_parse[n] = True
-    choices: list[tuple[int, str] | None] = [None] * (n + 1)
+    while idx < n:
+        if unknown_buf:
+            unknown_buf.append(token[idx])
+            idx += 1
+            continue
 
-    for idx in range(n - 1, -1, -1):
-        for size in (3, 2):
-            end = idx + size
+        match_norm = None
+        match_len = 0
+        for alias_len in _SEGMENTABLE_LENGTHS:
+            end = idx + alias_len
             if end > n:
                 continue
-            norm = _normalize_lang_code(token[idx:end])
-            if norm and can_parse[end]:
-                can_parse[idx] = True
-                choices[idx] = (end, norm)
+            candidate = token[idx:end]
+            norm = _ALIASES_BY_LENGTH[alias_len].get(candidate)
+            if norm:
+                match_norm = norm
+                match_len = alias_len
                 break
 
-    if not can_parse[0]:
-        return None
+        # 2-letter chunks are accepted only when we are on a clean boundary
+        # (no unknown chars accumulated). This keeps support for sequences like
+        # "freru" while avoiding noisy matches inside random garbage.
+        if match_norm is None and not unknown_buf and idx + 2 <= n:
+            candidate2 = token[idx:idx + 2]
+            norm2 = _SEGMENTABLE_TWO_LETTER_ALIASES.get(candidate2)
+            if norm2:
+                match_norm = norm2
+                match_len = 2
 
-    parsed: list[str] = []
-    idx = 0
-    while idx < n:
-        choice = choices[idx]
-        if choice is None:
-            return None
-        next_idx, norm = choice
-        parsed.append(norm)
-        idx = next_idx
-    return parsed
+        if match_norm is None:
+            unknown_buf.append(token[idx])
+            idx += 1
+            continue
+
+        if unknown_buf:
+            unknown_chunks.append(''.join(unknown_buf))
+            unknown_buf = []
+
+        recognized.append(match_norm)
+        idx += match_len
+
+    if unknown_buf:
+        unknown_chunks.append(''.join(unknown_buf))
+
+    return recognized, unknown_chunks
 
 
 def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
-    """Parse one language token (single code or concatenated known codes)."""
+    """Parse one language token (single alias or concatenated aliases)."""
     single = re.sub(r"\s+", "", token.lower().strip())
     if not single:
+        return []
+
+    if single in SPECIAL_LANGUAGE_MARKERS:
+        log.info(f"[SCAN] Audio language marker detected (no direct ISO code): {single!r} in item {item_title!r}")
         return []
 
     norm = _normalize_lang_code(single)
     if norm:
         return [norm]
 
-    parsed = _parse_concatenated_lang_codes(single)
+    parsed, unknown_chunks = _parse_concatenated_lang_codes(single)
     if parsed:
+        if unknown_chunks:
+            rec_preview = parsed[:8]
+            ignored_preview = unknown_chunks[:5]
+            suffix = ""
+            if len(parsed) > len(rec_preview) or len(unknown_chunks) > len(ignored_preview):
+                suffix = f" (truncated: recognized={len(parsed)}, ignored={len(unknown_chunks)})"
+            log.info(
+                f"[SCAN] Partially parsed audio language value: {single!r} in item {item_title!r} "
+                f"-> recognized={rec_preview}, ignored={ignored_preview}{suffix}"
+            )
         return parsed
 
     log.warning(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
@@ -235,7 +295,7 @@ def _parse_lang_raw(raw: str | None, item_title: str = '') -> list[str]:
         return []
 
     # Step 1 — split on explicit separators
-    parts = [p.strip() for p in re.split(r'[\s,/|;]+', raw) if p.strip()]
+    parts = [p.strip() for p in re.split(r'[\s,/|;_+\-]+', raw) if p.strip()]
     if len(parts) > 1:
         result = []
         for p in parts:
