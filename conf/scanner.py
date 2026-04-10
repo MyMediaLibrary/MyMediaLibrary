@@ -1062,6 +1062,7 @@ _DEFAULT_CONFIG: dict = {
     "system": {
         "scan_cron": "0 3 * * *",
         "log_level": "INFO",
+        "needs_onboarding": True,
     },
     "folders": [],
     "enable_movies": True,
@@ -1087,6 +1088,41 @@ def load_config() -> dict:
             return json.load(f)
     except Exception:
         return dict(_DEFAULT_CONFIG)
+
+
+def _config_file_exists() -> bool:
+    return Path(CONFIG_PATH).exists()
+
+
+def _has_usable_config(cfg: dict) -> bool:
+    folders = cfg.get("folders") or []
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        ftype = folder.get("type")
+        if ftype in ("movie", "tv") and not folder.get("missing", False):
+            return True
+    return False
+
+
+def _derive_needs_onboarding(cfg: dict, config_exists: bool) -> bool:
+    system = cfg.get("system") or {}
+    if isinstance(system.get("needs_onboarding"), bool):
+        return system["needs_onboarding"]
+    if not config_exists:
+        return True
+    return not _has_usable_config(cfg)
+
+
+def _ensure_needs_onboarding(cfg: dict, config_exists: bool | None = None) -> tuple[dict, bool]:
+    if config_exists is None:
+        config_exists = _config_file_exists()
+    system = cfg.setdefault("system", {})
+    changed = False
+    if not isinstance(system.get("needs_onboarding"), bool):
+        system["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists)
+        changed = True
+    return cfg, changed
 
 
 def save_config(data: dict) -> None:
@@ -1646,15 +1682,20 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             })
         elif path == "/api/config":
             cfg = load_config()
+            cfg, changed = _ensure_needs_onboarding(cfg)
             # First-run: auto-detect folders if none configured yet
             if not cfg.get("folders"):
                 root = Path(LIBRARY_PATH)
                 if root.exists():
                     sync_folders(root, cfg)
-                    save_config(cfg)
-                    cfg = load_config()
+                    changed = True
+            if changed:
+                save_config(cfg)
+                cfg = load_config()
+                cfg, _ = _ensure_needs_onboarding(cfg)
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
+            out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
             if out.get("jellyseerr", {}).get("apikey"):
                 out["jellyseerr"]["apikey"] = "***"
             elif _load_secrets().get("jellyseerr_apikey"):
@@ -1702,6 +1743,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             with _srv_lock:
                 if _srv_state["status"] == "running":
                     self._json(409, {"error": "scan already running"}); return
+            cfg = load_config()
+            cfg, _ = _ensure_needs_onboarding(cfg)
+            if cfg.get("system", {}).get("needs_onboarding") is True:
+                cfg["system"]["needs_onboarding"] = False
+                save_config(cfg)
             threading.Thread(target=_run_scan_bg, args=(mode,), daemon=True).start()
             self._json(200, {"ok": True, "mode": mode})
 
@@ -1717,6 +1763,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 if not payload["jellyseerr"]:
                     payload.pop("jellyseerr", None)
             merged = deep_merge(cfg, payload)
+            merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
             # Ensure apikey never persists in config.json
             if "jellyseerr" in merged:
                 merged["jellyseerr"].pop("apikey", None)

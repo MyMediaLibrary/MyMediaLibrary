@@ -84,5 +84,25 @@ class AudioCodecNormalizationCriticalTest(unittest.TestCase):
                 self.assertEqual(result["display"], display)
 
 
+class OnboardingFlagCriticalTest(unittest.TestCase):
+    def test_missing_config_always_requires_onboarding(self):
+        cfg = {"system": {}, "folders": []}
+        self.assertTrue(scanner._derive_needs_onboarding(cfg, config_exists=False))
+
+    def test_existing_config_without_usable_folders_requires_onboarding(self):
+        cfg = {"system": {}, "folders": [{"name": "Movies", "type": None}]}
+        self.assertTrue(scanner._derive_needs_onboarding(cfg, config_exists=True))
+
+    def test_existing_config_with_usable_folder_defaults_to_no_onboarding(self):
+        cfg = {"system": {}, "folders": [{"name": "Movies", "type": "movie", "missing": False}]}
+        self.assertFalse(scanner._derive_needs_onboarding(cfg, config_exists=True))
+
+    def test_explicit_flag_is_source_of_truth(self):
+        cfg = {"system": {"needs_onboarding": True}, "folders": [{"name": "Movies", "type": "movie"}]}
+        self.assertTrue(scanner._derive_needs_onboarding(cfg, config_exists=True))
+        cfg["system"]["needs_onboarding"] = False
+        self.assertFalse(scanner._derive_needs_onboarding(cfg, config_exists=False))
+
+
 if __name__ == "__main__":
     unittest.main()

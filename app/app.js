@@ -320,10 +320,11 @@ let allItems=[], categories=[], groups=[];
     const scanLbl = document.getElementById('scanBtnLabel');
     if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
 
-    // First-run: no folder has been assigned a type yet → show onboarding
-    const folders = appConfig.folders || [];
-    const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
-    if (!hasConfigured) {
+    // Backend is the source of truth for onboarding state.
+    const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
+      ? appConfig.needs_onboarding
+      : null;
+    if (explicitNeedsOnboarding === true) {
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
@@ -332,7 +333,9 @@ let allItems=[], categories=[], groups=[];
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
-      if (r.status === 404) {
+      if (r.status === 404 && explicitNeedsOnboarding === null) {
+        // Legacy backend compatibility: if the explicit flag is absent, fallback
+        // to first-run behavior when library.json has not been generated yet.
         libraryExportSource = null;
         updateExportJsonButtonState();
         showOnboarding();
@@ -461,6 +464,9 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/api/config');
       if (!r.ok) return;
       appConfig = await r.json();
+      if (typeof appConfig.needs_onboarding !== 'boolean' && typeof appConfig.system?.needs_onboarding === 'boolean') {
+        appConfig.needs_onboarding = appConfig.system.needs_onboarding;
+      }
 
       // UI prefs
       enablePlot       = appConfig.ui?.synopsis_on_hover ?? false;
