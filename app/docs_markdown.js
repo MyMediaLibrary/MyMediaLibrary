@@ -20,6 +20,16 @@
     return '#';
   }
 
+  function slugifyHeading(text) {
+    return (text || '')
+      .toLowerCase()
+      .normalize('NFC')
+      .replace(/[’'`]/g, '')
+      .replace(/[^\p{L}\p{N}\s-]/gu, '')
+      .trim()
+      .replace(/\s+/g, '-');
+  }
+
   function renderInline(text) {
     const codeTokens = [];
     let safe = escapeHtml(text || '');
@@ -32,7 +42,11 @@
 
     safe = safe.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, (_, label, url) => {
       const cleanUrl = sanitizeUrl(url);
-      return `<a href="${escapeHtml(cleanUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      if (cleanUrl.startsWith('#')) {
+        return `<a href="${escapeHtml(cleanUrl)}">${label}</a>`;
+      }
+      const external = /^(https?:|mailto:)/i.test(cleanUrl);
+      return `<a href="${escapeHtml(cleanUrl)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>${label}</a>`;
     });
 
     safe = safe.replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>');
@@ -111,7 +125,8 @@
       if (/^#{1,6}\s+/.test(trimmed)) {
         const level = trimmed.match(/^#+/)[0].length;
         const text = trimmed.replace(/^#{1,6}\s+/, '');
-        out.push(`<h${level}>${renderInline(text)}</h${level}>`);
+        const id = slugifyHeading(text);
+        out.push(`<h${level}${id ? ` id="${escapeHtml(id)}"` : ''}>${renderInline(text)}</h${level}>`);
         i += 1;
         continue;
       }

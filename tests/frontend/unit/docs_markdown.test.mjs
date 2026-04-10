@@ -24,7 +24,7 @@ test('parses common markdown blocks and inline styles', () => {
   ].join('\n');
 
   const html = parseMarkdown(input);
-  assert.match(html, /<h1>Titre<\/h1>/);
+  assert.match(html, /<h1 id="titre">Titre<\/h1>/);
   assert.match(html, /<strong>gras<\/strong>/);
   assert.match(html, /<em>italique<\/em>/);
   assert.match(html, /<a href="https:\/\/example.com"/);
@@ -47,4 +47,17 @@ test('escapes raw html and supports table syntax', () => {
   assert.match(html, /<table>/);
   assert.match(html, /<th>A<\/th>/);
   assert.match(html, /<td>2<\/td>/);
+});
+
+
+test('supports in-page anchors with heading ids and same-tab links', () => {
+  const html = parseMarkdown([
+    "## 1. Vue d'ensemble",
+    '',
+    '[Aller à la section](#1-vue-densemble)'
+  ].join('\n'));
+
+  assert.match(html, /<h2 id="1-vue-densemble">1\. Vue d&#39;ensemble<\/h2>/);
+  assert.match(html, /<a href="#1-vue-densemble">Aller à la section<\/a>/);
+  assert.doesNotMatch(html, /target="_blank"/);
 });
