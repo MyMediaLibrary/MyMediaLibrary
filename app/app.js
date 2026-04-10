@@ -266,11 +266,21 @@ let allItems=[], categories=[], groups=[];
     // First-run: no folder has been assigned a type yet → show onboarding
     const folders = appConfig.folders || [];
     const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
-    if (!hasConfigured) { updateExportJsonButtonState(); showOnboarding(); return; }
+    if (!hasConfigured) {
+      libraryExportSource = null;
+      updateExportJsonButtonState();
+      showOnboarding();
+      return;
+    }
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
-      if (r.status === 404) { showOnboarding(); return; }
+      if (r.status === 404) {
+        libraryExportSource = null;
+        updateExportJsonButtonState();
+        showOnboarding();
+        return;
+      }
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       libraryExportSource = data;
