@@ -792,6 +792,7 @@ let allItems=[], categories=[], groups=[];
         counts[name] = (counts[name]||0) + 1;
       });
     });
+    if (counts[PROVIDER_OTHERS_KEY] === undefined) counts[PROVIDER_OTHERS_KEY] = 0;
     ['providerSection', 'providerSectionMobile', 'providerSectionTop'].forEach(function(cid) {
       const sec = document.getElementById(cid);
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
@@ -1506,7 +1507,7 @@ let allItems=[], categories=[], groups=[];
 
 
     // ── Providers ─────────────────────────────────────────
-    const byProv={};
+    const byProv={ [PROVIDER_OTHERS_KEY]: { count: 0, logo: '' } };
     items.forEach(i=>(i.providers||[]).forEach(p=>{
       const rawName=_pname(p);
       const name=_providerGroupKey(rawName);
@@ -2666,6 +2667,9 @@ let allItems=[], categories=[], groups=[];
     });
     // [] = all visible (matches config.json schema); non-empty = whitelist
     if (checked.length === all.length) return [];
+    // Special case: no explicit provider selected => keep explicit providers hidden,
+    // aggregate them under Others instead of falling back to "all visible".
+    if (all.length > 0 && checked.length === 0) return [PROVIDER_OTHERS_KEY];
     return checked;
   }
 
