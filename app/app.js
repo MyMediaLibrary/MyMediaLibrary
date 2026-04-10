@@ -3050,7 +3050,12 @@ let allItems=[], categories=[], groups=[];
   };
 
   function _onbDocLang() {
+<<<<<<< codex/add-fr/en-language-switch-to-docs-i6srsv
+    const fallbackLang = CURRENT_LANG === 'en' ? 'en' : 'fr';
+    return _onbLang === 'en' ? 'en' : (_onbLang === 'fr' ? 'fr' : fallbackLang);
+=======
     return _onbLang === 'en' ? 'en' : 'fr';
+>>>>>>> main
   }
 
   function _onbDocHref() {
@@ -3217,11 +3222,15 @@ let allItems=[], categories=[], groups=[];
       + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
       + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:420px;margin:0 auto 22px">'
-        + '<a href="https://github.com/MyMediaLibrary/MyMediaLibrary" style="'+quickLinkBase+';border-color:#30363d;background:#0d1117;color:#f0f6fc">'
+        + '<a href="https://github.com/MyMediaLibrary/MyMediaLibrary" target="_blank" rel="noopener" style="'+quickLinkBase+'">'
           + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-.95-2.69-.95-.36-.91-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.81.06 1.24.84 1.24.84.72 1.23 1.89.87 2.35.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.96 0-.88.32-1.6.84-2.16-.08-.2-.36-1.02.08-2.12 0 0 .69-.22 2.26.82A7.73 7.73 0 0 1 8 4.08c.68 0 1.37.09 2.01.27 1.57-1.04 2.26-.82 2.26-.82.44 1.1.16 1.92.08 2.12.52.56.84 1.28.84 2.16 0 3.08-1.88 3.75-3.67 3.95.29.25.54.73.54 1.47v2.18c0 .22.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
           + '<span>GitHub</span>'
         + '</a>'
+<<<<<<< codex/add-fr/en-language-switch-to-docs-i6srsv
+        + '<a id="onbDocLink" href="'+_onbDocHref()+'" target="_blank" rel="noopener" style="'+quickLinkBase+'">'
+=======
         + '<a id="onbDocLink" href="'+_onbDocHref()+'" style="'+quickLinkBase+'">'
+>>>>>>> main
           + '<span>📘 Documentation</span>'
         + '</a>'
       + '</div>'

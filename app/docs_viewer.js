@@ -60,7 +60,10 @@
     const nextParams = new URLSearchParams(window.location.search);
     nextParams.set('lang', nextLang);
     const query = nextParams.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}`;
+
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     window.location.assign(nextUrl);
   }
 
