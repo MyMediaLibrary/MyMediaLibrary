@@ -21,10 +21,12 @@ class SimplifyAudioLanguagesTest(unittest.TestCase):
         self.assertEqual(scanner.simplify_audio_languages(['eng', 'jpn']), 'VO')
         self.assertEqual(scanner.simplify_audio_languages(['en', 'ja']), 'VO')
 
-    def test_vo_for_empty_or_invalid_values(self):
-        self.assertEqual(scanner.simplify_audio_languages([]), 'VO')
-        self.assertEqual(scanner.simplify_audio_languages(None), 'VO')
-        self.assertEqual(scanner.simplify_audio_languages(['unknown']), 'VO')
+    def test_unknown_for_empty_or_invalid_values(self):
+        self.assertEqual(scanner.simplify_audio_languages([]), 'UNKNOWN')
+        self.assertEqual(scanner.simplify_audio_languages(None), 'UNKNOWN')
+
+    def test_vo_for_non_french_languages(self):
+        self.assertEqual(scanner.simplify_audio_languages(['en', 'ja']), 'VO')
 
 
 if __name__ == '__main__':

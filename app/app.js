@@ -80,12 +80,13 @@ let allItems=[], categories=[], groups=[];
   }
 
   function simplifyAudioLanguages(codes) {
-    if (!Array.isArray(codes)) return 'VO';
+    if (!Array.isArray(codes)) return 'UNKNOWN';
     const normalized = new Set();
     codes.forEach(code => {
       const norm = normalizeAudioLanguageCode(code);
       if (norm) normalized.add(norm);
     });
+    if (normalized.size === 0) return 'UNKNOWN';
     if (normalized.size === 1 && normalized.has('fra')) return 'VF';
     if (normalized.has('fra') && normalized.size > 1) return 'MULTI';
     return 'VO';
@@ -93,8 +94,12 @@ let allItems=[], categories=[], groups=[];
 
   function getAudioLanguageSimple(item) {
     const mapped = item?.audio_languages_simple;
-    if (mapped === 'VF' || mapped === 'VO' || mapped === 'MULTI') return mapped;
+    if (mapped === 'VF' || mapped === 'VO' || mapped === 'MULTI' || mapped === 'UNKNOWN') return mapped;
     return simplifyAudioLanguages(item?.audio_languages ?? []);
+  }
+
+  function getAudioLanguageSimpleDisplay(value) {
+    return value === 'UNKNOWN' ? t('filters.unknown') : value;
   }
 
   function getAudioCodecDisplay(normalized) {
@@ -741,7 +746,7 @@ let allItems=[], categories=[], groups=[];
     ['audioLanguageSection', 'audioLanguageSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_language'),
         activeSet: activeAudioLanguages, toggleFn: 'toggleAudioLanguageFilter', clearFn: 'clearAudioLanguageFilter',
-        getDisplay: k => k,
+        getDisplay: k => getAudioLanguageSimpleDisplay(k),
         excludeMode: audioLanguageExclude, onToggleExclude: 'toggleAudioLanguageExclude' });
     });
   }
@@ -1126,7 +1131,7 @@ let allItems=[], categories=[], groups=[];
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
-        +'<td>'+escH(getAudioLanguageSimple(item))+'</td>'
+        +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
         +'<td class="col-date">'+(item.added_at?fmtDate(item.added_at):'-')+'</td>'
@@ -1335,7 +1340,7 @@ let allItems=[], categories=[], groups=[];
     const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
     const byAudioLang={};
     items.forEach(i=>{
-      const key = getAudioLanguageSimple(i);
+      const key = getAudioLanguageSimpleDisplay(getAudioLanguageSimple(i));
       byAudioLang[key]=(byAudioLang[key]||0)+1;
     });
     const audioLangTotal = Object.values(byAudioLang).reduce((a,b)=>a+b,0);

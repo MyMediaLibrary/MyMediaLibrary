@@ -236,15 +236,16 @@ def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
 
 
 def simplify_audio_languages(codes: list[str] | None) -> str:
-    """Map detailed audio language codes to VF / VO / MULTI.
+    """Map detailed audio language codes to VF / VO / MULTI / UNKNOWN.
 
     Rules:
+      - no language detected -> UNKNOWN
       - only French -> VF
       - French + at least 1 other language -> MULTI
-      - without French -> VO
+      - without French (but with at least one language) -> VO
     """
     if not isinstance(codes, list):
-        return 'VO'
+        return 'UNKNOWN'
 
     normalized: set[str] = set()
     for code in codes:
@@ -254,6 +255,8 @@ def simplify_audio_languages(codes: list[str] | None) -> str:
         if norm:
             normalized.add(norm)
 
+    if not normalized:
+        return 'UNKNOWN'
     if normalized == {'fra'}:
         return 'VF'
     if 'fra' in normalized and len(normalized) > 1:
