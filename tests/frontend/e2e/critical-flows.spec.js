@@ -56,7 +56,6 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
 
-  await page.click('button[onclick="openSettings()"]');
   const exportBtn = page.locator('#cfgExportJsonBtn');
   await expect(exportBtn).toBeDisabled();
 });
