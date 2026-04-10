@@ -29,5 +29,27 @@ class SimplifyAudioLanguagesTest(unittest.TestCase):
         self.assertEqual(scanner.simplify_audio_languages(['en', 'ja']), 'VO')
 
 
+class ParseAudioLanguageRawTest(unittest.TestCase):
+    def test_single_and_concat_codes(self):
+        self.assertEqual(scanner._parse_lang_raw('fre'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('ru'), ['rus'])
+        self.assertEqual(scanner._parse_lang_raw('freru'), ['fra', 'rus'])
+        self.assertEqual(scanner._parse_lang_raw('engfre'), ['eng', 'fra'])
+        self.assertEqual(scanner._parse_lang_raw('jpneng'), ['jpn', 'eng'])
+
+    def test_empty_or_null_like_values(self):
+        self.assertEqual(scanner._parse_lang_raw(''), [])
+        self.assertEqual(scanner._parse_lang_raw('   '), [])
+
+    def test_simplified_mapping_with_parsed_values(self):
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('fre')), 'VF')
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('ru')), 'VO')
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('freru')), 'MULTI')
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('engfre')), 'MULTI')
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('jpneng')), 'VO')
+        self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('')), 'UNKNOWN')
+        self.assertEqual(scanner.simplify_audio_languages(None), 'UNKNOWN')
+
+
 if __name__ == '__main__':
     unittest.main()
