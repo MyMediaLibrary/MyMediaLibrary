@@ -87,6 +87,7 @@
     "last_scan": "Dernier scan :",
     "indexed": "{n} éléments indexés",
     "no_results": "Aucun résultat",
+    "no_results_hint": "Essayez de modifier la recherche ou les filtres.",
     "seasons": "{n}S",
     "episodes": "{n}ep",
     "no_provider": "Non disponible en streaming FR",
