@@ -185,15 +185,7 @@ let allItems=[], categories=[], groups=[];
       renderCodecFilter();
       renderAudioCodecFilter();
       renderAudioLanguageFilter();
-      // Sync type pills
-      if (s.activeType) {
-        ['#typeFilter','#typeFilterTop'].forEach(sel => {
-          document.querySelectorAll(sel+' .provider-pill').forEach(p => {
-            const t = p.dataset.type || 'all';
-            p.classList.toggle('active', s.activeType==='all' ? !p.dataset.type : t===s.activeType);
-          });
-        });
-      }
+      syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
       updateGlobalResetButtons();
     } catch(e) {}
@@ -497,12 +489,7 @@ let allItems=[], categories=[], groups=[];
   function clickType(type) {
     activeType = (type !== 'all' && activeType === type) ? 'all' : type;
     activeCat = 'all';
-    ['#typeFilter', '#typeFilterTop', '#typeFilterMobile'].forEach(sel => {
-      document.querySelectorAll(sel + ' .provider-pill').forEach(p => {
-        const t = p.dataset.type || 'all';
-        p.classList.toggle('active', activeType === 'all' ? !p.dataset.type : t === activeType);
-      });
-    });
+    syncTypePills();
     renderStorageBar();
     renderProviderFilter();
     renderResolutionFilter();
@@ -792,6 +779,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onFilter() {
+    syncTypePills();
     renderStorageBar();
     renderResolutionFilter();
     renderProviderFilter();
@@ -804,6 +792,15 @@ let allItems=[], categories=[], groups=[];
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
+  }
+
+  function syncTypePills() {
+    ['#typeFilter', '#typeFilterTop', '#typeFilterMobile'].forEach(sel => {
+      document.querySelectorAll(sel + ' .provider-pill').forEach(p => {
+        const t = p.dataset.type || 'all';
+        p.classList.toggle('active', activeType === 'all' ? !p.dataset.type : t === activeType);
+      });
+    });
   }
 
   // ── FILTER ITEMS ─────────────────────────────────────
