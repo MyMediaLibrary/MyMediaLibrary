@@ -178,6 +178,10 @@ html { scroll-behavior: smooth; }
   background: color-mix(in srgb, #fff 91%, var(--accent) 9%);
 }
 
+[data-theme="light"] .docs-content pre code {
+  background: transparent;
+}
+
 .docs-content hr {
   border: 0;
   border-top: 1px solid var(--border);
