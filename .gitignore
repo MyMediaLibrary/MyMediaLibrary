@@ -42,9 +42,22 @@ volumes/
 *.tmp
 .cache/
 
-# Generated at build time
-app/version.json
 
 # Node
 node_modules/
 playwright-report/
+
+# Python test/cache artifacts
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# JS/coverage artifacts
+coverage/
+.nyc_output/
+
+# Runtime/local data dumps
+*.bak
+*.old
+*.orig
