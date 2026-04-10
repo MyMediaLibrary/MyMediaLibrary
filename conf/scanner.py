@@ -203,6 +203,7 @@ def _parse_lang_raw(raw: str, item_title: str = '') -> list[str]:
     return []
 
 
+
 def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
     """Collect all audio language codes from an NFO root element. Returns sorted ISO 639-2 list."""
     langs: list[str] = []
@@ -232,6 +233,32 @@ def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
             seen.add(l)
             result.append(l)
     return sorted(result)
+
+
+def simplify_audio_languages(codes: list[str] | None) -> str:
+    """Map detailed audio language codes to VF / VO / MULTI.
+
+    Rules:
+      - only French -> VF
+      - French + at least 1 other language -> MULTI
+      - without French -> VO
+    """
+    if not isinstance(codes, list):
+        return 'VO'
+
+    normalized: set[str] = set()
+    for code in codes:
+        if not isinstance(code, str):
+            continue
+        norm = _normalize_lang_code(code)
+        if norm:
+            normalized.add(norm)
+
+    if normalized == {'fra'}:
+        return 'VF'
+    if 'fra' in normalized and len(normalized) > 1:
+        return 'MULTI'
+    return 'VO'
 
 
 # Pre-compute normalized keys for fast lookup: strip dashes/spaces/uppercase
@@ -386,6 +413,7 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
         result["audio_codec_display"] = ac["display"]
 
     result["audio_languages"] = parse_audio_languages(root, result.get("title") or "")
+    result["audio_languages_simple"] = simplify_audio_languages(result["audio_languages"])
 
     return result
 
@@ -522,6 +550,7 @@ def find_episode_nfo(series_dir: Path) -> dict:
                     raw_audio = (_xml_text(audio_el, "codec") if audio_el is not None else None) \
                                 or _xml_text(root, "audio_codec", "audiocodec")
                     ac = normalize_audio_codec(raw_audio)
+                    langs = parse_audio_languages(root)
                     return {
                         "width":              w,
                         "height":             h,
@@ -532,7 +561,8 @@ def find_episode_nfo(series_dir: Path) -> dict:
                         "audio_codec_raw":    ac["raw"],
                         "audio_codec":        ac["normalized"],
                         "audio_codec_display": ac["display"],
-                        "audio_languages":    parse_audio_languages(root),
+                        "audio_languages":    langs,
+                        "audio_languages_simple": simplify_audio_languages(langs),
                     }
         except Exception as e:
             log.debug(f"Episode NFO extract error ({nfo_file}): {e}")
@@ -1120,6 +1150,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
         "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
+        "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               nfo_meta.get("hdr", False),
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
