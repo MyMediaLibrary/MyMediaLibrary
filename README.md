@@ -1,6 +1,6 @@
 # 📼 MyMediaLibrary
 
-<img src="https://github.com/MyMediaLibrary/MyMediaLibrary/blob/5a7b3a99e5506dfa4c4ac6955277a5e548e1396a/mymedialibrary1.png" width="45%">  <img src="https://github.com/MyMediaLibrary/MyMediaLibrary/blob/5a7b3a99e5506dfa4c4ac6955277a5e548e1396a/mymedialibrary2.png" width="45%">
+<img src="docs/assets/mymedialibrary1.png" width="45%">  <img src="docs/assets/mymedialibrary2.png" width="45%">
 
 ---
 
