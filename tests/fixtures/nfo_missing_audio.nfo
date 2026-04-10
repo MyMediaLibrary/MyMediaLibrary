@@ -1,0 +1,12 @@
+<movie>
+  <title>No Audio Language</title>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <width>1920</width>
+        <height>1080</height>
+        <codec>h264</codec>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>

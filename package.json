@@ -1,0 +1,14 @@
+{
+  "name": "mymedialibrary-tests",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test:python": "python3 -m unittest discover -s tests/python -p 'test_*.py' && python3 -m unittest discover -s conf/tests -p 'test_*.py'",
+    "test:frontend:unit": "node --test tests/frontend/unit/*.test.mjs",
+    "test:frontend:e2e": "playwright test",
+    "test": "npm run test:frontend:unit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2"
+  }
+}
