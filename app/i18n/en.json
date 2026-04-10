@@ -67,7 +67,8 @@
     "select_all": "Select all",
     "include": "Include",
     "exclude": "Exclude",
-    "except": "Except"
+    "except": "Except",
+    "reset_all": "Reset filters"
   },
   "sort": {
     "title_asc": "Title A-Z",
