@@ -246,11 +246,21 @@ let allItems=[], categories=[], groups=[];
     // First-run: no folder has been assigned a type yet → show onboarding
     const folders = appConfig.folders || [];
     const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
-    if (!hasConfigured) { showOnboarding(); return; }
+    if (!hasConfigured) {
+      libraryExportSource = null;
+      updateExportJsonButtonState();
+      showOnboarding();
+      return;
+    }
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
-      if (r.status === 404) { showOnboarding(); return; }
+      if (r.status === 404) {
+        libraryExportSource = null;
+        updateExportJsonButtonState();
+        showOnboarding();
+        return;
+      }
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       libraryExportSource = data;
@@ -285,12 +295,14 @@ let allItems=[], categories=[], groups=[];
       restoreState();
       renderStats(filterItems());
       render();
+      updateExportJsonButtonState();
     } catch(e) {
       console.error('loadLibrary error:', e);
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.scan_error');
+      updateExportJsonButtonState();
     }
   }
 
@@ -560,6 +572,12 @@ let allItems=[], categories=[], groups=[];
       if (!btn) return;
       btn.disabled = disabled;
     });
+  }
+
+  function updateExportJsonButtonState() {
+    const btn = document.getElementById('cfgExportJsonBtn');
+    if (!btn) return;
+    btn.disabled = !libraryExportSource;
   }
 
   function resetAllFilters() {
@@ -1000,7 +1018,7 @@ let allItems=[], categories=[], groups=[];
     let items=filterItems();
     renderStats(items);
     const c=document.getElementById('library');
-    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p></div>'; return; }
+    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>'; return; }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
@@ -2637,6 +2655,11 @@ let allItems=[], categories=[], groups=[];
     const dInput = document.getElementById('searchInput');
     const mInput = document.getElementById('searchInputMobile');
     if (active === dInput || active === mInput) {
+      if (active.value && active.value.length > 0) {
+        if (active === dInput) clearSearch();
+        else clearSearchMobile();
+        return true;
+      }
       active.blur();
       if (mobileFiltersOpen) closeMobileFilters();
       return true;
