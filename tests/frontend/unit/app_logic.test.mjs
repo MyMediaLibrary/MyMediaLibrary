@@ -61,3 +61,26 @@ test('export button enablement and stale-safe behavior', () => {
   assert.equal(logic.isExportEnabled(undefined), false);
   assert.equal(logic.isExportEnabled({ items: [] }), true);
 });
+
+test('normalizes legacy provider keys from persisted state', () => {
+  assert.equal(logic.canonicalProviderFilterKey('autres'), '__others__');
+  assert.equal(logic.canonicalProviderFilterKey('others'), '__others__');
+  assert.equal(logic.canonicalProviderFilterKey('__others__'), '__others__');
+  assert.equal(logic.canonicalProviderFilterKey('__none__'), '__none__');
+  assert.equal(logic.canonicalProviderFilterKey('  Netflix  '), 'Netflix');
+  assert.equal(logic.canonicalProviderFilterKey(''), null);
+});
+
+test('counts grouped providers once per item (no overcount in Others)', () => {
+  const sample = [
+    { providers: ['HiddenA', 'HiddenB'] }, // should count __others__ once
+    { providers: ['Netflix', 'HiddenA'] }, // Netflix once, __others__ once
+    { providers: ['Netflix', 'Netflix'] }, // Netflix once
+  ];
+  const counts = logic.groupedProviderCounts(
+    sample,
+    (name) => (name === 'Netflix' ? 'Netflix' : '__others__'),
+    (entry) => entry
+  );
+  assert.deepEqual(counts, { __others__: 2, Netflix: 2 });
+});
