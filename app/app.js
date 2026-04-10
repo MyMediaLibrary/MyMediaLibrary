@@ -181,6 +181,18 @@ let allItems=[], categories=[], groups=[];
     });
     return grouped;
   }
+  function _canonicalProviderFilterKey(raw) {
+    if (window.MMLLogic?.canonicalProviderFilterKey) {
+      return window.MMLLogic.canonicalProviderFilterKey(raw);
+    }
+    if (typeof raw !== 'string') return null;
+    const key = raw.trim();
+    if (!key) return null;
+    const lower = key.toLowerCase();
+    if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
+    if (key === '__none__') return '__none__';
+    return key;
+  }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
     return items.some(i => (i.providers || []).some(p => {
@@ -224,7 +236,13 @@ let allItems=[], categories=[], groups=[];
       if (s.activeType)                       activeType        = s.activeType;
       if (s.activeGroup)                      activeGroup       = s.activeGroup;
       if (s.activeCat)                        activeCat         = s.activeCat;
-      if (Array.isArray(s.activeProviders))   activeProviders   = new Set(s.activeProviders);
+      if (Array.isArray(s.activeProviders)) {
+        activeProviders = new Set(
+          s.activeProviders
+            .map(v => _canonicalProviderFilterKey(v))
+            .filter(Boolean)
+        );
+      }
       if (s.activeResolution)                 activeResolution  = s.activeResolution;
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
@@ -1507,14 +1525,24 @@ let allItems=[], categories=[], groups=[];
 
 
     // ── Providers ─────────────────────────────────────────
-    const byProv={ [PROVIDER_OTHERS_KEY]: { count: 0, logo: '' } };
-    items.forEach(i=>(i.providers||[]).forEach(p=>{
-      const rawName=_pname(p);
-      const name=_providerGroupKey(rawName);
-      if(!name) return;
-      if(!byProv[name]) byProv[name]={count:0, logo: name === PROVIDER_OTHERS_KEY ? '' : _plogo(p)};
-      byProv[name].count++;
-      if(!byProv[name].logo && name !== PROVIDER_OTHERS_KEY) byProv[name].logo=_plogo(p);
+    const groupedProviderCount = window.MMLLogic?.groupedProviderCounts
+      ? window.MMLLogic.groupedProviderCounts(items, _providerGroupKey, _pname)
+      : (() => {
+          const fallback = {};
+          items.forEach(i => _itemProviderGroups(i).forEach(name => {
+            fallback[name] = (fallback[name] || 0) + 1;
+          }));
+          return fallback;
+        })();
+    const byProv = {};
+    Object.entries(groupedProviderCount).forEach(([name, count]) => {
+      byProv[name] = { count, logo: '' };
+    });
+    items.forEach(i => (i.providers || []).forEach(p => {
+      const rawName = _pname(p);
+      const name = _providerGroupKey(rawName);
+      if (!name || !byProv[name] || name === PROVIDER_OTHERS_KEY) return;
+      if (!byProv[name].logo) byProv[name].logo = _plogo(p);
     }));
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
     const maxPC = provEntries[0]?.[1].count||1;
@@ -1713,7 +1741,7 @@ let allItems=[], categories=[], groups=[];
       ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
     const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
-    const provPieHtml=provCountEntries.length
+    const provPieHtml=provEntries.length
       ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
       : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
 
@@ -2108,13 +2136,14 @@ let allItems=[], categories=[], groups=[];
   }
 
   function setScanControlsState(isScanning) {
+    const wasScanning = _isScanning;
     _isScanning = !!isScanning;
     ['scanMainBtn', 'scanArrowBtn', 'mobileScanEntryBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
       });
-    if (_isScanning) {
+    if (!wasScanning && _isScanning) {
       document.getElementById('scanDropdown')?.classList.remove('open');
       closeMobileActionsMenu();
       closeMobileScanSheet();
@@ -3021,8 +3050,12 @@ let allItems=[], categories=[], groups=[];
   };
 
   function _onbDocLang() {
+<<<<<<< codex/add-fr/en-language-switch-to-docs-i6srsv
     const fallbackLang = CURRENT_LANG === 'en' ? 'en' : 'fr';
     return _onbLang === 'en' ? 'en' : (_onbLang === 'fr' ? 'fr' : fallbackLang);
+=======
+    return _onbLang === 'en' ? 'en' : 'fr';
+>>>>>>> main
   }
 
   function _onbDocHref() {
@@ -3193,7 +3226,11 @@ let allItems=[], categories=[], groups=[];
           + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-.95-2.69-.95-.36-.91-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.81.06 1.24.84 1.24.84.72 1.23 1.89.87 2.35.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.96 0-.88.32-1.6.84-2.16-.08-.2-.36-1.02.08-2.12 0 0 .69-.22 2.26.82A7.73 7.73 0 0 1 8 4.08c.68 0 1.37.09 2.01.27 1.57-1.04 2.26-.82 2.26-.82.44 1.1.16 1.92.08 2.12.52.56.84 1.28.84 2.16 0 3.08-1.88 3.75-3.67 3.95.29.25.54.73.54 1.47v2.18c0 .22.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
           + '<span>GitHub</span>'
         + '</a>'
+<<<<<<< codex/add-fr/en-language-switch-to-docs-i6srsv
         + '<a id="onbDocLink" href="'+_onbDocHref()+'" target="_blank" rel="noopener" style="'+quickLinkBase+'">'
+=======
+        + '<a id="onbDocLink" href="'+_onbDocHref()+'" style="'+quickLinkBase+'">'
+>>>>>>> main
           + '<span>📘 Documentation</span>'
         + '</a>'
       + '</div>'

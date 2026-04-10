@@ -5,6 +5,10 @@
     root.MMLLogic = factory();
   }
 })(typeof self !== 'undefined' ? self : this, function () {
+  const PROVIDER_OTHERS_KEY = '__others__';
+  const PROVIDER_NONE_KEY = '__none__';
+  const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+
   function normalizeAudioLanguageCode(raw) {
     if (typeof raw !== 'string') return null;
     const code = raw.toLowerCase().trim();
@@ -136,6 +140,35 @@
     return !!libraryExportSource;
   }
 
+  function canonicalProviderFilterKey(raw, options = {}) {
+    const knownProviders = options.knownProviders || null;
+    if (typeof raw !== 'string') return null;
+    const key = raw.trim();
+    if (!key) return null;
+    const lower = key.toLowerCase();
+    if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
+    if (key === PROVIDER_NONE_KEY) return PROVIDER_NONE_KEY;
+    if (knownProviders && !knownProviders.has(key)) return null;
+    return key;
+  }
+
+  function groupedProviderCounts(items, providerGroupForName, providerNameFromEntry) {
+    const byProvider = {};
+    const readName = providerNameFromEntry || ((p) => p);
+    const groupFor = providerGroupForName || ((name) => name);
+    (items || []).forEach((item) => {
+      const grouped = new Set();
+      (item.providers || []).forEach((entry) => {
+        const key = groupFor(readName(entry));
+        if (key) grouped.add(key);
+      });
+      grouped.forEach((key) => {
+        byProvider[key] = (byProvider[key] || 0) + 1;
+      });
+    });
+    return byProvider;
+  }
+
   return {
     normalizeAudioLanguageCode,
     simplifyAudioLanguages,
@@ -146,6 +179,8 @@
     filterItems,
     hasActiveFilters,
     resetFiltersState,
-    isExportEnabled
+    isExportEnabled,
+    canonicalProviderFilterKey,
+    groupedProviderCounts
   };
 });
