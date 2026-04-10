@@ -67,7 +67,8 @@
     "select_all": "Tout sélectionner",
     "include": "Inclure",
     "exclude": "Exclure",
-    "except": "Sauf"
+    "except": "Sauf",
+    "reset_all": "Réinitialiser les filtres"
   },
   "sort": {
     "title_asc": "Titre A-Z",

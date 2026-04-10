@@ -110,6 +110,9 @@
         <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
       </div>
     </div>
+    <div class="sidebar-section" style="width:100%">
+      <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
+    </div>
 
     <!-- SORT (library only) -->
     <div class="sidebar-section" id="sortSection" style="width:100%">
@@ -413,6 +416,9 @@
         <input type="search" id="searchInputMobile" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off" oninput="onMobileSearchInput(this.value)"/>
         <button class="search-clear" id="searchClearMobile" onclick="clearSearchMobile()" style="display:none" type="button">✕</button>
       </div>
+    </div>
+    <div style="margin-bottom:10px">
+      <button class="filter-reset-btn" id="globalFilterResetBtnMobile" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
     </div>
     <div id="mobileTypeSection" style="margin-bottom:8px">
       <div class="storage-block">

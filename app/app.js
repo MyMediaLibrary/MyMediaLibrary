@@ -185,16 +185,9 @@ let allItems=[], categories=[], groups=[];
       renderCodecFilter();
       renderAudioCodecFilter();
       renderAudioLanguageFilter();
-      // Sync type pills
-      if (s.activeType) {
-        ['#typeFilter','#typeFilterTop'].forEach(sel => {
-          document.querySelectorAll(sel+' .provider-pill').forEach(p => {
-            const t = p.dataset.type || 'all';
-            p.classList.toggle('active', s.activeType==='all' ? !p.dataset.type : t===s.activeType);
-          });
-        });
-      }
+      syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
+      updateGlobalResetButtons();
     } catch(e) {}
   }
   let currentView='grid', currentTab='library';
@@ -496,12 +489,7 @@ let allItems=[], categories=[], groups=[];
   function clickType(type) {
     activeType = (type !== 'all' && activeType === type) ? 'all' : type;
     activeCat = 'all';
-    ['#typeFilter', '#typeFilterTop', '#typeFilterMobile'].forEach(sel => {
-      document.querySelectorAll(sel + ' .provider-pill').forEach(p => {
-        const t = p.dataset.type || 'all';
-        p.classList.toggle('active', activeType === 'all' ? !p.dataset.type : t === activeType);
-      });
-    });
+    syncTypePills();
     renderStorageBar();
     renderProviderFilter();
     renderResolutionFilter();
@@ -543,6 +531,57 @@ let allItems=[], categories=[], groups=[];
       openDropdown = null;
     }
   });
+
+  function hasActiveFilters() {
+    return activeType !== 'all'
+      || activeGroup !== 'all'
+      || activeCat !== 'all'
+      || activeResolution !== 'all'
+      || activeProviders.size > 0
+      || activeCodecs.size > 0
+      || activeAudioCodecs.size > 0
+      || activeAudioLanguages.size > 0
+      || providerExclude
+      || videoCodecExclude
+      || audioCodecExclude
+      || audioLanguageExclude
+      || getSearchQuery().length > 0;
+  }
+
+  function updateGlobalResetButtons() {
+    const disabled = !hasActiveFilters();
+    ['globalFilterResetBtn', 'globalFilterResetBtnMobile'].forEach(function(id) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.disabled = disabled;
+    });
+  }
+
+  function resetAllFilters() {
+    activeType = 'all';
+    activeGroup = 'all';
+    activeCat = 'all';
+    activeResolution = 'all';
+    activeProviders.clear();
+    activeCodecs.clear();
+    activeAudioCodecs.clear();
+    activeAudioLanguages.clear();
+    providerExclude = false;
+    videoCodecExclude = false;
+    audioCodecExclude = false;
+    audioLanguageExclude = false;
+
+    const searchDesktop = document.getElementById('searchInput');
+    if (searchDesktop) searchDesktop.value = '';
+    const searchMobile = document.getElementById('searchInputMobile');
+    if (searchMobile) searchMobile.value = '';
+    const clearDesktop = document.getElementById('searchClear');
+    if (clearDesktop) clearDesktop.style.display = 'none';
+    const clearMobile = document.getElementById('searchClearMobile');
+    if (clearMobile) clearMobile.style.display = 'none';
+
+    onFilter();
+  }
 
   function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude }) {
     const sec = document.getElementById(containerId);
@@ -592,10 +631,9 @@ let allItems=[], categories=[], groups=[];
       + '<span>' + t('filters.select_all') + '</span>'
       + '</label>';
     if (onToggleExclude) {
-      html += '<select class="filter-dropdown-mode" onchange="event.stopPropagation();' + onToggleExclude + '(this.value===\'exclude\')" onclick="event.stopPropagation()">'
-        + '<option value="include"' + (excludeMode ? '' : ' selected') + '>' + t('filters.include') + '</option>'
-        + '<option value="exclude"' + (excludeMode ? ' selected' : '') + '>' + t('filters.exclude') + '</option>'
-        + '</select>';
+      const modeClass = excludeMode ? ' is-exclude' : ' is-include';
+      const modeLabel = excludeMode ? t('filters.exclude') : t('filters.include');
+      html += '<button class="filter-mode-toggle' + modeClass + '" type="button" onclick="event.stopPropagation();' + onToggleExclude + '()">' + modeLabel + '</button>';
     }
     html += '</div>';
     keys.forEach(function(key) {
@@ -639,10 +677,10 @@ let allItems=[], categories=[], groups=[];
   function clearAudioCodecFilter() { activeAudioCodecs.clear(); onFilter(); }
   function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
   function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
-  function toggleProviderExclude(v) { providerExclude = v; onFilter(); }
-  function toggleVideoCodecExclude(v) { videoCodecExclude = v; onFilter(); }
-  function toggleAudioCodecExclude(v) { audioCodecExclude = v; onFilter(); }
-  function toggleAudioLanguageExclude(v) { audioLanguageExclude = v; onFilter(); }
+  function toggleProviderExclude() { providerExclude = !providerExclude; onFilter(); }
+  function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
+  function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
+  function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
@@ -741,6 +779,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onFilter() {
+    syncTypePills();
     renderStorageBar();
     renderResolutionFilter();
     renderProviderFilter();
@@ -752,6 +791,16 @@ let allItems=[], categories=[], groups=[];
     else if (currentTab==='stats') renderStatsPanel();
     saveState();
     syncMobileFilters();
+    updateGlobalResetButtons();
+  }
+
+  function syncTypePills() {
+    ['#typeFilter', '#typeFilterTop', '#typeFilterMobile'].forEach(sel => {
+      document.querySelectorAll(sel + ' .provider-pill').forEach(p => {
+        const t = p.dataset.type || 'all';
+        p.classList.toggle('active', activeType === 'all' ? !p.dataset.type : t === activeType);
+      });
+    });
   }
 
   // ── FILTER ITEMS ─────────────────────────────────────
