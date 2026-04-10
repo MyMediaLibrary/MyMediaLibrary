@@ -139,7 +139,10 @@
       "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
       "cron": "Scan automatique (cron)",
       "log_level": "Niveau de log",
-      "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log"
+      "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log",
+      "export_json": "Export JSON",
+      "export_json_btn": "Télécharger l'export",
+      "export_unavailable": "Bibliothèque non chargée : impossible d'exporter."
     },
     "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml.",
     "github_link": "Projet GitHub",

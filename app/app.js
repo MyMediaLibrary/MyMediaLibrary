@@ -33,6 +33,7 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+  let libraryExportSource = null; // raw library.json payload used for export
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
   let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
@@ -111,6 +112,7 @@ let allItems=[], categories=[], groups=[];
   let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
+  let appVersionInfo = null;     // loaded from /version.json
 
   function saveState() {
     try {
@@ -185,6 +187,7 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/version.json?_='+Date.now());
       if (!r.ok) return;
       const v = await r.json();
+      appVersionInfo = v;
       const el = document.getElementById('appVersionStr');
       if (!el) return;
       const parts = ['v' + (v.version || 'dev')];
@@ -226,6 +229,7 @@ let allItems=[], categories=[], groups=[];
       if (r.status === 404) { showOnboarding(); return; }
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
+      libraryExportSource = data;
       allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
       // providers_meta: canonical logo source (new format)
       PROVIDERS_META = data.providers_meta || {};
@@ -256,10 +260,60 @@ let allItems=[], categories=[], groups=[];
       render();
     } catch(e) {
       console.error('loadLibrary error:', e);
+      libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.scan_error');
     }
+  }
+
+  function _dateYmd(d = new Date()) {
+    return [
+      d.getFullYear(),
+      String(d.getMonth() + 1).padStart(2, '0'),
+      String(d.getDate()).padStart(2, '0')
+    ].join('-');
+  }
+
+  async function _getVersionForExport() {
+    try {
+      const r = await fetch('/version.json?_=' + Date.now());
+      if (r.ok) {
+        const data = await r.json();
+        appVersionInfo = data;
+        return data;
+      }
+    } catch(_) {}
+    return appVersionInfo || { version: 'dev' };
+  }
+
+  async function exportLibraryJson() {
+    if (!libraryExportSource) {
+      alert(t('settings.system.export_unavailable'));
+      return;
+    }
+
+    const exportedAt = new Date();
+    const exportDate = _dateYmd(exportedAt);
+    const versionInfo = await _getVersionForExport();
+    const payload = {
+      exported_at: exportedAt.toISOString(),
+      export_date: exportDate,
+      app_version: versionInfo.version || 'dev',
+      app_version_meta: versionInfo,
+      library: libraryExportSource
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const filename = `mymedialibrary-export-${exportDate}.json`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
 

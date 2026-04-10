@@ -139,7 +139,10 @@
       "synopsis_hint": "Shows the synopsis when hovering over a card",
       "cron": "Automatic scan (cron)",
       "log_level": "Log level",
-      "log_path": "📄 Logs available on host: ./data/scanner.log"
+      "log_path": "📄 Logs available on host: ./data/scanner.log",
+      "export_json": "JSON export",
+      "export_json_btn": "Download export",
+      "export_unavailable": "Library not loaded: export unavailable."
     },
     "env_note": "⚙️ Read-only values are configured via compose.yaml.",
     "github_link": "GitHub project",
