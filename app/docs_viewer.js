@@ -7,6 +7,8 @@
   const contentEl = document.getElementById('docsContent');
   const themeBtn = document.getElementById('docsThemeToggle');
   const backToTopBtn = document.getElementById('docsBackToTop');
+  const langFrBtn = document.getElementById('docsLangFr');
+  const langEnBtn = document.getElementById('docsLangEn');
   const backToTopThreshold = 280;
 
   function applyTheme(theme) {
@@ -37,6 +39,38 @@
     applyTheme(next);
     localStorage.setItem('mml_docs_theme', next);
     updateThemeButtonLabel();
+  }
+
+  function updateLanguageButtons() {
+    const langMap = {
+      fr: langFrBtn,
+      en: langEnBtn
+    };
+    Object.entries(langMap).forEach(([buttonLang, button]) => {
+      if (!button) return;
+      const isActive = buttonLang === lang;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      button.disabled = isActive;
+    });
+  }
+
+  function switchLanguage(nextLang) {
+    if (nextLang === lang || (nextLang !== 'fr' && nextLang !== 'en')) return;
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.set('lang', nextLang);
+    const query = nextParams.toString();
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}`;
+
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    window.location.assign(nextUrl);
+  }
+
+  function bindLanguageSwitch() {
+    if (langFrBtn) langFrBtn.addEventListener('click', () => switchLanguage('fr'));
+    if (langEnBtn) langEnBtn.addEventListener('click', () => switchLanguage('en'));
+    updateLanguageButtons();
   }
 
   function scrollToHash(hash) {
@@ -73,6 +107,7 @@
   }
 
   if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+  bindLanguageSwitch();
   if (backToTopBtn) {
     backToTopBtn.addEventListener('click', scrollToTop);
     updateBackToTopVisibility();
