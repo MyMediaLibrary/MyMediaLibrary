@@ -110,6 +110,26 @@ let allItems=[], categories=[], groups=[];
     return entry?.display ?? normalized;
   }
 
+  function getNormalizedVideoCodec(item) {
+    return item?.codec || 'UNKNOWN';
+  }
+
+  function getNormalizedAudioCodec(item) {
+    return item?.audio_codec || 'UNKNOWN';
+  }
+
+  function getAudioCodecLabel(item) {
+    return item?.audio_codec_display ?? getAudioCodecDisplay(getNormalizedAudioCodec(item));
+  }
+
+  function getNormalizedResolution(item) {
+    return item?.resolution || 'UNKNOWN';
+  }
+
+  function getProviderNames(item) {
+    return (item?.providers || []).map(_pname).filter(Boolean);
+  }
+
   function getProviderLogo(name) {
     const logo = PROVIDERS_LOGOS[name];
     return logo ? `/assets/providers/${logo}` : null;
@@ -728,7 +748,10 @@ let allItems=[], categories=[], groups=[];
   function renderCodecFilter() {
     const base = baseItems('codec');
     const counts = {};
-    base.forEach(i => { if (i.codec) counts[i.codec] = (counts[i.codec]||0)+1; });
+    base.forEach(i => {
+      const key = getNormalizedVideoCodec(i);
+      counts[key] = (counts[key] || 0) + 1;
+    });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
         activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k,
@@ -739,10 +762,13 @@ let allItems=[], categories=[], groups=[];
   function renderAudioCodecFilter() {
     const base = baseItems('audioCodec');
     const counts = {};
-    base.forEach(i => { if (i.audio_codec) counts[i.audio_codec] = (counts[i.audio_codec]||0)+1; });
+    base.forEach(i => {
+      const key = getNormalizedAudioCodec(i);
+      counts[key] = (counts[key] || 0) + 1;
+    });
     ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
-        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k,
+        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => getAudioCodecDisplay(k),
         excludeMode: audioCodecExclude, onToggleExclude: 'toggleAudioCodecExclude' });
     });
   }
@@ -847,19 +873,23 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getItemSearchFields(item) {
-    const providers = (item.providers || []).map(_pname).filter(Boolean).join(' ');
+    const providers = getProviderNames(item).join(' ');
     const audioSimple = getAudioLanguageSimple(item);
     const audioSimpleAliases = audioSimple === 'VF'
       ? 'vf french francais fr'
-      : (audioSimple === 'VO' ? 'vo original' : 'multi multilingual multilang');
+      : (audioSimple === 'VO'
+        ? 'vo original'
+        : (audioSimple === 'MULTI'
+          ? 'multi multilingual multilang'
+          : 'unknown inconnu'));
     return [
       item.title,
       item.year,
-      item.audio_codec,
-      item.audio_codec_display,
+      getNormalizedAudioCodec(item),
+      getAudioCodecLabel(item),
       item.audio_codec_raw,
-      item.codec,
-      item.resolution,
+      getNormalizedVideoCodec(item),
+      getNormalizedResolution(item),
       audioSimple,
       audioSimpleAliases,
       providers
@@ -913,19 +943,19 @@ let allItems=[], categories=[], groups=[];
         });
       }
     }
-    if (activeResolution!=='all') items=items.filter(i=>i.resolution===activeResolution);
+    if (activeResolution!=='all') items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
     if (activeCodecs.size > 0) {
       if (videoCodecExclude) {
-        items=items.filter(i=>!activeCodecs.has(i.codec??'UNKNOWN'));
+        items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
       } else {
-        items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+        items=items.filter(i=>activeCodecs.has(getNormalizedVideoCodec(i)));
       }
     }
     if (activeAudioCodecs.size > 0) {
       if (audioCodecExclude) {
-        items=items.filter(i=>!activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+        items=items.filter(i=>!activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       } else {
-        items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+        items=items.filter(i=>activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       }
     }
     if (activeAudioLanguages.size > 0) {
@@ -964,19 +994,19 @@ let allItems=[], categories=[], groups=[];
         });
       }
     }
-    if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>i.resolution===activeResolution);
+    if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
     if (except!=='codec' && activeCodecs.size > 0) {
       if (videoCodecExclude) {
-        items=items.filter(i=>!activeCodecs.has(i.codec??'UNKNOWN'));
+        items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
       } else {
-        items=items.filter(i=>activeCodecs.has(i.codec??'UNKNOWN'));
+        items=items.filter(i=>activeCodecs.has(getNormalizedVideoCodec(i)));
       }
     }
     if (except!=='audioCodec' && activeAudioCodecs.size > 0) {
       if (audioCodecExclude) {
-        items=items.filter(i=>!activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+        items=items.filter(i=>!activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       } else {
-        items=items.filter(i=>activeAudioCodecs.has(i.audio_codec??'UNKNOWN'));
+        items=items.filter(i=>activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       }
     }
     if (except!=='audioLanguage' && activeAudioLanguages.size > 0) {
@@ -1332,9 +1362,9 @@ let allItems=[], categories=[], groups=[];
     const CODEC_COLORS = ['#f59e0b','#3b82f6','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
     const byCodec={}, byCodecCount={};
     items.forEach(i=>{
-      if (!i.codec) return;
-      byCodec[i.codec]=(byCodec[i.codec]||0)+(i.size_b||0);
-      byCodecCount[i.codec]=(byCodecCount[i.codec]||0)+1;
+      const key = getNormalizedVideoCodec(i);
+      byCodec[key]=(byCodec[key]||0)+(i.size_b||0);
+      byCodecCount[key]=(byCodecCount[key]||0)+1;
     });
     const codecColorFn=(k,idx)=>CODEC_COLORS[idx%CODEC_COLORS.length];
     const codecEntriesSize  = Object.entries(byCodec).sort((a,b)=>b[1]-a[1]);
@@ -1344,11 +1374,9 @@ let allItems=[], categories=[], groups=[];
     const AUDIO_CODEC_COLORS = ['#06b6d4','#f97316','#a3e635','#e879f9','#fb7185','#34d399','#fbbf24'];
     const byAudioCodec={}, byAudioCodecCount={};
     items.forEach(i=>{
-      const ac = i.audio_codec || 'UNKNOWN';
-      if (ac === 'UNKNOWN') return;  // skip unknowns in pie chart
-      const label = i.audio_codec_display ?? getAudioCodecDisplay(i.audio_codec);
-      byAudioCodec[label]=(byAudioCodec[label]||0)+(i.size_b||0);
-      byAudioCodecCount[label]=(byAudioCodecCount[label]||0)+1;
+      const key = getNormalizedAudioCodec(i);
+      byAudioCodec[key]=(byAudioCodec[key]||0)+(i.size_b||0);
+      byAudioCodecCount[key]=(byAudioCodecCount[key]||0)+1;
     });
     const audioCodecColorFn=(k,idx)=>AUDIO_CODEC_COLORS[idx%AUDIO_CODEC_COLORS.length];
     const audioCodecEntriesSize  = Object.entries(byAudioCodec).sort((a,b)=>b[1]-a[1]);
@@ -1379,7 +1407,7 @@ let allItems=[], categories=[], groups=[];
     const RES_COLORS = {'4K':'#a855f7','1080p':'#22c55e','720p':'#3b82f6','SD':'#78716c'};
     const byRes={}, byResCount={};
     items.forEach(i=>{
-      const r=i.resolution||'Inconnu';
+      const r=getNormalizedResolution(i);
       byRes[r]=(byRes[r]||0)+(i.size_b||0);
       byResCount[r]=(byResCount[r]||0)+1;
     });
@@ -1546,9 +1574,9 @@ let allItems=[], categories=[], groups=[];
     const groupColorFn=(k,i)=>groupColorMap[k]||PALETTE[i%PALETTE.length];
     const catColorFn=(k,i)=>catColorMap[k]||PALETTE[i%PALETTE.length];
 
-    function switchablePie(id, title, sizeEntries, countEntries, colorFn) {
-      const pieSize  = makePie(sizeEntries,  colorFn, v=>v, k=>k, fmtSize);
-      const pieCount = makePie(countEntries, colorFn, v=>v, k=>k, v=>String(v));
+    function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k) {
+      const pieSize  = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), fmtSize);
+      const pieCount = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v));
       return '<div class="stats-block">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
           +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
@@ -1574,19 +1602,24 @@ let allItems=[], categories=[], groups=[];
 
     // Provider pie (including "Aucun") — switchable taille/nombre
     const provColorFn=(k,i)=>provColors[i%provColors.length];
+    const noProviderLabel = t('filters.no_provider');
     const noneCount = items.filter(i=>!(i.providers&&i.providers.length)).length;
     const noneSize  = items.filter(i=>!(i.providers&&i.providers.length)).reduce((s,i)=>s+(i.size_b||0),0);
     const provCountEntries=[
       ...provEntries.map(([k,v])=>[k,v.count]),
-      ...(noneCount>0 ? [['Aucun',noneCount]] : []),
+      ...(noneCount>0 ? [[noProviderLabel,noneCount]] : []),
     ];
     const byProvSize={};
-    items.forEach(i=>(i.providers||[]).forEach(p=>{ if(p) byProvSize[p]=(byProvSize[p]||0)+(i.size_b||0); }));
+    items.forEach(i=>(i.providers||[]).forEach(p=>{
+      const name = _pname(p);
+      if (!name || !_provVisible(name)) return;
+      byProvSize[name]=(byProvSize[name]||0)+(i.size_b||0);
+    }));
     const provSizeEntries=[
       ...provEntries.map(([k])=>[k,byProvSize[k]||0]),
-      ...(noneSize>0 ? [['Aucun',noneSize]] : []),
+      ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
-    const provColorFnWithNone=(k,i)=> k==='Aucun' ? '#555577' : provColors[i%provColors.length];
+    const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
     const provPieHtml=provCountEntries.length
       ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone)
       : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
@@ -1690,7 +1723,7 @@ let allItems=[], categories=[], groups=[];
         +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn)
         +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn) : '')
         +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn) : '')
-        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn) : '')
+        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay) : '')
         +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntries, audioLangEntries, audioLangColorFn) : '')
         +provPieHtml
       +'</div>'

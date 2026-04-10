@@ -19,7 +19,6 @@ import copy
 import http.server
 import json
 import logging
-from functools import lru_cache
 from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 import os
@@ -172,27 +171,38 @@ def _parse_concatenated_lang_codes(raw: str) -> list[str] | None:
     if not token:
         return []
 
-    @lru_cache(maxsize=None)
-    def _walk(idx: int) -> tuple[str, ...] | None:
-        if idx == len(token):
-            return ()
-        # Prefer 3-letter tokens first (e.g. "fre" + "ru" for "freru")
+    # Non-recursive dynamic programming to avoid RecursionError on malformed
+    # very long strings. We keep the same preference as before (3-letter token
+    # before 2-letter token) when rebuilding the solution.
+    n = len(token)
+    can_parse = [False] * (n + 1)
+    can_parse[n] = True
+    choices: list[tuple[int, str] | None] = [None] * (n + 1)
+
+    for idx in range(n - 1, -1, -1):
         for size in (3, 2):
             end = idx + size
-            if end > len(token):
+            if end > n:
                 continue
             norm = _normalize_lang_code(token[idx:end])
-            if not norm:
-                continue
-            tail = _walk(end)
-            if tail is not None:
-                return (norm, *tail)
+            if norm and can_parse[end]:
+                can_parse[idx] = True
+                choices[idx] = (end, norm)
+                break
+
+    if not can_parse[0]:
         return None
 
-    parsed = _walk(0)
-    if parsed is None:
-        return None
-    return list(parsed)
+    parsed: list[str] = []
+    idx = 0
+    while idx < n:
+        choice = choices[idx]
+        if choice is None:
+            return None
+        next_idx, norm = choice
+        parsed.append(norm)
+        idx = next_idx
+    return parsed
 
 
 def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
@@ -213,8 +223,10 @@ def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
     return []
 
 
-def _parse_lang_raw(raw: str, item_title: str = '') -> list[str]:
+def _parse_lang_raw(raw: str | None, item_title: str = '') -> list[str]:
     """Parse a raw language string (possibly concatenated, e.g. 'freeng') into ISO 639-2 codes."""
+    if raw is None:
+        return []
     raw = raw.strip().lower()
     if not raw:
         return []

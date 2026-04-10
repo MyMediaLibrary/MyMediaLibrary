@@ -40,6 +40,14 @@ class ParseAudioLanguageRawTest(unittest.TestCase):
     def test_empty_or_null_like_values(self):
         self.assertEqual(scanner._parse_lang_raw(''), [])
         self.assertEqual(scanner._parse_lang_raw('   '), [])
+        self.assertEqual(scanner._parse_lang_raw(None), [])
+
+    def test_long_repetitive_values_do_not_crash(self):
+        self.assertEqual(scanner._parse_lang_raw('en' * 600), ['eng'] * 600)
+        self.assertEqual(scanner._parse_lang_raw('fre' * 500), ['fra'] * 500)
+
+    def test_long_malformed_values_do_not_crash(self):
+        self.assertEqual(scanner._parse_lang_raw('abcdef' * 400), [])
 
     def test_simplified_mapping_with_parsed_values(self):
         self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('fre')), 'VF')
