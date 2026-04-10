@@ -150,6 +150,9 @@ _KNOWN_ISO_639_2: frozenset[str] = frozenset({
 def _normalize_lang_code(raw: str) -> str | None:
     """Normalize a 2- or 3-letter code to ISO 639-2 (3-letter terminiologic). Returns None if unknown."""
     code = raw.lower().strip()
+    if code == 'und':
+        # ISO 639-2 "und" = undetermined/unknown language
+        return 'und'
     if len(code) == 2:
         return ISO_639_1_TO_2.get(code)
     if len(code) == 3:
@@ -291,7 +294,7 @@ def simplify_audio_languages(codes: list[str] | None) -> str:
         if not isinstance(code, str):
             continue
         norm = _normalize_lang_code(code)
-        if norm:
+        if norm and norm != 'und':
             normalized.add(norm)
 
     if not normalized:
@@ -785,9 +788,9 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, pr
     if not _fetch_providers_sampled:
         _fetch_providers_sampled = True
         top_keys = list(data.keys())
-        log.info(f"[providers] Jellyseerr response keys for {media}/{tmdb_id}: {top_keys}")
+        log.debug(f"[providers] Jellyseerr response keys for {media}/{tmdb_id}: {top_keys}")
         wp_raw = data.get("watchProviders")
-        log.info(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
+        log.debug(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
 
     watch_providers = data.get("watchProviders") or []
     # Jellyseerr can return either a list [{iso_3166_1, flatrate}] or a dict {"FR": {...}}
@@ -1177,7 +1180,6 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "added_at":          datetime.fromtimestamp(mtime).isoformat(),
         "added_ts":          int(mtime),
         "poster":            poster,
-        "poster_local":      poster_local,
         "tmdb_id":           tmdb_id,
         "resolution":        nfo_meta.get("resolution") or prev.get("resolution"),
         "width":             nfo_meta.get("width")      or prev.get("width"),
