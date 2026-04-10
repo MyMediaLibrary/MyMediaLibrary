@@ -21,7 +21,7 @@ class LanguageNormalizationCriticalTest(unittest.TestCase):
             ("jpneng", ["jpn", "eng"], "VO"),
             ("freijo", ["fra"], "VF"),
             ("fregsw", ["fra", "gsw"], "MULTI"),
-            ("frefrenob", ["fra", "fra", "nor"], "MULTI"),
+            ("frefrenob", ["fra", "fra", "nob"], "MULTI"),
             ("vf", ["fra"], "VF"),
             ("vo", [], "UNKNOWN"),
             ("multi", [], "UNKNOWN"),

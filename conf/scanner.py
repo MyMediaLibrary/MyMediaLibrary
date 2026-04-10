@@ -130,7 +130,7 @@ ISO_639_1_TO_2: dict[str, str] = {
     'it': 'ita', 'ja': 'jpn', 'zh': 'zho', 'ko': 'kor',
     'pt': 'por', 'ru': 'rus', 'ar': 'ara', 'nl': 'nld',
     'pl': 'pol', 'sv': 'swe', 'da': 'dan', 'fi': 'fin',
-    'nb': 'nor', 'tr': 'tur', 'cs': 'ces', 'hu': 'hun',
+    'nb': 'nob', 'tr': 'tur', 'cs': 'ces', 'hu': 'hun',
 }
 
 # Deprecated/bibliographic ISO 639-2 aliases → canonical terminiologic code
@@ -140,7 +140,7 @@ _ISO_639_2_ALIASES: dict[str, str] = {
 
 _KNOWN_ISO_639_2: frozenset[str] = frozenset({
     'fra', 'eng', 'deu', 'spa', 'ita', 'jpn', 'zho', 'kor', 'por', 'rus',
-    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'gsw', 'tur', 'ces', 'hun',
+    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'nob', 'gsw', 'tur', 'ces', 'hun',
     'ron', 'bul', 'hrv', 'srp', 'ukr', 'heb', 'cat', 'lat', 'hin', 'ben',
     'vie', 'ind', 'may', 'tha', 'ell', 'slk', 'slv', 'est', 'lav', 'lit',
     'isl', 'mkd', 'aze', 'geo', 'arm',
@@ -208,11 +208,6 @@ def _parse_concatenated_lang_codes(raw: str) -> tuple[list[str], list[str]]:
     idx = 0
     n = len(token)
     while idx < n:
-        if unknown_buf:
-            unknown_buf.append(token[idx])
-            idx += 1
-            continue
-
         match_norm = None
         match_len = 0
         for alias_len in _SEGMENTABLE_LENGTHS:
