@@ -19,6 +19,7 @@ import copy
 import http.server
 import json
 import logging
+from functools import lru_cache
 from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 import os
@@ -160,47 +161,73 @@ def _normalize_lang_code(raw: str) -> str | None:
     return None
 
 
-def _parse_lang_raw(raw: str, item_title: str = '') -> list[str]:
-    """Parse a raw language string (possibly concatenated, e.g. 'freeng') into ISO 639-2 codes."""
-    raw = raw.strip()
-    if not raw:
+def _parse_concatenated_lang_codes(raw: str) -> list[str] | None:
+    """Parse a separator-less string into known 2/3-letter language codes.
+
+    Returns:
+      - list of normalized ISO 639-2 codes when a full parse is possible
+      - None when no reliable segmentation was found
+    """
+    token = re.sub(r"\s+", "", (raw or "").lower())
+    if not token:
         return []
 
-    # Step 1 — split on explicit separators
-    parts = [p.strip() for p in re.split(r'[ ,/|;]+', raw) if p.strip()]
-    if len(parts) > 1:
-        result = []
-        for p in parts:
-            norm = _normalize_lang_code(p)
-            if norm:
-                result.append(norm)
-            else:
-                log.debug(f"[SCAN] Unrecognized audio language token: {p!r} in {item_title!r}")
-        return result
+    @lru_cache(maxsize=None)
+    def _walk(idx: int) -> tuple[str, ...] | None:
+        if idx == len(token):
+            return ()
+        # Prefer 3-letter tokens first (e.g. "fre" + "ru" for "freru")
+        for size in (3, 2):
+            end = idx + size
+            if end > len(token):
+                continue
+            norm = _normalize_lang_code(token[idx:end])
+            if not norm:
+                continue
+            tail = _walk(end)
+            if tail is not None:
+                return (norm, *tail)
+        return None
 
-    single = parts[0] if parts else raw
+    parsed = _walk(0)
+    if parsed is None:
+        return None
+    return list(parsed)
 
-    # Step 2 — try chunks of 3 (e.g. 'freeng' → 'fre'+'eng')
-    if len(single) >= 6 and len(single) % 3 == 0:
-        chunks = [single[i:i+3] for i in range(0, len(single), 3)]
-        codes = [_normalize_lang_code(c) for c in chunks]
-        if all(c is not None for c in codes):
-            return [c for c in codes if c]  # type: ignore[misc]
 
-    # Step 3 — try chunks of 2 (e.g. 'fren' → 'fr'+'en')
-    if len(single) >= 4 and len(single) % 2 == 0:
-        chunks2 = [single[i:i+2] for i in range(0, len(single), 2)]
-        codes2 = [ISO_639_1_TO_2.get(c) for c in chunks2]
-        if all(c is not None for c in codes2):
-            return [c for c in codes2 if c]  # type: ignore[misc]
+def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
+    """Parse one language token (single code or concatenated known codes)."""
+    single = re.sub(r"\s+", "", token.lower().strip())
+    if not single:
+        return []
 
-    # Step 4 — single code
     norm = _normalize_lang_code(single)
     if norm:
         return [norm]
 
+    parsed = _parse_concatenated_lang_codes(single)
+    if parsed:
+        return parsed
+
     log.warning(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
     return []
+
+
+def _parse_lang_raw(raw: str, item_title: str = '') -> list[str]:
+    """Parse a raw language string (possibly concatenated, e.g. 'freeng') into ISO 639-2 codes."""
+    raw = raw.strip().lower()
+    if not raw:
+        return []
+
+    # Step 1 — split on explicit separators
+    parts = [p.strip() for p in re.split(r'[\s,/|;]+', raw) if p.strip()]
+    if len(parts) > 1:
+        result = []
+        for p in parts:
+            result.extend(_parse_lang_token(p, item_title))
+        return result
+
+    return _parse_lang_token(parts[0] if parts else raw, item_title)
 
 
 
