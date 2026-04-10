@@ -285,7 +285,7 @@ let allItems=[], categories=[], groups=[];
     const docLink = document.getElementById('settingsDocLink');
     if (docLink) {
       const lang = appConfig.system?.language || CURRENT_LANG || 'fr';
-      docLink.href = '/docs/' + (lang === 'en' ? 'en' : 'fr') + '.md';
+      docLink.href = '/docs.html?lang=' + (lang === 'en' ? 'en' : 'fr');
     }
   }
 

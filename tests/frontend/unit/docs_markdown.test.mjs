@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { parseMarkdown } = require('../../../app/docs_markdown.js');
+
+test('parses common markdown blocks and inline styles', () => {
+  const input = [
+    '# Titre',
+    '',
+    'Texte **gras** et *italique* avec [lien](https://example.com).',
+    '',
+    '- item 1',
+    '- item 2',
+    '',
+    '> Citation',
+    '',
+    '---',
+    '',
+    '```js',
+    'const x = 1;',
+    '```'
+  ].join('\n');
+
+  const html = parseMarkdown(input);
+  assert.match(html, /<h1>Titre<\/h1>/);
+  assert.match(html, /<strong>gras<\/strong>/);
+  assert.match(html, /<em>italique<\/em>/);
+  assert.match(html, /<a href="https:\/\/example.com"/);
+  assert.match(html, /<ul><li>item 1<\/li><li>item 2<\/li><\/ul>/);
+  assert.match(html, /<blockquote>/);
+  assert.match(html, /<hr\/>/);
+  assert.match(html, /<pre><code class="language-js">const x = 1;<\/code><\/pre>/);
+});
+
+test('escapes raw html and supports table syntax', () => {
+  const html = parseMarkdown([
+    '<script>alert(1)</script>',
+    '',
+    '| A | B |',
+    '|---|---|',
+    '| 1 | 2 |'
+  ].join('\n'));
+
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /<table>/);
+  assert.match(html, /<th>A<\/th>/);
+  assert.match(html, /<td>2<\/td>/);
+});
