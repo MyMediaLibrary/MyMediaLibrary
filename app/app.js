@@ -3159,6 +3159,7 @@ let allItems=[], categories=[], groups=[];
 
   function _onbStep0HTML() {
     const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
+    const quickLinkBase = 'display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;text-decoration:none;line-height:1.2;min-height:34px';
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
       // Language selector
@@ -3170,6 +3171,18 @@ let allItems=[], categories=[], groups=[];
       + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
       + '<div id="onbWelcomeDesc" style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
       + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
+      + '</div>'
+      + '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:420px;margin:0 auto 22px">'
+        + '<a href="https://github.com/MyMediaLibrary/MyMediaLibrary" style="'+quickLinkBase+';border-color:#30363d;background:#0d1117;color:#f0f6fc">'
+          + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-.95-2.69-.95-.36-.91-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.81.06 1.24.84 1.24.84.72 1.23 1.89.87 2.35.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.96 0-.88.32-1.6.84-2.16-.08-.2-.36-1.02.08-2.12 0 0 .69-.22 2.26.82A7.73 7.73 0 0 1 8 4.08c.68 0 1.37.09 2.01.27 1.57-1.04 2.26-.82 2.26-.82.44 1.1.16 1.92.08 2.12.52.56.84 1.28.84 2.16 0 3.08-1.88 3.75-3.67 3.95.29.25.54.73.54 1.47v2.18c0 .22.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
+          + '<span>GitHub</span>'
+        + '</a>'
+        + '<a href="/docs.html?lang=fr" style="'+quickLinkBase+'">'
+          + '<span>📘 Doc FR</span>'
+        + '</a>'
+        + '<a href="/docs.html?lang=en" style="'+quickLinkBase+'">'
+          + '<span>📗 Doc EN</span>'
+        + '</a>'
       + '</div>'
       + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
         + '<span id="onbWelcomeStart">Commencer →</span>'
