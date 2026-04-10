@@ -62,6 +62,10 @@
     const shouldShow = window.scrollY > backToTopThreshold;
     backToTopBtn.classList.toggle('is-visible', shouldShow);
     backToTopBtn.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+    backToTopBtn.tabIndex = shouldShow ? 0 : -1;
+    if (!shouldShow && document.activeElement === backToTopBtn) {
+      backToTopBtn.blur();
+    }
   }
 
   function scrollToTop() {
