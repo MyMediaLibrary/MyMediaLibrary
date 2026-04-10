@@ -107,10 +107,17 @@ test('export JSON present and triggers download only when library is valid', asy
 
   await page.evaluate(() => {
     window.__mmlExportClickCount = 0;
+    window.__mmlExportFilename = null;
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    window.__mmlExpectedExportDate = `${y}-${m}-${day}`;
     const origClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function patchedClick() {
       if (this.download && this.download.startsWith('mymedialibrary-export-')) {
         window.__mmlExportClickCount += 1;
+        window.__mmlExportFilename = this.download;
       }
       return origClick.call(this);
     };
@@ -122,4 +129,10 @@ test('export JSON present and triggers download only when library is valid', asy
   await exportBtn.click();
 
   await expect.poll(async () => page.evaluate(() => window.__mmlExportClickCount)).toBe(1);
+
+  const exportMeta = await page.evaluate(() => ({
+    filename: window.__mmlExportFilename,
+    expectedDate: window.__mmlExpectedExportDate,
+  }));
+  expect(exportMeta.filename).toBe(`mymedialibrary-export-${exportMeta.expectedDate}.json`);
 });
