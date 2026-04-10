@@ -153,8 +153,41 @@ let allItems=[], categories=[], groups=[];
   // Visibility prefs (null = all visible; Set = specific visible names)
   let visibleCategories = null;
   let visibleProviders  = null;
+  const PROVIDER_OTHERS_KEY = '__others__';
+  const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
   function _catVisible(cat)  { return !visibleCategories || visibleCategories.has(cat); }
-  function _provVisible(prov){ return !visibleProviders  || visibleProviders.has(prov); }
+  function _isOthersProviderName(prov) {
+    if (!prov) return false;
+    return PROVIDER_OTHERS_ALIASES.has(String(prov).trim().toLowerCase());
+  }
+  function _provVisible(prov){
+    if (_isOthersProviderName(prov) || prov === PROVIDER_OTHERS_KEY) return true;
+    return !visibleProviders  || visibleProviders.has(prov);
+  }
+  function _providerGroupKey(prov) {
+    if (!prov) return null;
+    if (_isOthersProviderName(prov)) return PROVIDER_OTHERS_KEY;
+    return _provVisible(prov) ? prov : PROVIDER_OTHERS_KEY;
+  }
+  function _providerGroupLabel(key) {
+    return key === PROVIDER_OTHERS_KEY ? t('stats.others') : key;
+  }
+  function _itemProviderGroups(item) {
+    const grouped = new Set();
+    (item.providers || []).forEach(p => {
+      const n = _pname(p);
+      const key = _providerGroupKey(n);
+      if (key) grouped.add(key);
+    });
+    return grouped;
+  }
+  function _hasHiddenProviders(items = allItems) {
+    if (!visibleProviders) return false;
+    return items.some(i => (i.providers || []).some(p => {
+      const name = _pname(p);
+      return name && !_provVisible(name);
+    }));
+  }
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
@@ -754,16 +787,18 @@ let allItems=[], categories=[], groups=[];
     const counts = {};
     const noneCount = base.filter(i => !i.providers || !i.providers.length).length;
     if (noneCount > 0) counts['__none__'] = noneCount;
-    base.forEach(i => (i.providers||[]).forEach(p => {
-      const name = _pname(p); if (!name || !_provVisible(name)) return;
-      counts[name] = (counts[name]||0) + 1;
-    }));
+    base.forEach(i => {
+      _itemProviderGroups(i).forEach(name => {
+        counts[name] = (counts[name]||0) + 1;
+      });
+    });
+    if (counts[PROVIDER_OTHERS_KEY] === undefined) counts[PROVIDER_OTHERS_KEY] = 0;
     ['providerSection', 'providerSectionMobile', 'providerSectionTop'].forEach(function(cid) {
       const sec = document.getElementById(cid);
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
-        getDisplay: k => k === '__none__' ? t('filters.no_provider') : k, pinFirst: '__none__',
+        getDisplay: k => k === '__none__' ? t('filters.no_provider') : _providerGroupLabel(k), pinFirst: '__none__',
         excludeMode: providerExclude, onToggleExclude: 'toggleProviderExclude' });
     });
   }
@@ -971,15 +1006,16 @@ let allItems=[], categories=[], groups=[];
     if (enableJellyseerr && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const visProv = _itemVisProviders(i).map(_pname);
-          const hasNone = !visProv.length;
+          const hasNone = !i.providers || !i.providers.length;
           if (activeProviders.has('__none__') && hasNone) return false;
-          return !visProv.some(p=>activeProviders.has(p));
+          const groupedProv = _itemProviderGroups(i);
+          return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
           if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
-          return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+          const groupedProv = _itemProviderGroups(i);
+          return [...groupedProv].some(p=>activeProviders.has(p));
         });
       }
     }
@@ -1022,15 +1058,16 @@ let allItems=[], categories=[], groups=[];
     if (except!=='provider' && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const visProv = _itemVisProviders(i).map(_pname);
-          const hasNone = !visProv.length;
+          const hasNone = !i.providers || !i.providers.length;
           if (activeProviders.has('__none__') && hasNone) return false;
-          return !visProv.some(p=>activeProviders.has(p));
+          const groupedProv = _itemProviderGroups(i);
+          return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
           if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
-          return (i.providers||[]).some(p=>activeProviders.has(_pname(p))&&_provVisible(_pname(p)));
+          const groupedProv = _itemProviderGroups(i);
+          return [...groupedProv].some(p=>activeProviders.has(p));
         });
       }
     }
@@ -1424,22 +1461,35 @@ let allItems=[], categories=[], groups=[];
 
     // ── Audio Languages ──────────────────────────────────
     const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
-    const byAudioLang={};
+    const byAudioLangCount={}, byAudioLangSize={};
     items.forEach(i=>{
       const key = getAudioLanguageSimpleDisplay(getAudioLanguageSimple(i));
-      byAudioLang[key]=(byAudioLang[key]||0)+1;
+      byAudioLangCount[key]=(byAudioLangCount[key]||0)+1;
+      byAudioLangSize[key]=(byAudioLangSize[key]||0)+(i.size_b||0);
     });
-    const audioLangTotal = Object.values(byAudioLang).reduce((a,b)=>a+b,0);
+    const audioLangTotal = Object.values(byAudioLangCount).reduce((a,b)=>a+b,0);
     const audioLangThreshold = audioLangTotal * 0.01;
-    const audioLangMain={};
+    const audioLangMainCount={};
+    const audioLangMainSize={};
     let audioLangOthersCount=0;
-    Object.entries(byAudioLang).sort((a,b)=>b[1]-a[1]).forEach(([label,count])=>{
-      if (count >= audioLangThreshold) audioLangMain[label] = count;
-      else audioLangOthersCount += count;
+    let audioLangOthersSize=0;
+    Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]).forEach(([label,count])=>{
+      if (count >= audioLangThreshold) {
+        audioLangMainCount[label] = count;
+        audioLangMainSize[label] = byAudioLangSize[label] || 0;
+      } else {
+        audioLangOthersCount += count;
+        audioLangOthersSize += byAudioLangSize[label] || 0;
+      }
     });
-    if (audioLangOthersCount > 0) audioLangMain[t('stats.others')] = audioLangOthersCount;
-    const hasLangData = Object.keys(audioLangMain).length > 0;
-    const audioLangEntries = Object.entries(audioLangMain).sort((a,b)=>b[1]-a[1]);
+    if (audioLangOthersCount > 0) {
+      const othersLabel = t('stats.others');
+      audioLangMainCount[othersLabel] = audioLangOthersCount;
+      audioLangMainSize[othersLabel] = audioLangOthersSize;
+    }
+    const hasLangData = Object.keys(audioLangMainCount).length > 0;
+    const audioLangEntriesCount = Object.entries(audioLangMainCount).sort((a,b)=>b[1]-a[1]);
+    const audioLangEntriesSize = Object.entries(audioLangMainSize).sort((a,b)=>b[1]-a[1]);
     const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
 
     // ── Resolution ───────────────────────────────────────
@@ -1457,12 +1507,14 @@ let allItems=[], categories=[], groups=[];
 
 
     // ── Providers ─────────────────────────────────────────
-    const byProv={};
+    const byProv={ [PROVIDER_OTHERS_KEY]: { count: 0, logo: '' } };
     items.forEach(i=>(i.providers||[]).forEach(p=>{
-      const name=_pname(p); if(!name||!_provVisible(name))return;
-      if(!byProv[name]) byProv[name]={count:0, logo:_plogo(p)};
+      const rawName=_pname(p);
+      const name=_providerGroupKey(rawName);
+      if(!name) return;
+      if(!byProv[name]) byProv[name]={count:0, logo: name === PROVIDER_OTHERS_KEY ? '' : _plogo(p)};
       byProv[name].count++;
-      if(!byProv[name].logo) byProv[name].logo=_plogo(p);
+      if(!byProv[name].logo && name !== PROVIDER_OTHERS_KEY) byProv[name].logo=_plogo(p);
     }));
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
     const maxPC = provEntries[0]?.[1].count||1;
@@ -1474,12 +1526,12 @@ let allItems=[], categories=[], groups=[];
     items.forEach(i=>{
       const g=i.group||'Autres';
       if(!provByGroup[g]) provByGroup[g]={};
-      (i.providers||[]).forEach(p=>{ const n=_pname(p); if(n&&_provVisible(n)) provByGroup[g][n]=(provByGroup[g][n]||0)+1; });
+      _itemProviderGroups(i).forEach(n => { provByGroup[g][n]=(provByGroup[g][n]||0)+1; });
     });
     const provByCat={};
     items.forEach(i=>{
       if(!provByCat[i.category]) provByCat[i.category]={};
-      (i.providers||[]).forEach(p=>{ const n=_pname(p); if(n&&_provVisible(n)) provByCat[i.category][n]=(provByCat[i.category][n]||0)+1; });
+      _itemProviderGroups(i).forEach(n => { provByCat[i.category][n]=(provByCat[i.category][n]||0)+1; });
     });
 
     function crossTable(rowEntries, rowColorFn, transpose) {
@@ -1490,18 +1542,18 @@ let allItems=[], categories=[], groups=[];
         const colColorFn = rowColorFn;
         const headers = colKeys.map(k=>'<th style="color:'+colColorFn(k)+'">'+escH(k)+'</th>').join('');
         const rows = provNames.map((p,idx)=>{
-          const logo=(PROVIDERS_META[p]?.logo_url||providerCatalog[p])?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
+          const logo=(p !== PROVIDER_OTHERS_KEY && (PROVIDERS_META[p]?.logo_url||providerCatalog[p]))?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
           const cells=rowEntries.map(([k,pmap])=>{
             const n=pmap[p]||0;
             return '<td style="color:'+(n?'var(--text)':'var(--border)')+';">'+(n||'–')+'</td>';
           }).join('');
-          return '<tr><td style="font-weight:600">'+logo+escH(p)+'</td>'+cells+'</tr>';
+          return '<tr><td style="font-weight:600">'+logo+escH(_providerGroupLabel(p))+'</td>'+cells+'</tr>';
         }).join('');
         return '<div class="cross-wrap"><table class="cross-table"><thead><tr><th></th>'+headers+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
       }
       const headers = provNames.map(p=>{
-        const logo=(PROVIDERS_META[p]?.logo_url||providerCatalog[p])?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
-        return '<th>'+logo+escH(p)+'</th>';
+        const logo=(p !== PROVIDER_OTHERS_KEY && (PROVIDERS_META[p]?.logo_url||providerCatalog[p]))?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
+        return '<th>'+logo+escH(_providerGroupLabel(p))+'</th>';
       }).join('');
       const rows = rowEntries.map(([k,pmap])=>{
         const cells=provNames.map(p=>{
@@ -1614,19 +1666,20 @@ let allItems=[], categories=[], groups=[];
     const groupColorFn=(k,i)=>groupColorMap[k]||PALETTE[i%PALETTE.length];
     const catColorFn=(k,i)=>catColorMap[k]||PALETTE[i%PALETTE.length];
 
-    function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k) {
+    function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k, defaultUnit = 'size') {
+      const showCountByDefault = defaultUnit === 'count';
       const pieSize  = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), fmtSize);
       const pieCount = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v));
       return '<div class="stats-block">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
           +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
           +'<div class="pie-switch">'
-            +'<button class="pie-switch-btn active" id="'+id+'BtnSize"  data-pie="'+id+'" data-unit="size"  onclick="statSwitchPie(this)">'+t('stats.by_size')+'</button>'
-            +'<button class="pie-switch-btn"        id="'+id+'BtnCount" data-pie="'+id+'" data-unit="count" onclick="statSwitchPie(this)">'+t('stats.by_count')+'</button>'
+            +'<button class="pie-switch-btn'+(showCountByDefault ? '' : ' active')+'" id="'+id+'BtnSize"  data-pie="'+id+'" data-unit="size"  onclick="statSwitchPie(this)">'+t('stats.by_size')+'</button>'
+            +'<button class="pie-switch-btn'+(showCountByDefault ? ' active' : '')+'" id="'+id+'BtnCount" data-pie="'+id+'" data-unit="count" onclick="statSwitchPie(this)">'+t('stats.by_count')+'</button>'
           +'</div>'
         +'</div>'
-        +'<div id="'+id+'PieSize">'+pieSize+'</div>'
-        +'<div id="'+id+'PieCount" style="display:none">'+pieCount+'</div>'
+        +'<div id="'+id+'PieSize"'+(showCountByDefault ? ' style="display:none"' : '')+'>'+pieSize+'</div>'
+        +'<div id="'+id+'PieCount"'+(showCountByDefault ? '' : ' style="display:none"')+'>'+pieCount+'</div>'
         +'</div>';
     }
 
@@ -1650,18 +1703,18 @@ let allItems=[], categories=[], groups=[];
       ...(noneCount>0 ? [[noProviderLabel,noneCount]] : []),
     ];
     const byProvSize={};
-    items.forEach(i=>(i.providers||[]).forEach(p=>{
-      const name = _pname(p);
-      if (!name || !_provVisible(name)) return;
-      byProvSize[name]=(byProvSize[name]||0)+(i.size_b||0);
-    }));
+    items.forEach(i=>{
+      _itemProviderGroups(i).forEach(name => {
+        byProvSize[name]=(byProvSize[name]||0)+(i.size_b||0);
+      });
+    });
     const provSizeEntries=[
       ...provEntries.map(([k])=>[k,byProvSize[k]||0]),
       ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
     const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
     const provPieHtml=provCountEntries.length
-      ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone)
+      ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
       : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
 
     // Cross tables
@@ -1759,12 +1812,12 @@ let allItems=[], categories=[], groups=[];
     return ''
       // 1. Pie charts
       +'<div class="stats-row">'
-        +(hasGroups ? switchablePie('grp',t('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn) : '')
-        +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn)
-        +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn) : '')
-        +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn) : '')
-        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay) : '')
-        +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntries, audioLangEntries, audioLangColorFn) : '')
+        +(hasGroups ? switchablePie('grp',t('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : '')
+        +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size')
+        +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : '')
+        +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : '')
+        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : '')
+        +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count') : '')
         +provPieHtml
       +'</div>'
       // 2. Années / décennies
@@ -2580,8 +2633,11 @@ let allItems=[], categories=[], groups=[];
   function renderProviderToggles() {
     const container = document.getElementById('cfgProviderToggles');
     if (!container) return;
-    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))].sort();
-    if (!provs.length) { container.innerHTML = '<div class="settings-note">Aucun provider disponible.</div>'; return; }
+    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+      .filter(p => !_isOthersProviderName(p))
+      .sort();
+    const hasHidden = _hasHiddenProviders();
+    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">Aucun provider disponible.</div>'; return; }
     let html = '';
     provs.forEach(prov => {
       const checked = _provVisible(prov);
@@ -2591,17 +2647,29 @@ let allItems=[], categories=[], groups=[];
         + (checked?' checked':'') + '/><span class="toggle-switch-slider"></span></label>'
         + '</div>';
     });
+    if (hasHidden) {
+      html += '<div class="settings-row" style="margin-bottom:6px;opacity:.85">'
+        + '<label class="settings-label">'+escH(t('stats.others'))+'</label>'
+        + '<label class="toggle-switch"><input type="checkbox" checked disabled title="'+escH(t('stats.others'))+'"/>'
+        + '<span class="toggle-switch-slider"></span></label>'
+        + '</div>';
+    }
     container.innerHTML = html;
   }
 
   function gatherProviderVisibility() {
-    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))].sort();
+    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+      .filter(p => !_isOthersProviderName(p))
+      .sort();
     const checked = [];
     document.querySelectorAll('.prov-visibility-toggle').forEach(el => {
       if (el.checked) checked.push(el.dataset.prov);
     });
     // [] = all visible (matches config.json schema); non-empty = whitelist
     if (checked.length === all.length) return [];
+    // Special case: no explicit provider selected => keep explicit providers hidden,
+    // aggregate them under Others instead of falling back to "all visible".
+    if (all.length > 0 && checked.length === 0) return [PROVIDER_OTHERS_KEY];
     return checked;
   }
 
