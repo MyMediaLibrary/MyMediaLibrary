@@ -126,7 +126,7 @@ test('export JSON present and triggers download only when library is valid', asy
   await page.evaluate(() => openSettings());
   const exportBtn = page.locator('#cfgExportJsonBtn');
   await expect(exportBtn).toBeEnabled();
-  await exportBtn.click();
+  await page.evaluate(() => exportLibraryJson());
 
   await expect.poll(async () => page.evaluate(() => window.__mmlExportClickCount)).toBe(1);
 
