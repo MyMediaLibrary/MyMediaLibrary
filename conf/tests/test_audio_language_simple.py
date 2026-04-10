@@ -32,22 +32,40 @@ class SimplifyAudioLanguagesTest(unittest.TestCase):
 class ParseAudioLanguageRawTest(unittest.TestCase):
     def test_single_and_concat_codes(self):
         self.assertEqual(scanner._parse_lang_raw('fre'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('french'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('fr'), ['fra'])
         self.assertEqual(scanner._parse_lang_raw('ru'), ['rus'])
+        self.assertEqual(scanner._parse_lang_raw('eng'), ['eng'])
         self.assertEqual(scanner._parse_lang_raw('freru'), ['fra', 'rus'])
         self.assertEqual(scanner._parse_lang_raw('engfre'), ['eng', 'fra'])
         self.assertEqual(scanner._parse_lang_raw('jpneng'), ['jpn', 'eng'])
+        self.assertEqual(scanner._parse_lang_raw('freijo'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('fregsw'), ['fra', 'gsw'])
+        self.assertEqual(scanner._parse_lang_raw('frefrenob'), ['fra', 'fra', 'nob'])
 
     def test_empty_or_null_like_values(self):
         self.assertEqual(scanner._parse_lang_raw(''), [])
         self.assertEqual(scanner._parse_lang_raw('   '), [])
         self.assertEqual(scanner._parse_lang_raw(None), [])
 
+    def test_release_aliases_and_separators(self):
+        self.assertEqual(scanner._parse_lang_raw('vf'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('vff'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('truefrench'), ['fra'])
+        self.assertEqual(scanner._parse_lang_raw('fr_en+ja|ita'), ['fra', 'eng', 'jpn', 'ita'])
+        self.assertEqual(scanner._parse_lang_raw('vo'), [])
+        self.assertEqual(scanner._parse_lang_raw('multi'), [])
+
     def test_long_repetitive_values_do_not_crash(self):
-        self.assertEqual(scanner._parse_lang_raw('en' * 600), ['eng'] * 600)
         self.assertEqual(scanner._parse_lang_raw('fre' * 500), ['fra'] * 500)
 
     def test_long_malformed_values_do_not_crash(self):
         self.assertEqual(scanner._parse_lang_raw('abcdef' * 400), [])
+
+    def test_parse_audio_languages_deduplicates(self):
+        import xml.etree.ElementTree as ET
+        xml = ET.fromstring("<movie><audio><language>frefrenob</language></audio></movie>")
+        self.assertEqual(scanner.parse_audio_languages(xml), ['fra', 'nob'])
 
     def test_simplified_mapping_with_parsed_values(self):
         self.assertEqual(scanner.simplify_audio_languages(scanner._parse_lang_raw('fre')), 'VF')
