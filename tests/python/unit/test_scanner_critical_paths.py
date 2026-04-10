@@ -13,10 +13,19 @@ class LanguageNormalizationCriticalTest(unittest.TestCase):
     def test_expected_language_scenarios(self):
         cases = [
             ("fre", ["fra"], "VF"),
+            ("french", ["fra"], "VF"),
+            ("fr", ["fra"], "VF"),
             ("ru", ["rus"], "VO"),
             ("freru", ["fra", "rus"], "MULTI"),
             ("engfre", ["eng", "fra"], "MULTI"),
             ("jpneng", ["jpn", "eng"], "VO"),
+            ("freijo", ["fra"], "VF"),
+            ("fregsw", ["fra", "gsw"], "MULTI"),
+            ("frefrenob", ["fra", "fra", "nob"], "MULTI"),
+            ("vf", ["fra"], "VF"),
+            ("vo", [], "UNKNOWN"),
+            ("multi", [], "UNKNOWN"),
+            ("fr_en+ja|ita", ["fra", "eng", "jpn", "ita"], "MULTI"),
             ("und", ["und"], "UNKNOWN"),
             ("", [], "UNKNOWN"),
             (None, [], "UNKNOWN"),
@@ -28,7 +37,7 @@ class LanguageNormalizationCriticalTest(unittest.TestCase):
                 self.assertEqual(scanner.simplify_audio_languages(parsed), simplified)
 
     def test_long_or_malformed_values_never_crash(self):
-        self.assertEqual(scanner._parse_lang_raw("en" * 600), ["eng"] * 600)
+        self.assertEqual(scanner._parse_lang_raw("fre" * 600), ["fra"] * 600)
         self.assertEqual(scanner._parse_lang_raw("abcdef" * 500), [])
         self.assertEqual(scanner._parse_lang_raw("z" * 3000), [])
 
