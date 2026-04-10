@@ -102,12 +102,22 @@ let allItems=[], categories=[], groups=[];
     return value === 'UNKNOWN' ? t('filters.unknown') : value;
   }
 
+  function getVideoCodecDisplay(value) {
+    if (!value || value === 'UNKNOWN') return t('filters.unknown');
+    return value;
+  }
+
   function getAudioCodecDisplay(normalized) {
     if (!normalized || normalized === 'UNKNOWN')
-      return audioCodecMapping.fallback?.display ?? 'Unknown';
+      return t('filters.unknown');
     const entry = Object.values(audioCodecMapping.mapping ?? {})
       .find(e => e.normalized === normalized);
     return entry?.display ?? normalized;
+  }
+
+  function getItemAudioCodecDisplay(item) {
+    if (item?.audio_codec_display) return item.audio_codec_display;
+    return getAudioCodecDisplay(item?.audio_codec);
   }
 
   function getProviderLogo(name) {
@@ -246,7 +256,7 @@ let allItems=[], categories=[], groups=[];
     // First-run: no folder has been assigned a type yet → show onboarding
     const folders = appConfig.folders || [];
     const hasConfigured = folders.some(f => f.type && f.type !== 'ignore' && !f.missing);
-    if (!hasConfigured) { showOnboarding(); return; }
+    if (!hasConfigured) { updateExportJsonButtonState(); showOnboarding(); return; }
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
@@ -285,12 +295,14 @@ let allItems=[], categories=[], groups=[];
       restoreState();
       renderStats(filterItems());
       render();
+      updateExportJsonButtonState();
     } catch(e) {
       console.error('loadLibrary error:', e);
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.scan_error');
+      updateExportJsonButtonState();
     }
   }
 
@@ -559,7 +571,16 @@ let allItems=[], categories=[], groups=[];
       const btn = document.getElementById(id);
       if (!btn) return;
       btn.disabled = disabled;
+      btn.title = disabled ? t('filters.reset_disabled_hint') : t('filters.reset_enabled_hint');
     });
+  }
+
+  function updateExportJsonButtonState() {
+    const btn = document.getElementById('cfgExportJsonBtn');
+    if (!btn) return;
+    const disabled = !libraryExportSource;
+    btn.disabled = disabled;
+    btn.title = disabled ? t('settings.system.export_unavailable') : t('settings.system.export_json_hint');
   }
 
   function resetAllFilters() {
@@ -713,7 +734,7 @@ let allItems=[], categories=[], groups=[];
     base.forEach(i => { if (i.codec) counts[i.codec] = (counts[i.codec]||0)+1; });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
-        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k,
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => getVideoCodecDisplay(k),
         excludeMode: videoCodecExclude, onToggleExclude: 'toggleVideoCodecExclude' });
     });
   }
@@ -724,7 +745,7 @@ let allItems=[], categories=[], groups=[];
     base.forEach(i => { if (i.audio_codec) counts[i.audio_codec] = (counts[i.audio_codec]||0)+1; });
     ['audioCodecSection', 'audioCodecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.audio_codec'),
-        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => k,
+        activeSet: activeAudioCodecs, toggleFn: 'toggleAudioCodecFilter', clearFn: 'clearAudioCodecFilter', getDisplay: k => getAudioCodecDisplay(k),
         excludeMode: audioCodecExclude, onToggleExclude: 'toggleAudioCodecExclude' });
     });
   }
@@ -1000,7 +1021,14 @@ let allItems=[], categories=[], groups=[];
     let items=filterItems();
     renderStats(items);
     const c=document.getElementById('library');
-    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p></div>'; return; }
+    if (!items.length) {
+      const emptyAction = hasActiveFilters()
+        ? '<button class="empty-reset-btn" type="button" onclick="resetAllFilters()">'+t('filters.reset_all')+'</button>'
+        : '';
+      c.className='';
+      c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small>'+emptyAction+'</div>';
+      return;
+    }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
@@ -1112,7 +1140,7 @@ let allItems=[], categories=[], groups=[];
           +'<span class="cat-badge">'+escH(item.category)+'</span>'
           +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
-          +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
+          +(item.codec?'<span class="badge badge-codec">'+escH(getVideoCodecDisplay(item.codec))+'</span>':'')
         +'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
           +'<span style="font-size:11px;color:var(--muted)">'+escH(item.size)+'</span>'
@@ -1129,8 +1157,8 @@ let allItems=[], categories=[], groups=[];
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
-        +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
-        +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
+        +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(getVideoCodecDisplay(item.codec))+'</span>':'-')+'</td>'
+        +'<td>'+escH(getItemAudioCodecDisplay(item))+'</td>'
         +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
@@ -2637,6 +2665,11 @@ let allItems=[], categories=[], groups=[];
     const dInput = document.getElementById('searchInput');
     const mInput = document.getElementById('searchInputMobile');
     if (active === dInput || active === mInput) {
+      if (active.value && active.value.length > 0) {
+        if (active === dInput) clearSearch();
+        else clearSearchMobile();
+        return true;
+      }
       active.blur();
       if (mobileFiltersOpen) closeMobileFilters();
       return true;

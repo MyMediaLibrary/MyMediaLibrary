@@ -56,7 +56,8 @@
     "resolution": "Resolution",
     "sort_by": "Sort by",
     "type": "Type",
-    "search": "Search...",
+    "search": "Search title, codec, language… (Ctrl+K)",
+    "search_mobile": "Search title, codec, language…",
     "type_all": "All",
     "type_movies": "🎬 Movies",
     "type_tv": "📺 Series",
@@ -68,7 +69,9 @@
     "include": "Include",
     "exclude": "Exclude",
     "except": "Except",
-    "reset_all": "Reset filters"
+    "reset_all": "Reset filters",
+    "reset_disabled_hint": "No active filter to reset",
+    "reset_enabled_hint": "Reset all filters and search"
   },
   "sort": {
     "title_asc": "Title A-Z",
@@ -87,6 +90,7 @@
     "last_scan": "Last scan:",
     "indexed": "{n} items indexed",
     "no_results": "No results",
+    "no_results_hint": "Adjust your search or filters to show results.",
     "seasons": "{n}S",
     "episodes": "{n}ep",
     "no_provider": "Not available on FR streaming",
@@ -143,6 +147,7 @@
       "log_path": "📄 Logs available on host: ./data/scanner.log",
       "export_json": "JSON export",
       "export_json_btn": "Download export",
+      "export_json_hint": "Download the full library as JSON",
       "export_unavailable": "Library not loaded: export unavailable."
     },
     "env_note": "⚙️ Read-only values are configured via compose.yaml.",

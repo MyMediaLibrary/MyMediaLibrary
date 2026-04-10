@@ -106,7 +106,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
         </svg>
-        <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off"/>
+        <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher titre, codec, langue… (Ctrl+K)" autocomplete="off"/>
         <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
       </div>
     </div>
@@ -382,7 +382,7 @@
             </div>
             <div class="settings-row" style="margin-top:10px">
               <label class="settings-label" data-i18n="settings.system.export_json">Export JSON</label>
-              <button class="scan-btn" id="cfgExportJsonBtn" onclick="exportLibraryJson()" style="padding:5px 14px;font-size:12px" data-i18n="settings.system.export_json_btn">Télécharger l'export</button>
+              <button class="scan-btn" id="cfgExportJsonBtn" onclick="exportLibraryJson()" style="padding:5px 14px;font-size:12px" data-i18n="settings.system.export_json_btn" data-i18n-title="settings.system.export_json_hint" disabled>Télécharger l'export</button>
             </div>
             <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <a href="https://github.com/MyMediaLibrary/MyMediaLibrary" target="_blank" rel="noopener" class="settings-ext-link" data-i18n="settings.github_link">Projet GitHub</a>
@@ -413,7 +413,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
         </svg>
-        <input type="search" id="searchInputMobile" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off" oninput="onMobileSearchInput(this.value)"/>
+        <input type="search" id="searchInputMobile" data-i18n-placeholder="filters.search_mobile" placeholder="Rechercher…" autocomplete="off" oninput="onMobileSearchInput(this.value)"/>
         <button class="search-clear" id="searchClearMobile" onclick="clearSearchMobile()" style="display:none" type="button">✕</button>
       </div>
     </div>
