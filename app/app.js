@@ -181,6 +181,18 @@ let allItems=[], categories=[], groups=[];
     });
     return grouped;
   }
+  function _canonicalProviderFilterKey(raw) {
+    if (window.MMLLogic?.canonicalProviderFilterKey) {
+      return window.MMLLogic.canonicalProviderFilterKey(raw);
+    }
+    if (typeof raw !== 'string') return null;
+    const key = raw.trim();
+    if (!key) return null;
+    const lower = key.toLowerCase();
+    if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
+    if (key === '__none__') return '__none__';
+    return key;
+  }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
     return items.some(i => (i.providers || []).some(p => {
@@ -224,7 +236,13 @@ let allItems=[], categories=[], groups=[];
       if (s.activeType)                       activeType        = s.activeType;
       if (s.activeGroup)                      activeGroup       = s.activeGroup;
       if (s.activeCat)                        activeCat         = s.activeCat;
-      if (Array.isArray(s.activeProviders))   activeProviders   = new Set(s.activeProviders);
+      if (Array.isArray(s.activeProviders)) {
+        activeProviders = new Set(
+          s.activeProviders
+            .map(v => _canonicalProviderFilterKey(v))
+            .filter(Boolean)
+        );
+      }
       if (s.activeResolution)                 activeResolution  = s.activeResolution;
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
@@ -1507,14 +1525,24 @@ let allItems=[], categories=[], groups=[];
 
 
     // ── Providers ─────────────────────────────────────────
-    const byProv={ [PROVIDER_OTHERS_KEY]: { count: 0, logo: '' } };
-    items.forEach(i=>(i.providers||[]).forEach(p=>{
-      const rawName=_pname(p);
-      const name=_providerGroupKey(rawName);
-      if(!name) return;
-      if(!byProv[name]) byProv[name]={count:0, logo: name === PROVIDER_OTHERS_KEY ? '' : _plogo(p)};
-      byProv[name].count++;
-      if(!byProv[name].logo && name !== PROVIDER_OTHERS_KEY) byProv[name].logo=_plogo(p);
+    const groupedProviderCount = window.MMLLogic?.groupedProviderCounts
+      ? window.MMLLogic.groupedProviderCounts(items, _providerGroupKey, _pname)
+      : (() => {
+          const fallback = {};
+          items.forEach(i => _itemProviderGroups(i).forEach(name => {
+            fallback[name] = (fallback[name] || 0) + 1;
+          }));
+          return fallback;
+        })();
+    const byProv = {};
+    Object.entries(groupedProviderCount).forEach(([name, count]) => {
+      byProv[name] = { count, logo: '' };
+    });
+    items.forEach(i => (i.providers || []).forEach(p => {
+      const rawName = _pname(p);
+      const name = _providerGroupKey(rawName);
+      if (!name || !byProv[name] || name === PROVIDER_OTHERS_KEY) return;
+      if (!byProv[name].logo) byProv[name].logo = _plogo(p);
     }));
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
     const maxPC = provEntries[0]?.[1].count||1;
@@ -1713,7 +1741,7 @@ let allItems=[], categories=[], groups=[];
       ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
     const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
-    const provPieHtml=provCountEntries.length
+    const provPieHtml=provEntries.length
       ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
       : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
 
@@ -2108,13 +2136,14 @@ let allItems=[], categories=[], groups=[];
   }
 
   function setScanControlsState(isScanning) {
+    const wasScanning = _isScanning;
     _isScanning = !!isScanning;
     ['scanMainBtn', 'scanArrowBtn', 'mobileScanEntryBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
       });
-    if (_isScanning) {
+    if (!wasScanning && _isScanning) {
       document.getElementById('scanDropdown')?.classList.remove('open');
       closeMobileActionsMenu();
       closeMobileScanSheet();
