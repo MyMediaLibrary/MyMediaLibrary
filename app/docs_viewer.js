@@ -6,6 +6,8 @@
   const statusEl = document.getElementById('docsStatus');
   const contentEl = document.getElementById('docsContent');
   const themeBtn = document.getElementById('docsThemeToggle');
+  const backToTopBtn = document.getElementById('docsBackToTop');
+  const backToTopThreshold = 280;
 
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -55,7 +57,23 @@
     });
   }
 
+  function updateBackToTopVisibility() {
+    if (!backToTopBtn) return;
+    const shouldShow = window.scrollY > backToTopThreshold;
+    backToTopBtn.classList.toggle('is-visible', shouldShow);
+    backToTopBtn.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+  }
+
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+  if (backToTopBtn) {
+    backToTopBtn.addEventListener('click', scrollToTop);
+    updateBackToTopVisibility();
+    window.addEventListener('scroll', updateBackToTopVisibility, { passive: true });
+  }
   initTheme();
   updateThemeButtonLabel();
   document.documentElement.lang = lang;
