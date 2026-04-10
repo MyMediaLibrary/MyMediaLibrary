@@ -321,7 +321,10 @@ let allItems=[], categories=[], groups=[];
     if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
 
     // Backend is the source of truth for onboarding state.
-    if (appConfig.needs_onboarding) {
+    const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
+      ? appConfig.needs_onboarding
+      : null;
+    if (explicitNeedsOnboarding === true) {
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
@@ -330,6 +333,14 @@ let allItems=[], categories=[], groups=[];
 
     try {
       const r = await fetch('./library.json?_='+Date.now());
+      if (r.status === 404 && explicitNeedsOnboarding === null) {
+        // Legacy backend compatibility: if the explicit flag is absent, fallback
+        // to first-run behavior when library.json has not been generated yet.
+        libraryExportSource = null;
+        updateExportJsonButtonState();
+        showOnboarding();
+        return;
+      }
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       libraryExportSource = data;
@@ -453,6 +464,9 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/api/config');
       if (!r.ok) return;
       appConfig = await r.json();
+      if (typeof appConfig.needs_onboarding !== 'boolean' && typeof appConfig.system?.needs_onboarding === 'boolean') {
+        appConfig.needs_onboarding = appConfig.system.needs_onboarding;
+      }
 
       // UI prefs
       enablePlot       = appConfig.ui?.synopsis_on_hover ?? false;
