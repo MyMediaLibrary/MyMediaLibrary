@@ -1,8 +1,12 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect, chromium } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 
 const items = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../fixtures/library_items.json'), 'utf8'));
+
+
+const hasChromium = fs.existsSync(chromium.executablePath());
+test.skip(!hasChromium, 'Playwright Chromium binary is not installed in this environment.');
 
 function configuredPayload() {
   return {
