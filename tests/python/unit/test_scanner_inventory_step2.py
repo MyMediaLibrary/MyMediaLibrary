@@ -57,6 +57,26 @@ class ScannerInventoryStep2Test(unittest.TestCase):
         with patch("scanner.write_json", side_effect=OSError("disk full")):
             scanner.write_inventory_json_non_blocking([], scan_mode="quick")
 
+    def test_invalid_existing_inventory_falls_back_to_current_inventory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            output_path.write_text("{ invalid json", encoding="utf-8")
+
+            movie_dir = pathlib.Path(tmpdir) / "Films" / "Inception (2010)"
+            movie_dir.mkdir(parents=True)
+            (movie_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+            entries = [
+                {"media_dir": movie_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"},
+            ]
+
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(entries, scan_mode="quick")
+
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            self.assertIsNotNone(written)
+            self.assertEqual(len(written["items"]), 1)
+            self.assertEqual(written["items"][0]["id"], "movie:Films:Inception (2010)")
+
 
 if __name__ == "__main__":
     unittest.main()

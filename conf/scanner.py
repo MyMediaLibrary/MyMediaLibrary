@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+from inventory_helpers import merge_inventory_documents
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1171,11 +1172,35 @@ def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: da
 def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: str) -> None:
     log.info("[SCAN] Inventory write started")
     try:
-        inventory = build_library_inventory(scanned_entries, scan_mode)
-        write_json(inventory, INVENTORY_OUTPUT_PATH)
+        current_inventory = build_library_inventory(scanned_entries, scan_mode)
+        existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
+        merged_inventory = (
+            merge_inventory_documents(existing_inventory, current_inventory)
+            if existing_inventory is not None
+            else current_inventory
+        )
+        write_json(merged_inventory, INVENTORY_OUTPUT_PATH)
         log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
         log.warning(f"[SCAN] Inventory write failed: {e}")
+
+
+def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
+    """Load inventory JSON for merge; return None on missing/invalid/non-dict."""
+    inventory_path = Path(path)
+    if not inventory_path.exists():
+        return None
+    try:
+        with open(inventory_path, encoding="utf-8") as f:
+            document = json.load(f)
+        if not isinstance(document, dict):
+            raise ValueError("inventory root must be a JSON object")
+        if not isinstance(document.get("items", []), list):
+            raise ValueError("inventory.items must be an array")
+        return document
+    except Exception as e:
+        log.warning(f"[SCAN] Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
+        return None
 
 
 # ---------------------------------------------------------------------------
