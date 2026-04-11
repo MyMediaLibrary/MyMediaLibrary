@@ -34,7 +34,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-from inventory_helpers import merge_inventory_documents
+try:
+    from inventory_helpers import merge_inventory_documents
+except Exception as e:
+    def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
+        return current_doc
+
+    logging.getLogger("scanner").warning(
+        "[SCAN] inventory_helpers import failed (%s). Inventory merge disabled; continuing non-blocking.",
+        e,
+    )
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1174,12 +1183,15 @@ def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: st
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
         existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
-        merged_inventory = (
-            merge_inventory_documents(existing_inventory, current_inventory)
-            if existing_inventory is not None
-            else current_inventory
-        )
-        write_json(merged_inventory, INVENTORY_OUTPUT_PATH)
+        inventory_to_write = current_inventory
+        if existing_inventory is not None:
+            try:
+                inventory_to_write = merge_inventory_documents(existing_inventory, current_inventory)
+            except Exception as e:
+                log.warning(
+                    f"[SCAN] Inventory merge failed: {e}. Falling back to current scan inventory."
+                )
+        write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
         log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
         log.warning(f"[SCAN] Inventory write failed: {e}")
