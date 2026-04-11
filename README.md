@@ -18,12 +18,12 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 ### Fonctionnalités
 
 - **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques (résolution, codec vidéo/audio, HDR)
-- **Filtres avancés** : filtrage multi-critères par dossier, type, résolution, provider streaming, codec vidéo, codec audio et langue audio — avec persistance entre sessions
+- **Filtres avancés** : filtrage multi-critères par dossier, type, résolution, plateforme de streaming, codec vidéo, codec audio et langue audio — avec persistance entre sessions
 - **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
-- **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, providers, langues audio)
+- **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
 - **Scoring qualité** : système de score qualité (0–100) avec niveaux visuels, filtres et analyse détaillée
-- **Interface bilingue** : UI entièrement disponible en français et en anglais, thème clair/sombre, sidebar redimensionnable
+- **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, barre latérale redimensionnable
 
 ### Démarrage rapide
 

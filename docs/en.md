@@ -232,109 +232,88 @@ Each media item receives a global **quality score out of 100**. This score is ca
 
 ### Score structure
 
-```text
-Total = 100 points
-- Video: 50
-- Audio: 20
-- Languages: 15
-- Size: 15
-```
+| Criterion | Points |
+|---|---:|
+| Video | 50 |
+| Audio | 20 |
+| Languages | 15 |
+| Size | 15 |
+| **Total** | **100** |
 
 ### Detailed criteria
 
 #### 🎥 Video (50)
 
-##### Resolution (25)
-
-```text
-2160p → 25
-1080p → 20
-720p → 10
-SD → 5
-Unknown → 8
-```
-
-##### Codec (15)
-
-```text
-AV1 / HEVC / H.265 → 15
-H.264 / AVC → 10
-Legacy (MPEG-2, VC-1, Xvid, DivX) → 3
-Unknown → 6
-```
-
-##### HDR (10)
-
-```text
-Dolby Vision → 10
-HDR10+ → 8
-HDR10 / HLG → 5
-SDR → 0
-Unknown → 0
-```
+| Sub-criterion | Value | Points |
+|---|---|---:|
+| Resolution | 2160p | 25 |
+| Resolution | 1080p | 20 |
+| Resolution | 720p | 10 |
+| Resolution | SD | 5 |
+| Resolution | Unknown | 8 |
+| Codec | AV1 / HEVC / H.265 | 15 |
+| Codec | H.264 / AVC | 10 |
+| Codec | Legacy (MPEG-2, VC-1, Xvid, DivX) | 3 |
+| Codec | Unknown | 6 |
+| HDR | Dolby Vision | 10 |
+| HDR | HDR10+ | 8 |
+| HDR | HDR10 / HLG | 5 |
+| HDR | SDR | 0 |
+| HDR | Unknown | 0 |
 
 #### 🔊 Audio (20)
 
-```text
-TrueHD / Atmos → 20
-DTS-HD → 18
-DTS → 15
-EAC3 → 12
-AC3 → 10
-AAC → 6
-MP3 / MP2 → 3
-Unknown → 8
-```
+| Audio codec | Points |
+|---|---:|
+| TrueHD / Atmos | 20 |
+| DTS-HD | 18 |
+| DTS | 15 |
+| EAC3 | 12 |
+| AC3 | 10 |
+| AAC | 6 |
+| MP3 / MP2 | 3 |
+| Unknown | 8 |
 
 #### 🌍 Languages (15)
 
-```text
-MULTI (French + others) → 15
-French only → 10
-Original only (VO) → 5
-Unknown → 3
-```
+| Language profile | Points |
+|---|---:|
+| MULTI (French + others) | 15 |
+| French only | 10 |
+| Original language only (VO) | 5 |
+| Unknown | 3 |
 
 #### 💾 Size (15)
 
-##### States
+| Consistency state | Points |
+|---|---:|
+| Coherent | 15 |
+| Too large | 8 |
+| Too small | 5 |
+| Unknown | 5 |
 
-```text
-Coherent → 15
-Too large → 8
-Too small → 5
-Unknown → 5
-```
+##### Size references (optimal range)
 
-##### Examples
-
-**1080p**
-- H.265: 2–10 GB → optimal
-- H.264: 4–15 GB → optimal
-
-**4K**
-- H.265: 8–25 GB → optimal
-
-**720p**
-- 2–6 GB → optimal
-
-**SD**
-- 500 MB – 2 GB → optimal
+| Resolution | Codec | Optimal size |
+|---|---|---|
+| 1080p | H.265 | 2–10 GB |
+| 1080p | H.264 | 4–15 GB |
+| 4K | H.265 | 8–25 GB |
+| 720p | All | 2–6 GB |
+| SD | All | 500 MB – 2 GB |
 
 ### Penalties
 
 Penalties are applied to correct incoherent combinations and avoid inflated scores in weak technical profiles.
 
-```text
-High video + weak audio → -10 or -5
-High resolution + legacy codec → -8 or -4
-High quality video + poor languages → -5
-Incoherent size → -5
-```
+| Situation | Penalty | Explanation |
+|---|---|---|
+| High video quality + weak audio | -10 / -5 | A very sharp image with poor sound creates an unbalanced viewing experience. |
+| High resolution + legacy codec | -8 / -4 | HD/4K video encoded with an older codec often indicates less efficient compression quality. |
+| Good video + limited languages | -5 | The file quality is good, but usability is lower for users needing more language options. |
+| Inconsistent size | -5 | A file that is too small or too large for its profile can indicate uneven quality. |
 
-```text
-Maximum penalty = 20
-```
+> Maximum applied penalty: 20 points.
 
 ### Final score
 
