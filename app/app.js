@@ -2484,6 +2484,7 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
+    _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     updateCronHint();
 
     // Jellyseerr — editable from appConfig
@@ -2512,7 +2513,8 @@ let allItems=[], categories=[], groups=[];
 
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
-                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight'];
+                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight',
+                 'cfgInventoryEnabled'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
 
@@ -2570,11 +2572,13 @@ let allItems=[], categories=[], groups=[];
     const cron = get('cfgScanCron');
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
-    if (cron !== null || logLevel !== null || lang !== null) {
+    const inventoryEnabled = get('cfgInventoryEnabled');
+    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
+      if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
     }
 
     try {

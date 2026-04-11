@@ -153,6 +153,106 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             self.assertEqual(written_library["total_items"], 1)
             self.assertEqual(written_library["items"][0]["title"], "Inception")
 
+    def test_run_quick_skips_inventory_when_flag_disabled_or_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {"needs_onboarding": False, "scan_cron": "0 3 * * *", "log_level": "INFO"},
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(scan_mode="quick")
+                            inventory_write.assert_not_called()
+
+    def test_run_quick_runs_inventory_when_flag_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(scan_mode="quick")
+                            inventory_write.assert_called_once()
+
+    def test_disabling_inventory_does_not_delete_existing_inventory_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            inventory_output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            inventory_output_path.write_text('{"version":1,"items":[{"id":"legacy"}]}', encoding="utf-8")
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": False,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(inventory_output_path)):
+                            with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                                scanner.run_quick(scan_mode="quick")
+                                inventory_write.assert_not_called()
+
+            self.assertTrue(inventory_output_path.exists())
+            self.assertEqual(
+                inventory_output_path.read_text(encoding="utf-8"),
+                '{"version":1,"items":[{"id":"legacy"}]}',
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

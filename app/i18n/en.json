@@ -139,6 +139,8 @@
       "version": "Version",
       "synopsis": "Synopsis on hover",
       "synopsis_hint": "Shows the synopsis when hovering over a card",
+      "inventory_enabled": "Generate raw inventory",
+      "inventory_enabled_hint": "Generates library_inventory.json in addition to library.json during scans.",
       "cron": "Automatic scan (cron)",
       "log_level": "Log level",
       "log_path": "📄 Logs available on host: ./data/scanner.log",
