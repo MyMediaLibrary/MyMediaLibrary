@@ -150,12 +150,12 @@ let allItems=[], categories=[], groups=[];
     return logo;
   }
 
-  // Visibility prefs (null = all visible; Set = specific visible names)
-  let visibleCategories = null;
+  // Active category prefs (null = all active; Set = specific active names)
+  let enabledCategories = null;
   let visibleProviders  = null;
   const PROVIDER_OTHERS_KEY = '__others__';
   const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
-  function _catVisible(cat)  { return !visibleCategories || visibleCategories.has(cat); }
+  function _catVisible(cat)  { return !enabledCategories || enabledCategories.has(cat); }
   function _isOthersProviderName(prov) {
     if (!prov) return false;
     return PROVIDER_OTHERS_ALIASES.has(String(prov).trim().toLowerCase());
@@ -489,17 +489,17 @@ let allItems=[], categories=[], groups=[];
       const pv = appConfig.providers_visible;
       visibleProviders = Array.isArray(pv) && pv.length > 0 ? new Set(pv) : null;
 
-      // Category visibility: derived from folders with enabled=false
+      // Active categories: derived from folders with enabled=false
       const folders = appConfig.folders || [];
       const hasHidden = folders.some(f => !_folderEnabled(f) && f.type && f.type !== 'ignore');
       if (hasHidden) {
-        visibleCategories = new Set(
+        enabledCategories = new Set(
           folders
             .filter(f => _folderEnabled(f) && f.type && f.type !== 'ignore')
             .map(f => folderToCategoryName(f.name))
         );
       } else {
-        visibleCategories = null;
+        enabledCategories = null;
       }
 
       _updateTypeFilterVisibility();
@@ -1016,14 +1016,14 @@ let allItems=[], categories=[], groups=[];
   function filterItems() {
     // Visibility order:
     // 1. Settings — type enabled (enableMovies/enableSeries)
-    // 2. Settings — category visible (visibleCategories)
+    // 2. Settings — active categories (enabledCategories)
     // 3. Sidebar filters — type, group, cat, provider, resolution, codec, search
     // Note: visibleProviders affects logos/filter display only, NOT item visibility
     const q = getSearchQuery();
     let items=allItems;
     if (!enableMovies)       items=items.filter(i=>i.type!=='movie');
     if (!enableSeries)       items=items.filter(i=>i.type!=='tv');
-    if (visibleCategories)   items=items.filter(i=>_catVisible(i.category));
+    if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
@@ -1075,7 +1075,7 @@ let allItems=[], categories=[], groups=[];
     let items=allItems;
     if (!enableMovies)     items=items.filter(i=>i.type!=='movie');
     if (!enableSeries)     items=items.filter(i=>i.type!=='tv');
-    if (visibleCategories)   items=items.filter(i=>_catVisible(i.category));
+    if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
     if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
@@ -2519,8 +2519,6 @@ let allItems=[], categories=[], groups=[];
   function _setFolderEnabled(folder, enabled) {
     if (!folder) return;
     folder.enabled = !!enabled;
-    // Keep legacy field during transition (step 1 compatibility)
-    folder.visible = !!enabled;
   }
 
 
@@ -2681,7 +2679,14 @@ let allItems=[], categories=[], groups=[];
       }
       else { folders[idx][key] = el.value === 'null' ? null : el.value; }
     });
-    return folders;
+    return folders.map(folder => {
+      const normalized = {...folder};
+      if (normalized.enabled === undefined || normalized.enabled === null) {
+        normalized.enabled = normalized.visible !== false;
+      }
+      delete normalized.visible;
+      return normalized;
+    });
   }
 
   // ── SETTINGS — PROVIDER TOGGLES ──────────────────────
@@ -3304,7 +3309,6 @@ let allItems=[], categories=[], groups=[];
   function _onbFolderChange(idx, val) {
     if (appConfig.folders[idx]) {
       appConfig.folders[idx]._onbType = val;
-      if (val && val !== 'ignore') appConfig.folders[idx].visible = true;
     }
     _onbValidateStep1();
   }
@@ -3422,14 +3426,13 @@ let allItems=[], categories=[], groups=[];
     const btn = document.getElementById('onbNextBtn');
     if (btn) { btn.disabled = true; btn.textContent = t('onboarding.saving'); }
 
-    // Build folder list: apply _onbType overrides, set visible accordingly
+    // Build folder list: apply _onbType overrides, set enabled accordingly
     const folders = (appConfig.folders || []).map(f => {
       const t = f._onbType !== undefined ? (f._onbType || null) : (f.type || null);
       const type = (t === 'ignore') ? null : t;
       const enabled = !!type;
-      const visible = enabled;
       const clean = Object.fromEntries(Object.entries(f).filter(([k]) => k !== '_onbType'));
-      return {...clean, type, enabled, visible};
+      return {...clean, type, enabled};
     });
 
     const partial = {

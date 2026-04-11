@@ -964,9 +964,9 @@ def is_folder_enabled(folder_cfg: dict | None) -> bool:
 def sync_folders(root: Path, cfg: dict) -> bool:
     """
     Sync config['folders'] with filesystem subdirs of root:
-    - New dirs  → add with type=null, enabled=false (visible=false kept for compatibility)
+    - New dirs  → add with type=null, enabled=false
     - Missing   → mark missing=True (preserved in config)
-    - Existing  → preserve current config (type, enabled/visible)
+    - Existing  → preserve current config (type, enabled)
     Logs a WARNING for each folder with type=null.
     Returns True if cfg was modified (caller should save_config).
     """
@@ -994,7 +994,7 @@ def sync_folders(root: Path, cfg: dict) -> bool:
     # Add new dirs
     for name in sorted(fs_dirs):
         if name not in cfg_folders:
-            cfg_folders[name] = {"name": name, "type": None, "enabled": False, "visible": False}
+            cfg_folders[name] = {"name": name, "type": None, "enabled": False}
             changed = True
 
     cfg["folders"] = list(cfg_folders.values())
@@ -1064,9 +1064,9 @@ def migrate_env_to_config() -> None:
     if (env_movies or env_series) and not cfg.get("folders"):
         cfg["folders"] = []
         for fname in env_movies:
-            cfg["folders"].append({"name": fname, "type": "movie", "enabled": True, "visible": True})
+            cfg["folders"].append({"name": fname, "type": "movie", "enabled": True})
         for fname in env_series:
-            cfg["folders"].append({"name": fname, "type": "tv",    "enabled": True, "visible": True})
+            cfg["folders"].append({"name": fname, "type": "tv",    "enabled": True})
         changed = True
 
     # system block defaults
@@ -1385,6 +1385,29 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
     return system.get("inventory_enabled") is True
 
 
+def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:
+    """
+    Normalize folder active state to `enabled`.
+
+    - If `enabled` is missing, derive it from legacy `visible` (default True)
+    - Optionally drop `visible` once normalized
+    """
+    folders = cfg.get("folders")
+    if not isinstance(folders, list):
+        return False
+    changed = False
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        if folder.get("enabled") is None:
+            folder["enabled"] = folder.get("visible", True) is not False
+            changed = True
+        if drop_visible and "visible" in folder:
+            folder.pop("visible", None)
+            changed = True
+    return changed
+
+
 def save_config(data: dict) -> None:
     output = Path(CONFIG_PATH)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1515,6 +1538,9 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     # Sync folders with filesystem (adds new, marks missing)
     cfg = load_config()
     if sync_folders(root, cfg):
+        save_config(cfg)
+        cfg = load_config()
+    if normalize_folder_enabled_flags(cfg, drop_visible=True):
         save_config(cfg)
         cfg = load_config()
     inventory_enabled = _is_inventory_enabled(cfg)
@@ -1978,6 +2004,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/config":
             cfg = load_config()
             cfg, changed = _ensure_needs_onboarding(cfg)
+            if normalize_folder_enabled_flags(cfg, drop_visible=True):
+                changed = True
             # First-run: auto-detect folders if none configured yet
             if not cfg.get("folders"):
                 root = Path(LIBRARY_PATH)
@@ -2059,6 +2087,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     payload.pop("jellyseerr", None)
             merged = deep_merge(cfg, payload)
             merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
+            normalize_folder_enabled_flags(merged, drop_visible=True)
             # Ensure apikey never persists in config.json
             if "jellyseerr" in merged:
                 merged["jellyseerr"].pop("apikey", None)
