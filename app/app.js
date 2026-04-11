@@ -1925,19 +1925,16 @@ let allItems=[], categories=[], groups=[];
         if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
         const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
         const maxV = Math.max(...entries.map(([,v]) => v), 1);
-        const W=700,H=180,PB=42,PT=8,PL=34,PR=8;
-        const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
-        const slot = iW / n;
-        const bw = Math.min(80, Math.max(22, Math.floor(slot * 0.6)));
-        const bars = entries.map(([lvl, val], idx) => {
-          const bh = Math.round(val / maxV * iH);
-          const x = PL + idx * slot + (slot - bw) / 2;
-          const y = PT + iH - bh;
-          return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw+'" height="'+bh+'" fill="'+qualityLevelColor(lvl)+'" rx="4"><title>'+qualityLevelRanges[lvl]+' : '+val+'</title></rect>'
-            +'<text x="'+(x+bw/2).toFixed(1)+'" y="'+(PT+iH+15)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+qualityLevelRanges[lvl]+'</text>'
-            +'<text x="'+(x+bw/2).toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="10" fill="var(--text)">'+val+'</text>';
-        }).join('');
-        return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'+bars+'</svg>';
+        return '<div class="quality-bars">'
+          + entries.map(([lvl, val]) => {
+            const pct = Math.max(0, Math.min(100, (val / maxV) * 100));
+            return '<div class="quality-bar-row">'
+              + '<div class="quality-bar-label">'+qualityLevelRanges[lvl]+'</div>'
+              + '<div class="quality-bar-track"><div class="quality-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+qualityLevelColor(lvl)+'"></div></div>'
+              + '<div class="quality-bar-val">'+val+'</div>'
+              + '</div>';
+          }).join('')
+          + '</div>';
       }
       const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
       const qualityChartHtml = '<div class="stats-block">'
@@ -1945,6 +1942,9 @@ let allItems=[], categories=[], groups=[];
         + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
         + makeQualityLevelBarChart()
         + '</div>';
+      const audioLangChartHtml = hasLangData
+        ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count')
+        : '';
 
 
 
@@ -1958,13 +1958,12 @@ let allItems=[], categories=[], groups=[];
         +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : '')
         +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : '')
         +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : '')
-        +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count') : '')
         +provPieHtml
       +'</div>'
       // 2. Années / décennies
       +'<div style="margin-bottom:0">'+yearDecadeHtml+'</div>'
-      // 3. Qualité
-      +qualityChartHtml
+      // 3. Langues audio + qualité
+      +(audioLangChartHtml ? '<div class="stats-row">'+audioLangChartHtml+qualityChartHtml+'</div>' : qualityChartHtml)
       // 4. Courbes d'évolution
       +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
