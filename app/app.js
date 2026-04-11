@@ -3426,9 +3426,10 @@ let allItems=[], categories=[], groups=[];
     const folders = (appConfig.folders || []).map(f => {
       const t = f._onbType !== undefined ? (f._onbType || null) : (f.type || null);
       const type = (t === 'ignore') ? null : t;
-      const visible = !!type;
+      const enabled = !!type;
+      const visible = enabled;
       const clean = Object.fromEntries(Object.entries(f).filter(([k]) => k !== '_onbType'));
-      return {...clean, type, visible};
+      return {...clean, type, enabled, visible};
     });
 
     const partial = {
