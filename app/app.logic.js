@@ -101,9 +101,15 @@
 
     if (state.activeQualityLevels.size > 0) {
       if (state.qualityExclude) {
-        out = out.filter((i) => !state.activeQualityLevels.has(getItemQualityLevel(i)));
+        out = out.filter((i) => {
+          const level = getScoredQualityLevel(i);
+          return level === null || !state.activeQualityLevels.has(level);
+        });
       } else {
-        out = out.filter((i) => state.activeQualityLevels.has(getItemQualityLevel(i)));
+        out = out.filter((i) => {
+          const level = getScoredQualityLevel(i);
+          return level !== null && state.activeQualityLevels.has(level);
+        });
       }
     }
 
@@ -196,6 +202,14 @@
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
+  function getScoredQualityLevel(item) {
+    const score = Number(item?.quality?.score);
+    if (!Number.isFinite(score)) return null;
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(score);
+  }
+
   function getQualityLevelClass(level) {
     const safeLevel = Number(level);
     if (safeLevel >= 1 && safeLevel <= 5) return `quality-lvl-${safeLevel}`;
@@ -217,6 +231,7 @@
     groupedProviderCounts,
     getQualityLevelFromScore,
     getItemQualityLevel,
+    getScoredQualityLevel,
     getQualityLevelClass
   };
 });

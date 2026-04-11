@@ -59,14 +59,20 @@ test('filters include/exclude and reset state behavior', () => {
 });
 
 test('quality filter supports include/exclude with multi-select levels', () => {
+  const qualityItems = [
+    { title: 'Unscored' },
+    { title: 'Low', quality: { score: 18 } },
+    { title: 'Mid', quality: { score: 55 } },
+    { title: 'High', quality: { score: 90 } }
+  ];
   const state = baseState();
-  state.activeQualityLevels = new Set([4, 5]);
-  let filtered = logic.filterItems(items, state);
-  assert.equal(filtered.every((i) => [4, 5].includes(logic.getItemQualityLevel(i))), true);
+  state.activeQualityLevels = new Set([1, 5]);
+  let filtered = logic.filterItems(qualityItems, state);
+  assert.deepEqual(filtered.map((i) => i.title), ['Low', 'High']);
 
   state.qualityExclude = true;
-  filtered = logic.filterItems(items, state);
-  assert.equal(filtered.some((i) => [4, 5].includes(logic.getItemQualityLevel(i))), false);
+  filtered = logic.filterItems(qualityItems, state);
+  assert.deepEqual(filtered.map((i) => i.title), ['Unscored', 'Mid']);
 });
 
 test('export button enablement and stale-safe behavior', () => {

@@ -153,6 +153,17 @@ let allItems=[], categories=[], groups=[];
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
+  function getScoredQualityLevel(item) {
+    if (window.MMLLogic?.getScoredQualityLevel) {
+      return window.MMLLogic.getScoredQualityLevel(item);
+    }
+    const score = Number(item?.quality?.score);
+    if (!Number.isFinite(score)) return null;
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(score);
+  }
+
   function getQualityLevelClass(level) {
     if (window.MMLLogic?.getQualityLevelClass) {
       return window.MMLLogic.getQualityLevelClass(level);
@@ -946,7 +957,10 @@ let allItems=[], categories=[], groups=[];
   function renderQualityFilter() {
     const base = baseItems('quality');
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    base.forEach(i => { counts[getItemQualityLevel(i)] += 1; });
+    base.forEach(i => {
+      const level = getScoredQualityLevel(i);
+      if (level !== null) counts[level] += 1;
+    });
     const total = Object.values(counts).reduce((s, n) => s + n, 0);
     ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
       const sec = document.getElementById(cid);
@@ -1164,9 +1178,15 @@ let allItems=[], categories=[], groups=[];
     }
     if (activeQualityLevels.size > 0) {
       if (qualityExclude) {
-        items=items.filter(i=>!activeQualityLevels.has(getItemQualityLevel(i)));
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level === null || !activeQualityLevels.has(level);
+        });
       } else {
-        items=items.filter(i=>activeQualityLevels.has(getItemQualityLevel(i)));
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level !== null && activeQualityLevels.has(level);
+        });
       }
     }
     return applySearch(items, q);
@@ -1223,9 +1243,15 @@ let allItems=[], categories=[], groups=[];
     }
     if (except!=='quality' && activeQualityLevels.size > 0) {
       if (qualityExclude) {
-        items=items.filter(i=>!activeQualityLevels.has(getItemQualityLevel(i)));
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level === null || !activeQualityLevels.has(level);
+        });
       } else {
-        items=items.filter(i=>activeQualityLevels.has(getItemQualityLevel(i)));
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level !== null && activeQualityLevels.has(level);
+        });
       }
     }
     return applySearch(items, q);
