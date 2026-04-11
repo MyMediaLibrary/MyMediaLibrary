@@ -22,6 +22,7 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 - **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, providers, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
+- **Scoring qualité** : système de score qualité (0–100) avec niveaux visuels, filtres et analyse détaillée
 - **Interface bilingue** : UI entièrement disponible en français et en anglais, thème clair/sombre, sidebar redimensionnable
 
 ### Démarrage rapide
@@ -79,6 +80,7 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 - **Streaming availability**: Jellyseerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Jellyseerr), schedulable via cron, configurable from the UI
+- **Quality scoring**: quality scoring system (0–100) with visual levels, filters, and detailed analysis
 - **Bilingual interface**: fully available in French and English, light/dark theme, resizable sidebar
 
 ### Quick start

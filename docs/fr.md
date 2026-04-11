@@ -3,15 +3,16 @@
 ## Table des matières
 
 1. [Vue d'ensemble](#1-vue-densemble)
-2. [Installation](#2-installation)
-3. [Structure de la bibliothèque](#3-structure-de-la-bibliothèque)
-4. [Onboarding](#4-onboarding)
-5. [Interface web](#5-interface-web)
-6. [Filtres](#6-filtres)
-7. [Providers streaming](#7-providers-streaming)
-8. [Statistiques](#8-statistiques)
-9. [Paramètres](#9-paramètres)
-10. [Architecture technique](#10-architecture-technique)
+2. [Architecture technique](#2-architecture-technique)
+3. [Installation](#3-installation)
+4. [Structure de la bibliothèque](#4-structure-de-la-bibliothèque)
+5. [Onboarding](#5-onboarding)
+6. [Interface web](#6-interface-web)
+7. [Filtres](#7-filtres)
+8. [Providers streaming](#8-providers-streaming)
+9. [Quality Scoring](#9-quality-scoring)
+10. [Statistiques](#10-statistiques)
+11. [Paramètres](#11-paramètres)
 
 ---
 
@@ -26,7 +27,24 @@
 
 ---
 
-## 2. Installation
+## 2. Architecture technique
+
+### Stack
+
+- **Conteneur** : nginx:alpine + Python 3 + dcron (image unique)
+- **Frontend** : HTML/CSS + vanilla JS (aucun framework)
+- **Backend** : serveur Python minimal (`scanner/server.py`) — routes API REST + service des fichiers statiques
+- **Scanner** : Python (`scanner/scan.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
+- **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
+
+
+### Internationalisation
+
+Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans `config.json` côté serveur et dans `localStorage` côté client.
+
+---
+
+## 3. Installation
 
 **Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo`.
 
@@ -74,7 +92,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 3. Structure de la bibliothèque
+## 4. Structure de la bibliothèque
 
 Le scanner lit les **sous-dossiers directs** de `LIBRARY_PATH`. Chaque sous-dossier est un **dossier** auquel on assigne un type (Films, Séries, Ignorer) depuis l'interface.
 
@@ -121,7 +139,7 @@ environment:
 
 ---
 
-## 4. Onboarding
+## 5. Onboarding
 
 L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide).
 
@@ -134,7 +152,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 ---
 
-## 5. Interface web
+## 6. Interface web
 
 ### Vues
 
@@ -163,7 +181,7 @@ Chaque tuile affiche :
 
 ---
 
-## 6. Filtres
+## 7. Filtres
 
 ### Filtres en pills (faible cardinalité)
 
@@ -187,7 +205,7 @@ Les compteurs affichés dans chaque dropdown correspondent aux items corresponda
 
 ---
 
-## 7. Providers streaming
+## 8. Providers streaming
 
 L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
 
@@ -205,7 +223,162 @@ Chaque provider peut être masqué dans les paramètres (onglet Jellyseerr → "
 
 ---
 
-## 8. Statistiques
+## 9. Quality Scoring
+
+Chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
+
+### Structure du score
+
+```text
+Total = 100 points
+- Video: 50
+- Audio: 20
+- Languages: 15
+- Size: 15
+```
+
+### Critères détaillés
+
+#### 🎥 Video (50)
+
+##### Résolution (25)
+
+```text
+2160p → 25
+1080p → 20
+720p → 10
+SD → 5
+Unknown → 8
+```
+
+##### Codec (15)
+
+```text
+AV1 / HEVC / H.265 → 15
+H.264 / AVC → 10
+Legacy (MPEG-2, VC-1, Xvid, DivX) → 3
+Unknown → 6
+```
+
+##### HDR (10)
+
+```text
+Dolby Vision → 10
+HDR10+ → 8
+HDR10 / HLG → 5
+SDR → 0
+Unknown → 0
+```
+
+#### 🔊 Audio (20)
+
+```text
+TrueHD / Atmos → 20
+DTS-HD → 18
+DTS → 15
+EAC3 → 12
+AC3 → 10
+AAC → 6
+MP3 / MP2 → 3
+Unknown → 8
+```
+
+#### 🌍 Languages (15)
+
+```text
+MULTI (French + others) → 15
+French only → 10
+Original only (VO) → 5
+Unknown → 3
+```
+
+#### 💾 Size (15)
+
+##### États
+
+```text
+Coherent → 15
+Too large → 8
+Too small → 5
+Unknown → 5
+```
+
+##### Exemples
+
+**1080p**
+- H.265: 2–10 GB → optimal
+- H.264: 4–15 GB → optimal
+
+**4K**
+- H.265: 8–25 GB → optimal
+
+**720p**
+- 2–6 GB → optimal
+
+**SD**
+- 500 MB – 2 GB → optimal
+
+### Pénalités
+
+Des pénalités sont appliquées pour corriger les incohérences et éviter qu'un profil technique faible conserve un score trop élevé.
+
+```text
+High video + weak audio → -10 or -5
+High resolution + legacy codec → -8 or -4
+High quality video + poor languages → -5
+Incoherent size → -5
+```
+
+```text
+Maximum penalty = 20
+```
+
+### Score final
+
+```text
+Final Score = Base Score - Penalties
+Clamped between 0 and 100
+```
+
+### Niveaux de qualité
+
+```text
+0–20   → Level 1
+21–40  → Level 2
+41–60  → Level 3
+61–80  → Level 4
+81–100 → Level 5
+```
+
+### Intégration UI
+
+Le score qualité est visible dans toute l'interface :
+- badge sur les tuiles
+- colonne tableau
+- export CSV
+- statistiques
+
+### Tooltip
+
+Au survol du badge, une infobulle détaillée est affichée :
+- breakdown complet par catégorie
+- pénalités appliquées
+
+### Filtres
+
+Le scoring s'intègre à des filtres dédiés :
+- pills par niveaux
+- couleurs cohérentes entre niveaux
+- multi-sélection
+- logique include / exclude
+
+### Statistiques
+
+Les statistiques incluent une distribution des scores pour analyser la qualité globale de la bibliothèque.
+
+---
+
+## 10. Statistiques
 
 L'onglet Statistiques affiche :
 
@@ -223,7 +396,7 @@ Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 
 ---
 
-## 9. Paramètres
+## 11. Paramètres
 
 Accessible via l'icône ⚙️ en bas de la sidebar.
 
@@ -249,18 +422,3 @@ Accessible via l'icône ⚙️ en bas de la sidebar.
 - Version
 
 ---
-
-## 10. Architecture technique
-
-### Stack
-
-- **Conteneur** : nginx:alpine + Python 3 + dcron (image unique)
-- **Frontend** : HTML/CSS + vanilla JS (aucun framework)
-- **Backend** : serveur Python minimal (`scanner/server.py`) — routes API REST + service des fichiers statiques
-- **Scanner** : Python (`scanner/scan.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
-- **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
-
-
-### Internationalisation
-
-Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans `config.json` côté serveur et dans `localStorage` côté client.

@@ -3,15 +3,16 @@
 ## Table of contents
 
 1. [Overview](#1-overview)
-2. [Installation](#2-installation)
-3. [Library structure](#3-library-structure)
-4. [Onboarding](#4-onboarding)
-5. [Web interface](#5-web-interface)
-6. [Filters](#6-filters)
-7. [Streaming providers](#7-streaming-providers)
-8. [Statistics](#8-statistics)
-9. [Settings](#9-settings)
-10. [Technical architecture](#10-technical-architecture)
+2. [Technical architecture](#2-technical-architecture)
+3. [Installation](#3-installation)
+4. [Library structure](#4-library-structure)
+5. [Onboarding](#5-onboarding)
+6. [Web interface](#6-web-interface)
+7. [Filters](#7-filters)
+8. [Streaming providers](#8-streaming-providers)
+9. [Quality Scoring](#9-quality-scoring)
+10. [Statistics](#10-statistics)
+11. [Settings](#11-settings)
 
 ---
 
@@ -26,7 +27,23 @@
 
 ---
 
-## 2. Installation
+## 2. Technical architecture
+
+### Stack
+
+- **Container**: nginx:alpine + Python 3 + dcron (single image)
+- **Frontend**: HTML/CSS + vanilla JS (no framework)
+- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
+- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
+
+### Internationalisation
+
+Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
+
+---
+
+## 3. Installation
 
 **Requirements:** Docker + Docker Compose, library with `.nfo` files.
 
@@ -74,7 +91,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 3. Library structure
+## 4. Library structure
 
 The scanner reads the **direct subdirectories** of `LIBRARY_PATH`. Each subdirectory is a **folder** that you assign a type to (Movies, Series, Ignore) from the interface.
 
@@ -121,7 +138,7 @@ environment:
 
 ---
 
-## 4. Onboarding
+## 5. Onboarding
 
 The setup wizard appears on first launch (or when `config.json` is missing/empty).
 
@@ -134,7 +151,7 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 ---
 
-## 5. Web interface
+## 6. Web interface
 
 ### Views
 
@@ -163,7 +180,7 @@ Each card displays:
 
 ---
 
-## 6. Filters
+## 7. Filters
 
 ### Pill filters (low cardinality)
 
@@ -191,7 +208,7 @@ The counts displayed in each dropdown correspond to items matching the **other a
 
 ---
 
-## 7. Streaming providers
+## 8. Streaming providers
 
 Streaming enrichment is optional and relies on **Jellyseerr**.
 
@@ -209,7 +226,162 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 
 ---
 
-## 8. Statistics
+## 9. Quality Scoring
+
+Each media item receives a global **quality score out of 100**. This score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+
+### Score structure
+
+```text
+Total = 100 points
+- Video: 50
+- Audio: 20
+- Languages: 15
+- Size: 15
+```
+
+### Detailed criteria
+
+#### 🎥 Video (50)
+
+##### Resolution (25)
+
+```text
+2160p → 25
+1080p → 20
+720p → 10
+SD → 5
+Unknown → 8
+```
+
+##### Codec (15)
+
+```text
+AV1 / HEVC / H.265 → 15
+H.264 / AVC → 10
+Legacy (MPEG-2, VC-1, Xvid, DivX) → 3
+Unknown → 6
+```
+
+##### HDR (10)
+
+```text
+Dolby Vision → 10
+HDR10+ → 8
+HDR10 / HLG → 5
+SDR → 0
+Unknown → 0
+```
+
+#### 🔊 Audio (20)
+
+```text
+TrueHD / Atmos → 20
+DTS-HD → 18
+DTS → 15
+EAC3 → 12
+AC3 → 10
+AAC → 6
+MP3 / MP2 → 3
+Unknown → 8
+```
+
+#### 🌍 Languages (15)
+
+```text
+MULTI (French + others) → 15
+French only → 10
+Original only (VO) → 5
+Unknown → 3
+```
+
+#### 💾 Size (15)
+
+##### States
+
+```text
+Coherent → 15
+Too large → 8
+Too small → 5
+Unknown → 5
+```
+
+##### Examples
+
+**1080p**
+- H.265: 2–10 GB → optimal
+- H.264: 4–15 GB → optimal
+
+**4K**
+- H.265: 8–25 GB → optimal
+
+**720p**
+- 2–6 GB → optimal
+
+**SD**
+- 500 MB – 2 GB → optimal
+
+### Penalties
+
+Penalties are applied to correct incoherent combinations and avoid inflated scores in weak technical profiles.
+
+```text
+High video + weak audio → -10 or -5
+High resolution + legacy codec → -8 or -4
+High quality video + poor languages → -5
+Incoherent size → -5
+```
+
+```text
+Maximum penalty = 20
+```
+
+### Final score
+
+```text
+Final Score = Base Score - Penalties
+Clamped between 0 and 100
+```
+
+### Quality levels
+
+```text
+0–20   → Level 1
+21–40  → Level 2
+41–60  → Level 3
+61–80  → Level 4
+81–100 → Level 5
+```
+
+### UI integration
+
+Quality scoring is visible throughout the interface:
+- badge on media cards
+- table column
+- CSV export
+- statistics
+
+### Tooltip
+
+Hovering the quality badge shows a complete detailed tooltip:
+- full breakdown by category
+- applied penalties
+
+### Filters
+
+Quality scoring integrates with dedicated filters:
+- level-based filter pills
+- consistent level colors
+- multi-selection support
+- include / exclude behavior
+
+### Stats
+
+Statistics include score distribution views to provide a global quality analysis of the library.
+
+---
+
+## 10. Statistics
 
 The Statistics tab displays:
 
@@ -227,7 +399,7 @@ All charts are filtered by the active library filters.
 
 ---
 
-## 9. Settings
+## 11. Settings
 
 Accessible via the ⚙️ icon at the bottom of the sidebar.
 
@@ -253,17 +425,3 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 - Version
 
 ---
-
-## 10. Technical architecture
-
-### Stack
-
-- **Container**: nginx:alpine + Python 3 + dcron (single image)
-- **Frontend**: HTML/CSS + vanilla JS (no framework)
-- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
-- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
-- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
-
-### Internationalisation
-
-Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
