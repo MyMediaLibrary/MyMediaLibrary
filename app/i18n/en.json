@@ -113,6 +113,7 @@
       "folder_col_name": "Folder",
       "folder_col_type": "Type",
       "folder_col_visible": "Visible",
+      "folder_col_enabled": "Active",
       "folder_unconfigured": "{n} unconfigured folder{s} — assign a type to include them in the library.",
       "folder_types": {
         "movie": "Movies",

@@ -113,6 +113,7 @@
       "folder_col_name": "Dossier",
       "folder_col_type": "Type",
       "folder_col_visible": "Visible",
+      "folder_col_enabled": "Actif",
       "folder_unconfigured": "{n} dossier{s} non configuré{s} — assignez un type pour les inclure dans la bibliothèque.",
       "folder_types": {
         "movie": "Films",

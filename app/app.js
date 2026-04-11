@@ -489,13 +489,13 @@ let allItems=[], categories=[], groups=[];
       const pv = appConfig.providers_visible;
       visibleProviders = Array.isArray(pv) && pv.length > 0 ? new Set(pv) : null;
 
-      // Category visibility: derived from folders with visible=false
+      // Category visibility: derived from folders with enabled=false
       const folders = appConfig.folders || [];
-      const hasHidden = folders.some(f => f.visible === false && f.type && f.type !== 'ignore');
+      const hasHidden = folders.some(f => !_folderEnabled(f) && f.type && f.type !== 'ignore');
       if (hasHidden) {
         visibleCategories = new Set(
           folders
-            .filter(f => f.visible !== false && f.type && f.type !== 'ignore')
+            .filter(f => _folderEnabled(f) && f.type && f.type !== 'ignore')
             .map(f => folderToCategoryName(f.name))
         );
       } else {
@@ -2510,6 +2510,19 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
+  function _folderEnabled(folder) {
+    const enabled = folder?.enabled;
+    if (enabled === undefined || enabled === null) return folder?.visible !== false;
+    return enabled !== false;
+  }
+
+  function _setFolderEnabled(folder, enabled) {
+    if (!folder) return;
+    folder.enabled = !!enabled;
+    // Keep legacy field during transition (step 1 compatibility)
+    folder.visible = !!enabled;
+  }
+
 
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
@@ -2595,7 +2608,7 @@ let allItems=[], categories=[], groups=[];
     const val = sel.value === 'null' ? null : sel.value;
     if (appConfig.folders[idx]) {
       appConfig.folders[idx].type = val;
-      if (val && val !== 'ignore') appConfig.folders[idx].visible = true;
+      if (val && val !== 'ignore') _setFolderEnabled(appConfig.folders[idx], true);
     }
     renderFoldersUI();
   }
@@ -2618,7 +2631,7 @@ let allItems=[], categories=[], groups=[];
       + '<thead><tr>'
         + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_name')+'</th>'
         + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_type')+'</th>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_visible')+'</th>'
+        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_enabled')+'</th>'
       + '</tr></thead><tbody>';
     folders.forEach((f, idx) => {
       const isMissing = !!f.missing;
@@ -2643,8 +2656,8 @@ let allItems=[], categories=[], groups=[];
           + (!f.type || f.type === 'null' || isMissing
             ? '<span style="color:var(--muted);font-size:12px">—</span>'
             : '<label class="toggle-switch">'
-              + '<input type="checkbox" data-folder-idx="'+idx+'" data-folder-key="visible"'
-              + (f.visible !== false ? ' checked' : '')
+              + '<input type="checkbox" data-folder-idx="'+idx+'" data-folder-key="enabled"'
+              + (_folderEnabled(f) ? ' checked' : '')
               + '/><span class="toggle-switch-slider"></span></label>')
           + '</td>'
         + '</tr>';
@@ -2662,7 +2675,10 @@ let allItems=[], categories=[], groups=[];
       const idx = parseInt(el.dataset.folderIdx);
       const key = el.dataset.folderKey;
       if (!folders[idx]) return;
-      if (el.type === 'checkbox') { folders[idx][key] = el.checked; }
+      if (el.type === 'checkbox') {
+        if (key === 'enabled') _setFolderEnabled(folders[idx], el.checked);
+        else folders[idx][key] = el.checked;
+      }
       else { folders[idx][key] = el.value === 'null' ? null : el.value; }
     });
     return folders;

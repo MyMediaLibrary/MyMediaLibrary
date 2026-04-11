@@ -931,12 +931,29 @@ def build_categories_from_config(cfg: dict) -> list[dict]:
     return cats
 
 
+def is_folder_enabled(folder_cfg: dict | None) -> bool:
+    """
+    Compatibility resolver for folder active state.
+
+    Priority:
+    1) folder.enabled
+    2) folder.visible (legacy)
+    3) True (default)
+    """
+    if not isinstance(folder_cfg, dict):
+        return True
+    enabled = folder_cfg.get("enabled")
+    if enabled is None:
+        enabled = folder_cfg.get("visible", True)
+    return enabled is not False
+
+
 def sync_folders(root: Path, cfg: dict) -> bool:
     """
     Sync config['folders'] with filesystem subdirs of root:
-    - New dirs  → add with type=null, visible=false
+    - New dirs  → add with type=null, enabled=false (visible=false kept for compatibility)
     - Missing   → mark missing=True (preserved in config)
-    - Existing  → preserve current config (type, visible)
+    - Existing  → preserve current config (type, enabled/visible)
     Logs a WARNING for each folder with type=null.
     Returns True if cfg was modified (caller should save_config).
     """
@@ -964,7 +981,7 @@ def sync_folders(root: Path, cfg: dict) -> bool:
     # Add new dirs
     for name in sorted(fs_dirs):
         if name not in cfg_folders:
-            cfg_folders[name] = {"name": name, "type": None, "visible": False}
+            cfg_folders[name] = {"name": name, "type": None, "enabled": False, "visible": False}
             changed = True
 
     cfg["folders"] = list(cfg_folders.values())
@@ -1034,9 +1051,9 @@ def migrate_env_to_config() -> None:
     if (env_movies or env_series) and not cfg.get("folders"):
         cfg["folders"] = []
         for fname in env_movies:
-            cfg["folders"].append({"name": fname, "type": "movie", "visible": True})
+            cfg["folders"].append({"name": fname, "type": "movie", "enabled": True, "visible": True})
         for fname in env_series:
-            cfg["folders"].append({"name": fname, "type": "tv",    "visible": True})
+            cfg["folders"].append({"name": fname, "type": "tv",    "enabled": True, "visible": True})
         changed = True
 
     # system block defaults
