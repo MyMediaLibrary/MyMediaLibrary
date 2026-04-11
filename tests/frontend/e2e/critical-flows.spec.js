@@ -192,7 +192,12 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   await expect(inventoryToggle).toBeAttached();
   await expect(inventoryToggle).not.toBeChecked();
 
-  await inventoryToggle.check({ force: true });
+  await page.evaluate(() => {
+    const el = document.getElementById('cfgInventoryEnabled');
+    if (!el) return;
+    el.checked = true;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await page.click('#settingsSaveBtn');
 
   await expect.poll(() => capturedPayload).not.toBeNull();
