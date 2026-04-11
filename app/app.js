@@ -2427,11 +2427,33 @@ let allItems=[], categories=[], groups=[];
     const wrap = document.getElementById('scanBtnWrap');
     document.querySelectorAll('.scan-dropdown').forEach(d => { if(d!==dd) d.classList.remove('open'); });
     if (!dd.classList.contains('open')) {
+      const viewportPad = 8;
+      const dropdownGap = 6;
       const r = wrap.getBoundingClientRect();
-      dd.style.bottom = (window.innerHeight - r.top + 6) + 'px';
-      dd.style.top = 'auto';
+
+      dd.style.visibility = 'hidden';
+      dd.style.display = 'block';
+      dd.style.top = '0px';
+      dd.style.bottom = 'auto';
+      const dropdownHeight = dd.offsetHeight;
+      dd.style.display = '';
+      dd.style.visibility = '';
+
+      const spaceBelow = window.innerHeight - r.bottom - dropdownGap - viewportPad;
+      const spaceAbove = r.top - dropdownGap - viewportPad;
+      const openDown = spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove;
+
+      if (openDown) {
+        dd.style.top = Math.max(viewportPad, r.bottom + dropdownGap) + 'px';
+        dd.style.bottom = 'auto';
+      } else {
+        dd.style.bottom = Math.max(viewportPad, window.innerHeight - r.top + dropdownGap) + 'px';
+        dd.style.top = 'auto';
+      }
+
       dd.style.left = r.left + 'px';
       dd.style.minWidth = r.width + 'px';
+      dd.style.maxHeight = Math.max(120, window.innerHeight - (viewportPad * 2)) + 'px';
     }
     dd.classList.toggle('open');
   }
