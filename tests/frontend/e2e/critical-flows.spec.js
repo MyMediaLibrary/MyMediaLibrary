@@ -9,7 +9,7 @@ function configuredPayload() {
     needs_onboarding: false,
     ui: { language: 'fr' },
     jellyseerr: { enabled: true },
-    folders: [{ name: 'Cinema', type: 'movie', enabled: true, visible: true, missing: false }],
+    folders: [{ name: 'Cinema', type: 'movie', enabled: true, missing: false }],
   };
 }
 
@@ -18,7 +18,7 @@ function onboardingPayload() {
     needs_onboarding: true,
     ui: { language: 'fr' },
     jellyseerr: { enabled: false },
-    folders: [{ name: 'Cinema', type: '', enabled: true, visible: true, missing: false }],
+    folders: [{ name: 'Cinema', type: '', enabled: true, missing: false }],
   };
 }
 
@@ -204,7 +204,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   expect(capturedPayload.system.inventory_enabled).toBe(true);
 });
 
-test('folder active toggle persists using enabled with visible compatibility', async ({ page }) => {
+test('folder active toggle persists using enabled without visible persistence', async ({ page }) => {
   let capturedPayload = null;
 
   await page.route('**/api/config', async (route) => {
@@ -235,7 +235,7 @@ test('folder active toggle persists using enabled with visible compatibility', a
 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.folders[0].enabled).toBe(false);
-  expect(capturedPayload.folders[0].visible).toBe(false);
+  expect(capturedPayload.folders[0].visible).toBeUndefined();
 });
 
 test('resetting persisted config makes onboarding visible again', async ({ page }) => {

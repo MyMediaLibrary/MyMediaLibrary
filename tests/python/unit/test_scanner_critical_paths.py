@@ -143,6 +143,20 @@ class FolderEnabledCompatibilityTest(unittest.TestCase):
         self.assertTrue(scanner.is_folder_enabled({"name": "Movies"}))
         self.assertTrue(scanner.is_folder_enabled({}))
 
+    def test_normalize_folder_enabled_flags_migrates_visible_to_enabled(self):
+        cfg = {"folders": [{"name": "Movies", "type": "movie", "visible": False}]}
+        changed = scanner.normalize_folder_enabled_flags(cfg, drop_visible=False)
+        self.assertTrue(changed)
+        self.assertIs(cfg["folders"][0]["enabled"], False)
+        self.assertIn("visible", cfg["folders"][0])
+
+    def test_normalize_folder_enabled_flags_can_drop_visible(self):
+        cfg = {"folders": [{"name": "Movies", "type": "movie", "visible": True}]}
+        changed = scanner.normalize_folder_enabled_flags(cfg, drop_visible=True)
+        self.assertTrue(changed)
+        self.assertIs(cfg["folders"][0]["enabled"], True)
+        self.assertNotIn("visible", cfg["folders"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
