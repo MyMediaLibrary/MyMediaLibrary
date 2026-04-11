@@ -99,6 +99,14 @@
       }
     }
 
+    if (state.activeQualityLevels.size > 0) {
+      if (state.qualityExclude) {
+        out = out.filter((i) => !state.activeQualityLevels.has(getItemQualityLevel(i)));
+      } else {
+        out = out.filter((i) => state.activeQualityLevels.has(getItemQualityLevel(i)));
+      }
+    }
+
     return applySearch(out, state.searchQuery || '');
   }
 
@@ -111,10 +119,12 @@
       || state.activeCodecs.size > 0
       || state.activeAudioCodecs.size > 0
       || state.activeAudioLanguages.size > 0
+      || state.activeQualityLevels.size > 0
       || state.providerExclude
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
+      || state.qualityExclude
       || !!(state.searchQuery || '').trim();
   }
 
@@ -128,10 +138,12 @@
       activeCodecs: new Set(),
       activeAudioCodecs: new Set(),
       activeAudioLanguages: new Set(),
+      activeQualityLevels: new Set(),
       providerExclude: false,
       videoCodecExclude: false,
       audioCodecExclude: false,
       audioLanguageExclude: false,
+      qualityExclude: false,
       searchQuery: ''
     };
   }
