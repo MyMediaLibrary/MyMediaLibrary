@@ -1183,7 +1183,7 @@ def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: da
         "version": 1,
         "generated_at": now_utc,
         "scan_mode": scan_mode,
-        "missing_reconciliation": scan_mode == "full",
+        "missing_reconciliation": False,
         "items": inventory_items,
     }
 
@@ -1204,10 +1204,13 @@ def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: st
         if scan_mode == "full":
             try:
                 inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
+                inventory_to_write["missing_reconciliation"] = True
             except Exception as e:
                 log.warning(
                     f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing with merged inventory."
                 )
+        else:
+            inventory_to_write["missing_reconciliation"] = False
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
         log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")

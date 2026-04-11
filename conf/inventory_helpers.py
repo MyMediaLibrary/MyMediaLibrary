@@ -139,7 +139,6 @@ def merge_inventory_video_files(
             current_copy["first_seen_at"] = existing.get("first_seen_at", current_copy.get("first_seen_at"))
             current_copy["last_seen_at"] = current.get("last_seen_at", existing.get("last_seen_at"))
             current_copy["status"] = "present"
-        current_copy["_seen_in_scan"] = True
         merged.append(current_copy)
 
     for existing in existing_files:
@@ -178,7 +177,6 @@ def merge_inventory_subfolders(
                 existing.get("video_files", []),
                 current.get("video_files", []),
             )
-        current_copy["_seen_in_scan"] = True
         merged.append(current_copy)
 
     for existing in existing_subfolders:
@@ -202,7 +200,6 @@ def merge_inventory_items(existing_item: dict[str, Any], current_item: dict[str,
     merged["first_seen_at"] = existing_item.get("first_seen_at", current_item.get("first_seen_at"))
     merged["last_seen_at"] = current_item.get("last_seen_at", existing_item.get("last_seen_at"))
     merged["status"] = "present"
-    merged["_seen_in_scan"] = True
     merged["video_files"] = merge_inventory_video_files(
         existing_item.get("video_files", []),
         current_item.get("video_files", []),
@@ -239,23 +236,6 @@ def merge_inventory_documents(existing_doc: dict[str, Any], current_doc: dict[st
         if existing_item:
             merged_items.append(merge_inventory_items(existing_item, current_item))
         else:
-            current_copy["_seen_in_scan"] = True
-            current_copy["video_files"] = [
-                {**copy.deepcopy(video_file), "_seen_in_scan": True}
-                for video_file in current_copy.get("video_files", [])
-            ]
-            if current_copy.get("media_type") == "tv":
-                current_copy["subfolders"] = [
-                    {
-                        **copy.deepcopy(subfolder),
-                        "_seen_in_scan": True,
-                        "video_files": [
-                            {**copy.deepcopy(video_file), "_seen_in_scan": True}
-                            for video_file in subfolder.get("video_files", [])
-                        ],
-                    }
-                    for subfolder in current_copy.get("subfolders", [])
-                ]
             merged_items.append(current_copy)
 
     for existing_item in existing_items:

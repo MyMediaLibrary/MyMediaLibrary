@@ -273,7 +273,7 @@ class InventoryHelpersTest(unittest.TestCase):
         self.assertEqual(len(reconciled["items"]), 2)
         self.assertEqual(by_id["movie:Films:Inception (2010)"]["last_seen_at"], "2026-04-08T00:00:00Z")
 
-    def test_inventory_missing_reconciliation_flag_depends_on_scan_mode(self):
+    def test_inventory_missing_reconciliation_default_is_false_during_build(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             item_dir = pathlib.Path(tmp_dir) / "Inception (2010)"
             item_dir.mkdir()
@@ -282,7 +282,24 @@ class InventoryHelpersTest(unittest.TestCase):
             full_inventory = scanner.build_library_inventory(scanned_entries, scan_mode="full")
 
         self.assertFalse(quick_inventory["missing_reconciliation"])
-        self.assertTrue(full_inventory["missing_reconciliation"])
+        self.assertFalse(full_inventory["missing_reconciliation"])
+
+    def test_written_inventory_sets_missing_reconciliation_by_scan_mode(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = pathlib.Path(tmp_dir) / "library_inventory.json"
+            item_dir = pathlib.Path(tmp_dir) / "Films" / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+            scanned_entries = [{"media_dir": item_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"}]
+
+            with unittest.mock.patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(scanned_entries, scan_mode="full")
+                full_written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+                scanner.write_inventory_json_non_blocking(scanned_entries, scan_mode="quick")
+                quick_written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+
+        self.assertTrue(full_written["missing_reconciliation"])
+        self.assertFalse(quick_written["missing_reconciliation"])
 
 
 if __name__ == "__main__":
