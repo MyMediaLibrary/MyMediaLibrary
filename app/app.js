@@ -231,7 +231,7 @@ let allItems=[], categories=[], groups=[];
     const tooltip = getQualityTooltipText(item);
     const tooltipAttr = tooltip ? ' data-quality-tooltip="'+escapeAttrMultiline(tooltip)+'"' : '';
     const tooltipHandlers = tooltip
-      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="hideQualityTooltip()"'
+      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="handleQualityBadgeLeave(this)"'
       : '';
     return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
@@ -1410,7 +1410,7 @@ let allItems=[], categories=[], groups=[];
   function cardHTML(item) {
     const plotText = (item.plot||'').trim();
     const qualityBadge = qualityBadgeHTML(item);
-    return '<div class="tl-card"'+(plotText?' onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'" onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
@@ -3176,7 +3176,7 @@ let allItems=[], categories=[], groups=[];
   let _ttTimer;
   let _scoreTt = null;
 
-  function showPlot(el, text) {
+  function showPlot(el, text, delayMs = 400) {
     if (!enablePlot || isMobile()) return;
     if (!_tt) _tt = document.getElementById('plotTooltip');
     if (!text || !_tt) return;
@@ -3184,7 +3184,7 @@ let allItems=[], categories=[], groups=[];
     _ttTimer = setTimeout(() => {
       _tt.textContent = text;
       _tt.classList.add('visible');
-    }, 400);
+    }, delayMs);
     document.addEventListener('mousemove', _moveTT);
   }
 
@@ -3226,6 +3226,15 @@ let allItems=[], categories=[], groups=[];
 
   function hideQualityTooltip() {
     if (_scoreTt) _scoreTt.classList.remove('visible');
+  }
+
+  function handleQualityBadgeLeave(el) {
+    hideQualityTooltip();
+    if (!enablePlot || isMobile()) return;
+    const card = el?.closest?.('.tl-card');
+    if (!card || !card.matches(':hover')) return;
+    const plotText = (card.getAttribute('data-plot') || '').trim();
+    if (plotText) showPlot(card, plotText, 0);
   }
 
   // ── KEYBOARD SHORTCUTS ──────────────────────────────
