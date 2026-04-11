@@ -320,6 +320,39 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             self.assertEqual(written["items"][0]["first_seen_at"], "2026-04-01T00:00:00Z")
             self.assertEqual(written["items"][0]["last_seen_at"], "2026-04-09T00:00:00Z")
 
+    def test_run_quick_writes_inventory_when_all_categories_disabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            films = root / "films"
+            films.mkdir(parents=True)
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "enabled": False}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(scan_mode="quick")
+                            inventory_write.assert_called_once()
+                            args, kwargs = inventory_write.call_args
+                            self.assertEqual(args[0], [])
+                            self.assertEqual(kwargs["forced_missing_categories"], {"Films"})
+
     def test_disabling_inventory_does_not_delete_existing_inventory_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"

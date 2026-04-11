@@ -1518,6 +1518,16 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
         else:
             log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
+        if inventory_enabled:
+            try:
+                write_inventory_json_non_blocking(
+                    [],
+                    scan_mode,
+                    reconcile_missing=(scan_mode == "full" and not only_category),
+                    forced_missing_categories=force_missing_categories,
+                )
+            except Exception as e:
+                log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
         return
 
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
