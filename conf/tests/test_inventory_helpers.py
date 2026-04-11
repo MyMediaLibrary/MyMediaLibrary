@@ -110,6 +110,21 @@ class InventoryHelpersTest(unittest.TestCase):
         self.assertEqual(result["video_files"], [])
         self.assertEqual(result["subfolders"], [subfolder])
 
+    def test_build_inventory_document_deep_copies_items(self):
+        item = {
+            "id": "movie:Films:Inception (2010)",
+            "video_files": [{"name": "Inception (2010).mkv"}],
+        }
+        result = inventory_helpers.build_inventory_document(
+            items=[item],
+            generated_at="2026-04-11T23:55:00Z",
+            scan_mode="full",
+            missing_reconciliation=True,
+        )
+
+        item["video_files"][0]["name"] = "MUTATED.mkv"
+        self.assertEqual(result["items"][0]["video_files"][0]["name"], "Inception (2010).mkv")
+
 
 if __name__ == "__main__":
     unittest.main()

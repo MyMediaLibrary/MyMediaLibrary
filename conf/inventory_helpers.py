@@ -5,6 +5,7 @@ This module is intentionally side-effect free and not wired into runtime scannin
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 
@@ -108,5 +109,5 @@ def build_inventory_document(
         "generated_at": generated_at,
         "scan_mode": scan_mode,
         "missing_reconciliation": missing_reconciliation,
-        "items": list(items),
+        "items": [copy.deepcopy(item) for item in items],
     }
