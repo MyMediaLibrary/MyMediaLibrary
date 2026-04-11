@@ -1544,15 +1544,18 @@ let allItems=[], categories=[], groups=[];
 
   // ── VIEW ─────────────────────────────────────────────
   function setView(v, silent) {
-    currentView=v;
-    document.getElementById('gridBtn').classList.toggle('active',v==='grid');
-    document.getElementById('tableBtn').classList.toggle('active',v==='table');
+    const nextView = (v === 'table') ? 'table' : 'grid';
+    if (currentView === nextView) return;
+    currentView=nextView;
+    document.getElementById('gridBtn').classList.toggle('active',nextView==='grid');
+    document.getElementById('tableBtn').classList.toggle('active',nextView==='table');
     // Sort visible only in grid view
     const sortEl = document.getElementById('sortSelect');
     const sortSec = document.getElementById('sortSection');
-    if (sortEl) sortEl.style.display = v==='grid' ? '' : 'none';
-    if (sortSec) sortSec.style.display = v==='grid' ? '' : 'none';
+    if (sortEl) sortEl.style.display = nextView==='grid' ? '' : 'none';
+    if (sortSec) sortSec.style.display = nextView==='grid' ? '' : 'none';
     render();
+    if (!silent) saveState();
   }
 
   // ── UTILS ────────────────────────────────────────────
