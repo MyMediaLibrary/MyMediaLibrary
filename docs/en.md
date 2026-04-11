@@ -3,16 +3,16 @@
 ## Table of contents
 
 1. [Overview](#1-overview)
-2. [Installation](#2-installation)
-3. [Library structure](#3-library-structure)
-4. [Onboarding](#4-onboarding)
-5. [Web interface](#5-web-interface)
-6. [Filters](#6-filters)
-7. [Streaming providers](#7-streaming-providers)
-8. [Statistics](#8-statistics)
-9. [Settings](#9-settings)
-10. [Technical architecture](#10-technical-architecture)
-11. [Quality Scoring](#11-quality-scoring)
+2. [Technical architecture](#2-technical-architecture)
+3. [Installation](#3-installation)
+4. [Library structure](#4-library-structure)
+5. [Onboarding](#5-onboarding)
+6. [Web interface](#6-web-interface)
+7. [Filters](#7-filters)
+8. [Streaming providers](#8-streaming-providers)
+9. [Quality Scoring](#9-quality-scoring)
+10. [Statistics](#10-statistics)
+11. [Settings](#11-settings)
 
 ---
 
@@ -27,7 +27,23 @@
 
 ---
 
-## 2. Installation
+## 2. Technical architecture
+
+### Stack
+
+- **Container**: nginx:alpine + Python 3 + dcron (single image)
+- **Frontend**: HTML/CSS + vanilla JS (no framework)
+- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
+- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
+
+### Internationalisation
+
+Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
+
+---
+
+## 3. Installation
 
 **Requirements:** Docker + Docker Compose, library with `.nfo` files.
 
@@ -75,7 +91,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 3. Library structure
+## 4. Library structure
 
 The scanner reads the **direct subdirectories** of `LIBRARY_PATH`. Each subdirectory is a **folder** that you assign a type to (Movies, Series, Ignore) from the interface.
 
@@ -122,7 +138,7 @@ environment:
 
 ---
 
-## 4. Onboarding
+## 5. Onboarding
 
 The setup wizard appears on first launch (or when `config.json` is missing/empty).
 
@@ -135,7 +151,7 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 ---
 
-## 5. Web interface
+## 6. Web interface
 
 ### Views
 
@@ -164,7 +180,7 @@ Each card displays:
 
 ---
 
-## 6. Filters
+## 7. Filters
 
 ### Pill filters (low cardinality)
 
@@ -192,7 +208,7 @@ The counts displayed in each dropdown correspond to items matching the **other a
 
 ---
 
-## 7. Streaming providers
+## 8. Streaming providers
 
 Streaming enrichment is optional and relies on **Jellyseerr**.
 
@@ -210,68 +226,7 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 
 ---
 
-## 8. Statistics
-
-The Statistics tab displays:
-
-- **Global summary** — total items, files, disk usage
-- **By type** — Movies / Series breakdown
-- **Resolution** — pie chart
-- **Video codec** — pie chart
-- **Audio codec** — pie chart
-- **Release years** — bar chart by year or decade
-- **Monthly evolution** — line chart of additions per month (size and/or item count), periods: all / 12 months / 30 days
-- **By group / folder** — size or count
-- **Streaming** — availability by provider, breakdown by group
-
-All charts are filtered by the active library filters.
-
----
-
-## 9. Settings
-
-Accessible via the ⚙️ icon at the bottom of the sidebar.
-
-### Library tab
-
-- Library path (`LIBRARY_PATH`, read-only if set via compose.yaml)
-- Show/hide Movies or Series
-- Table of detected folders: type (Movies/Series/Ignore) + individual visibility
-
-### Jellyseerr tab
-
-- Enable/disable enrichment
-- URL + API key + connection test
-- Per-provider visibility (visible/hidden)
-
-### System tab
-
-- Language (FR/EN)
-- Accent color (picker + reset)
-- Synopsis on hover (on/off)
-- Auto-scan (cron)
-- Log level
-- Version
-
----
-
-## 10. Technical architecture
-
-### Stack
-
-- **Container**: nginx:alpine + Python 3 + dcron (single image)
-- **Frontend**: HTML/CSS + vanilla JS (no framework)
-- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
-- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
-- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
-
-### Internationalisation
-
-Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
-
----
-
-## 11. Quality Scoring
+## 9. Quality Scoring
 
 Each media item receives a global **quality score out of 100**. This score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
 
@@ -423,3 +378,50 @@ Quality scoring integrates with dedicated filters:
 ### Stats
 
 Statistics include score distribution views to provide a global quality analysis of the library.
+
+---
+
+## 10. Statistics
+
+The Statistics tab displays:
+
+- **Global summary** — total items, files, disk usage
+- **By type** — Movies / Series breakdown
+- **Resolution** — pie chart
+- **Video codec** — pie chart
+- **Audio codec** — pie chart
+- **Release years** — bar chart by year or decade
+- **Monthly evolution** — line chart of additions per month (size and/or item count), periods: all / 12 months / 30 days
+- **By group / folder** — size or count
+- **Streaming** — availability by provider, breakdown by group
+
+All charts are filtered by the active library filters.
+
+---
+
+## 11. Settings
+
+Accessible via the ⚙️ icon at the bottom of the sidebar.
+
+### Library tab
+
+- Library path (`LIBRARY_PATH`, read-only if set via compose.yaml)
+- Show/hide Movies or Series
+- Table of detected folders: type (Movies/Series/Ignore) + individual visibility
+
+### Jellyseerr tab
+
+- Enable/disable enrichment
+- URL + API key + connection test
+- Per-provider visibility (visible/hidden)
+
+### System tab
+
+- Language (FR/EN)
+- Accent color (picker + reset)
+- Synopsis on hover (on/off)
+- Auto-scan (cron)
+- Log level
+- Version
+
+---

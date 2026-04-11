@@ -3,16 +3,16 @@
 ## Table des matières
 
 1. [Vue d'ensemble](#1-vue-densemble)
-2. [Installation](#2-installation)
-3. [Structure de la bibliothèque](#3-structure-de-la-bibliothèque)
-4. [Onboarding](#4-onboarding)
-5. [Interface web](#5-interface-web)
-6. [Filtres](#6-filtres)
-7. [Providers streaming](#7-providers-streaming)
-8. [Statistiques](#8-statistiques)
-9. [Paramètres](#9-paramètres)
-10. [Architecture technique](#10-architecture-technique)
-11. [Quality Scoring](#11-quality-scoring)
+2. [Architecture technique](#2-architecture-technique)
+3. [Installation](#3-installation)
+4. [Structure de la bibliothèque](#4-structure-de-la-bibliothèque)
+5. [Onboarding](#5-onboarding)
+6. [Interface web](#6-interface-web)
+7. [Filtres](#7-filtres)
+8. [Providers streaming](#8-providers-streaming)
+9. [Quality Scoring](#9-quality-scoring)
+10. [Statistiques](#10-statistiques)
+11. [Paramètres](#11-paramètres)
 
 ---
 
@@ -27,7 +27,24 @@
 
 ---
 
-## 2. Installation
+## 2. Architecture technique
+
+### Stack
+
+- **Conteneur** : nginx:alpine + Python 3 + dcron (image unique)
+- **Frontend** : HTML/CSS + vanilla JS (aucun framework)
+- **Backend** : serveur Python minimal (`scanner/server.py`) — routes API REST + service des fichiers statiques
+- **Scanner** : Python (`scanner/scan.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
+- **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
+
+
+### Internationalisation
+
+Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans `config.json` côté serveur et dans `localStorage` côté client.
+
+---
+
+## 3. Installation
 
 **Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo`.
 
@@ -75,7 +92,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 3. Structure de la bibliothèque
+## 4. Structure de la bibliothèque
 
 Le scanner lit les **sous-dossiers directs** de `LIBRARY_PATH`. Chaque sous-dossier est un **dossier** auquel on assigne un type (Films, Séries, Ignorer) depuis l'interface.
 
@@ -122,7 +139,7 @@ environment:
 
 ---
 
-## 4. Onboarding
+## 5. Onboarding
 
 L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide).
 
@@ -135,7 +152,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 ---
 
-## 5. Interface web
+## 6. Interface web
 
 ### Vues
 
@@ -164,7 +181,7 @@ Chaque tuile affiche :
 
 ---
 
-## 6. Filtres
+## 7. Filtres
 
 ### Filtres en pills (faible cardinalité)
 
@@ -188,7 +205,7 @@ Les compteurs affichés dans chaque dropdown correspondent aux items corresponda
 
 ---
 
-## 7. Providers streaming
+## 8. Providers streaming
 
 L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
 
@@ -206,69 +223,7 @@ Chaque provider peut être masqué dans les paramètres (onglet Jellyseerr → "
 
 ---
 
-## 8. Statistiques
-
-L'onglet Statistiques affiche :
-
-- **Résumé global** — nombre total d'items, fichiers, taille disque
-- **Par type** — répartition Films / Séries
-- **Résolution** — camembert
-- **Codec vidéo** — camembert
-- **Codec audio** — camembert
-- **Années de sortie** — histogramme par année ou par décennie
-- **Évolution mensuelle** — courbe des ajouts par mois (taille et/ou nombre d'items), périodes : tout / 12 mois / 30 jours
-- **Répartition par groupe / dossier** — taille ou nombre
-- **Streaming** — disponibilité par provider, répartition par groupe
-
-Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
-
----
-
-## 9. Paramètres
-
-Accessible via l'icône ⚙️ en bas de la sidebar.
-
-### Onglet Bibliothèque
-
-- Chemin de la bibliothèque (`LIBRARY_PATH`, lecture seule si défini via compose.yaml)
-- Afficher/masquer Films ou Séries
-- Tableau des dossiers détectés : type (Films/Séries/Ignorer) + visibilité individuelle
-
-### Onglet Jellyseerr
-
-- Activer/désactiver l'enrichissement
-- URL + clé API + test de connexion
-- Visibilité de chaque provider (visible/masqué)
-
-### Onglet Système
-
-- Langue (FR/EN)
-- Couleur d'accent (sélecteur + reset)
-- Synopsis au survol (on/off)
-- Scan automatique (cron)
-- Niveau de log
-- Version
-
----
-
-## 10. Architecture technique
-
-### Stack
-
-- **Conteneur** : nginx:alpine + Python 3 + dcron (image unique)
-- **Frontend** : HTML/CSS + vanilla JS (aucun framework)
-- **Backend** : serveur Python minimal (`scanner/server.py`) — routes API REST + service des fichiers statiques
-- **Scanner** : Python (`scanner/scan.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
-- **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
-
-
-### Internationalisation
-
-Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans `config.json` côté serveur et dans `localStorage` côté client.
-
----
-
-## 11. Quality Scoring
+## 9. Quality Scoring
 
 Chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
 
@@ -420,3 +375,50 @@ Le scoring s'intègre à des filtres dédiés :
 ### Statistiques
 
 Les statistiques incluent une distribution des scores pour analyser la qualité globale de la bibliothèque.
+
+---
+
+## 10. Statistiques
+
+L'onglet Statistiques affiche :
+
+- **Résumé global** — nombre total d'items, fichiers, taille disque
+- **Par type** — répartition Films / Séries
+- **Résolution** — camembert
+- **Codec vidéo** — camembert
+- **Codec audio** — camembert
+- **Années de sortie** — histogramme par année ou par décennie
+- **Évolution mensuelle** — courbe des ajouts par mois (taille et/ou nombre d'items), périodes : tout / 12 mois / 30 jours
+- **Répartition par groupe / dossier** — taille ou nombre
+- **Streaming** — disponibilité par provider, répartition par groupe
+
+Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
+
+---
+
+## 11. Paramètres
+
+Accessible via l'icône ⚙️ en bas de la sidebar.
+
+### Onglet Bibliothèque
+
+- Chemin de la bibliothèque (`LIBRARY_PATH`, lecture seule si défini via compose.yaml)
+- Afficher/masquer Films ou Séries
+- Tableau des dossiers détectés : type (Films/Séries/Ignorer) + visibilité individuelle
+
+### Onglet Jellyseerr
+
+- Activer/désactiver l'enrichissement
+- URL + clé API + test de connexion
+- Visibilité de chaque provider (visible/masqué)
+
+### Onglet Système
+
+- Langue (FR/EN)
+- Couleur d'accent (sélecteur + reset)
+- Synopsis au survol (on/off)
+- Scan automatique (cron)
+- Niveau de log
+- Version
+
+---
