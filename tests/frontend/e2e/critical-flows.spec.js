@@ -227,7 +227,10 @@ test('folder active toggle persists using enabled with visible compatibility', a
 
   const folderToggle = page.locator('input[data-folder-key="enabled"]').first();
   await expect(folderToggle).toBeChecked();
-  await folderToggle.setChecked(false, { force: true });
+  await folderToggle.evaluate((el) => {
+    el.checked = false;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await page.click('#settingsSaveBtn');
 
   await expect.poll(() => capturedPayload).not.toBeNull();
