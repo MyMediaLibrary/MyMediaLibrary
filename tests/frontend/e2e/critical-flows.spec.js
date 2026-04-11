@@ -182,13 +182,14 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
 
   await page.goto('/index.html');
   await page.evaluate(() => openSettings());
+  await page.locator('.stab', { hasText: '⚙️' }).click();
 
   const inventoryToggle = page.locator('#cfgInventoryEnabled');
   await expect(inventoryToggle).toBeVisible();
   await expect(inventoryToggle).not.toBeChecked();
 
   await inventoryToggle.check();
-  await page.click('#cfgSaveBtn');
+  await page.click('#settingsSaveBtn');
 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.system.inventory_enabled).toBe(true);
