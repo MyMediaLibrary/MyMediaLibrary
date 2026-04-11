@@ -228,6 +228,97 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick(scan_mode="quick")
                             inventory_write.assert_called_once()
+                            _, kwargs = inventory_write.call_args
+                            self.assertEqual(kwargs["forced_missing_categories"], set())
+
+    def test_build_categories_from_config_skips_disabled_folders(self):
+        cfg = {
+            "enable_movies": True,
+            "enable_series": True,
+            "folders": [
+                {"name": "films", "type": "movie", "enabled": False},
+                {"name": "series", "type": "tv", "enabled": True},
+            ],
+        }
+        categories = scanner.build_categories_from_config(cfg)
+        self.assertEqual(len(categories), 1)
+        self.assertEqual(categories[0]["name"], "Series")
+
+    def test_run_quick_passes_disabled_categories_to_inventory_force_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            series = root / "series"
+            item_dir = series / "Dark"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Dark.S01E01.mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [
+                        {"name": "films", "type": "movie", "enabled": False},
+                        {"name": "series", "type": "tv", "enabled": True},
+                    ],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(scan_mode="quick")
+                            _, kwargs = inventory_write.call_args
+                            self.assertEqual(kwargs["forced_missing_categories"], {"Films"})
+
+    def test_quick_scan_forces_missing_for_disabled_category(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            output_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "generated_at": "2026-04-10T00:00:00Z",
+                    "scan_mode": "quick",
+                    "missing_reconciliation": False,
+                    "items": [
+                        {
+                            "id": "movie:Films:Inception (2010)",
+                            "media_type": "movie",
+                            "category": "Films",
+                            "title": "Inception",
+                            "root_folder_path": "/media/Films/Inception (2010)",
+                            "status": "present",
+                            "first_seen_at": "2026-04-01T00:00:00Z",
+                            "last_seen_at": "2026-04-09T00:00:00Z",
+                            "video_files": [
+                                {"name": "Inception (2010).mkv", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z"},
+                            ],
+                        }
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(
+                    scanned_entries=[],
+                    scan_mode="quick",
+                    reconcile_missing=False,
+                    forced_missing_categories={"Films"},
+                )
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            self.assertEqual(written["items"][0]["status"], "missing")
+            self.assertEqual(written["items"][0]["video_files"][0]["status"], "missing")
+            self.assertEqual(written["items"][0]["first_seen_at"], "2026-04-01T00:00:00Z")
+            self.assertEqual(written["items"][0]["last_seen_at"], "2026-04-09T00:00:00Z")
 
     def test_disabling_inventory_does_not_delete_existing_inventory_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:

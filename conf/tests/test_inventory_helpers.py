@@ -225,6 +225,42 @@ class InventoryHelpersTest(unittest.TestCase):
         cleaned = inventory_helpers.cleanup_inventory_transient_fields(merged)
         self.assertNotIn("_seen_in_scan", cleaned["items"][0])
 
+    def test_apply_forced_missing_by_categories_marks_whole_tree_missing(self):
+        document = {
+            "items": [
+                {
+                    "id": "tv:Series:Dark",
+                    "category": "Series",
+                    "media_type": "tv",
+                    "status": "present",
+                    "first_seen_at": "2026-04-01T00:00:00Z",
+                    "last_seen_at": "2026-04-09T00:00:00Z",
+                    "video_files": [
+                        {"name": "trailer.mkv", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z"},
+                    ],
+                    "subfolders": [
+                        {
+                            "name": "Season 01",
+                            "status": "present",
+                            "first_seen_at": "2026-04-01T00:00:00Z",
+                            "last_seen_at": "2026-04-09T00:00:00Z",
+                            "video_files": [
+                                {"name": "Dark.S01E01.mkv", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        forced = inventory_helpers.apply_forced_missing_by_categories(document, {"Series"})
+        item = forced["items"][0]
+        self.assertEqual(item["status"], "missing")
+        self.assertEqual(item["first_seen_at"], "2026-04-01T00:00:00Z")
+        self.assertEqual(item["last_seen_at"], "2026-04-09T00:00:00Z")
+        self.assertEqual(item["video_files"][0]["status"], "missing")
+        self.assertEqual(item["subfolders"][0]["status"], "missing")
+        self.assertEqual(item["subfolders"][0]["video_files"][0]["status"], "missing")
+
     def test_full_scan_marks_missing_subfolder_and_video_file(self):
         existing_doc = {
             "items": [

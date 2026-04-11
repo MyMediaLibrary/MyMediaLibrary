@@ -354,6 +354,48 @@ def reconcile_inventory_missing_states(document: dict[str, Any]) -> dict[str, An
     return reconciled_document
 
 
+def _mark_item_tree_missing(item: dict[str, Any]) -> dict[str, Any]:
+    """Mark one item and all nested sub-entities as missing (timestamps preserved)."""
+    item_copy = copy.deepcopy(item)
+    item_copy["status"] = "missing"
+    item_copy["video_files"] = [
+        {**copy.deepcopy(video_file), "status": "missing"}
+        for video_file in item_copy.get("video_files", [])
+    ]
+    if item_copy.get("media_type") == "tv":
+        item_copy["subfolders"] = [
+            {
+                **copy.deepcopy(subfolder),
+                "status": "missing",
+                "video_files": [
+                    {**copy.deepcopy(video_file), "status": "missing"}
+                    for video_file in subfolder.get("video_files", [])
+                ],
+            }
+            for subfolder in item_copy.get("subfolders", [])
+        ]
+    return item_copy
+
+
+def apply_forced_missing_by_categories(
+    document: dict[str, Any],
+    categories: set[str] | list[str] | None,
+) -> dict[str, Any]:
+    """Force missing status for all inventory items belonging to disabled categories."""
+    if not categories:
+        return copy.deepcopy(document)
+    disabled_categories = set(categories)
+    forced_document = copy.deepcopy(document)
+    forced_items: list[dict[str, Any]] = []
+    for item in forced_document.get("items", []):
+        if item.get("category") in disabled_categories:
+            forced_items.append(_mark_item_tree_missing(item))
+        else:
+            forced_items.append(copy.deepcopy(item))
+    forced_document["items"] = forced_items
+    return forced_document
+
+
 def cleanup_inventory_transient_fields(document: dict[str, Any]) -> dict[str, Any]:
     """Remove internal merge markers from inventory document."""
     cleaned_document = copy.deepcopy(document)

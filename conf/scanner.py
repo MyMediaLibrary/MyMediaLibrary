@@ -36,6 +36,7 @@ from pathlib import Path
 
 try:
     from inventory_helpers import (
+        apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
         merge_inventory_documents,
         reconcile_inventory_missing_states,
@@ -48,6 +49,9 @@ except Exception as e:
         return document
 
     def cleanup_inventory_transient_fields(document: dict) -> dict:
+        return document
+
+    def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
         return document
 
     logging.getLogger("scanner").warning(
@@ -922,6 +926,8 @@ def build_categories_from_config(cfg: dict) -> list[dict]:
         ftype = f.get("type")
         if not ftype or ftype == "ignore":
             continue
+        if not is_folder_enabled(f):
+            continue
         if ftype == "movie" and not enable_movies:
             continue
         if ftype == "tv" and not enable_series:
@@ -1212,6 +1218,7 @@ def write_inventory_json_non_blocking(
     scanned_entries: list[dict],
     scan_mode: str,
     reconcile_missing: bool | None = None,
+    forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
     log.info("[SCAN] Inventory write started")
     try:
@@ -1237,6 +1244,11 @@ def write_inventory_json_non_blocking(
                 )
         else:
             inventory_to_write["missing_reconciliation"] = False
+        if forced_missing_categories:
+            inventory_to_write = apply_forced_missing_by_categories(
+                inventory_to_write,
+                forced_missing_categories,
+            )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
         log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
@@ -1493,6 +1505,11 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         save_config(cfg)
         cfg = load_config()
     inventory_enabled = _is_inventory_enabled(cfg)
+    force_missing_categories = {
+        folder["name"].replace("_", " ").replace("-", " ").title()
+        for folder in cfg.get("folders", [])
+        if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
+    }
 
     categories = build_categories_from_config(cfg)
     if not categories:
@@ -1585,6 +1602,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
                 inventory_entries,
                 scan_mode,
                 reconcile_missing=(scan_mode == "full" and not only_category),
+                forced_missing_categories=force_missing_categories,
             )
         except Exception as e:
             log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
