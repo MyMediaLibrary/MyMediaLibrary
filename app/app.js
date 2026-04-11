@@ -173,11 +173,67 @@ let allItems=[], categories=[], groups=[];
     return 'quality-lvl-unknown';
   }
 
+  const QUALITY_PENALTY_LABELS = {
+    audio_video_mismatch: 'Audio/vidéo incohérent',
+    audio_video_imbalance: 'Audio/vidéo déséquilibré',
+    legacy_codec_high_res: 'Codec legacy en haute résolution',
+    legacy_codec_mid_res: 'Codec legacy en résolution moyenne',
+    premium_video_weak_languages: 'Langues limitées',
+    size_video_mismatch: 'Taille incohérente avec la vidéo'
+  };
+
+  function getQualityPenaltyLabel(code) {
+    return QUALITY_PENALTY_LABELS[code] || code;
+  }
+
+  function getQualityTooltipText(item) {
+    const quality = item?.quality;
+    const score = Number(quality?.score);
+    if (!Number.isFinite(score)) return '';
+
+    const lines = [
+      `Score: ${Math.round(score)}`,
+      '',
+      `Vidéo: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
+      `Audio: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
+      `Langues: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
+      `Taille: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
+    ];
+
+    const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];
+    if (penalties.length) {
+      lines.push('', 'Pénalités:');
+      penalties.forEach(penalty => {
+        const label = getQualityPenaltyLabel(String(penalty?.code || '').trim());
+        const value = Number(penalty?.value);
+        const valueLabel = Number.isFinite(value) ? ` (-${Math.abs(Math.round(value))})` : '';
+        lines.push(`- ${label}${valueLabel}`);
+      });
+    }
+
+    return lines.join('\n');
+  }
+
+  function escapeAttrMultiline(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\r?\n/g, '&#10;');
+  }
+
   function qualityBadgeHTML(item, extraClass = '') {
     const score = item?.quality?.score;
     if (!Number.isFinite(Number(score))) return '';
     const levelClass = getQualityLevelClass(getItemQualityLevel(item));
-    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'">'+Math.round(Number(score))+'</span>';
+    const tooltip = getQualityTooltipText(item);
+    const tooltipAttr = tooltip ? ' data-quality-tooltip="'+escapeAttrMultiline(tooltip)+'"' : '';
+    const tooltipHandlers = tooltip
+      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="hideQualityTooltip()"'
+      : '';
+    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
   function getProviderNames(item) {
@@ -3096,6 +3152,7 @@ let allItems=[], categories=[], groups=[];
   // ── PLOT TOOLTIP ─────────────────────────────────────
   let _tt = null;
   let _ttTimer;
+  let _scoreTt = null;
 
   function showPlot(el, text) {
     if (!enablePlot || isMobile()) return;
@@ -3122,6 +3179,31 @@ let allItems=[], categories=[], groups=[];
     const maxY = window.innerHeight - _tt.offsetHeight - 10;
     _tt.style.left = Math.min(x, maxX) + 'px';
     _tt.style.top  = Math.min(y, maxY) + 'px';
+  }
+
+  function showQualityTooltip(el, event) {
+    if (isMobile()) return;
+    hidePlot();
+    if (!_scoreTt) _scoreTt = document.getElementById('scoreTooltip');
+    if (!_scoreTt) return;
+    const text = el?.dataset?.qualityTooltip || '';
+    if (!text) return;
+    _scoreTt.textContent = text.replace(/&#10;/g, '\n');
+    _scoreTt.classList.add('visible');
+    moveQualityTooltip(event);
+  }
+
+  function moveQualityTooltip(e) {
+    if (!_scoreTt || !_scoreTt.classList.contains('visible') || !e) return;
+    const x = e.clientX + 14, y = e.clientY + 14;
+    const maxX = window.innerWidth  - _scoreTt.offsetWidth  - 10;
+    const maxY = window.innerHeight - _scoreTt.offsetHeight - 10;
+    _scoreTt.style.left = Math.min(x, maxX) + 'px';
+    _scoreTt.style.top  = Math.min(y, maxY) + 'px';
+  }
+
+  function hideQualityTooltip() {
+    if (_scoreTt) _scoreTt.classList.remove('visible');
   }
 
   // ── KEYBOARD SHORTCUTS ──────────────────────────────

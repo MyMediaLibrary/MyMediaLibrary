@@ -157,6 +157,7 @@
       box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none;opacity:0;
       transition:opacity .15s;font-size:12px;line-height:1.5;color:var(--text)}
     .plot-tooltip.visible{opacity:1}
+    .score-tooltip{white-space:pre-line;max-width:320px}
     /* MEDIA BADGES */
     .badge{display:inline-block;font-size:10px;font-weight:700;font-family:'Syne',sans-serif;
       padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:3px}
@@ -389,17 +390,17 @@
       transition:border-color var(--transition),background var(--transition)}
     .tl-card:hover{background:var(--card-h);border-color:var(--accent-40)}
     .tl-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);z-index:1}
-    .tl-quality{position:absolute;top:8px;right:8px;z-index:3}
+    .tl-quality{position:absolute;bottom:8px;right:8px;z-index:3}
     .tl-poster{width:70px;min-width:70px;background:var(--surface);flex-shrink:0;overflow:hidden;align-self:stretch}
     .tl-poster img{width:100%;height:100%;object-fit:cover;display:block}
     .tl-poster-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--border)}
     .tl-body{padding:12px 14px;display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
-    .tl-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;padding-right:40px}
-    .tl-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .tl-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+    .tl-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-right:40px}
     .tl-date{font-size:11px;color:var(--accent);font-weight:500}
     .tl-cat{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--tag-bg);border-radius:3px;padding:2px 6px}
     .tl-size{font-size:11px;color:#4ecdc4}
-    .tl-providers{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+    .tl-providers{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;padding-right:40px}
     .tl-provider{width:20px;height:20px;border-radius:4px;overflow:hidden;background:var(--surface);flex-shrink:0}
     .tl-provider img{width:100%;height:100%;object-fit:cover;display:block}
     .tl-provider-name{font-size:10px;color:var(--muted);background:var(--tag-bg);border-radius:3px;padding:2px 5px;white-space:nowrap}
