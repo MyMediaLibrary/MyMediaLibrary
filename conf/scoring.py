@@ -210,14 +210,16 @@ def compute_quality_penalties(item: dict, partial_scores: dict) -> list[dict]:
     return penalties
 
 
-def _grade_from_score(score: int) -> str:
-    if score >= 85:
-        return "excellent"
-    if score >= 70:
-        return "good"
-    if score >= 50:
-        return "fair"
-    return "poor"
+def get_quality_level(score: int) -> int:
+    if score <= 20:
+        return 1
+    if score <= 40:
+        return 2
+    if score <= 60:
+        return 3
+    if score <= 80:
+        return 4
+    return 5
 
 
 def compute_quality(item: dict) -> dict:
@@ -242,7 +244,7 @@ def compute_quality(item: dict) -> dict:
 
     return {
         "score": final_score,
-        "grade": _grade_from_score(final_score),
+        "level": get_quality_level(final_score),
         "base_score": base_score,
         "penalty_total": penalty_total,
         "video": video_score,

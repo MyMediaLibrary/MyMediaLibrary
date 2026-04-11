@@ -214,7 +214,9 @@
     "items_count": "{n} item",
     "items_count_pl": "{n} items",
     "entry": "entry",
-    "entries": "entries"
+    "entries": "entries",
+    "quality_distribution": "Quality distribution (score)",
+    "quality_average": "Average score: {score}"
   },
   "auth": {
     "protected": "Protected access",
@@ -245,6 +247,7 @@
     "year": "Year",
     "group": "Group",
     "category": "Folder",
+    "quality": "Quality",
     "resolution": "Resolution",
     "codec": "Video codec",
     "audio_codec": "Audio codec",
