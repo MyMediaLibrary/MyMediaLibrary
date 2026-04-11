@@ -261,6 +261,27 @@ class InventoryHelpersTest(unittest.TestCase):
         self.assertEqual(item["subfolders"][0]["status"], "missing")
         self.assertEqual(item["subfolders"][0]["video_files"][0]["status"], "missing")
 
+    def test_mark_disabled_inventory_items_missing_by_media_type_and_category(self):
+        document = {
+            "items": [
+                {"id": "movie:Films:Inception (2010)", "media_type": "movie", "category": "Films", "status": "present", "video_files": []},
+                {"id": "tv:Films:Dark", "media_type": "tv", "category": "Films", "status": "present", "video_files": [], "subfolders": []},
+            ]
+        }
+        forced = inventory_helpers.mark_disabled_inventory_items_missing(document, {("movie", "Films")})
+        by_id = {item["id"]: item for item in forced["items"]}
+        self.assertEqual(by_id["movie:Films:Inception (2010)"]["status"], "missing")
+        self.assertEqual(by_id["tv:Films:Dark"]["status"], "present")
+
+    def test_mark_disabled_inventory_items_missing_uses_id_fallback(self):
+        document = {
+            "items": [
+                {"id": "movie:Films:Inception (2010)", "status": "present", "video_files": []},
+            ]
+        }
+        forced = inventory_helpers.mark_disabled_inventory_items_missing(document, {("movie", "Films")})
+        self.assertEqual(forced["items"][0]["status"], "missing")
+
     def test_full_scan_marks_missing_subfolder_and_video_file(self):
         existing_doc = {
             "items": [

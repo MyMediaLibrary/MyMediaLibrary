@@ -38,6 +38,7 @@ try:
     from inventory_helpers import (
         apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
+        mark_disabled_inventory_items_missing,
         merge_inventory_documents,
         reconcile_inventory_missing_states,
     )
@@ -49,6 +50,12 @@ except Exception as e:
         return document
 
     def cleanup_inventory_transient_fields(document: dict) -> dict:
+        return document
+
+    def mark_disabled_inventory_items_missing(
+        document: dict,
+        disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
+    ) -> dict:
         return document
 
     def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
@@ -1218,6 +1225,7 @@ def write_inventory_json_non_blocking(
     scanned_entries: list[dict],
     scan_mode: str,
     reconcile_missing: bool | None = None,
+    forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
     forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
     log.info("[SCAN] Inventory write started")
@@ -1244,7 +1252,12 @@ def write_inventory_json_non_blocking(
                 )
         else:
             inventory_to_write["missing_reconciliation"] = False
-        if forced_missing_categories:
+        if forced_missing_folder_refs:
+            inventory_to_write = mark_disabled_inventory_items_missing(
+                inventory_to_write,
+                forced_missing_folder_refs,
+            )
+        elif forced_missing_categories:
             inventory_to_write = apply_forced_missing_by_categories(
                 inventory_to_write,
                 forced_missing_categories,
@@ -1505,8 +1518,8 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         save_config(cfg)
         cfg = load_config()
     inventory_enabled = _is_inventory_enabled(cfg)
-    force_missing_categories = {
-        folder["name"].replace("_", " ").replace("-", " ").title()
+    force_missing_folder_refs = {
+        ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
         for folder in cfg.get("folders", [])
         if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
     }
@@ -1524,7 +1537,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
                     [],
                     scan_mode,
                     reconcile_missing=(scan_mode == "full" and not only_category),
-                    forced_missing_categories=force_missing_categories,
+                    forced_missing_folder_refs=force_missing_folder_refs,
                 )
             except Exception as e:
                 log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
@@ -1612,7 +1625,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
                 inventory_entries,
                 scan_mode,
                 reconcile_missing=(scan_mode == "full" and not only_category),
-                forced_missing_categories=force_missing_categories,
+                forced_missing_folder_refs=force_missing_folder_refs,
             )
         except Exception as e:
             log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
