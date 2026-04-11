@@ -229,8 +229,11 @@ let allItems=[], categories=[], groups=[];
     if (!Number.isFinite(Number(score))) return '';
     const levelClass = getQualityLevelClass(getItemQualityLevel(item));
     const tooltip = getQualityTooltipText(item);
-    const titleAttr = tooltip ? ' title="'+escapeAttrMultiline(tooltip)+'"' : '';
-    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+titleAttr+'>'+Math.round(Number(score))+'</span>';
+    const tooltipAttr = tooltip ? ' data-quality-tooltip="'+escapeAttrMultiline(tooltip)+'"' : '';
+    const tooltipHandlers = tooltip
+      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="hideQualityTooltip()"'
+      : '';
+    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
   function getProviderNames(item) {
@@ -3171,6 +3174,7 @@ let allItems=[], categories=[], groups=[];
   // ── PLOT TOOLTIP ─────────────────────────────────────
   let _tt = null;
   let _ttTimer;
+  let _scoreTt = null;
 
   function showPlot(el, text) {
     if (!enablePlot || isMobile()) return;
@@ -3197,6 +3201,31 @@ let allItems=[], categories=[], groups=[];
     const maxY = window.innerHeight - _tt.offsetHeight - 10;
     _tt.style.left = Math.min(x, maxX) + 'px';
     _tt.style.top  = Math.min(y, maxY) + 'px';
+  }
+
+  function showQualityTooltip(el, event) {
+    if (isMobile()) return;
+    hidePlot();
+    if (!_scoreTt) _scoreTt = document.getElementById('scoreTooltip');
+    if (!_scoreTt) return;
+    const text = el?.dataset?.qualityTooltip || '';
+    if (!text) return;
+    _scoreTt.textContent = text.replace(/&#10;/g, '\n');
+    _scoreTt.classList.add('visible');
+    moveQualityTooltip(event);
+  }
+
+  function moveQualityTooltip(e) {
+    if (!_scoreTt || !_scoreTt.classList.contains('visible') || !e) return;
+    const x = e.clientX + 14, y = e.clientY + 14;
+    const maxX = window.innerWidth  - _scoreTt.offsetWidth  - 10;
+    const maxY = window.innerHeight - _scoreTt.offsetHeight - 10;
+    _scoreTt.style.left = Math.min(x, maxX) + 'px';
+    _scoreTt.style.top  = Math.min(y, maxY) + 'px';
+  }
+
+  function hideQualityTooltip() {
+    if (_scoreTt) _scoreTt.classList.remove('visible');
   }
 
   // ── KEYBOARD SHORTCUTS ──────────────────────────────
