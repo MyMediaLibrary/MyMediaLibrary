@@ -91,7 +91,26 @@ log = logging.getLogger("scanner")
 try:
     from conf.scoring import compute_quality
 except Exception:
-    from scoring import compute_quality
+    try:
+        from scoring import compute_quality
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
+            e,
+        )
+
+        def compute_quality(item: dict) -> dict:
+            return {
+                "score": 0,
+                "grade": "unknown",
+                "base_score": 0,
+                "penalty_total": 0,
+                "video": 0,
+                "audio": 0,
+                "languages": 0,
+                "size": 0,
+                "penalties": [{"code": "scoring_unavailable", "value": 0}],
+            }
 
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
