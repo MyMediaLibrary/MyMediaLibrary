@@ -88,6 +88,31 @@ except Exception:
     pass
 log = logging.getLogger("scanner")
 
+try:
+    from conf.scoring import compute_quality
+except Exception:
+    try:
+        from scoring import compute_quality
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
+            e,
+        )
+
+        def compute_quality(item: dict) -> dict:
+            return {
+                "score": 0,
+                "grade": "unknown",
+                "base_score": 0,
+                "penalty_total": 0,
+                "video": 0,
+                "audio": 0,
+                "languages": 0,
+                "size": 0,
+                "penalties": [{"code": "scoring_unavailable", "value": 0}],
+            }
+
+
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
 _log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
 try:
@@ -524,6 +549,7 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
                 result["codec"] = normalize_codec(raw_codec)
             hdr = _xml_text(video, "hdrtype")
             result["hdr"] = bool(hdr and hdr.strip())
+            result["hdr_type"] = hdr
             rt = _xml_text(video, "duration") or _xml_text(root, "runtime")
             if rt:
                 try:
@@ -689,6 +715,7 @@ def find_episode_nfo(series_dir: Path) -> dict:
                         "resolution":         classify_resolution(w, h),
                         "codec":              normalize_codec(raw_codec),
                         "hdr":                bool(hdr_raw and hdr_raw.strip()),
+                        "hdr_type":           hdr_raw,
                         "runtime_min":        runtime_min,
                         "audio_codec_raw":    ac["raw"],
                         "audio_codec":        ac["normalized"],
@@ -1486,7 +1513,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
     tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
     size_b = get_dir_size(media_dir)
 
-    return {
+    item = {
         "path":              item_path,
         "title":             title,
         "raw":               raw_name,
@@ -1515,9 +1542,13 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               nfo_meta.get("hdr", False),
+        "hdr_type":          nfo_meta.get("hdr_type") or prev.get("hdr_type"),
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
     }
+    item["quality"] = compute_quality(item)
+    return item
+
 
 
 def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None:
