@@ -145,7 +145,9 @@ def merge_inventory_video_files(
         name = existing.get("name")
         if name and name in seen_names:
             continue
-        merged.append(copy.deepcopy(existing))
+        existing_copy = copy.deepcopy(existing)
+        existing_copy["_seen_in_scan"] = False
+        merged.append(existing_copy)
 
     return merged
 
@@ -181,7 +183,13 @@ def merge_inventory_subfolders(
         name = existing.get("name")
         if name and name in seen_names:
             continue
-        merged.append(copy.deepcopy(existing))
+        existing_copy = copy.deepcopy(existing)
+        existing_copy["_seen_in_scan"] = False
+        existing_copy["video_files"] = [
+            {**copy.deepcopy(video_file), "_seen_in_scan": False}
+            for video_file in existing_copy.get("video_files", [])
+        ]
+        merged.append(existing_copy)
 
     return merged
 
@@ -234,8 +242,127 @@ def merge_inventory_documents(existing_doc: dict[str, Any], current_doc: dict[st
         item_id = existing_item.get("id")
         if item_id and item_id in seen_ids:
             continue
-        merged_items.append(copy.deepcopy(existing_item))
+        existing_copy = copy.deepcopy(existing_item)
+        existing_copy["_seen_in_scan"] = False
+        existing_copy["video_files"] = [
+            {**copy.deepcopy(video_file), "_seen_in_scan": False}
+            for video_file in existing_copy.get("video_files", [])
+        ]
+        if existing_copy.get("media_type") == "tv":
+            existing_copy["subfolders"] = [
+                {
+                    **copy.deepcopy(subfolder),
+                    "_seen_in_scan": False,
+                    "video_files": [
+                        {**copy.deepcopy(video_file), "_seen_in_scan": False}
+                        for video_file in subfolder.get("video_files", [])
+                    ],
+                }
+                for subfolder in existing_copy.get("subfolders", [])
+            ]
+        merged_items.append(existing_copy)
 
     merged_doc = copy.deepcopy(current_doc)
     merged_doc["items"] = merged_items
     return merged_doc
+
+
+def reconcile_inventory_video_files(
+    video_files: list[dict[str, Any]],
+    seen_names: set[str],
+) -> list[dict[str, Any]]:
+    """Mark non-seen video files as missing while preserving last_seen_at."""
+    reconciled: list[dict[str, Any]] = []
+    for video_file in video_files:
+        file_copy = copy.deepcopy(video_file)
+        name = file_copy.get("name")
+        seen_in_scan = file_copy.pop("_seen_in_scan", name in seen_names)
+        if name and not seen_in_scan:
+            file_copy["status"] = "missing"
+        else:
+            file_copy["status"] = "present"
+        reconciled.append(file_copy)
+    return reconciled
+
+
+def reconcile_inventory_subfolders(
+    subfolders: list[dict[str, Any]],
+    seen_subfolder_names: set[str],
+) -> list[dict[str, Any]]:
+    """Reconcile subfolder status by name and nested video files by name."""
+    reconciled: list[dict[str, Any]] = []
+    for subfolder in subfolders:
+        subfolder_copy = copy.deepcopy(subfolder)
+        subfolder_name = subfolder_copy.get("name")
+        seen_in_scan = subfolder_copy.pop("_seen_in_scan", subfolder_name in seen_subfolder_names)
+        seen_files = {f.get("name") for f in subfolder_copy.get("video_files", []) if f.get("status") == "present"}
+        subfolder_copy["video_files"] = reconcile_inventory_video_files(
+            subfolder_copy.get("video_files", []),
+            seen_files,
+        )
+        if subfolder_name and not seen_in_scan:
+            subfolder_copy["status"] = "missing"
+        else:
+            subfolder_copy["status"] = "present"
+        reconciled.append(subfolder_copy)
+    return reconciled
+
+
+def reconcile_inventory_items(
+    items: list[dict[str, Any]],
+    seen_item_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Reconcile root item status by id and nested structures by name."""
+    reconciled: list[dict[str, Any]] = []
+    for item in items:
+        item_copy = copy.deepcopy(item)
+        seen_root_video_files = {
+            video_file.get("name")
+            for video_file in item_copy.get("video_files", [])
+            if video_file.get("status") == "present"
+        }
+        item_copy["video_files"] = reconcile_inventory_video_files(
+            item_copy.get("video_files", []),
+            seen_root_video_files,
+        )
+        if item_copy.get("media_type") == "tv":
+            seen_subfolders = {
+                subfolder.get("name")
+                for subfolder in item_copy.get("subfolders", [])
+                if subfolder.get("status") == "present"
+            }
+            item_copy["subfolders"] = reconcile_inventory_subfolders(
+                item_copy.get("subfolders", []),
+                seen_subfolders,
+            )
+        item_id = item_copy.get("id")
+        seen_in_scan = item_copy.pop("_seen_in_scan", item_id in seen_item_ids)
+        if item_id and not seen_in_scan:
+            item_copy["status"] = "missing"
+        else:
+            item_copy["status"] = "present"
+        reconciled.append(item_copy)
+    return reconciled
+
+
+def reconcile_inventory_missing_states(document: dict[str, Any]) -> dict[str, Any]:
+    """Apply full-scan missing reconciliation without deleting entries."""
+    reconciled_document = copy.deepcopy(document)
+    items = reconciled_document.get("items", [])
+    seen_item_ids = {item.get("id") for item in items if item.get("status") == "present" and item.get("id")}
+    reconciled_document["items"] = reconcile_inventory_items(items, seen_item_ids)
+    return reconciled_document
+
+
+def cleanup_inventory_transient_fields(document: dict[str, Any]) -> dict[str, Any]:
+    """Remove internal merge markers from inventory document."""
+    cleaned_document = copy.deepcopy(document)
+    for item in cleaned_document.get("items", []):
+        item.pop("_seen_in_scan", None)
+        for video_file in item.get("video_files", []):
+            video_file.pop("_seen_in_scan", None)
+        for subfolder in item.get("subfolders", []):
+            subfolder.pop("_seen_in_scan", None)
+            for video_file in subfolder.get("video_files", []):
+                video_file.pop("_seen_in_scan", None)
+    return cleaned_document

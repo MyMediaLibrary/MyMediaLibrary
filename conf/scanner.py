@@ -35,13 +35,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from inventory_helpers import merge_inventory_documents
+    from inventory_helpers import (
+        cleanup_inventory_transient_fields,
+        merge_inventory_documents,
+        reconcile_inventory_missing_states,
+    )
 except Exception as e:
     def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
         return current_doc
 
+    def reconcile_inventory_missing_states(document: dict) -> dict:
+        return document
+
+    def cleanup_inventory_transient_fields(document: dict) -> dict:
+        return document
+
     logging.getLogger("scanner").warning(
-        "[SCAN] inventory_helpers import failed (%s). Inventory merge disabled; continuing non-blocking.",
+        "[SCAN] inventory_helpers import failed (%s). Inventory helpers disabled; continuing non-blocking.",
         e,
     )
 
@@ -1191,6 +1201,17 @@ def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: st
                 log.warning(
                     f"[SCAN] Inventory merge failed: {e}. Falling back to current scan inventory."
                 )
+        if scan_mode == "full":
+            try:
+                inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
+                inventory_to_write["missing_reconciliation"] = True
+            except Exception as e:
+                log.warning(
+                    f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing with merged inventory."
+                )
+        else:
+            inventory_to_write["missing_reconciliation"] = False
+        inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
         log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
