@@ -122,6 +122,23 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             self.assertEqual(len(written["items"]), 1)
             self.assertEqual(written["items"][0]["id"], "movie:Films:Inception (2010)")
 
+    def test_full_scan_can_explicitly_skip_missing_reconciliation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            movie_dir = pathlib.Path(tmpdir) / "Films" / "Inception (2010)"
+            movie_dir.mkdir(parents=True)
+            (movie_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+            entries = [
+                {"media_dir": movie_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"},
+            ]
+
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(entries, scan_mode="full", reconcile_missing=False)
+
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            self.assertIsNotNone(written)
+            self.assertFalse(written["missing_reconciliation"])
+
     def test_run_quick_still_writes_library_json_if_inventory_sidecar_call_raises(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
@@ -252,6 +269,76 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 inventory_output_path.read_text(encoding="utf-8"),
                 '{"version":1,"items":[{"id":"legacy"}]}',
             )
+
+    def test_run_quick_full_category_scope_does_not_trigger_missing_reconciliation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(only_category="Films", scan_mode="full")
+                            inventory_write.assert_called_once()
+                            _, kwargs = inventory_write.call_args
+                            self.assertIn("reconcile_missing", kwargs)
+                            self.assertFalse(kwargs["reconcile_missing"])
+
+    def test_run_quick_full_empty_category_string_triggers_reconciliation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(only_category="", scan_mode="full")
+                            inventory_write.assert_called_once()
+                            _, kwargs = inventory_write.call_args
+                            self.assertIn("reconcile_missing", kwargs)
+                            self.assertTrue(kwargs["reconcile_missing"])
 
 
 if __name__ == "__main__":

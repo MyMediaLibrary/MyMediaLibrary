@@ -1191,7 +1191,11 @@ def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: da
     }
 
 
-def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: str) -> None:
+def write_inventory_json_non_blocking(
+    scanned_entries: list[dict],
+    scan_mode: str,
+    reconcile_missing: bool | None = None,
+) -> None:
     log.info("[SCAN] Inventory write started")
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
@@ -1204,7 +1208,8 @@ def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: st
                 log.warning(
                     f"[SCAN] Inventory merge failed: {e}. Falling back to current scan inventory."
                 )
-        if scan_mode == "full":
+        should_reconcile_missing = (scan_mode == "full") if reconcile_missing is None else bool(reconcile_missing)
+        if should_reconcile_missing:
             try:
                 inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
                 inventory_to_write["missing_reconciliation"] = True
@@ -1559,7 +1564,11 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     write_json(data, OUTPUT_PATH)
     if inventory_enabled:
         try:
-            write_inventory_json_non_blocking(inventory_entries, scan_mode)
+            write_inventory_json_non_blocking(
+                inventory_entries,
+                scan_mode,
+                reconcile_missing=(scan_mode == "full" and not only_category),
+            )
         except Exception as e:
             log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
     else:
