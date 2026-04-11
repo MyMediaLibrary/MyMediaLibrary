@@ -42,7 +42,7 @@ def build_inventory_subfolder(
         "status": status,
         "first_seen_at": first_seen_at,
         "last_seen_at": last_seen_at,
-        "video_files": list(video_files),
+        "video_files": copy.deepcopy(video_files),
     }
 
 
@@ -66,7 +66,7 @@ def build_inventory_movie_item(
         "status": status,
         "first_seen_at": first_seen_at,
         "last_seen_at": last_seen_at,
-        "video_files": list(video_files),
+        "video_files": copy.deepcopy(video_files),
     }
 
 
@@ -91,8 +91,8 @@ def build_inventory_tv_item(
         "status": status,
         "first_seen_at": first_seen_at,
         "last_seen_at": last_seen_at,
-        "video_files": list(video_files or []),
-        "subfolders": list(subfolders or []),
+        "video_files": copy.deepcopy(video_files or []),
+        "subfolders": copy.deepcopy(subfolders or []),
     }
 
 

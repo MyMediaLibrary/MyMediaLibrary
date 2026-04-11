@@ -67,6 +67,21 @@ class InventoryHelpersTest(unittest.TestCase):
             },
         )
 
+    def test_build_inventory_subfolder_deep_copies_video_files(self):
+        file_entry = inventory_helpers.build_inventory_video_file(
+            name="Dark.S01E01.mkv",
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        result = inventory_helpers.build_inventory_subfolder(
+            name="Season 01",
+            video_files=[file_entry],
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        file_entry["name"] = "MUTATED.mkv"
+        self.assertEqual(result["video_files"][0]["name"], "Dark.S01E01.mkv")
+
     def test_build_inventory_movie_item(self):
         file_entry = inventory_helpers.build_inventory_video_file(
             name="Inception (2010).mkv",
@@ -86,6 +101,24 @@ class InventoryHelpersTest(unittest.TestCase):
         self.assertEqual(result["media_type"], "movie")
         self.assertEqual(result["root_folder_path"], "/media/Films/Inception (2010)")
         self.assertEqual(result["video_files"], [file_entry])
+
+    def test_build_inventory_movie_item_deep_copies_video_files(self):
+        file_entry = inventory_helpers.build_inventory_video_file(
+            name="Inception (2010).mkv",
+            first_seen_at="2026-04-01T20:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        result = inventory_helpers.build_inventory_movie_item(
+            category="Films",
+            title="Inception",
+            root_folder_name="Inception (2010)",
+            root_folder_path="/media/Films/Inception (2010)",
+            video_files=[file_entry],
+            first_seen_at="2026-04-01T20:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        file_entry["name"] = "MUTATED.mkv"
+        self.assertEqual(result["video_files"][0]["name"], "Inception (2010).mkv")
 
     def test_build_inventory_tv_item(self):
         file_entry = inventory_helpers.build_inventory_video_file(
@@ -112,6 +145,40 @@ class InventoryHelpersTest(unittest.TestCase):
         self.assertEqual(result["media_type"], "tv")
         self.assertEqual(result["video_files"], [])
         self.assertEqual(result["subfolders"], [subfolder])
+
+    def test_build_inventory_tv_item_deep_copies_video_files_and_subfolders(self):
+        file_entry = inventory_helpers.build_inventory_video_file(
+            name="Dark.S01E01.mkv",
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        subfolder = inventory_helpers.build_inventory_subfolder(
+            name="Season 01",
+            video_files=[file_entry],
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        root_video_file = inventory_helpers.build_inventory_video_file(
+            name="Dark.trailer.mkv",
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+        )
+        result = inventory_helpers.build_inventory_tv_item(
+            category="Series",
+            title="Dark",
+            root_folder_name="Dark",
+            root_folder_path="/media/Series/Dark",
+            first_seen_at="2026-04-01T21:00:00Z",
+            last_seen_at="2026-04-11T23:55:00Z",
+            video_files=[root_video_file],
+            subfolders=[subfolder],
+        )
+        root_video_file["name"] = "MUTATED-ROOT.mkv"
+        subfolder["name"] = "MUTATED-SEASON"
+        subfolder["video_files"][0]["name"] = "MUTATED-EP.mkv"
+        self.assertEqual(result["video_files"][0]["name"], "Dark.trailer.mkv")
+        self.assertEqual(result["subfolders"][0]["name"], "Season 01")
+        self.assertEqual(result["subfolders"][0]["video_files"][0]["name"], "Dark.S01E01.mkv")
 
     def test_build_inventory_document_deep_copies_items(self):
         item = {
