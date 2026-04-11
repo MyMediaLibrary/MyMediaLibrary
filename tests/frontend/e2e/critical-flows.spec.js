@@ -182,7 +182,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
 
   await page.goto('/index.html');
   await page.evaluate(() => openSettings());
-  await page.locator('.stab', { hasText: '⚙️' }).click();
+  await page.click('button.stab[onclick*="stab-system"]');
 
   const inventoryToggle = page.locator('#cfgInventoryEnabled');
   await expect(inventoryToggle).toBeVisible();
