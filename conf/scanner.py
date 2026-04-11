@@ -1567,7 +1567,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             write_inventory_json_non_blocking(
                 inventory_entries,
                 scan_mode,
-                reconcile_missing=(scan_mode == "full" and only_category is None),
+                reconcile_missing=(scan_mode == "full" and not only_category),
             )
         except Exception as e:
             log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")

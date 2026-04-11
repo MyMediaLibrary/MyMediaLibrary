@@ -305,6 +305,41 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                             self.assertIn("reconcile_missing", kwargs)
                             self.assertFalse(kwargs["reconcile_missing"])
 
+    def test_run_quick_full_empty_category_string_triggers_reconciliation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {
+                        "needs_onboarding": False,
+                        "scan_cron": "0 3 * * *",
+                        "log_level": "INFO",
+                        "inventory_enabled": True,
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
+                            scanner.run_quick(only_category="", scan_mode="full")
+                            inventory_write.assert_called_once()
+                            _, kwargs = inventory_write.call_args
+                            self.assertIn("reconcile_missing", kwargs)
+                            self.assertTrue(kwargs["reconcile_missing"])
+
 
 if __name__ == "__main__":
     unittest.main()
