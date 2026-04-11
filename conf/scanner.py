@@ -1400,7 +1400,7 @@ def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> boo
         if not isinstance(folder, dict):
             continue
         if folder.get("enabled") is None:
-            folder["enabled"] = folder.get("visible", True) is not False
+            folder["enabled"] = is_folder_enabled(folder)
             changed = True
         if drop_visible and "visible" in folder:
             folder.pop("visible", None)

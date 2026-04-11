@@ -46,6 +46,41 @@ class InventoryMergeStep3Test(unittest.TestCase):
         self.assertEqual(merged["title"], "Inception (Updated)")
         self.assertEqual(merged["status"], "present")
 
+    def test_merge_reactivation_turns_missing_item_back_to_present(self):
+        existing_item = {
+            "id": "movie:Films:Inception (2010)",
+            "media_type": "movie",
+            "category": "Films",
+            "title": "Inception",
+            "root_folder_path": "/media/Films/Inception (2010)",
+            "status": "missing",
+            "first_seen_at": "2026-04-01T10:00:00Z",
+            "last_seen_at": "2026-04-05T10:00:00Z",
+            "video_files": [{
+                "name": "Inception (2010).mkv",
+                "status": "missing",
+                "first_seen_at": "2026-04-01T10:00:00Z",
+                "last_seen_at": "2026-04-05T10:00:00Z",
+            }],
+        }
+        current_item = {
+            **existing_item,
+            "status": "present",
+            "last_seen_at": "2026-04-12T10:00:00Z",
+            "video_files": [{
+                "name": "Inception (2010).mkv",
+                "status": "present",
+                "first_seen_at": "2026-04-12T10:00:00Z",
+                "last_seen_at": "2026-04-12T10:00:00Z",
+            }],
+        }
+        merged = inventory_helpers.merge_inventory_items(existing_item, current_item)
+        self.assertEqual(merged["status"], "present")
+        self.assertEqual(merged["first_seen_at"], "2026-04-01T10:00:00Z")
+        self.assertEqual(merged["last_seen_at"], "2026-04-12T10:00:00Z")
+        self.assertEqual(merged["video_files"][0]["status"], "present")
+        self.assertEqual(merged["video_files"][0]["first_seen_at"], "2026-04-01T10:00:00Z")
+
     def test_merge_adds_new_root_item(self):
         existing = self._doc("2026-04-10T10:00:00Z", [])
         current = self._doc("2026-04-12T10:00:00Z", [{"id": "movie:Films:New Movie"}])
