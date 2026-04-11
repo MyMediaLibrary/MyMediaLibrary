@@ -21,10 +21,12 @@ function baseState() {
     activeCodecs: new Set(),
     activeAudioCodecs: new Set(),
     activeAudioLanguages: new Set(),
+    activeQualityLevels: new Set(),
     providerExclude: false,
     videoCodecExclude: false,
     audioCodecExclude: false,
     audioLanguageExclude: false,
+    qualityExclude: false,
     searchQuery: ''
   };
 }
@@ -54,6 +56,23 @@ test('filters include/exclude and reset state behavior', () => {
   assert.equal(logic.hasActiveFilters(reset), false);
   reset.activeAudioLanguages.add('VF');
   assert.equal(logic.hasActiveFilters(reset), true);
+});
+
+test('quality filter supports include/exclude with multi-select levels', () => {
+  const qualityItems = [
+    { title: 'Unscored' },
+    { title: 'Low', quality: { score: 18 } },
+    { title: 'Mid', quality: { score: 55 } },
+    { title: 'High', quality: { score: 90 } }
+  ];
+  const state = baseState();
+  state.activeQualityLevels = new Set([1, 5]);
+  let filtered = logic.filterItems(qualityItems, state);
+  assert.deepEqual(filtered.map((i) => i.title), ['Low', 'High']);
+
+  state.qualityExclude = true;
+  filtered = logic.filterItems(qualityItems, state);
+  assert.deepEqual(filtered.map((i) => i.title), ['Unscored', 'Mid']);
 });
 
 test('export button enablement and stale-safe behavior', () => {

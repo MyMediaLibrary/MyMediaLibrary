@@ -153,6 +153,17 @@ let allItems=[], categories=[], groups=[];
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
+  function getScoredQualityLevel(item) {
+    if (window.MMLLogic?.getScoredQualityLevel) {
+      return window.MMLLogic.getScoredQualityLevel(item);
+    }
+    const score = Number(item?.quality?.score);
+    if (!Number.isFinite(score)) return null;
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(score);
+  }
+
   function getQualityLevelClass(level) {
     if (window.MMLLogic?.getQualityLevelClass) {
       return window.MMLLogic.getQualityLevelClass(level);
@@ -244,10 +255,12 @@ let allItems=[], categories=[], groups=[];
   let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
+  let activeQualityLevels = new Set();
   let audioCodecExclude = false;
   let videoCodecExclude = false;
   let providerExclude = false;
   let audioLanguageExclude = false;
+  let qualityExclude = false;
   let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
@@ -259,7 +272,8 @@ let allItems=[], categories=[], groups=[];
         activeGroup, activeCat, activeResolution, activeType,
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
-        audioCodecExclude, videoCodecExclude, providerExclude, audioLanguageExclude,
+        activeQualityLevels: [...activeQualityLevels],
+        audioCodecExclude, videoCodecExclude, providerExclude, audioLanguageExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -284,10 +298,12 @@ let allItems=[], categories=[], groups=[];
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
+      if (Array.isArray(s.activeQualityLevels)) activeQualityLevels = new Set(s.activeQualityLevels.map(Number).filter(n => n >= 1 && n <= 5));
       if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
+      if (s.qualityExclude !== undefined)        qualityExclude        = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -303,6 +319,7 @@ let allItems=[], categories=[], groups=[];
       renderResolutionFilter();
       renderCodecFilter();
       renderAudioCodecFilter();
+      renderQualityFilter();
       renderAudioLanguageFilter();
       syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
@@ -680,10 +697,12 @@ let allItems=[], categories=[], groups=[];
         activeCodecs,
         activeAudioCodecs,
         activeAudioLanguages,
+        activeQualityLevels,
         providerExclude,
         videoCodecExclude,
         audioCodecExclude,
         audioLanguageExclude,
+        qualityExclude,
         searchQuery: getSearchQuery(),
       });
     }
@@ -695,10 +714,12 @@ let allItems=[], categories=[], groups=[];
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
       || activeAudioLanguages.size > 0
+      || activeQualityLevels.size > 0
       || providerExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
+      || qualityExclude
       || getSearchQuery().length > 0;
   }
 
@@ -726,10 +747,12 @@ let allItems=[], categories=[], groups=[];
     activeCodecs.clear();
     activeAudioCodecs.clear();
     activeAudioLanguages.clear();
+    activeQualityLevels.clear();
     providerExclude = false;
     videoCodecExclude = false;
     audioCodecExclude = false;
     audioLanguageExclude = false;
+    qualityExclude = false;
 
     const searchDesktop = document.getElementById('searchInput');
     if (searchDesktop) searchDesktop.value = '';
@@ -841,6 +864,14 @@ let allItems=[], categories=[], groups=[];
   function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
+  function toggleQualityFilter(level) {
+    const key = Number(level);
+    if (!Number.isFinite(key)) return;
+    if (activeQualityLevels.has(key)) activeQualityLevels.delete(key); else activeQualityLevels.add(key);
+    onFilter();
+  }
+  function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
+  function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
@@ -914,6 +945,48 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
+  function qualityRangeLabel(level) {
+    if (level === 1) return '0–20';
+    if (level === 2) return '21–40';
+    if (level === 3) return '41–60';
+    if (level === 4) return '61–80';
+    if (level === 5) return '81–100';
+    return t('filters.unknown');
+  }
+
+  function renderQualityFilter() {
+    const base = baseItems('quality');
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    base.forEach(i => {
+      const level = getScoredQualityLevel(i);
+      if (level !== null) counts[level] += 1;
+    });
+    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
+      const sec = document.getElementById(cid);
+      if (!sec) return;
+      if (!total) { sec.style.display = 'none'; return; }
+      const modeClass = qualityExclude ? ' is-exclude' : ' is-include';
+      const modeLabel = qualityExclude ? t('filters.exclude') : t('filters.include');
+      let pills = '<button class="filter-mode-toggle' + modeClass + '" type="button" onclick="toggleQualityExclude()">' + modeLabel + '</button>';
+      [1, 2, 3, 4, 5].forEach(function(level) {
+        const active = activeQualityLevels.has(level);
+        const classes = ['provider-pill', getQualityLevelClass(level)];
+        if (active) classes.push('active');
+        if (qualityExclude && active) classes.push('is-exclude');
+        pills += '<div class="' + classes.join(' ') + '" onclick="toggleQualityFilter(' + level + ')">'
+          + '<span>' + qualityRangeLabel(level) + '</span>'
+          + '<span class="quality-count">(' + counts[level] + ')</span>'
+          + '</div>';
+      });
+      if (activeQualityLevels.size > 0) {
+        pills += '<div class="provider-pill provider-pill-reset" onclick="clearQualityFilter()">✕</div>';
+      }
+      sec.style.display = 'block';
+      sec.innerHTML = '<div class="storage-block"><div class="storage-title">' + t('filters.quality_score') + '</div><div class="quality-filter">' + pills + '</div></div>';
+    });
+  }
+
   function renderResolutionFilter() {
     const sec = document.getElementById('resolutionSection');
     if (!sec) return;
@@ -953,6 +1026,7 @@ let allItems=[], categories=[], groups=[];
     renderProviderFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
+    renderQualityFilter();
     renderAudioLanguageFilter();
     renderStats(filterItems());
     if (currentTab==='library') render();
@@ -1102,6 +1176,19 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
+    if (activeQualityLevels.size > 0) {
+      if (qualityExclude) {
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level === null || !activeQualityLevels.has(level);
+        });
+      } else {
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level !== null && activeQualityLevels.has(level);
+        });
+      }
+    }
     return applySearch(items, q);
   }
 
@@ -1152,6 +1239,19 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>!activeAudioLanguages.has(getAudioLanguageSimple(i)));
       } else {
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
+      }
+    }
+    if (except!=='quality' && activeQualityLevels.size > 0) {
+      if (qualityExclude) {
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level === null || !activeQualityLevels.has(level);
+        });
+      } else {
+        items=items.filter(i=>{
+          const level = getScoredQualityLevel(i);
+          return level !== null && activeQualityLevels.has(level);
+        });
       }
     }
     return applySearch(items, q);
@@ -2529,7 +2629,7 @@ let allItems=[], categories=[], groups=[];
     if (mSearch && dSearch && mSearch.value !== dSearch.value) mSearch.value = dSearch.value;
     // Mirror filter sections to mobile panel
     // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
-    ['storageSection','resolutionSection'].forEach(id => {
+    ['storageSection','resolutionSection','qualitySection'].forEach(id => {
       const src = document.getElementById(id);
       const dst = document.getElementById(id + 'Mobile');
       if (src && dst) dst.innerHTML = src.innerHTML;
