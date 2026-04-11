@@ -1,5 +1,6 @@
 import pathlib
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -156,6 +157,28 @@ class FolderEnabledCompatibilityTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertIs(cfg["folders"][0]["enabled"], True)
         self.assertNotIn("visible", cfg["folders"][0])
+
+
+class HdrFallbackSafetyTest(unittest.TestCase):
+    def test_scan_media_item_drops_stale_hdr_type_when_current_scan_has_no_hdr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            media_dir = root / "Films" / "Test Movie (2024)"
+            media_dir.mkdir(parents=True)
+            (media_dir / "test.mkv").write_text("x", encoding="utf-8")
+
+            prev = {
+                "resolution": "1080p",
+                "codec": "H.264",
+                "hdr": True,
+                "hdr_type": "Dolby Vision",
+            }
+            cat = {"name": "Films", "type": "movie"}
+            item = scanner.scan_media_item(media_dir, root, cat, prev)
+
+            self.assertFalse(item["hdr"])
+            self.assertIsNone(item["hdr_type"])
+            self.assertEqual(item["quality"]["video"], 30)
 
 
 if __name__ == "__main__":
