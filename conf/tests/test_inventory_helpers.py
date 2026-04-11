@@ -2,6 +2,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -292,7 +293,7 @@ class InventoryHelpersTest(unittest.TestCase):
             (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
             scanned_entries = [{"media_dir": item_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"}]
 
-            with unittest.mock.patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
                 scanner.write_inventory_json_non_blocking(scanned_entries, scan_mode="full")
                 full_written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
                 scanner.write_inventory_json_non_blocking(scanned_entries, scan_mode="quick")
