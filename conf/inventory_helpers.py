@@ -377,23 +377,55 @@ def _mark_item_tree_missing(item: dict[str, Any]) -> dict[str, Any]:
     return item_copy
 
 
-def apply_forced_missing_by_categories(
+def _parse_inventory_root_id(item_id: str | None) -> tuple[str | None, str | None, str | None]:
+    """Parse root inventory id format: type:category:root_folder_name."""
+    if not item_id or not isinstance(item_id, str):
+        return (None, None, None)
+    media_type, sep, rest = item_id.partition(":")
+    if not sep:
+        return (None, None, None)
+    category, sep2, root_folder_name = rest.partition(":")
+    if not sep2:
+        return (None, None, None)
+    return (media_type or None, category or None, root_folder_name or None)
+
+
+def mark_disabled_inventory_items_missing(
     document: dict[str, Any],
-    categories: set[str] | list[str] | None,
+    disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None,
 ) -> dict[str, Any]:
-    """Force missing status for all inventory items belonging to disabled categories."""
-    if not categories:
+    """Force missing for items that belong to explicitly disabled folders.
+
+    A disabled ref is represented by (media_type, category), where media_type is
+    "movie" or "tv" and category is the display category name used in inventory.
+    """
+    if not disabled_folder_refs:
         return copy.deepcopy(document)
-    disabled_categories = set(categories)
+    disabled_refs = set(disabled_folder_refs)
     forced_document = copy.deepcopy(document)
     forced_items: list[dict[str, Any]] = []
     for item in forced_document.get("items", []):
-        if item.get("category") in disabled_categories:
+        media_type = item.get("media_type")
+        category = item.get("category")
+        if not media_type or not category:
+            parsed_media_type, parsed_category, _ = _parse_inventory_root_id(item.get("id"))
+            media_type = media_type or parsed_media_type
+            category = category or parsed_category
+        if media_type and category and (media_type, category) in disabled_refs:
             forced_items.append(_mark_item_tree_missing(item))
         else:
             forced_items.append(copy.deepcopy(item))
     forced_document["items"] = forced_items
     return forced_document
+
+
+def apply_forced_missing_by_categories(
+    document: dict[str, Any],
+    categories: set[str] | list[str] | None,
+) -> dict[str, Any]:
+    """Force missing status for all inventory items belonging to disabled categories."""
+    refs = {(media_type, category) for media_type in ("movie", "tv") for category in (categories or [])}
+    return mark_disabled_inventory_items_missing(document, refs)
 
 
 def cleanup_inventory_transient_fields(document: dict[str, Any]) -> dict[str, Any]:

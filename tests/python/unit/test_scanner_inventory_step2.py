@@ -229,7 +229,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                             scanner.run_quick(scan_mode="quick")
                             inventory_write.assert_called_once()
                             _, kwargs = inventory_write.call_args
-                            self.assertEqual(kwargs["forced_missing_categories"], set())
+                            self.assertEqual(kwargs["forced_missing_folder_refs"], set())
 
     def test_build_categories_from_config_skips_disabled_folders(self):
         cfg = {
@@ -278,7 +278,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick(scan_mode="quick")
                             _, kwargs = inventory_write.call_args
-                            self.assertEqual(kwargs["forced_missing_categories"], {"Films"})
+                            self.assertEqual(kwargs["forced_missing_folder_refs"], {("movie", "Films")})
 
     def test_quick_scan_forces_missing_for_disabled_category(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -312,13 +312,78 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     scanned_entries=[],
                     scan_mode="quick",
                     reconcile_missing=False,
-                    forced_missing_categories={"Films"},
+                    forced_missing_folder_refs={("movie", "Films")},
                 )
             written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
             self.assertEqual(written["items"][0]["status"], "missing")
             self.assertEqual(written["items"][0]["video_files"][0]["status"], "missing")
             self.assertEqual(written["items"][0]["first_seen_at"], "2026-04-01T00:00:00Z")
             self.assertEqual(written["items"][0]["last_seen_at"], "2026-04-09T00:00:00Z")
+
+    def test_quick_scan_forces_missing_for_disabled_tv_descendants(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            output_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "generated_at": "2026-04-10T00:00:00Z",
+                    "scan_mode": "quick",
+                    "missing_reconciliation": False,
+                    "items": [
+                        {
+                            "id": "tv:Series:Dark",
+                            "media_type": "tv",
+                            "category": "Series",
+                            "title": "Dark",
+                            "root_folder_path": "/media/Series/Dark",
+                            "status": "present",
+                            "first_seen_at": "2026-04-01T00:00:00Z",
+                            "last_seen_at": "2026-04-09T00:00:00Z",
+                            "video_files": [{"name": "trailer.mkv", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z"}],
+                            "subfolders": [
+                                {"name": "Season 01", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z", "video_files": [{"name": "Dark.S01E01.mkv", "status": "present", "first_seen_at": "2026-04-01T00:00:00Z", "last_seen_at": "2026-04-09T00:00:00Z"}]}
+                            ],
+                        }
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(
+                    scanned_entries=[],
+                    scan_mode="quick",
+                    reconcile_missing=False,
+                    forced_missing_folder_refs={("tv", "Series")},
+                )
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            item = written["items"][0]
+            self.assertEqual(item["status"], "missing")
+            self.assertEqual(item["video_files"][0]["status"], "missing")
+            self.assertEqual(item["subfolders"][0]["status"], "missing")
+            self.assertEqual(item["subfolders"][0]["video_files"][0]["status"], "missing")
+
+    def test_full_scan_forces_missing_for_disabled_folder(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            output_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "generated_at": "2026-04-10T00:00:00Z",
+                    "scan_mode": "full",
+                    "missing_reconciliation": False,
+                    "items": [{"id": "movie:Films:Inception (2010)", "media_type": "movie", "category": "Films", "status": "present", "video_files": []}],
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                scanner.write_inventory_json_non_blocking(
+                    scanned_entries=[],
+                    scan_mode="full",
+                    reconcile_missing=True,
+                    forced_missing_folder_refs={("movie", "Films")},
+                )
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            self.assertEqual(written["items"][0]["status"], "missing")
 
     def test_run_quick_writes_inventory_when_all_categories_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,7 +416,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                             inventory_write.assert_called_once()
                             args, kwargs = inventory_write.call_args
                             self.assertEqual(args[0], [])
-                            self.assertEqual(kwargs["forced_missing_categories"], {"Films"})
+                            self.assertEqual(kwargs["forced_missing_folder_refs"], {("movie", "Films")})
 
     def test_disabling_inventory_does_not_delete_existing_inventory_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -463,6 +528,10 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                             _, kwargs = inventory_write.call_args
                             self.assertIn("reconcile_missing", kwargs)
                             self.assertTrue(kwargs["reconcile_missing"])
+
+    def test_is_folder_enabled_fallbacks_to_visible_for_legacy_config(self):
+        self.assertFalse(scanner.is_folder_enabled({"name": "films", "type": "movie", "visible": False}))
+        self.assertTrue(scanner.is_folder_enabled({"name": "films", "type": "movie", "visible": True}))
 
 
 if __name__ == "__main__":
