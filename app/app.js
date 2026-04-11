@@ -491,11 +491,11 @@ let allItems=[], categories=[], groups=[];
 
       // Active categories: derived from folders with enabled=false
       const folders = appConfig.folders || [];
-      const hasHidden = folders.some(f => !_folderEnabled(f) && f.type && f.type !== 'ignore');
+      const hasHidden = folders.some(f => !_isFolderEnabled(f) && f.type && f.type !== 'ignore');
       if (hasHidden) {
         enabledCategories = new Set(
           folders
-            .filter(f => _folderEnabled(f) && f.type && f.type !== 'ignore')
+            .filter(f => _isFolderEnabled(f) && f.type && f.type !== 'ignore')
             .map(f => folderToCategoryName(f.name))
         );
       } else {
@@ -2510,7 +2510,7 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
-  function _folderEnabled(folder) {
+  function _isFolderEnabled(folder) {
     const enabled = folder?.enabled;
     if (enabled === undefined || enabled === null) return folder?.visible !== false;
     return enabled !== false;
@@ -2571,7 +2571,7 @@ let allItems=[], categories=[], groups=[];
       if (jKey !== null && jKey !== '') partial.jellyseerr.apikey  = jKey;
     }
 
-    // Gather folder type/visibility — always include current state
+    // Gather folder type/activation — always include current state
     const folderUpdates = gatherFolderEdits();
     if (folderUpdates) partial.folders = folderUpdates;
 
@@ -2655,7 +2655,7 @@ let allItems=[], categories=[], groups=[];
             ? '<span style="color:var(--muted);font-size:12px">—</span>'
             : '<label class="toggle-switch">'
               + '<input type="checkbox" data-folder-idx="'+idx+'" data-folder-key="enabled"'
-              + (_folderEnabled(f) ? ' checked' : '')
+              + (_isFolderEnabled(f) ? ' checked' : '')
               + '/><span class="toggle-switch-slider"></span></label>')
           + '</td>'
         + '</tr>';
@@ -2681,9 +2681,7 @@ let allItems=[], categories=[], groups=[];
     });
     return folders.map(folder => {
       const normalized = {...folder};
-      if (normalized.enabled === undefined || normalized.enabled === null) {
-        normalized.enabled = normalized.visible !== false;
-      }
+      normalized.enabled = _isFolderEnabled(normalized);
       delete normalized.visible;
       return normalized;
     });
