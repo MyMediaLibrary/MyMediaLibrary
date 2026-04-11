@@ -63,6 +63,7 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
   await page.goto('/index.html');
 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
+  await expect(page.locator('#onboardingOverlay')).not.toContainText('library_inventory.json');
   await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
 });
 
@@ -159,6 +160,48 @@ test('configured app stays on main screen across reloads', async ({ page }) => {
   await page.reload();
   await expect(page.locator('#library')).toContainText('Film VF');
   await expect(page.locator('#onboardingOverlay')).toBeHidden();
+});
+
+test('inventory toggle is in settings and persists via /api/config', async ({ page }) => {
+  let capturedPayload = null;
+
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    capturedPayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-system"]');
+    if (btn) switchStab(btn, 'stab-system');
+  });
+  await expect(page.locator('#stab-system')).toBeVisible();
+
+  const inventoryToggle = page.locator('#cfgInventoryEnabled');
+  await expect(inventoryToggle).toBeAttached();
+  await expect(inventoryToggle).not.toBeChecked();
+
+  await page.evaluate(() => {
+    const el = document.getElementById('cfgInventoryEnabled');
+    if (!el) return;
+    el.checked = true;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.click('#settingsSaveBtn');
+
+  await expect.poll(() => capturedPayload).not.toBeNull();
+  expect(capturedPayload.system.inventory_enabled).toBe(true);
 });
 
 test('resetting persisted config makes onboarding visible again', async ({ page }) => {
