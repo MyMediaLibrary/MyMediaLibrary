@@ -1803,9 +1803,9 @@ let allItems=[], categories=[], groups=[];
       ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
     const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
-    const provPieHtml=provEntries.length
+    const provPieHtml = provEntries.length
       ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
-      : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
+      : '';
 
     // Cross tables
     const crossGroupRows = Object.entries(provByGroup).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
@@ -1950,21 +1950,22 @@ let allItems=[], categories=[], groups=[];
 
 
 
+    const topChartsHtml = [
+      switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size'),
+      provPieHtml,
+      (resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
+      (codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : ''),
+      (audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : ''),
+      audioLangChartHtml,
+      qualityChartHtml
+    ].filter(Boolean).join('');
+
     return ''
-      // 1. Pie charts
-      +'<div class="stats-row">'
-        +(hasGroups ? switchablePie('grp',t('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : '')
-        +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size')
-        +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : '')
-        +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : '')
-        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : '')
-        +provPieHtml
-      +'</div>'
-      // 2. Années / décennies
-      +'<div style="margin-bottom:0">'+yearDecadeHtml+'</div>'
-      // 3. Langues audio + qualité
-      +(audioLangChartHtml ? '<div class="stats-row">'+audioLangChartHtml+qualityChartHtml+'</div>' : qualityChartHtml)
-      // 4. Courbes d'évolution
+      // 1. Dossier / Provider / Résolution / Codecs / Langue audio / Score
+      +'<div class="stats-row">'+topChartsHtml+'</div>'
+      // 2. Répartition par année (pleine largeur)
+      +yearDecadeHtml
+      // 3. Évolution (pleine largeur)
       +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 
