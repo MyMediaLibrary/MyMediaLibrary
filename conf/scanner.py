@@ -1513,6 +1513,10 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
     tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
     size_b = get_dir_size(media_dir)
 
+    hdr_current = bool(nfo_meta.get("hdr", False))
+    hdr_type_current = (nfo_meta.get("hdr_type") or "").strip() or None
+    hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
+
     item = {
         "path":              item_path,
         "title":             title,
@@ -1541,8 +1545,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
-        "hdr":               nfo_meta.get("hdr", False),
-        "hdr_type":          nfo_meta.get("hdr_type") or prev.get("hdr_type"),
+        "hdr":               hdr_current,
+        "hdr_type":          hdr_type_value,
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
     }
