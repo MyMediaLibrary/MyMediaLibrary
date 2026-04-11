@@ -1206,6 +1206,7 @@ def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: st
                 inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
                 inventory_to_write["missing_reconciliation"] = True
             except Exception as e:
+                inventory_to_write["missing_reconciliation"] = False
                 log.warning(
                     f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing with merged inventory."
                 )
@@ -1545,7 +1546,10 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     }
     output_path = Path(OUTPUT_PATH)
     write_json(data, OUTPUT_PATH)
-    write_inventory_json_non_blocking(inventory_entries, scan_mode)
+    try:
+        write_inventory_json_non_blocking(inventory_entries, scan_mode)
+    except Exception as e:
+        log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
     try:
         size_mb = output_path.stat().st_size / (1024*1024)
         size_str = f"{size_mb:.1f} MB"

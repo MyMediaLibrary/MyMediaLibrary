@@ -2,6 +2,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -100,6 +101,57 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             self.assertIsNotNone(written)
             self.assertEqual(len(written["items"]), 1)
             self.assertEqual(written["items"][0]["id"], "movie:Films:Inception (2010)")
+
+    def test_full_scan_reconciliation_failure_keeps_flow_non_blocking_and_marks_flag_false(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            movie_dir = pathlib.Path(tmpdir) / "Films" / "Inception (2010)"
+            movie_dir.mkdir(parents=True)
+            (movie_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+            entries = [
+                {"media_dir": movie_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"},
+            ]
+
+            with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(output_path)):
+                with patch("scanner.reconcile_inventory_missing_states", side_effect=RuntimeError("reconcile failed")):
+                    scanner.write_inventory_json_non_blocking(entries, scan_mode="full")
+
+            written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
+            self.assertIsNotNone(written)
+            self.assertFalse(written["missing_reconciliation"])
+            self.assertEqual(len(written["items"]), 1)
+            self.assertEqual(written["items"][0]["id"], "movie:Films:Inception (2010)")
+
+    def test_run_quick_still_writes_library_json_if_inventory_sidecar_call_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir) / "library"
+            movies = root / "films"
+            item_dir = movies / "Inception (2010)"
+            item_dir.mkdir(parents=True)
+            (item_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "folders": [{"name": "films", "type": "movie", "visible": True}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "system": {"needs_onboarding": False, "scan_cron": "0 3 * * *", "log_level": "INFO"},
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "LIBRARY_PATH", str(root)):
+                with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                    with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                        with patch("scanner.write_inventory_json_non_blocking", side_effect=RuntimeError("boom")):
+                            scanner.run_quick(scan_mode="quick")
+
+            with open(output_path, encoding="utf-8") as f:
+                written_library = json.load(f)
+            self.assertEqual(written_library["total_items"], 1)
+            self.assertEqual(written_library["items"][0]["title"], "Inception")
 
 
 if __name__ == "__main__":
