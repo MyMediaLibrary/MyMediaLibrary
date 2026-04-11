@@ -6,11 +6,11 @@
 2. [Architecture technique](#2-architecture-technique)
 3. [Installation](#3-installation)
 4. [Structure de la bibliothèque](#4-structure-de-la-bibliothèque)
-5. [Onboarding](#5-onboarding)
+5. [Configuration initiale](#5-configuration-initiale)
 6. [Interface web](#6-interface-web)
 7. [Filtres](#7-filtres)
-8. [Providers streaming](#8-providers-streaming)
-9. [Quality Scoring](#9-quality-scoring)
+8. [Plateformes de streaming](#8-plateformes-de-streaming)
+9. [Score de qualité](#9-score-de-qualité)
 10. [Statistiques](#10-statistiques)
 11. [Paramètres](#11-paramètres)
 
@@ -139,7 +139,7 @@ environment:
 
 ---
 
-## 5. Onboarding
+## 5. Configuration initiale
 
 L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide).
 
@@ -156,7 +156,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 ### Vues
 
-- **Bibliothèque** — grille de tuiles (poster, titre, année, résolution, codec, providers) + vue tableau
+- **Bibliothèque** — grille de tuiles (poster, titre, année, résolution, codec, plateformes) + vue tableau
 - **Statistiques** — graphiques détaillés
 - **Scanner** — déclenchement manuel + log du dernier scan
 
@@ -170,34 +170,34 @@ Chaque tuile affiche :
 - Poster local (si disponible) ou placeholder
 - Titre + année
 - Résolution (badge coloré : 4K, 1080p, 720p…)
-- Logos des providers streaming (si Jellyseerr activé)
+- Logos des plateformes de streaming (si Jellyseerr activé)
 - Nombre de saisons/épisodes (séries)
 - Synopsis au survol (optionnel, activable dans les paramètres)
 
 ### Thème et langue
 
-- Thème clair/sombre, persisté via un toggle dans la sidebar (icône soleil/lune)
+- Thème clair/sombre, persisté via un interrupteur dans la barre latérale (icône soleil/lune)
 - Langue FR/EN sélectionnable dans les paramètres système
 
 ---
 
 ## 7. Filtres
 
-### Filtres en pills (faible cardinalité)
+### Filtres en pastilles (faible cardinalité)
 
 - **Type** — Tous / Films / Séries
 - **Résolution** — Toutes / 4K / 1080p / 720p / SD
 - **Groupe** — par dossier configuré
 
-Ces filtres sont rendus comme des boutons pills (sélection unique).
+Ces filtres sont rendus comme des boutons en pastille (sélection unique).
 
 ### Filtres en dropdown multi-select (haute cardinalité)
 
-- **Streaming (FR)** — providers disponibles (Netflix, Prime Video…) + option "Aucun provider"
+- **Streaming (FR)** — plateformes disponibles (Netflix, Prime Video…) + option "Aucune plateforme"
 - **Codec vidéo** — H.264, H.265/HEVC, AV1…
 - **Codec audio** — AAC, AC3, EAC3, TrueHD…
 
-Ces filtres utilisent un dropdown avec checkboxes. La sélection est multiple (logique OR : un item passe s'il correspond à **au moins un** des codecs/providers sélectionnés). L'état sélectionné est persisté dans `localStorage`.
+Ces filtres utilisent une liste déroulante avec cases à cocher. La sélection est multiple (logique OR : un élément passe s'il correspond à **au moins un** des codecs/plateformes sélectionnés). L'état sélectionné est persisté dans `localStorage`.
 
 #### Compteurs dynamiques
 
@@ -205,139 +205,118 @@ Les compteurs affichés dans chaque dropdown correspondent aux items corresponda
 
 ---
 
-## 8. Providers streaming
+## 8. Plateformes de streaming
 
 L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
 
 ### Configuration
 
-URL + clé API dans les paramètres (onglet Jellyseerr) ou lors de l'onboarding. Un bouton "Tester la connexion" valide les identifiants.
+URL + clé API dans les paramètres (onglet Jellyseerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
 
 ### Normalisation
 
-Les noms de providers retournés par Jellyseerr sont normalisés via `app/providers.json` (ex. `"Amazon Prime Video"` → `"Prime Video"`). Ce fichier associe également un logo SVG à chaque provider.
+Les noms des plateformes retournés par Jellyseerr sont normalisés via `app/providers.json` (ex. `"Amazon Prime Video"` → `"Prime Video"`). Ce fichier associe également un logo SVG à chaque plateforme.
 
 ### Visibilité
 
-Chaque provider peut être masqué dans les paramètres (onglet Jellyseerr → "Visibilité des providers"). Les providers masqués n'apparaissent pas dans les tuiles ni dans le filtre.
+Chaque plateforme peut être masquée dans les paramètres (onglet Jellyseerr → "Visibilité des plateformes"). Les plateformes masquées n'apparaissent pas dans les tuiles ni dans le filtre.
 
 ---
 
-## 9. Quality Scoring
+## 9. Score de qualité
 
 Chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
 
 ### Structure du score
 
-```text
-Total = 100 points
-- Video: 50
-- Audio: 20
-- Languages: 15
-- Size: 15
-```
+| Critère | Points |
+|---|---:|
+| Vidéo | 50 |
+| Audio | 20 |
+| Langues | 15 |
+| Taille | 15 |
+| **Total** | **100** |
 
 ### Critères détaillés
 
-#### 🎥 Video (50)
+#### 🎥 Vidéo (50)
 
-##### Résolution (25)
-
-```text
-2160p → 25
-1080p → 20
-720p → 10
-SD → 5
-Unknown → 8
-```
-
-##### Codec (15)
-
-```text
-AV1 / HEVC / H.265 → 15
-H.264 / AVC → 10
-Legacy (MPEG-2, VC-1, Xvid, DivX) → 3
-Unknown → 6
-```
-
-##### HDR (10)
-
-```text
-Dolby Vision → 10
-HDR10+ → 8
-HDR10 / HLG → 5
-SDR → 0
-Unknown → 0
-```
+| Sous-critère | Valeur | Points |
+|---|---|---:|
+| Résolution | 2160p | 25 |
+| Résolution | 1080p | 20 |
+| Résolution | 720p | 10 |
+| Résolution | SD | 5 |
+| Résolution | Inconnue | 8 |
+| Codec | AV1 / HEVC / H.265 | 15 |
+| Codec | H.264 / AVC | 10 |
+| Codec | Ancien (MPEG-2, VC-1, Xvid, DivX) | 3 |
+| Codec | Inconnu | 6 |
+| HDR | Dolby Vision | 10 |
+| HDR | HDR10+ | 8 |
+| HDR | HDR10 / HLG | 5 |
+| HDR | SDR | 0 |
+| HDR | Inconnu | 0 |
 
 #### 🔊 Audio (20)
 
-```text
-TrueHD / Atmos → 20
-DTS-HD → 18
-DTS → 15
-EAC3 → 12
-AC3 → 10
-AAC → 6
-MP3 / MP2 → 3
-Unknown → 8
-```
+| Codec audio | Points |
+|---|---:|
+| TrueHD / Atmos | 20 |
+| DTS-HD | 18 |
+| DTS | 15 |
+| EAC3 | 12 |
+| AC3 | 10 |
+| AAC | 6 |
+| MP3 / MP2 | 3 |
+| Inconnu | 8 |
 
-#### 🌍 Languages (15)
+#### 🌍 Langues (15)
 
-```text
-MULTI (French + others) → 15
-French only → 10
-Original only (VO) → 5
-Unknown → 3
-```
+| Profil linguistique | Points |
+|---|---:|
+| MULTI (français + autres) | 15 |
+| Français uniquement | 10 |
+| Version originale uniquement (VO) | 5 |
+| Inconnu | 3 |
 
-#### 💾 Size (15)
+#### 💾 Taille (15)
 
-##### États
+| État de cohérence | Points |
+|---|---:|
+| Cohérente | 15 |
+| Trop grande | 8 |
+| Trop petite | 5 |
+| Inconnue | 5 |
 
-```text
-Coherent → 15
-Too large → 8
-Too small → 5
-Unknown → 5
-```
+##### Repères de taille (zone optimale)
 
-##### Exemples
-
-**1080p**
-- H.265: 2–10 GB → optimal
-- H.264: 4–15 GB → optimal
-
-**4K**
-- H.265: 8–25 GB → optimal
-
-**720p**
-- 2–6 GB → optimal
-
-**SD**
-- 500 MB – 2 GB → optimal
+| Résolution | Codec | Taille optimale |
+|---|---|---|
+| 1080p | H.265 | 2–10 GB |
+| 1080p | H.264 | 4–15 GB |
+| 4K | H.265 | 8–25 GB |
+| 720p | Tous | 2–6 GB |
+| SD | Tous | 500 MB – 2 GB |
 
 ### Pénalités
 
 Des pénalités sont appliquées pour corriger les incohérences et éviter qu'un profil technique faible conserve un score trop élevé.
 
-```text
-High video + weak audio → -10 or -5
-High resolution + legacy codec → -8 or -4
-High quality video + poor languages → -5
-Incoherent size → -5
-```
+| Situation | Pénalité | Explication |
+|---|---|---|
+| Vidéo excellente + audio faible | -10 / -5 | Un très bon rendu visuel avec un son faible crée un déséquilibre perceptible à l'usage. |
+| Haute résolution + codec ancien | -8 / -4 | Une vidéo HD/4K encodée avec un codec ancien indique souvent une compression moins efficace. |
+| Bonne vidéo + peu de langues | -5 | Le fichier est de bonne qualité, mais reste moins accessible pour plusieurs profils d'utilisateurs. |
+| Taille incohérente | -5 | Une taille trop faible ou trop élevée pour le profil attendu peut signaler une qualité irrégulière. |
 
-```text
-Maximum penalty = 20
-```
+> Pénalité maximale appliquée : 20 points.
 
 ### Score final
 
 ```text
-Final Score = Base Score - Penalties
-Clamped between 0 and 100
+Score final = Score de base - Pénalités
+Borné entre 0 et 100
 ```
 
 ### Niveaux de qualité
@@ -358,19 +337,19 @@ Le score qualité est visible dans toute l'interface :
 - export CSV
 - statistiques
 
-### Tooltip
+### Infobulle
 
 Au survol du badge, une infobulle détaillée est affichée :
-- breakdown complet par catégorie
+- détail complet par catégorie
 - pénalités appliquées
 
 ### Filtres
 
 Le scoring s'intègre à des filtres dédiés :
-- pills par niveaux
+- pastilles par niveaux
 - couleurs cohérentes entre niveaux
 - multi-sélection
-- logique include / exclude
+- logique inclure / exclure
 
 ### Statistiques
 
@@ -390,7 +369,7 @@ L'onglet Statistiques affiche :
 - **Années de sortie** — histogramme par année ou par décennie
 - **Évolution mensuelle** — courbe des ajouts par mois (taille et/ou nombre d'items), périodes : tout / 12 mois / 30 jours
 - **Répartition par groupe / dossier** — taille ou nombre
-- **Streaming** — disponibilité par provider, répartition par groupe
+- **Streaming** — disponibilité par plateforme, répartition par groupe
 
 Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 
@@ -398,7 +377,7 @@ Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 
 ## 11. Paramètres
 
-Accessible via l'icône ⚙️ en bas de la sidebar.
+Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 ### Onglet Bibliothèque
 
@@ -410,7 +389,7 @@ Accessible via l'icône ⚙️ en bas de la sidebar.
 
 - Activer/désactiver l'enrichissement
 - URL + clé API + test de connexion
-- Visibilité de chaque provider (visible/masqué)
+- Visibilité de chaque plateforme (visible/masqué)
 
 ### Onglet Système
 
