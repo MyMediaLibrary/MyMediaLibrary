@@ -159,6 +159,16 @@
       padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:3px}
     .badge-hdr{background:#ea580c;color:#fff}
     .badge-codec{background:var(--bg);color:var(--muted);border:1px solid var(--border)}
+    .quality-badge{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:20px;
+      padding:0 7px;border-radius:999px;font-size:11px;font-weight:700;font-family:'Syne',sans-serif;
+      border:1px solid transparent;line-height:1}
+    .quality-badge-inline{height:18px;min-width:24px;font-size:10px;padding:0 6px}
+    .quality-lvl-1{background:#ef4444;color:#fff;border-color:#f87171}
+    .quality-lvl-2{background:#f97316;color:#fff;border-color:#fb923c}
+    .quality-lvl-3{background:#facc15;color:#3f2a00;border-color:#fde047}
+    .quality-lvl-4{background:#84cc16;color:#17330c;border-color:#a3e635}
+    .quality-lvl-5{background:#16a34a;color:#ecfdf5;border-color:#22c55e}
+    .quality-lvl-unknown{background:var(--bg);color:var(--muted);border-color:var(--border)}
     /* SETTINGS MODAL */
     .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
       display:flex;align-items:center;justify-content:center;padding:16px}
@@ -371,6 +381,7 @@
       transition:border-color var(--transition),background var(--transition)}
     .tl-card:hover{background:var(--card-h);border-color:var(--accent-40)}
     .tl-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);z-index:1}
+    .tl-quality{position:absolute;top:8px;right:8px;z-index:3}
     .tl-poster{width:70px;min-width:70px;background:var(--surface);flex-shrink:0;overflow:hidden;align-self:stretch}
     .tl-poster img{width:100%;height:100%;object-fit:cover;display:block}
     .tl-poster-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--border)}
@@ -513,6 +524,7 @@
     /* Curve */
     .curve-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}
     .curve-svg{width:100%;height:160px}
+    .quality-avg{font-size:12px;color:var(--muted);margin-top:-8px;margin-bottom:12px}
     /* SCAN BUTTON */
     .scan-btn-wrap{position:relative;display:flex}
     .scan-btn{background:var(--accent);border:none;border-radius:var(--radius);

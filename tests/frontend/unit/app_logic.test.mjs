@@ -84,3 +84,21 @@ test('counts grouped providers once per item (no overcount in Others)', () => {
   );
   assert.deepEqual(counts, { __others__: 2, Netflix: 2 });
 });
+
+test('maps quality score and quality payload to 5-level ranking', () => {
+  assert.equal(logic.getQualityLevelFromScore(0), 1);
+  assert.equal(logic.getQualityLevelFromScore(20), 1);
+  assert.equal(logic.getQualityLevelFromScore(21), 2);
+  assert.equal(logic.getQualityLevelFromScore(40), 2);
+  assert.equal(logic.getQualityLevelFromScore(41), 3);
+  assert.equal(logic.getQualityLevelFromScore(60), 3);
+  assert.equal(logic.getQualityLevelFromScore(61), 4);
+  assert.equal(logic.getQualityLevelFromScore(80), 4);
+  assert.equal(logic.getQualityLevelFromScore(81), 5);
+  assert.equal(logic.getQualityLevelFromScore(100), 5);
+
+  assert.equal(logic.getItemQualityLevel({ quality: { level: 4, score: 10 } }), 4);
+  assert.equal(logic.getItemQualityLevel({ quality: { score: 84 } }), 5);
+  assert.equal(logic.getItemQualityLevel({}), 1);
+  assert.equal(logic.getQualityLevelClass(3), 'quality-lvl-3');
+});

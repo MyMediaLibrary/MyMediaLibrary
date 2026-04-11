@@ -80,7 +80,19 @@ class QualityScoringV1Test(unittest.TestCase):
         )
         self.assertEqual(quality["penalty_total"], 20)
 
-    def test_final_score_grade_and_shape(self):
+    def test_quality_level_boundaries(self):
+        self.assertEqual(scoring.get_quality_level(0), 1)
+        self.assertEqual(scoring.get_quality_level(20), 1)
+        self.assertEqual(scoring.get_quality_level(21), 2)
+        self.assertEqual(scoring.get_quality_level(40), 2)
+        self.assertEqual(scoring.get_quality_level(41), 3)
+        self.assertEqual(scoring.get_quality_level(60), 3)
+        self.assertEqual(scoring.get_quality_level(61), 4)
+        self.assertEqual(scoring.get_quality_level(80), 4)
+        self.assertEqual(scoring.get_quality_level(81), 5)
+        self.assertEqual(scoring.get_quality_level(100), 5)
+
+    def test_final_score_level_and_shape(self):
         quality = scoring.compute_quality(
             {
                 "resolution": "1080p",
@@ -92,11 +104,11 @@ class QualityScoringV1Test(unittest.TestCase):
             }
         )
         self.assertEqual(quality["score"], 65)
-        self.assertEqual(quality["grade"], "fair")
+        self.assertEqual(quality["level"], 4)
 
         expected_keys = {
             "score",
-            "grade",
+            "level",
             "base_score",
             "penalty_total",
             "video",

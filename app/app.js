@@ -132,6 +132,43 @@ let allItems=[], categories=[], groups=[];
     return item?.resolution || 'UNKNOWN';
   }
 
+  function getQualityLevelFromScore(score) {
+    if (window.MMLLogic?.getQualityLevelFromScore) {
+      return window.MMLLogic.getQualityLevelFromScore(score);
+    }
+    const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+    if (safeScore <= 20) return 1;
+    if (safeScore <= 40) return 2;
+    if (safeScore <= 60) return 3;
+    if (safeScore <= 80) return 4;
+    return 5;
+  }
+
+  function getItemQualityLevel(item) {
+    if (window.MMLLogic?.getItemQualityLevel) {
+      return window.MMLLogic.getItemQualityLevel(item);
+    }
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(item?.quality?.score);
+  }
+
+  function getQualityLevelClass(level) {
+    if (window.MMLLogic?.getQualityLevelClass) {
+      return window.MMLLogic.getQualityLevelClass(level);
+    }
+    const safeLevel = Number(level);
+    if (safeLevel >= 1 && safeLevel <= 5) return `quality-lvl-${safeLevel}`;
+    return 'quality-lvl-unknown';
+  }
+
+  function qualityBadgeHTML(item, extraClass = '') {
+    const score = item?.quality?.score;
+    if (!Number.isFinite(Number(score))) return '';
+    const levelClass = getQualityLevelClass(getItemQualityLevel(item));
+    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'">'+Math.round(Number(score))+'</span>';
+  }
+
   function getProviderNames(item) {
     return (item?.providers || []).map(_pname).filter(Boolean);
   }
@@ -1182,6 +1219,7 @@ let allItems=[], categories=[], groups=[];
         case 'size':     return ((a.size_b||0)-(b.size_b||0))*dir;
         case 'files':    return ((a.file_count||0)-(b.file_count||0))*dir;
         case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*dir;
+        case 'quality':  return ((Number(a.quality?.score)||-1)-(Number(b.quality?.score)||-1))*dir;
         case 'category': return (a.category||'').localeCompare(b.category||'')*dir;
         case 'group':    return (a.group||'').localeCompare(b.group||'')*dir;
       }
@@ -1215,7 +1253,9 @@ let allItems=[], categories=[], groups=[];
   }
   function cardHTML(item) {
     const plotText = (item.plot||'').trim();
+    const qualityBadge = qualityBadgeHTML(item);
     return '<div class="tl-card"'+(plotText?' onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+      +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
         +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
@@ -1259,6 +1299,7 @@ let allItems=[], categories=[], groups=[];
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
           +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
           +'<span class="cat-badge">'+escH(item.category)+'</span>'
+          +(qualityBadgeHTML(item, 'quality-badge-inline') || '')
           +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
@@ -1277,6 +1318,7 @@ let allItems=[], categories=[], groups=[];
         +'<td class="col-year">'+(item.year||'-')+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
+        +'<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>'
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
@@ -1292,6 +1334,7 @@ let allItems=[], categories=[], groups=[];
       +th('title',t('table.title'))+th('year',t('table.year'))
       +(hg?th('group',t('table.group')):'')
       +th('category',t('table.category'))
+      +th('quality',t('table.quality'))
       +'<th>'+t('table.resolution')+'</th><th>'+t('table.codec')+'</th>'
       +'<th>'+t('table.audio_codec')+'</th><th>'+t('table.audio_languages')+'</th>'
       +th('size',t('table.size'))+th('files',t('table.files'))+th('added',t('table.added'))
@@ -1303,11 +1346,24 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
-    const headers=[t('table.title'),t('table.year'),hg?t('table.group'):null,t('table.category'),t('table.resolution'),'HDR',t('table.codec'),t('table.audio_codec'),t('table.audio_languages')+' (simple)',t('table.audio_languages')+' (raw)','Runtime (min)',t('table.size'),'Size (B)',t('table.files'),t('table.added'),t('table.streaming')].filter(Boolean);
+    const headers=[
+      t('table.title'), t('table.year'), hg ? t('table.group') : null, t('table.category'),
+      'quality_score', 'quality_level', 'quality_video', 'quality_audio', 'quality_languages', 'quality_size', 'quality_penalty_total',
+      t('table.resolution'), 'HDR', t('table.codec'), t('table.audio_codec'),
+      t('table.audio_languages')+' (simple)', t('table.audio_languages')+' (raw)', 'Runtime (min)',
+      t('table.size'), 'Size (B)', t('table.files'), t('table.added'), t('table.streaming')
+    ].filter(Boolean);
     const rows=items.map(i=>[
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
       csvC(i.category),
+      Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '',
+      Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : ''),
+      i.quality?.video ?? '',
+      i.quality?.audio ?? '',
+      i.quality?.languages ?? '',
+      i.quality?.size ?? '',
+      i.quality?.penalty_total ?? '',
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
@@ -1838,6 +1894,57 @@ let allItems=[], categories=[], groups=[];
         + '<div id="yearViewDecade" style="display:none">'+decadeChart+'</div>'
         + '</div>';
 
+      const qualityLevelRanges = {
+        1: '0–20',
+        2: '21–40',
+        3: '41–60',
+        4: '61–80',
+        5: '81–100'
+      };
+      const qualityCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      let qualityScoreTotal = 0;
+      let qualityScoreItems = 0;
+      items.forEach((i) => {
+        const score = Number(i?.quality?.score);
+        if (!Number.isFinite(score)) return;
+        const level = getItemQualityLevel(i);
+        if (qualityCounts[level] !== undefined) qualityCounts[level] += 1;
+        qualityScoreTotal += score;
+        qualityScoreItems += 1;
+      });
+      function qualityLevelColor(level) {
+        return ({
+          1: '#ef4444',
+          2: '#f97316',
+          3: '#facc15',
+          4: '#84cc16',
+          5: '#16a34a'
+        })[level] || '#64748b';
+      }
+      function makeQualityLevelBarChart() {
+        if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
+        const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
+        const maxV = Math.max(...entries.map(([,v]) => v), 1);
+        const W=700,H=180,PB=42,PT=8,PL=34,PR=8;
+        const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
+        const slot = iW / n;
+        const bw = Math.min(80, Math.max(22, Math.floor(slot * 0.6)));
+        const bars = entries.map(([lvl, val], idx) => {
+          const bh = Math.round(val / maxV * iH);
+          const x = PL + idx * slot + (slot - bw) / 2;
+          const y = PT + iH - bh;
+          return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw+'" height="'+bh+'" fill="'+qualityLevelColor(lvl)+'" rx="4"><title>'+qualityLevelRanges[lvl]+' : '+val+'</title></rect>'
+            +'<text x="'+(x+bw/2).toFixed(1)+'" y="'+(PT+iH+15)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+qualityLevelRanges[lvl]+'</text>'
+            +'<text x="'+(x+bw/2).toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="10" fill="var(--text)">'+val+'</text>';
+        }).join('');
+        return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'+bars+'</svg>';
+      }
+      const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
+      const qualityChartHtml = '<div class="stats-block">'
+        + '<div class="stats-block-title">'+t('stats.quality_distribution')+'</div>'
+        + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
+        + makeQualityLevelBarChart()
+        + '</div>';
 
 
 
@@ -1856,7 +1963,9 @@ let allItems=[], categories=[], groups=[];
       +'</div>'
       // 2. Années / décennies
       +'<div style="margin-bottom:0">'+yearDecadeHtml+'</div>'
-      // 3. Courbes d'évolution
+      // 3. Qualité
+      +qualityChartHtml
+      // 4. Courbes d'évolution
       +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 

@@ -214,7 +214,9 @@
     "items_count": "{n} élément",
     "items_count_pl": "{n} éléments",
     "entry": "entrée",
-    "entries": "entrées"
+    "entries": "entrées",
+    "quality_distribution": "Répartition qualité (score)",
+    "quality_average": "Score moyen : {score}"
   },
   "auth": {
     "protected": "Accès protégé",
@@ -245,6 +247,7 @@
     "year": "Année",
     "group": "Groupe",
     "category": "Dossier",
+    "quality": "Qualité",
     "resolution": "Résolution",
     "codec": "Codec vidéo",
     "audio_codec": "Codec audio",

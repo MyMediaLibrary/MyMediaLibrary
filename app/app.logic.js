@@ -169,6 +169,27 @@
     return byProvider;
   }
 
+  function getQualityLevelFromScore(score) {
+    const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+    if (safeScore <= 20) return 1;
+    if (safeScore <= 40) return 2;
+    if (safeScore <= 60) return 3;
+    if (safeScore <= 80) return 4;
+    return 5;
+  }
+
+  function getItemQualityLevel(item) {
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(item?.quality?.score);
+  }
+
+  function getQualityLevelClass(level) {
+    const safeLevel = Number(level);
+    if (safeLevel >= 1 && safeLevel <= 5) return `quality-lvl-${safeLevel}`;
+    return 'quality-lvl-unknown';
+  }
+
   return {
     normalizeAudioLanguageCode,
     simplifyAudioLanguages,
@@ -181,6 +202,9 @@
     resetFiltersState,
     isExportEnabled,
     canonicalProviderFilterKey,
-    groupedProviderCounts
+    groupedProviderCounts,
+    getQualityLevelFromScore,
+    getItemQualityLevel,
+    getQualityLevelClass
   };
 });

@@ -102,7 +102,7 @@ except Exception:
         def compute_quality(item: dict) -> dict:
             return {
                 "score": 0,
-                "grade": "unknown",
+                "level": 1,
                 "base_score": 0,
                 "penalty_total": 0,
                 "video": 0,
