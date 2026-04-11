@@ -139,6 +139,8 @@
       "version": "Version",
       "synopsis": "Synopsis au survol",
       "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
+      "inventory_enabled": "Générer l'inventaire brut",
+      "inventory_enabled_hint": "Génère library_inventory.json en plus de library.json lors des scans.",
       "cron": "Scan automatique (cron)",
       "log_level": "Niveau de log",
       "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log",

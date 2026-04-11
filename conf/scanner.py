@@ -1047,6 +1047,9 @@ def migrate_env_to_config() -> None:
     if not sys_cfg.get("log_level"):
         sys_cfg["log_level"] = "INFO"
         changed = True
+    if "inventory_enabled" not in sys_cfg:
+        sys_cfg["inventory_enabled"] = False
+        changed = True
 
     if changed:
         save_config(cfg)
@@ -1267,6 +1270,7 @@ _DEFAULT_CONFIG: dict = {
         "scan_cron": "0 3 * * *",
         "log_level": "INFO",
         "needs_onboarding": True,
+        "inventory_enabled": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -1327,6 +1331,11 @@ def _ensure_needs_onboarding(cfg: dict, config_exists: bool | None = None) -> tu
         system["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists)
         changed = True
     return cfg, changed
+
+
+def _is_inventory_enabled(cfg: dict | None) -> bool:
+    system = (cfg or {}).get("system") or {}
+    return system.get("inventory_enabled") is True
 
 
 def save_config(data: dict) -> None:
@@ -1461,6 +1470,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     if sync_folders(root, cfg):
         save_config(cfg)
         cfg = load_config()
+    inventory_enabled = _is_inventory_enabled(cfg)
 
     categories = build_categories_from_config(cfg)
     if not categories:
@@ -1500,11 +1510,12 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             item = scan_media_item(media_dir, root, cat, prev)
             item["id"] = item_id
             items.append(item)
-            inventory_entries.append({
-                "media_dir": media_dir,
-                "cat": cat,
-                "title": item.get("title") or media_dir.name,
-            })
+            if inventory_enabled:
+                inventory_entries.append({
+                    "media_dir": media_dir,
+                    "cat": cat,
+                    "title": item.get("title") or media_dir.name,
+                })
             scanned_paths.add(item_path)
             item_id += 1
 
@@ -1546,10 +1557,13 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     }
     output_path = Path(OUTPUT_PATH)
     write_json(data, OUTPUT_PATH)
-    try:
-        write_inventory_json_non_blocking(inventory_entries, scan_mode)
-    except Exception as e:
-        log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
+    if inventory_enabled:
+        try:
+            write_inventory_json_non_blocking(inventory_entries, scan_mode)
+        except Exception as e:
+            log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
+    else:
+        log.info("[SCAN] Inventory sidecar disabled by system.inventory_enabled=false")
     try:
         size_mb = output_path.stat().st_size / (1024*1024)
         size_str = f"{size_mb:.1f} MB"
