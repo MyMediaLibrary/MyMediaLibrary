@@ -1,0 +1,62 @@
+import pathlib
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "conf"))
+
+import scanner  # noqa: E402
+
+
+class ScannerInventoryStep2Test(unittest.TestCase):
+    def test_build_library_inventory_with_movie_and_tv_items(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+
+            movie_dir = root / "Films" / "Inception (2010)"
+            movie_dir.mkdir(parents=True)
+            (movie_dir / "Inception (2010).mkv").write_text("x", encoding="utf-8")
+
+            tv_dir = root / "Series" / "Dark"
+            season_dir = tv_dir / "Season 01"
+            season_dir.mkdir(parents=True)
+            (season_dir / "Dark.S01E01.mkv").write_text("x", encoding="utf-8")
+
+            entries = [
+                {"media_dir": movie_dir, "cat": {"name": "Films", "type": "movie"}, "title": "Inception"},
+                {"media_dir": tv_dir, "cat": {"name": "Series", "type": "tv"}, "title": "Dark"},
+            ]
+
+            generated_at = datetime(2026, 4, 11, 23, 55, 0, tzinfo=timezone.utc)
+            inventory = scanner.build_library_inventory(entries, scan_mode="full", now=generated_at)
+
+            self.assertEqual(inventory["version"], 1)
+            self.assertEqual(inventory["generated_at"], "2026-04-11T23:55:00Z")
+            self.assertEqual(inventory["scan_mode"], "full")
+            self.assertFalse(inventory["missing_reconciliation"])
+            self.assertEqual(len(inventory["items"]), 2)
+
+            movie_item = inventory["items"][0]
+            self.assertEqual(movie_item["id"], "movie:Films:Inception (2010)")
+            self.assertEqual(movie_item["status"], "present")
+            self.assertEqual(movie_item["video_files"][0]["name"], "Inception (2010).mkv")
+            self.assertEqual(movie_item["first_seen_at"], "2026-04-11T23:55:00Z")
+            self.assertEqual(movie_item["last_seen_at"], "2026-04-11T23:55:00Z")
+
+            tv_item = inventory["items"][1]
+            self.assertEqual(tv_item["id"], "tv:Series:Dark")
+            self.assertEqual(tv_item["video_files"], [])
+            self.assertEqual(len(tv_item["subfolders"]), 1)
+            self.assertEqual(tv_item["subfolders"][0]["name"], "Season 01")
+            self.assertEqual(tv_item["subfolders"][0]["video_files"][0]["name"], "Dark.S01E01.mkv")
+
+    def test_inventory_write_failure_is_non_blocking(self):
+        with patch("scanner.write_json", side_effect=OSError("disk full")):
+            scanner.write_inventory_json_non_blocking([], scan_mode="quick")
+
+
+if __name__ == "__main__":
+    unittest.main()

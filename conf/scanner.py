@@ -41,6 +41,7 @@ from pathlib import Path
 
 LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
 OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
+INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 logging.basicConfig(
@@ -1088,6 +1089,95 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
+def _inventory_item_id(media_type: str, category: str, folder_name: str) -> str:
+    return f"{media_type}:{category}:{folder_name}"
+
+
+def _list_video_files(path: Path) -> list[str]:
+    files: list[str] = []
+    try:
+        for entry in sorted(path.iterdir(), key=lambda p: p.name.lower()):
+            if (
+                entry.is_file()
+                and not entry.is_symlink()
+                and entry.suffix.lower() in MEDIA_EXTENSIONS
+            ):
+                files.append(entry.name)
+    except Exception:
+        return []
+    return files
+
+
+def _make_inventory_video_file(name: str, now_utc: str) -> dict:
+    return {
+        "name": name,
+        "status": "present",
+        "first_seen_at": now_utc,
+        "last_seen_at": now_utc,
+    }
+
+
+def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -> dict:
+    media_type = "tv" if cat["type"] == "tv" else "movie"
+    item = {
+        "id": _inventory_item_id(media_type, cat["name"], media_dir.name),
+        "media_type": media_type,
+        "category": cat["name"],
+        "title": title,
+        "root_folder_path": str(media_dir),
+        "status": "present",
+        "first_seen_at": now_utc,
+        "last_seen_at": now_utc,
+        "video_files": [_make_inventory_video_file(vf, now_utc) for vf in _list_video_files(media_dir)],
+    }
+    if media_type == "tv":
+        subfolders: list[dict] = []
+        try:
+            for subdir in sorted(media_dir.iterdir(), key=lambda p: p.name.lower()):
+                if not subdir.is_dir() or subdir.name.startswith((".", "@")):
+                    continue
+                sub_video_files = _list_video_files(subdir)
+                if not sub_video_files:
+                    continue
+                subfolders.append({
+                    "name": subdir.name,
+                    "status": "present",
+                    "first_seen_at": now_utc,
+                    "last_seen_at": now_utc,
+                    "video_files": [_make_inventory_video_file(vf, now_utc) for vf in sub_video_files],
+                })
+        except Exception:
+            subfolders = []
+        item["subfolders"] = subfolders
+    return item
+
+
+def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: datetime | None = None) -> dict:
+    now_dt = now or datetime.now(timezone.utc)
+    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    inventory_items = [
+        build_inventory_item(entry["media_dir"], entry["cat"], entry["title"], now_utc)
+        for entry in scanned_entries
+    ]
+    return {
+        "version": 1,
+        "generated_at": now_utc,
+        "scan_mode": scan_mode,
+        "missing_reconciliation": False,
+        "items": inventory_items,
+    }
+
+
+def write_inventory_json_non_blocking(scanned_entries: list[dict], scan_mode: str) -> None:
+    log.info("[SCAN] Inventory write started")
+    try:
+        inventory = build_library_inventory(scanned_entries, scan_mode)
+        write_json(inventory, INVENTORY_OUTPUT_PATH)
+        log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
+    except Exception as e:
+        log.warning(f"[SCAN] Inventory write failed: {e}")
+
+
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
@@ -1292,7 +1382,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
     }
 
 
-def run_quick(only_category: str | None = None) -> None:
+def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None:
     _t0 = time.monotonic()
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
@@ -1326,6 +1416,7 @@ def run_quick(only_category: str | None = None) -> None:
     existing = load_existing(OUTPUT_PATH)
 
     items = []
+    inventory_entries: list[dict] = []
     item_id = 0
     scanned_paths = set()
     cat_counts = {}
@@ -1350,6 +1441,11 @@ def run_quick(only_category: str | None = None) -> None:
             item = scan_media_item(media_dir, root, cat, prev)
             item["id"] = item_id
             items.append(item)
+            inventory_entries.append({
+                "media_dir": media_dir,
+                "cat": cat,
+                "title": item.get("title") or media_dir.name,
+            })
             scanned_paths.add(item_path)
             item_id += 1
 
@@ -1391,6 +1487,7 @@ def run_quick(only_category: str | None = None) -> None:
     }
     output_path = Path(OUTPUT_PATH)
     write_json(data, OUTPUT_PATH)
+    write_inventory_json_non_blocking(inventory_entries, scan_mode)
     try:
         size_mb = output_path.stat().st_size / (1024*1024)
         size_str = f"{size_mb:.1f} MB"
@@ -1906,13 +2003,13 @@ def main():
     log.info(f"[SCAN] ═══════════════════════════════════")
 
     if args.quick:
-        run_quick(only_category=args.category)
+        run_quick(only_category=args.category, scan_mode="quick")
     elif args.full:
-        run_quick(only_category=args.category)
+        run_quick(only_category=args.category, scan_mode="full")
         run_enrich(force=True, only_category=args.category)
     else:
         # --enrich or default
-        run_quick(only_category=args.category)
+        run_quick(only_category=args.category, scan_mode="full")
         run_enrich(force=False, only_category=args.category)
 
     elapsed = time.monotonic() - _t_main
