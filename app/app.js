@@ -174,16 +174,17 @@ let allItems=[], categories=[], groups=[];
   }
 
   const QUALITY_PENALTY_LABELS = {
-    audio_video_mismatch: 'Audio/vidéo incohérent',
-    audio_video_imbalance: 'Audio/vidéo déséquilibré',
-    legacy_codec_high_res: 'Codec legacy en haute résolution',
-    legacy_codec_mid_res: 'Codec legacy en résolution moyenne',
-    premium_video_weak_languages: 'Langues limitées',
-    size_video_mismatch: 'Taille incohérente avec la vidéo'
+    audio_video_mismatch: 'quality_tooltip.penalties.audio_video_mismatch',
+    audio_video_imbalance: 'quality_tooltip.penalties.audio_video_imbalance',
+    legacy_codec_high_res: 'quality_tooltip.penalties.legacy_codec_high_res',
+    legacy_codec_mid_res: 'quality_tooltip.penalties.legacy_codec_mid_res',
+    premium_video_weak_languages: 'quality_tooltip.penalties.premium_video_weak_languages',
+    size_video_mismatch: 'quality_tooltip.penalties.size_video_mismatch'
   };
 
   function getQualityPenaltyLabel(code) {
-    return QUALITY_PENALTY_LABELS[code] || code;
+    const key = QUALITY_PENALTY_LABELS[code];
+    return key ? t(key) : code;
   }
 
   function getQualityTooltipText(item) {
@@ -192,17 +193,17 @@ let allItems=[], categories=[], groups=[];
     if (!Number.isFinite(score)) return '';
 
     const lines = [
-      `Score: ${Math.round(score)}`,
+      `${t('quality_tooltip.score')}: ${Math.round(score)}`,
       '',
-      `Vidéo: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
-      `Audio: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
-      `Langues: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
-      `Taille: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
+      `${t('quality_tooltip.video')}: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
+      `${t('quality_tooltip.audio')}: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
+      `${t('quality_tooltip.languages')}: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
+      `${t('quality_tooltip.size')}: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
     ];
 
     const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];
     if (penalties.length) {
-      lines.push('', 'Pénalités:');
+      lines.push('', `${t('quality_tooltip.penalties.title')}:`);
       penalties.forEach(penalty => {
         const label = getQualityPenaltyLabel(String(penalty?.code || '').trim());
         const value = Number(penalty?.value);

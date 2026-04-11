@@ -257,5 +257,21 @@
     "files": "Files",
     "added": "Added",
     "streaming": "Streaming"
+  },
+  "quality_tooltip": {
+    "score": "Score",
+    "video": "Video",
+    "audio": "Audio",
+    "languages": "Languages",
+    "size": "Size",
+    "penalties": {
+      "title": "Penalties",
+      "audio_video_mismatch": "Inconsistent audio/video",
+      "audio_video_imbalance": "Unbalanced audio/video",
+      "legacy_codec_high_res": "Legacy codec at high resolution",
+      "legacy_codec_mid_res": "Legacy codec at medium resolution",
+      "premium_video_weak_languages": "Limited languages",
+      "size_video_mismatch": "Size inconsistent with video"
+    }
   }
 }
