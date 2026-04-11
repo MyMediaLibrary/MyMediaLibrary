@@ -130,5 +130,19 @@ class InventoryFlagCriticalTest(unittest.TestCase):
         self.assertTrue(merged["system"]["inventory_enabled"])
 
 
+class FolderEnabledCompatibilityTest(unittest.TestCase):
+    def test_enabled_falls_back_to_visible_when_missing(self):
+        self.assertTrue(scanner.is_folder_enabled({"visible": True}))
+        self.assertFalse(scanner.is_folder_enabled({"visible": False}))
+
+    def test_enabled_has_priority_over_visible(self):
+        self.assertFalse(scanner.is_folder_enabled({"enabled": False, "visible": True}))
+        self.assertTrue(scanner.is_folder_enabled({"enabled": True, "visible": False}))
+
+    def test_enabled_defaults_to_true_when_no_flag(self):
+        self.assertTrue(scanner.is_folder_enabled({"name": "Movies"}))
+        self.assertTrue(scanner.is_folder_enabled({}))
+
+
 if __name__ == "__main__":
     unittest.main()

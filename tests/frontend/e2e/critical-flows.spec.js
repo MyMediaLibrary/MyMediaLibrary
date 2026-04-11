@@ -9,7 +9,7 @@ function configuredPayload() {
     needs_onboarding: false,
     ui: { language: 'fr' },
     jellyseerr: { enabled: true },
-    folders: [{ name: 'Cinema', type: 'movie', visible: true, missing: false }],
+    folders: [{ name: 'Cinema', type: 'movie', enabled: true, visible: true, missing: false }],
   };
 }
 
@@ -18,7 +18,7 @@ function onboardingPayload() {
     needs_onboarding: true,
     ui: { language: 'fr' },
     jellyseerr: { enabled: false },
-    folders: [{ name: 'Cinema', type: '', visible: true, missing: false }],
+    folders: [{ name: 'Cinema', type: '', enabled: true, visible: true, missing: false }],
   };
 }
 
@@ -202,6 +202,40 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.system.inventory_enabled).toBe(true);
+});
+
+test('folder active toggle persists using enabled with visible compatibility', async ({ page }) => {
+  let capturedPayload = null;
+
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    capturedPayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => openSettings());
+
+  const folderToggle = page.locator('input[data-folder-key="enabled"]').first();
+  await expect(folderToggle).toBeChecked();
+  await folderToggle.evaluate((el) => {
+    el.checked = false;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.click('#settingsSaveBtn');
+
+  await expect.poll(() => capturedPayload).not.toBeNull();
+  expect(capturedPayload.folders[0].enabled).toBe(false);
+  expect(capturedPayload.folders[0].visible).toBe(false);
 });
 
 test('resetting persisted config makes onboarding visible again', async ({ page }) => {
