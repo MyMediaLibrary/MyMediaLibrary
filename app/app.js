@@ -1351,6 +1351,16 @@ let allItems=[], categories=[], groups=[];
   function sortItems(items) {
     const v=document.getElementById('sortSelect').value;
     return [...items].sort((a,b)=>{
+      if (v === 'score-asc' || v === 'score-desc') {
+        const aScore = Number(a.quality?.score);
+        const bScore = Number(b.quality?.score);
+        const aHasScore = Number.isFinite(aScore);
+        const bHasScore = Number.isFinite(bScore);
+        if (!aHasScore && !bHasScore) return 0;
+        if (!aHasScore) return 1;
+        if (!bHasScore) return -1;
+        return v === 'score-desc' ? bScore - aScore : aScore - bScore;
+      }
       switch(v){
         case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
         case 'title-desc':   return (b.title||'').localeCompare(a.title||'');

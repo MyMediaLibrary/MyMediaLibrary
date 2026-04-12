@@ -78,6 +78,8 @@
     "year_asc": "Year ↑",
     "size_desc": "Size ↓",
     "size_asc": "Size ↑",
+    "score_desc": "Score ↓",
+    "score_asc": "Score ↑",
     "added_desc": "Recent"
   },
   "library": {
