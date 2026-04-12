@@ -18,11 +18,11 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 ### Fonctionnalités
 
 - **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques (résolution, codec vidéo/audio, HDR)
-- **Filtres avancés** : filtrage multi-critères par dossier, type, résolution, plateforme de streaming, codec vidéo, codec audio et langue audio — avec persistance entre sessions
+- **Filtres unifiés** : système cohérent de dropdowns multi-sélection (dossiers, résolution, langues, codecs, plateformes) avec mode inclure/exclure, bouton "Tout sélectionner", tri dynamique par volume et persistance
 - **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
-- **Scoring qualité** : système de score qualité (0–100) avec niveaux visuels, filtres et analyse détaillée
+- **Scoring qualité** : score qualité (0–100) avec badge coloré, filtre par slider min/max et gestion des éléments sans score
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, barre latérale redimensionnable
 
 ### Démarrage rapide
@@ -40,6 +40,7 @@ services:
       - /chemin/vers/ta/mediatheque:/library:ro
     environment:
       LIBRARY_PATH: /library
+      TZ: Europe/Paris
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -76,11 +77,11 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 ### Features
 
 - **Unified library**: browse your movies and TV shows in grid or table view, with posters, metadata, and technical details (resolution, video/audio codec, HDR)
-- **Advanced filters**: multi-criteria filtering by folder, type, resolution, streaming provider, video codec, audio codec, and audio language — persisted between sessions
+- **Unified filters**: consistent multi-select dropdown system (folders, resolution, languages, codecs, providers) with include/exclude mode, "Select all", dynamic count sorting, and persistence
 - **Streaming availability**: Jellyseerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Jellyseerr), schedulable via cron, configurable from the UI
-- **Quality scoring**: quality scoring system (0–100) with visual levels, filters, and detailed analysis
+- **Quality scoring**: quality score (0–100) with color badge, min/max slider filtering, and support for items without score
 - **Bilingual interface**: fully available in French and English, light/dark theme, resizable sidebar
 
 ### Quick start
@@ -98,6 +99,7 @@ services:
       - /path/to/your/library:/library:ro
     environment:
       LIBRARY_PATH: /library
+      TZ: Europe/Paris
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```

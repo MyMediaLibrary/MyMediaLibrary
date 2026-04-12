@@ -41,6 +41,15 @@
 
 Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
 
+### Timezone (`TZ`)
+
+The container reads the `TZ` environment variable at startup (fallback: `UTC`). This depends on the system/container runtime (Docker/host OS) and is propagated to scanner and cron.
+
+Main impact areas:
+- log timestamps (for example `scanner.log`)
+- technical timestamps (scan state, execution times)
+- UI displays based on timestamps
+
 ---
 
 ## 3. Installation
@@ -79,6 +88,7 @@ services:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `LIBRARY_PATH` | ✅ | — | Root path of the library inside the container |
+| `TZ` | ❌ | `UTC` | Container timezone (logs and timestamps) |
 | `APP_PASSWORD` | ❌ | — | Password (enables login screen) |
 
 Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
@@ -182,29 +192,33 @@ Each card displays:
 
 ## 7. Filters
 
-### Pill filters (low cardinality)
+Main library filters now use a unified dropdown architecture (same behavior on desktop/mobile) for:
+- **Folders**
+- **Resolution**
+- **Audio languages**
+- **Video codecs**
+- **Audio codecs**
+- **Streaming providers**
 
-- **Type** — All / Movies / Series
-- **Resolution** — All / 4K / 1080p / 720p / SD
-- **Group** — by configured folder
+Shared capabilities:
+- multi-selection
+- per-filter **Include / Exclude** mode
+- **Select all** action
+- dynamic counts (faceted logic: computed against other active filters)
+- descending sort by item count
+- zero-count options hidden
+- active options kept visible even when count reaches 0
+- filter state persisted and restored after reload
 
-These filters are rendered as pill buttons (single selection).
+> The **Type** filter (All / Movies / Series) remains a dedicated quick control.
 
-### Multi-select dropdown filters (high cardinality)
+### User example
 
-- **Streaming (FR)** — available providers (Netflix, Prime Video…) + "No provider" option
-- **Video codec** — H.264, H.265/HEVC, AV1…
-- **Audio codec** — AAC, AC3, EAC3, TrueHD…
-
-These filters use a dropdown with checkboxes. Selection is multiple (OR logic: an item passes if it matches **at least one** of the selected codecs/providers). Selection state is persisted in `localStorage`.
-
-#### "No provider" option
-
-In the Streaming filter, a special **"No provider"** option is shown first. It filters items that have no streaming provider associated.
-
-#### Dynamic counts
-
-The counts displayed in each dropdown correspond to items matching the **other active filters** (faceted search logic — `baseItems(except)` excludes the current filter from the count calculation).
+1. Open **Audio languages**.
+2. Select `French` + `English` (multi-select).
+3. Switch to **Exclude** mode to remove these languages from results.
+4. Use **Select all** to toggle all currently visible options.
+5. Notice options are automatically sorted by current matching volume.
 
 ---
 
@@ -229,6 +243,42 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 ## 9. Quality Scoring
 
 Each media item receives a global **quality score out of 100**. This score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+
+### Score filter (0–100 slider)
+
+The score filter is no longer a dropdown: it is a **dual-handle slider** with two bounds:
+- `min`
+- `max`
+
+Filtering rule:
+
+```text
+score >= min && score <= max
+```
+
+The slider updates displayed values in real-time while dragging, then applies filtering when released (smooth UX without expensive continuous re-filtering).
+
+### Items without score
+
+Dedicated option: **Include items without score**.
+
+Behavior:
+- enabled by default (range 0–100)
+- automatically disabled when the range is narrowed from default
+- can be manually re-enabled at any time
+
+### Score colors (visual consistency)
+
+Score colors follow a consistent gradient across the app:
+
+```text
+red → orange → yellow → light green → dark green
+```
+
+Used for:
+- score badges
+- slider visual markers
+- consistent quality-level visuals in stats/UI
 
 ### Score structure
 
@@ -346,13 +396,24 @@ Hovering the quality badge shows a complete detailed tooltip:
 - full breakdown by category
 - applied penalties
 
-### Filters
+### Full score disable (`enable_score`)
 
-Quality scoring integrates with dedicated filters:
-- level-based filter pills
-- consistent level colors
-- multi-selection support
-- include / exclude behavior
+The `enable_score` system setting can disable the feature entirely.
+
+When disabled:
+- no score computation in backend scan
+- score fields removed from `library.json`
+- no score rendering in UI
+- no score filter
+- score-based sorting/stats disabled
+
+### Key behaviors
+
+- filters persist and restore after reload
+- zero-count options are hidden (except active ones)
+- empty filter sections are automatically hidden
+- option order updates dynamically by counts
+- UI reacts immediately to configuration changes (for example score OFF)
 
 ### Stats
 
