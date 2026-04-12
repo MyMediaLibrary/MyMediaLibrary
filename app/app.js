@@ -934,10 +934,10 @@ let allItems=[], categories=[], groups=[];
 
   function matchesScoreRange(score, rangeKey) {
     const value = Number(score);
-    if (!Number.isFinite(value)) return null;
+    if (!Number.isFinite(value)) return false;
     const range = getScoreRangeByKey(rangeKey);
     if (!range) return false;
-    return value >= range.min && (range.maxInclusive ? value <= range.max : value < range.max);
+    return getQualityLevelFromScore(value) === range.level;
   }
 
   function getScoreRangeKey(score) {
