@@ -189,7 +189,7 @@
     .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
       display:flex;align-items:center;justify-content:center;padding:16px}
     .settings-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;
-      width:min(100%, 980px);max-width:980px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
+      width:min(100%, 760px);max-width:760px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
       display:flex;flex-direction:column;height:min(88vh, 820px)}
     .settings-header{display:flex;align-items:center;justify-content:space-between;
       padding:16px 20px;border-bottom:1px solid var(--border)}
@@ -228,8 +228,8 @@
     .settings-collapsible:hover{border-color:var(--accent)}
     .settings-collapsible-icon{color:var(--muted);transition:transform .2s ease}
     .settings-collapsible[aria-expanded="false"] .settings-collapsible-icon{transform:rotate(-90deg)}
-    .settings-collapsible-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .25s ease,opacity .25s ease;opacity:1;overflow:hidden}
-    .settings-collapsible-body.is-collapsed{grid-template-rows:0fr;opacity:.65}
+    .settings-collapsible-body{display:block;overflow:hidden;transition:opacity .2s ease;opacity:1}
+    .settings-collapsible-body.is-collapsed{display:none;opacity:0}
     #cfgJellyseerrFields{display:block}
     /* RESOLUTION BADGE */
     .res-badge{display:inline-block;font-size:10px;font-weight:700;font-family:'Syne',sans-serif;

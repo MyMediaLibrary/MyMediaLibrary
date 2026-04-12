@@ -3170,6 +3170,7 @@ let allItems=[], categories=[], groups=[];
     const expanded = btn.getAttribute('aria-expanded') !== 'false';
     btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
     panel.classList.toggle('is-collapsed', expanded);
+    panel.style.display = expanded ? 'none' : 'block';
   }
 
   function _isFolderEnabled(folder) {
