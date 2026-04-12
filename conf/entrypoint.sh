@@ -65,7 +65,7 @@ WRAPPER="/app/scan_cron.sh"
 cat > "$WRAPPER" << 'WRAPEOF'
 #!/bin/sh
 . /app/scanner_env.sh
-exec python3 /app/scanner.py >> "${LOG_PATH:-/data/scanner.log}" 2>&1
+exec python3 /app/scanner.py
 WRAPEOF
 chmod +x "$WRAPPER"
 
