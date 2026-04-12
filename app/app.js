@@ -159,6 +159,12 @@ let allItems=[], categories=[], groups=[];
     return normalized;
   }
 
+  function canonicalAudioLanguageFilterKey(raw) {
+    const key = canonicalFilterMissingKey(raw);
+    if (key === 'UNKNOWN') return FILTER_NONE_KEY; // legacy persisted value for audio language only
+    return key;
+  }
+
   function getQualityLevelFromScore(score) {
     if (window.MMLLogic?.getQualityLevelFromScore) {
       return window.MMLLogic.getQualityLevelFromScore(score);
@@ -474,7 +480,7 @@ let allItems=[], categories=[], groups=[];
       }
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs.map(canonicalFilterMissingKey).filter(Boolean));
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs.map(canonicalFilterMissingKey).filter(Boolean));
-      if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages.map(canonicalFilterMissingKey).filter(Boolean));
+      if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages.map(canonicalAudioLanguageFilterKey).filter(Boolean));
       if (isScoreEnabled() && Array.isArray(s.activeQualityLevels)) {
         activeQualityLevels = new Set(
           s.activeQualityLevels
