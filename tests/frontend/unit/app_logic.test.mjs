@@ -132,6 +132,7 @@ test('score range helpers handle boundaries and missing values', () => {
   assert.equal(logic.matchesScoreRange(21, '0_20'), false);
   assert.equal(logic.matchesScoreRange(100, '80_100'), true);
   assert.equal(logic.matchesScoreRange(undefined, '80_100'), false);
+  assert.equal(logic.getScoreRangeKey({ quality: { score: 10, level: 5 } }), '80_100');
 });
 
 test('applyFilters handles multi-filters include/exclude consistently', () => {

@@ -96,8 +96,10 @@
     return SCORE_FILTER_RANGES.find((r) => r.level === numeric)?.key || null;
   }
 
-  function getScoreRangeKey(score) {
-    const level = getScoredQualityLevel({ quality: { score } });
+  function getScoreRangeKey(input) {
+    const level = (input && typeof input === 'object')
+      ? getScoredQualityLevel(input)
+      : getScoredQualityLevel({ quality: { score: input } });
     if (level === null) return null;
     return SCORE_FILTER_RANGES.find((r) => r.level === level)?.key || null;
   }
@@ -152,7 +154,7 @@
       out,
       new Set([...(state.activeQualityLevels || new Set())].map((k) => normalizeScoreRangeKey(k)).filter(Boolean)),
       state.qualityExclude,
-      (i) => getScoreRangeKey(i?.quality?.score)
+      (i) => getScoreRangeKey(i)
     );
 
     return applySearch(out, state.searchQuery || '');
@@ -189,7 +191,7 @@
         const key = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages);
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'quality') {
-        const key = getScoreRangeKey(item?.quality?.score);
+        const key = getScoreRangeKey(item);
         if (key) counts[key] += 1;
       }
     });
