@@ -116,9 +116,15 @@
     "saved": "✓ Sauvegardé",
     "save_error": "Erreur lors de la sauvegarde : {msg}",
     "tabs": {
-      "library": "📁 Bibliothèque",
-      "jellyseerr": "🔍 Jellyseerr",
-      "system": "⚙️ Système"
+      "library": "Bibliothèque",
+      "configuration": "Configuration",
+      "connections": "Connexions",
+      "system": "Système"
+    },
+    "connections": {
+      "jellyseerr_block": "Jellyseerr",
+      "providers_block": "Providers",
+      "enable_jellyseerr": "Activer Jellyseerr"
     },
     "library": {
       "path": "Chemin bibliothèque",

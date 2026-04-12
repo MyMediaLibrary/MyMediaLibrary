@@ -116,9 +116,15 @@
     "saved": "✓ Saved",
     "save_error": "Error saving: {msg}",
     "tabs": {
-      "library": "📁 Library",
-      "jellyseerr": "🔍 Jellyseerr",
-      "system": "⚙️ System"
+      "library": "Library",
+      "configuration": "Configuration",
+      "connections": "Connections",
+      "system": "System"
+    },
+    "connections": {
+      "jellyseerr_block": "Jellyseerr",
+      "providers_block": "Providers",
+      "enable_jellyseerr": "Enable Jellyseerr"
     },
     "library": {
       "path": "Library path",
