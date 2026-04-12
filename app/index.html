@@ -77,18 +77,50 @@
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-resizer" id="sidebarResizer"></div>
 
+  <div class="sidebar-fixed">
   <!-- BRAND + TOGGLE -->
   <div class="sidebar-brand sidebar-section" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
     <div style="min-width:0;flex:1">
       <div class="brand-logo" style="font-size:16px;font-weight:800;font-family:'Syne',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📼 MyMediaLibrary</div>
-      <div class="brand-sub" id="brandSub" style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+      <div class="brand-sub" id="brandSub" style="display:none"></div>
     </div>
-
   </div>
 
-  <!-- GLOBAL ACTIONS (sticky with title) -->
+  <!-- STATS KPIs -->
+  <div class="sidebar-section" style="width:100%">
+    <div class="stats-bar" id="statsBar"></div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="sidebar-section" style="width:100%">
+    <div class="sidebar-search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+      </svg>
+      <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off"/>
+      <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
+    </div>
+  </div>
+
+  <div class="sidebar-section sidebar-sort-reset" style="width:100%">
+    <div class="storage-block sort-inline-wrap" id="sortSection">
+      <div class="storage-title" data-i18n="filters.sort_by">Trier par</div>
+      <select class="tab-sort-select" id="sortSelect" style="width:100%;padding-left:10px">
+        <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
+        <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
+        <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
+        <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
+        <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
+        <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
+        <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
+      </select>
+    </div>
+    <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
+  </div>
+
+  <!-- GLOBAL ACTIONS -->
   <div class="sidebar-section sidebar-global-actions">
-    <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:10px"></div>
+    <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0">
       <div class="scan-btn-wrap" id="scanBtnWrap" style="flex:1;min-width:0;overflow:hidden">
         <button class="scan-btn scan-btn-main" id="scanMainBtn" onclick="triggerScan()" style="width:100%;justify-content:center">
@@ -127,44 +159,10 @@
       </button>
     </div>
   </div>
+  </div>
 
   <!-- FILTERS WRAPPER (column in sidebar, row in top) -->
   <div class="sidebar-filters">
-    <!-- STATS KPIs -->
-    <div class="sidebar-section" style="width:100%">
-      <div class="stats-bar" id="statsBar"></div>
-    </div>
-
-    <!-- SEARCH -->
-    <div class="sidebar-section" style="width:100%">
-      <div class="sidebar-search-wrap">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-        </svg>
-        <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off"/>
-        <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
-      </div>
-    </div>
-    <div class="sidebar-section" style="width:100%">
-      <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
-    </div>
-
-    <!-- SORT (library only) -->
-    <div class="sidebar-section" id="sortSection" style="width:100%">
-      <div class="storage-block">
-        <div class="storage-title" data-i18n="filters.sort_by">Trier par</div>
-        <select class="tab-sort-select" id="sortSelect" style="width:100%;padding-left:10px">
-          <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
-          <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
-          <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
-          <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
-          <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
-          <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
-          <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
-        </select>
-      </div>
-    </div>
-
     <!-- TYPE FILTER -->
     <div class="sidebar-section" id="typeSection" style="width:100%">
       <div class="storage-block">
