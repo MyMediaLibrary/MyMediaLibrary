@@ -3513,7 +3513,7 @@ let allItems=[], categories=[], groups=[];
     const tabs = document.querySelector('.settings-tabs');
     const saveBtn = document.getElementById('settingsSaveBtn');
     if (tabs) tabs.style.display = onMobile ? 'none' : '';
-    if (saveBtn) saveBtn.style.display = onMobile ? 'none' : 'block';
+    if (saveBtn) saveBtn.style.display = 'block';
 
     const panels = document.querySelectorAll('.stab-panel[data-mobile-panel]');
     panels.forEach((panel, index) => {
