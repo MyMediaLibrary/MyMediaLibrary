@@ -329,6 +329,20 @@ let allItems=[], categories=[], groups=[];
     { key: '60_80', min: 60, max: 80, maxInclusive: false, labelKey: 'filters.score.range_60_80', level: 4 },
     { key: '80_100', min: 80, max: 100, maxInclusive: true, labelKey: 'filters.score.range_80_100', level: 5 },
   ];
+
+  function isFiltersDebugEnabled() {
+    try {
+      return window.__MML_DEBUG_FILTERS__ === true || localStorage.getItem('mml_debug_filters') === '1';
+    } catch (e) {
+      return window.__MML_DEBUG_FILTERS__ === true;
+    }
+  }
+
+  function logFiltersDebug(message, payload) {
+    if (!isFiltersDebugEnabled()) return;
+    if (payload !== undefined) console.info('[filters]', message, payload);
+    else console.info('[filters]', message);
+  }
   let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
@@ -1084,12 +1098,31 @@ let allItems=[], categories=[], groups=[];
       const key = getScoreRangeKey(i?.quality?.score);
       if (key) counts[key] += 1;
     });
-    const scoredTotal = Object.values(counts).reduce((s, n) => s + n, 0);
-    const total = scoredTotal + noneCount;
+
+    const invalidRanges = SCORE_FILTER_RANGES.filter(range => !range?.key || typeof counts[range.key] !== 'number');
+    if (invalidRanges.length) {
+      console.warn('[filters] score filter has invalid range config', invalidRanges);
+    }
+    if (!SCORE_FILTER_RANGES.some(range => range.key === '0_20')) {
+      console.warn('[filters] score filter expected key is missing from source config', SCORE_FILTER_RANGES);
+    }
+
+    const orderedKeys = SCORE_FILTER_RANGES.map(r => r.key);
+    logFiltersDebug('detected filters before score render', {
+      hasScore: true,
+      scoreOrderedKeys: orderedKeys,
+      scoreCounts: counts,
+      baseItems: base.length,
+      scoredItems: Object.values(counts).reduce((sum, count) => sum + count, 0),
+    });
+
     ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
       const sec = document.getElementById(cid);
-      if (!sec) return;
-      if (!total) { sec.style.display = 'none'; return; }
+      if (!sec) {
+        console.warn('[filters] score filter target container not found', cid);
+        return;
+      }
+
       renderFilterDropdown({
         containerId: cid,
         counts,
@@ -1098,7 +1131,7 @@ let allItems=[], categories=[], groups=[];
         toggleFn: 'toggleQualityFilter',
         clearFn: 'clearQualityFilter',
         getDisplay: k => qualityRangeLabel(k),
-        orderedKeys: SCORE_FILTER_RANGES.map(r => r.key),
+        orderedKeys,
         excludeMode: qualityExclude,
         onToggleExclude: 'toggleQualityExclude',
         getOptionPrefixHtml: k => {
@@ -1107,6 +1140,12 @@ let allItems=[], categories=[], groups=[];
           return '<span class="score-range-dot ' + getQualityLevelClass(range.level) + '"></span>';
         }
       });
+
+      if (sec.style.display === 'none') {
+        console.warn('[filters] score filter expected but not rendered', { containerId: cid, counts });
+      } else {
+        logFiltersDebug('score filter injected in DOM', { containerId: cid, options: orderedKeys.length });
+      }
     });
   }
 
