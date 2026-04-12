@@ -69,7 +69,17 @@
     "include": "Inclure",
     "exclude": "Exclure",
     "except": "Sauf",
-    "reset_all": "Réinitialiser les filtres"
+    "reset_all": "Réinitialiser les filtres",
+    "score": {
+      "label": "Score",
+      "all": "Tous",
+      "none": "Aucun",
+      "range_0_20": "0–20",
+      "range_20_40": "20–40",
+      "range_40_60": "40–60",
+      "range_60_80": "60–80",
+      "range_80_100": "80–100"
+    }
   },
   "sort": {
     "label": "Trier par",
