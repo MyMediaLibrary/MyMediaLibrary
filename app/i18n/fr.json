@@ -72,6 +72,7 @@
     "reset_all": "Réinitialiser les filtres"
   },
   "sort": {
+    "label": "Trier par",
     "title_asc": "Titre A-Z",
     "title_desc": "Titre Z-A",
     "year_desc": "Année ↓",
