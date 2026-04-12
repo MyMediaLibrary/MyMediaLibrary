@@ -1128,6 +1128,11 @@ def migrate_env_to_config() -> None:
         sys_cfg["enable_score"] = False
         changed = True
 
+    ui_cfg = cfg.setdefault("ui", {})
+    if "synopsis_on_hover" not in ui_cfg:
+        ui_cfg["synopsis_on_hover"] = False
+        changed = True
+
     if changed:
         save_config(cfg)
         log.info("[MIGRATION] Env vars migrated to config.json")
@@ -1435,7 +1440,7 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
 
 def _is_score_enabled(cfg: dict | None) -> bool:
     system = (cfg or {}).get("system") or {}
-    return system.get("enable_score", False) is True
+    return system.get("enable_score") is True
 
 
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:

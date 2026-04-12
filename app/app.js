@@ -336,7 +336,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=true;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -391,7 +391,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function isScoreEnabled() {
-    return enableScore !== false;
+    return enableScore === true;
   }
 
   function sanitizeScoreState() {

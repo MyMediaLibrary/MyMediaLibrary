@@ -467,42 +467,13 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 - Langue (FR/EN)
 - Couleur d'accent (sélecteur + reset)
-- Synopsis au survol (on/off, désactivé par défaut)
-- Activer le score de qualité (`system.enable_score`, désactivé par défaut)
-- Générer l'inventaire brut (`system.inventory_enabled`, désactivé par défaut)
+- Synopsis au survol (on/off, **désactivé par défaut**)
+- Score de qualité (on/off, **désactivé par défaut**)
+- Inventaire brut `library_inventory.json` (on/off, **désactivé par défaut**)
 - Scan automatique (cron)
 - Niveau de log
 - Version
 
-### Configuration système (`config.json`)
-
-`enable_score` se trouve dans le bloc `system` :
-
-```json
-{
-  "system": {
-    "enable_score": false
-  }
-}
-```
-
-- type : `boolean`
-- défaut : `false`
-
-### Comportement technique de `enable_score`
-
-- Le backend lit `system.enable_score` au lancement du scan.
-- Si `false`, le pipeline de scoring est totalement bypassé.
-- Si `false`, les champs score sont supprimés des items scannés et des items préservés avant écriture de `library.json`.
-- L'UI se base sur la config / les métadonnées de bibliothèque et masque les contrôles score quand la fonctionnalité est coupée.
-
-### Impact performance
-
-Désactiver le score réduit généralement :
-- le temps de scan
-- la charge CPU pendant le scan
-- la taille de `library.json`
-
-Particulièrement utile pour les grosses bibliothèques.
+> Le synopsis au survol, le score qualité et l'inventaire sont considérés comme des fonctionnalités avancées : ils sont opt-in et doivent être activés explicitement dans les paramètres.
 
 ---

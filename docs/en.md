@@ -466,42 +466,13 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 
 - Language (FR/EN)
 - Accent color (picker + reset)
-- Synopsis on hover (on/off, default: disabled)
-- Enable quality score (`system.enable_score`, default: disabled)
-- Generate raw inventory (`system.inventory_enabled`, default: disabled)
+- Synopsis on hover (on/off, **disabled by default**)
+- Quality score (on/off, **disabled by default**)
+- Raw inventory `library_inventory.json` (on/off, **disabled by default**)
 - Auto-scan (cron)
 - Log level
 - Version
 
-### System configuration (`config.json`)
-
-`enable_score` lives in the `system` block:
-
-```json
-{
-  "system": {
-    "enable_score": false
-  }
-}
-```
-
-- type: `boolean`
-- default: `false`
-
-### Technical behavior of `enable_score`
-
-- Backend reads `system.enable_score` at scan time.
-- If `false`, quality scoring is fully bypassed (no scoring pipeline execution).
-- If `false`, score fields are stripped from scanned and preserved items before writing `library.json`.
-- UI resolves score availability from config/library metadata and hides score-only controls when disabled.
-
-### Performance impact
-
-Disabling score typically reduces:
-- scan duration
-- CPU usage during scan
-- `library.json` size
-
-Especially useful for very large libraries.
+> Synopsis on hover, quality scoring, and raw inventory are advanced features: they are opt-in and must be enabled manually in settings.
 
 ---

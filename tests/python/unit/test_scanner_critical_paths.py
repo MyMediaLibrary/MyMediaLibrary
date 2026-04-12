@@ -137,6 +137,7 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
 
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"system": {}}))
+        self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": "true"}}))
         self.assertTrue(scanner._is_score_enabled({"system": {"enable_score": True}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": False}}))
 
