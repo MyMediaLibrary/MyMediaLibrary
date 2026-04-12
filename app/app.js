@@ -1733,6 +1733,12 @@ let allItems=[], categories=[], groups=[];
     render();
     saveState();
   });
+  document.getElementById('sortSelectMobile')?.addEventListener('change', function() {
+    const desktopSort = document.getElementById('sortSelect');
+    if (desktopSort) desktopSort.value = this.value;
+    render();
+    saveState();
+  });
 
 
 
@@ -2550,7 +2556,6 @@ let allItems=[], categories=[], groups=[];
       });
     if (!wasScanning && _isScanning) {
       document.getElementById('scanDropdown')?.classList.remove('open');
-      closeMobileActionsMenu();
       closeMobileScanSheet();
     }
   }
@@ -2598,7 +2603,6 @@ let allItems=[], categories=[], groups=[];
   function triggerScan(mode = _scanMode) {
     if (_isScanning) return;
     selectScanMode(mode);
-    closeMobileActionsMenu();
     closeMobileScanSheet();
     setScanControlsState(true);
     _logOffset = 0;
@@ -2754,29 +2758,10 @@ let allItems=[], categories=[], groups=[];
 
   // ── MOBILE NAV ───────────────────────────────────────
   let currentMobileTab = 'library';
-  let mobileActionsMenuOpen = false;
   let mobileScanSheetOpen = false;
-
-  function toggleMobileActionsMenu(event) {
-    if (event) event.stopPropagation();
-    mobileActionsMenuOpen = !mobileActionsMenuOpen;
-    const menu = document.getElementById('mobileActionsMenu');
-    const btn = document.getElementById('mobileActionsBtn');
-    if (menu) menu.classList.toggle('open', mobileActionsMenuOpen);
-    if (btn) btn.style.color = mobileActionsMenuOpen ? 'var(--accent)' : '';
-  }
-
-  function closeMobileActionsMenu() {
-    mobileActionsMenuOpen = false;
-    const menu = document.getElementById('mobileActionsMenu');
-    const btn = document.getElementById('mobileActionsBtn');
-    if (menu) menu.classList.remove('open');
-    if (btn) btn.style.color = '';
-  }
 
   function openMobileScanSheet() {
     if (_isScanning) return;
-    closeMobileActionsMenu();
     mobileScanSheetOpen = true;
     document.getElementById('mobileScanSheet')?.classList.add('open');
   }
@@ -2795,11 +2780,10 @@ let allItems=[], categories=[], groups=[];
   let mobileFiltersOpen = false;
 
   function toggleMobileFilters() {
-    closeMobileActionsMenu();
     mobileFiltersOpen = !mobileFiltersOpen;
     const panel = document.getElementById('mobileFiltersPanel');
     const btn   = document.getElementById('mobileFilterBtn');
-    if (panel) panel.style.display = mobileFiltersOpen ? 'block' : 'none';
+    if (panel) panel.classList.toggle('open', mobileFiltersOpen);
     if (btn)   btn.style.color = mobileFiltersOpen ? 'var(--accent)' : '';
     if (mobileFiltersOpen) syncMobileFilters();
   }
@@ -2808,7 +2792,7 @@ let allItems=[], categories=[], groups=[];
     mobileFiltersOpen = false;
     const panel = document.getElementById('mobileFiltersPanel');
     const btn   = document.getElementById('mobileFilterBtn');
-    if (panel) panel.style.display = 'none';
+    if (panel) panel.classList.remove('open');
     if (btn)   btn.style.color = '';
   }
 
@@ -2839,6 +2823,9 @@ let allItems=[], categories=[], groups=[];
     const mSearch = document.getElementById('searchInputMobile');
     const dSearch = document.getElementById('searchInput');
     if (mSearch && dSearch && mSearch.value !== dSearch.value) mSearch.value = dSearch.value;
+    const mSort = document.getElementById('sortSelectMobile');
+    const dSort = document.getElementById('sortSelect');
+    if (mSort && dSort && mSort.value !== dSort.value) mSort.value = dSort.value;
     // Mirror filter sections to mobile panel
     // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
     ['storageSection','resolutionSection'].forEach(id => {
@@ -2848,7 +2835,7 @@ let allItems=[], categories=[], groups=[];
     });
     // Sync stats bar
     const sbSrc = document.getElementById('statsBar');
-    document.querySelectorAll('#mobileStatsBar').forEach(el => {
+    document.querySelectorAll('#mobileStatsBar, #mobileFiltersStats').forEach(el => {
       if (sbSrc) el.innerHTML = sbSrc.innerHTML;
     });
     // Sync type pills
@@ -3264,7 +3251,6 @@ let allItems=[], categories=[], groups=[];
   }
 
   function openSettings() {
-    closeMobileActionsMenu();
     closeMobileScanSheet();
     _settingsJsrTestOk = false;
     loadSettings();
@@ -3381,13 +3367,6 @@ let allItems=[], categories=[], groups=[];
         closeMobileFilters();
       }
     }
-    if (mobileActionsMenuOpen) {
-      const menu = document.getElementById('mobileActionsMenu');
-      const btn = document.getElementById('mobileActionsBtn');
-      if (menu && !menu.contains(e.target) && btn && !btn.contains(e.target)) {
-        closeMobileActionsMenu();
-      }
-    }
   });
 
   function focusGlobalSearch() {
@@ -3431,7 +3410,6 @@ let allItems=[], categories=[], groups=[];
       if (escapeSearchInteraction()) return;
       const overlay = document.getElementById('settingsOverlay');
       if (overlay && overlay.style.display !== 'none') closeSettings();
-      closeMobileActionsMenu();
       if (mobileScanSheetOpen) closeMobileScanSheet();
     }
   });

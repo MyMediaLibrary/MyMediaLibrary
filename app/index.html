@@ -54,20 +54,12 @@
 <!-- MOBILE TOPBAR -->
 <div class="mobile-topbar" id="mobileTopbar">
   <div class="mobile-topbar-title">📼 MyMediaLibrary</div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <button class="icon-btn mobile-topbar-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-      </svg>
-      <span data-i18n="mobile.filters">Filtres</span>
-    </button>
-    <button class="icon-btn mobile-topbar-btn" id="mobileActionsBtn" onclick="toggleMobileActionsMenu(event)" data-i18n-title="mobile.actions_menu">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>
-      </svg>
-      <span data-i18n="mobile.actions_short">⋯</span>
-    </button>
-  </div>
+  <button class="icon-btn mobile-topbar-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+    </svg>
+    <span data-i18n="mobile.filters">Filtres</span>
+  </button>
 </div>
 
 
@@ -77,7 +69,7 @@
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-resizer" id="sidebarResizer"></div>
 
-  <div class="sidebar-fixed">
+  <div class="sidebar-top">
   <!-- BRAND + TOGGLE -->
   <div class="sidebar-brand sidebar-section" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
     <div style="min-width:0;flex:1">
@@ -120,47 +112,6 @@
     <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
   </div>
 
-  <!-- GLOBAL ACTIONS -->
-  <div class="sidebar-section sidebar-global-actions">
-    <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0">
-      <div class="scan-btn-wrap" id="scanBtnWrap" style="flex:1;min-width:0;overflow:hidden">
-        <button class="scan-btn scan-btn-main" id="scanMainBtn" onclick="triggerScan()" style="width:100%;justify-content:center">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-          </svg>
-          <span id="scanBtnLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px" data-i18n="scan.start">Scanner</span>
-        </button>
-        <button class="scan-btn scan-btn-arrow" id="scanArrowBtn" onclick="toggleScanDropdown(event)">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <div class="scan-dropdown" id="scanDropdown">
-          <div class="scan-dropdown-item" onclick="selectScanMode('quick')">
-            <span class="sd-label" data-i18n="scan.mode_quick">Scan rapide</span><span class="sd-desc" data-i18n="scan.mode_quick_desc">Fichiers et métadonnées locales uniquement, sans appel réseau</span>
-          </div>
-          <div class="scan-dropdown-item" onclick="selectScanMode('full')">
-            <span class="sd-label" data-i18n="scan.mode_full">Scan complet</span><span class="sd-desc" data-i18n="scan.mode_full_desc">Resynchronisation complète incluant les disponibilités streaming</span>
-          </div>
-        </div>
-      </div>
-      <button class="icon-btn" onclick="openSettings()" style="flex-shrink:0">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-      </button>
-      <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" style="flex-shrink:0">
-        <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
-          <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
-          <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-        </svg>
-      </button>
-    </div>
-  </div>
   </div>
 
   <!-- FILTERS WRAPPER (column in sidebar, row in top) -->
@@ -189,6 +140,49 @@
     <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="qualitySection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="audioLanguageSection" style="display:none;width:100%"></div>
+  </div>
+
+  <div class="sidebar-bottom">
+    <div class="sidebar-section sidebar-global-actions">
+      <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0">
+        <div class="scan-btn-wrap" id="scanBtnWrap" style="flex:1;min-width:0;overflow:hidden">
+          <button class="scan-btn scan-btn-main" id="scanMainBtn" onclick="triggerScan()" style="width:100%;justify-content:center">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+            </svg>
+            <span id="scanBtnLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px" data-i18n="scan.start">Scanner</span>
+          </button>
+          <button class="scan-btn scan-btn-arrow" id="scanArrowBtn" onclick="toggleScanDropdown(event)">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="scan-dropdown" id="scanDropdown">
+            <div class="scan-dropdown-item" onclick="selectScanMode('quick')">
+              <span class="sd-label" data-i18n="scan.mode_quick">Scan rapide</span><span class="sd-desc" data-i18n="scan.mode_quick_desc">Fichiers et métadonnées locales uniquement, sans appel réseau</span>
+            </div>
+            <div class="scan-dropdown-item" onclick="selectScanMode('full')">
+              <span class="sd-label" data-i18n="scan.mode_full">Scan complet</span><span class="sd-desc" data-i18n="scan.mode_full_desc">Resynchronisation complète incluant les disponibilités streaming</span>
+            </div>
+          </div>
+        </div>
+        <button class="icon-btn" onclick="openSettings()" style="flex-shrink:0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" style="flex-shrink:0">
+          <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
+      </div>
+    </div>
   </div>
 </aside>
 <!-- MAIN CONTENT -->
@@ -399,11 +393,9 @@
   </div>
 
   <!-- MOBILE FILTERS PANEL (slide-down overlay) -->
-  <div id="mobileFiltersPanel" style="display:none;position:fixed;top:48px;left:0;right:0;z-index:149;
-    background:var(--surface);border-bottom:1px solid var(--border);
-    padding:12px 14px 16px;max-height:70vh;overflow-y:auto;
-    box-shadow:0 8px 24px rgba(0,0,0,.3)">
-    <div style="margin-bottom:10px">
+  <div id="mobileFiltersPanel" class="mobile-filters-panel">
+    <div class="mobile-filters-top">
+      <div id="mobileFiltersStats" class="mobile-filters-stats"></div>
       <div class="sidebar-search-wrap">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
@@ -411,38 +403,53 @@
         <input type="search" id="searchInputMobile" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off" oninput="onMobileSearchInput(this.value)"/>
         <button class="search-clear" id="searchClearMobile" onclick="clearSearchMobile()" style="display:none" type="button">✕</button>
       </div>
-    </div>
-    <div style="margin-bottom:10px">
-      <button class="filter-reset-btn" id="globalFilterResetBtnMobile" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
-    </div>
-    <div id="mobileTypeSection" style="margin-bottom:8px">
-      <div class="storage-block">
-        <div class="storage-title" data-i18n="filters.type">Type</div>
-        <div class="provider-filter" id="typeFilterMobile">
-          <div class="provider-pill provider-pill-reset active" onclick="clickType('all')" data-i18n="filters.type_all">Tous</div>
-          <div class="provider-pill" onclick="clickType('movie')" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
-          <div class="provider-pill" onclick="clickType('tv')" data-type="tv" data-i18n="filters.type_tv">📺 Séries</div>
+      <div class="mobile-filters-sort-row">
+        <div class="storage-block sort-inline-wrap">
+          <select class="tab-sort-select" id="sortSelectMobile" style="width:100%;padding-left:10px">
+            <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
+            <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
+            <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
+            <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
+            <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
+            <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
+            <option value="score-desc" data-i18n="sort.score_desc">Score ↓</option>
+            <option value="score-asc" data-i18n="sort.score_asc">Score ↑</option>
+            <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
+          </select>
         </div>
+        <button class="filter-reset-btn" id="globalFilterResetBtnMobile" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser</button>
       </div>
     </div>
-    <div id="storageSectionMobile" style="margin-bottom:8px"></div>
-    <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
-    <div id="providerSectionMobile" style="margin-bottom:8px"></div>
-    <div id="codecSectionMobile" style="margin-bottom:8px"></div>
-    <div id="audioCodecSectionMobile"></div>
-    <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
-    <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
-  </div>
-  <div id="mobileActionsMenu" class="mobile-actions-menu">
-    <button class="mobile-actions-item" id="mobileScanEntryBtn" onclick="openMobileScanSheet()">
-      <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
-    </button>
-    <button class="mobile-actions-item" onclick="openSettings(); closeMobileActionsMenu();">
-      <span data-i18n="settings.title">⚙️ Paramètres</span>
-    </button>
-    <button class="mobile-actions-item" onclick="toggleTheme(); closeMobileActionsMenu();">
-      <span data-i18n="mobile.toggle_theme">Thème sombre / clair</span>
-    </button>
+    <div class="mobile-filters-body">
+      <div id="mobileTypeSection" style="margin-bottom:8px">
+        <div class="storage-block">
+          <div class="storage-title" data-i18n="filters.type">Type</div>
+          <div class="provider-filter" id="typeFilterMobile">
+            <div class="provider-pill provider-pill-reset active" onclick="clickType('all')" data-i18n="filters.type_all">Tous</div>
+            <div class="provider-pill" onclick="clickType('movie')" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
+            <div class="provider-pill" onclick="clickType('tv')" data-type="tv" data-i18n="filters.type_tv">📺 Séries</div>
+          </div>
+        </div>
+      </div>
+      <div id="storageSectionMobile" style="margin-bottom:8px"></div>
+      <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
+      <div id="providerSectionMobile" style="margin-bottom:8px"></div>
+      <div id="codecSectionMobile" style="margin-bottom:8px"></div>
+      <div id="audioCodecSectionMobile"></div>
+      <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
+      <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
+    </div>
+    <div class="mobile-filters-bottom">
+      <button class="scan-btn mobile-bottom-scan-btn" id="mobileScanEntryBtn" onclick="openMobileScanSheet()">
+        <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
+      </button>
+      <button class="icon-btn mobile-bottom-icon-btn" onclick="toggleTheme()">
+        <span data-i18n="mobile.toggle_theme">🌓</span>
+      </button>
+      <button class="icon-btn mobile-bottom-icon-btn" onclick="openSettings()">
+        <span data-i18n="settings.title">⚙️</span>
+      </button>
+    </div>
   </div>
   <div id="mobileScanSheet" class="mobile-sheet-backdrop" onclick="closeMobileScanSheetIfBackdrop(event)">
     <div class="mobile-sheet">

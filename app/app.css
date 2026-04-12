@@ -91,7 +91,7 @@
       background:var(--surface);display:flex;flex-direction:column;
       overflow:hidden;
       border-right:1px solid var(--border);padding:20px 16px;
-      position:sticky;top:0;height:100vh}
+      position:sticky;top:0;height:100vh;min-height:0}
     .main-content{flex:1;min-width:0;padding:0;overflow-y:auto}
     @media(max-width:768px){
       /* Layout */
@@ -130,10 +130,12 @@
       .mobile-nav{display:none!important}
     }
     .sidebar-section{margin-bottom:12px}
-    .sidebar-fixed{flex-shrink:0;padding-bottom:8px;border-bottom:1px solid var(--border)}
+    .sidebar-top{flex-shrink:0;padding-bottom:8px;border-bottom:1px solid var(--border)}
     .sidebar-brand{padding-bottom:4px}
     .sidebar-global-actions{margin-bottom:0}
-    .sidebar-filters{flex:1;overflow-y:auto;min-height:0;padding-top:10px;padding-bottom:8px}
+    .sidebar-filters{flex:1 1 auto;overflow-y:auto;min-height:0;padding-top:10px;padding-bottom:10px}
+    .sidebar-bottom{flex-shrink:0;border-top:1px solid var(--border);padding-top:10px;
+      margin-top:2px;background:linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.03))}
     .sidebar-sort-reset{display:flex;align-items:flex-end;gap:8px}
     .sort-inline-wrap{flex:1;min-width:0}
     .sidebar-sort-reset .filter-reset-btn{width:auto;flex-shrink:0;white-space:nowrap;padding:7px 10px}
@@ -428,16 +430,22 @@
     .mobile-topbar-title{font-family:'Syne',sans-serif;font-weight:800;font-size:15px}
     .mobile-topbar-btn{min-width:0;padding:8px 10px}
     .mobile-topbar-btn span{font-size:11px;white-space:nowrap}
-    .mobile-actions-menu{display:none;position:fixed;top:52px;right:12px;z-index:220;
-      background:var(--surface);border:1px solid var(--border);border-radius:12px;
-      min-width:220px;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden}
-    .mobile-actions-menu.open{display:flex;flex-direction:column}
-    .mobile-actions-item{background:none;border:none;border-bottom:1px solid var(--border);
-      color:var(--text);text-align:left;padding:12px 14px;cursor:pointer;font-family:'Inter',sans-serif;
-      font-size:13px}
-    .mobile-actions-item:last-child{border-bottom:none}
-    .mobile-actions-item:hover{background:var(--card-h)}
-    .mobile-actions-item:disabled{opacity:.5;cursor:not-allowed}
+    .mobile-filters-panel{display:none;position:fixed;top:48px;left:0;right:0;z-index:149;
+      background:var(--surface);border-bottom:1px solid var(--border);
+      max-height:calc(100dvh - 48px);height:calc(100dvh - 48px);box-shadow:0 8px 24px rgba(0,0,0,.3);
+      flex-direction:column;min-height:0}
+    .mobile-filters-panel.open{display:flex}
+    .mobile-filters-top{flex-shrink:0;padding:10px 12px 10px;border-bottom:1px solid var(--border);
+      display:flex;flex-direction:column;gap:8px}
+    .mobile-filters-stats .stats-bar{margin-bottom:0}
+    .mobile-filters-sort-row{display:flex;align-items:flex-end;gap:8px}
+    .mobile-filters-sort-row .filter-reset-btn{width:auto;white-space:nowrap;padding:7px 10px}
+    .mobile-filters-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:10px 12px 12px}
+    .mobile-filters-bottom{flex-shrink:0;display:flex;align-items:center;gap:8px;
+      padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      border-top:1px solid var(--border);background:var(--surface)}
+    .mobile-bottom-scan-btn{flex:1;justify-content:center}
+    .mobile-bottom-icon-btn{width:40px;height:36px;padding:0;justify-content:center;flex-shrink:0}
     .mobile-sheet-backdrop{position:fixed;inset:0;z-index:260;background:rgba(0,0,0,.45);
       display:none;align-items:flex-end;padding:0}
     .mobile-sheet-backdrop.open{display:flex}
@@ -466,6 +474,15 @@
       box-shadow:0 4px 16px rgba(0,0,0,.3);opacity:0;transition:opacity .3s;
       z-index:180;align-items:center;justify-content:center}
     @media(max-width:768px){
+      .mobile-topbar{padding:8px 12px}
+      .mobile-topbar-title{font-size:14px}
+      .mobile-topbar-btn{padding:7px 9px}
+      .mobile-filters-top{padding:8px 10px}
+      .mobile-filters-body{padding:8px 10px 10px}
+      .mobile-filters-bottom{padding:8px 10px calc(8px + env(safe-area-inset-bottom, 0px))}
+      .mobile-filters-stats .stat{padding:4px 7px}
+      .mobile-filters-stats .stat-val{font-size:13px}
+      .mobile-filters-stats .stat-label{font-size:9px}
       .mobile-backtop{display:flex}
     }
     /* Mobile table: 2-column layout */
