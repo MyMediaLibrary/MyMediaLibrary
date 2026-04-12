@@ -22,7 +22,7 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 - **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
-- **Scoring qualité** : score qualité (0–100) avec badge coloré, filtre par slider min/max et gestion des éléments sans score
+- **Scoring qualité (optionnel)** : fonctionnalité activable via `system.enable_score` (désactivée par défaut) avec score (0–100), badge coloré, filtre par slider min/max et gestion des éléments sans score
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, barre latérale redimensionnable
 
 ### Démarrage rapide
@@ -81,7 +81,7 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 - **Streaming availability**: Jellyseerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Jellyseerr), schedulable via cron, configurable from the UI
-- **Quality scoring**: quality score (0–100) with color badge, min/max slider filtering, and support for items without score
+- **Quality scoring (optional)**: feature controlled by `system.enable_score` (disabled by default), with quality score (0–100), color badge, min/max slider filtering, and support for items without score
 - **Bilingual interface**: fully available in French and English, light/dark theme, resizable sidebar
 
 ### Quick start

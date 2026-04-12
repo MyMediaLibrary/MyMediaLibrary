@@ -200,6 +200,7 @@ Les filtres principaux utilisent une architecture unifiée de dropdowns (même c
 - **Codecs vidéo**
 - **Codecs audio**
 - **Plateformes streaming**
+- **Score** (double slider, uniquement si le scoring est activé)
 
 Fonctionnalités communes :
 - multi-sélection
@@ -243,11 +244,12 @@ Chaque plateforme peut être masquée dans les paramètres (onglet Jellyseerr �
 
 ## 9. Score de qualité
 
-Chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
+Le score de qualité est une fonctionnalité **optionnelle** pilotée par `system.enable_score` (valeur par défaut : `false`).
+Quand il est activé, chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
 
-### Filtre score (slider 0–100)
+### Filtre score (slider 0–100, si activé)
 
-Le filtre score n'est plus un dropdown : il utilise un **double slider** avec deux bornes :
+Le filtre score n'est pas un dropdown : il utilise un **double slider** avec deux bornes :
 - `min`
 - `max`
 
@@ -402,11 +404,16 @@ Au survol du badge, une infobulle détaillée est affichée :
 Le paramètre système `enable_score` permet de couper totalement la fonctionnalité.
 
 Si désactivé :
-- plus de calcul de score côté backend pendant le scan
-- champs score retirés du `library.json`
-- score masqué dans l'UI
-- filtre score indisponible
-- tris/statistiques liés au score désactivés
+- le backend bypass complètement le calcul de score pendant le scan
+- les champs score sont retirés du `library.json` (pas de dataset mixte score/sans score après un scan)
+- le score est masqué dans l'UI (badges, colonne score, infobulle score)
+- le slider de filtre score disparaît
+- les tris/statistiques liés au score sont désactivés
+- les colonnes score sont exclues de l'export CSV
+
+Si réactivé :
+- les contrôles UI liés au score réapparaissent immédiatement
+- un nouveau scan est nécessaire pour régénérer les scores dans `library.json`
 
 ### Comportements clés
 
@@ -460,9 +467,42 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 - Langue (FR/EN)
 - Couleur d'accent (sélecteur + reset)
-- Synopsis au survol (on/off)
+- Synopsis au survol (on/off, désactivé par défaut)
+- Activer le score de qualité (`system.enable_score`, désactivé par défaut)
+- Générer l'inventaire brut (`system.inventory_enabled`, désactivé par défaut)
 - Scan automatique (cron)
 - Niveau de log
 - Version
+
+### Configuration système (`config.json`)
+
+`enable_score` se trouve dans le bloc `system` :
+
+```json
+{
+  "system": {
+    "enable_score": false
+  }
+}
+```
+
+- type : `boolean`
+- défaut : `false`
+
+### Comportement technique de `enable_score`
+
+- Le backend lit `system.enable_score` au lancement du scan.
+- Si `false`, le pipeline de scoring est totalement bypassé.
+- Si `false`, les champs score sont supprimés des items scannés et des items préservés avant écriture de `library.json`.
+- L'UI se base sur la config / les métadonnées de bibliothèque et masque les contrôles score quand la fonctionnalité est coupée.
+
+### Impact performance
+
+Désactiver le score réduit généralement :
+- le temps de scan
+- la charge CPU pendant le scan
+- la taille de `library.json`
+
+Particulièrement utile pour les grosses bibliothèques.
 
 ---
