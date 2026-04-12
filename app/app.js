@@ -387,7 +387,7 @@ let allItems=[], categories=[], groups=[];
     if (typeof libraryMetaScoreEnabled === 'boolean') {
       return libraryMetaScoreEnabled;
     }
-    return true;
+    return false;
   }
 
   function isScoreEnabled() {
@@ -3145,7 +3145,7 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
-    _rw('cfgEnableScore', sys.enable_score !== false);
+    _rw('cfgEnableScore', sys.enable_score === true);
     updateCronHint();
 
     // Jellyseerr — editable from appConfig

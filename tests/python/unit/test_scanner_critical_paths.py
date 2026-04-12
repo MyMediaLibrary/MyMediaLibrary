@@ -132,11 +132,11 @@ class InventoryFlagCriticalTest(unittest.TestCase):
 
 
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):
-    def test_default_config_score_flag_is_enabled(self):
-        self.assertIs(scanner._DEFAULT_CONFIG["system"]["enable_score"], True)
+    def test_default_config_score_flag_is_disabled(self):
+        self.assertIs(scanner._DEFAULT_CONFIG["system"]["enable_score"], False)
 
-    def test_score_flag_parser_defaults_to_enabled(self):
-        self.assertTrue(scanner._is_score_enabled({"system": {}}))
+    def test_score_flag_parser_defaults_to_disabled(self):
+        self.assertFalse(scanner._is_score_enabled({"system": {}}))
         self.assertTrue(scanner._is_score_enabled({"system": {"enable_score": True}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": False}}))
 
