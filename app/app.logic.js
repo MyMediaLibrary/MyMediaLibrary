@@ -25,13 +25,13 @@
   }
 
   function simplifyAudioLanguages(codes) {
-    if (!Array.isArray(codes)) return 'UNKNOWN';
+    if (!Array.isArray(codes)) return PROVIDER_NONE_KEY;
     const normalized = new Set();
     codes.forEach((code) => {
       const norm = normalizeAudioLanguageCode(code);
       if (norm) normalized.add(norm);
     });
-    if (normalized.size === 0) return 'UNKNOWN';
+    if (normalized.size === 0) return PROVIDER_NONE_KEY;
     if (normalized.size === 1 && normalized.has('fra')) return 'VF';
     if (normalized.has('fra') && normalized.size > 1) return 'MULTI';
     return 'VO';
@@ -141,17 +141,17 @@
         out,
         activeResolutions,
         !!state.resolutionExclude,
-        (i) => i.resolution || 'UNKNOWN'
+        (i) => i.resolution || PROVIDER_NONE_KEY
       );
     }
 
-    out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || 'UNKNOWN');
-    out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || 'UNKNOWN');
+    out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || PROVIDER_NONE_KEY);
+    out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || PROVIDER_NONE_KEY);
     out = applySelectionFilter(
       out,
       state.activeAudioLanguages,
       state.audioLanguageExclude,
-      (i) => i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)
+      (i) => (i.audio_languages_simple === 'UNKNOWN' ? PROVIDER_NONE_KEY : (i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)))
     );
     out = applySelectionFilter(
       out,
@@ -193,16 +193,18 @@
         if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
         providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
       } else if (field === 'resolution') {
-        const key = item.resolution || 'UNKNOWN';
+        const key = item.resolution || PROVIDER_NONE_KEY;
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'codec') {
-        const key = item.codec || 'UNKNOWN';
+        const key = item.codec || PROVIDER_NONE_KEY;
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'audioCodec') {
-        const key = item.audio_codec || 'UNKNOWN';
+        const key = item.audio_codec || PROVIDER_NONE_KEY;
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'audioLanguage') {
-        const key = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages);
+        const key = item.audio_languages_simple === 'UNKNOWN'
+          ? PROVIDER_NONE_KEY
+          : (item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages));
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'quality') {
         const key = getScoreRangeKey(item);

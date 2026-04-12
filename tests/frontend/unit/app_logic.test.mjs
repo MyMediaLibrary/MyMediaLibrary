@@ -96,6 +96,29 @@ test('resolution filter supports multi-select include/exclude and legacy single-
   assert.deepEqual(logic.applyFilters(sample, legacyState).map((i) => i.title), ['C']);
 });
 
+test('missing values are handled as a selectable none value across filters', () => {
+  const sample = [
+    { title: 'MissingAll' },
+    { title: 'ResOnly', resolution: '1080p' },
+    { title: 'CodecOnly', codec: 'H.265' },
+    { title: 'AudioCodecOnly', audio_codec: 'DTS' },
+    { title: 'LangOnly', audio_languages_simple: 'VF' }
+  ];
+
+  const state = baseState();
+  state.activeResolutions = new Set(['__none__']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['MissingAll', 'CodecOnly', 'AudioCodecOnly', 'LangOnly']);
+  state.resolutionExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['ResOnly']);
+
+  state.resolutionExclude = false;
+  state.activeResolutions.clear();
+  state.activeCodecs = new Set(['__none__']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['MissingAll', 'ResOnly', 'AudioCodecOnly', 'LangOnly']);
+  state.videoCodecExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['CodecOnly']);
+});
+
 test('export button enablement and stale-safe behavior', () => {
   assert.equal(logic.isExportEnabled(null), false);
   assert.equal(logic.isExportEnabled(undefined), false);
