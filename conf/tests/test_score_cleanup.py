@@ -59,6 +59,7 @@ class ScoreCleanupTest(unittest.TestCase):
 
             with patch.object(scanner, "LIBRARY_PATH", str(root)), \
                  patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "migrate_env_to_config", return_value=None), \
                  patch.object(scanner, "load_config", return_value=cfg), \
                  patch.object(scanner, "sync_folders", return_value=False), \
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
@@ -108,6 +109,7 @@ class ScoreCleanupTest(unittest.TestCase):
 
             with patch.object(scanner, "LIBRARY_PATH", str(root)), \
                  patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "migrate_env_to_config", return_value=None), \
                  patch.object(scanner, "load_config", return_value=cfg), \
                  patch.object(scanner, "sync_folders", return_value=False), \
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
