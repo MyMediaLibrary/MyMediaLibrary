@@ -1350,6 +1350,16 @@ let allItems=[], categories=[], groups=[];
 
   function sortItems(items) {
     const v=document.getElementById('sortSelect').value;
+    const scoreCompare = (a, b, dir = 1) => {
+      const sa = Number(a?.quality?.score);
+      const sb = Number(b?.quality?.score);
+      const aHasScore = Number.isFinite(sa);
+      const bHasScore = Number.isFinite(sb);
+      if (!aHasScore && !bHasScore) return 0;
+      if (!aHasScore) return 1;
+      if (!bHasScore) return -1;
+      return (sa - sb) * dir;
+    };
     return [...items].sort((a,b)=>{
       switch(v){
         case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
@@ -1359,7 +1369,10 @@ let allItems=[], categories=[], groups=[];
         case 'size-desc':    return (b.size_b||0)-(a.size_b||0);
         case 'size-asc':     return (a.size_b||0)-(b.size_b||0);
         case 'added-desc':   return (b.added_ts||0)-(a.added_ts||0);
+        case 'score-desc':   return scoreCompare(a, b, -1);
+        case 'score-asc':    return scoreCompare(a, b, 1);
         case 'category-asc': return (a.category||'').localeCompare(b.category||'');
+        default:             return 0;
       }
     });
   }
