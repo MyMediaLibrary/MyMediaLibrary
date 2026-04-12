@@ -8,6 +8,13 @@
   const PROVIDER_OTHERS_KEY = '__others__';
   const PROVIDER_NONE_KEY = '__none__';
   const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  const SCORE_FILTER_RANGES = [
+    { key: '0_20', level: 1 },
+    { key: '20_40', level: 2 },
+    { key: '40_60', level: 3 },
+    { key: '60_80', level: 4 },
+    { key: '80_100', level: 5 },
+  ];
 
   function normalizeAudioLanguageCode(raw) {
     if (typeof raw !== 'string') return null;
@@ -79,41 +86,114 @@
     });
   }
 
-  function filterItems(items, state) {
+  function normalizeScoreRangeKey(raw) {
+    if (raw === null || raw === undefined) return null;
+    const value = String(raw).trim();
+    if (!value) return null;
+    if (SCORE_FILTER_RANGES.some((r) => r.key === value)) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return SCORE_FILTER_RANGES.find((r) => r.level === numeric)?.key || null;
+  }
+
+  function getScoreRangeKey(score) {
+    const level = getScoredQualityLevel({ quality: { score } });
+    if (level === null) return null;
+    return SCORE_FILTER_RANGES.find((r) => r.level === level)?.key || null;
+  }
+
+  function matchesScoreRange(score, rangeKey) {
+    const normalized = normalizeScoreRangeKey(rangeKey);
+    if (!normalized) return false;
+    return getScoreRangeKey(score) === normalized;
+  }
+
+  function applySelectionFilter(items, activeSet, excludeMode, readValue, options = {}) {
+    if (!activeSet || activeSet.size === 0) return items;
+    const matchNoneWhenSelected = !!options.matchNoneWhenSelected;
+    const withNoneExclusion = !!options.withNoneExclusion;
+    return items.filter((item) => {
+      const read = readValue(item);
+      const values = Array.isArray(read) ? read.filter((v) => v !== null && v !== undefined) : [read];
+      const hasNone = values.length === 0;
+      const matches = values.some((value) => activeSet.has(value));
+      if (excludeMode) {
+        if (withNoneExclusion && activeSet.has(PROVIDER_NONE_KEY) && hasNone) return false;
+        return !matches;
+      }
+      if (matchNoneWhenSelected && activeSet.has(PROVIDER_NONE_KEY) && hasNone) return true;
+      return matches;
+    });
+  }
+
+  function applyFilters(items, state) {
     let out = items.slice();
-    if (state.activeResolution !== 'all') out = out.filter((i) => i.resolution === state.activeResolution);
+    if (state.activeType && state.activeType !== 'all') out = out.filter((i) => i.type === state.activeType);
+    if (state.activeGroup && state.activeGroup !== 'all') out = out.filter((i) => i.group === state.activeGroup);
+    if (state.activeCat && state.activeCat !== 'all') out = out.filter((i) => i.category === state.activeCat);
+    if (state.activeResolution && state.activeResolution !== 'all') out = out.filter((i) => i.resolution === state.activeResolution);
 
-    if (state.activeAudioLanguages.size > 0) {
-      if (state.audioLanguageExclude) {
-        out = out.filter((i) => !state.activeAudioLanguages.has(i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)));
-      } else {
-        out = out.filter((i) => state.activeAudioLanguages.has(i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)));
-      }
-    }
-
-    if (state.activeProviders.size > 0) {
-      if (state.providerExclude) {
-        out = out.filter((i) => !(i.providers || []).some((p) => state.activeProviders.has(p)));
-      } else {
-        out = out.filter((i) => (i.providers || []).some((p) => state.activeProviders.has(p)));
-      }
-    }
-
-    if (state.activeQualityLevels.size > 0) {
-      if (state.qualityExclude) {
-        out = out.filter((i) => {
-          const level = getScoredQualityLevel(i);
-          return level === null || !state.activeQualityLevels.has(level);
-        });
-      } else {
-        out = out.filter((i) => {
-          const level = getScoredQualityLevel(i);
-          return level !== null && state.activeQualityLevels.has(level);
-        });
-      }
-    }
+    out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || 'UNKNOWN');
+    out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || 'UNKNOWN');
+    out = applySelectionFilter(
+      out,
+      state.activeAudioLanguages,
+      state.audioLanguageExclude,
+      (i) => i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)
+    );
+    out = applySelectionFilter(
+      out,
+      state.activeProviders,
+      state.providerExclude,
+      (i) => i.providers || [],
+      { matchNoneWhenSelected: true, withNoneExclusion: true }
+    );
+    out = applySelectionFilter(
+      out,
+      new Set([...(state.activeQualityLevels || new Set())].map((k) => normalizeScoreRangeKey(k)).filter(Boolean)),
+      state.qualityExclude,
+      (i) => getScoreRangeKey(i?.quality?.score)
+    );
 
     return applySearch(out, state.searchQuery || '');
+  }
+
+  function filterItems(items, state) {
+    return applyFilters(items, state);
+  }
+
+  function computeFilterCounts(items, state, field) {
+    const nextState = { ...state };
+    if (field === 'provider') nextState.activeProviders = new Set();
+    if (field === 'codec') nextState.activeCodecs = new Set();
+    if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
+    if (field === 'audioLanguage') nextState.activeAudioLanguages = new Set();
+    if (field === 'quality') nextState.activeQualityLevels = new Set();
+    const scoped = applyFilters(items, nextState);
+    const counts = {};
+    if (field === 'quality') {
+      SCORE_FILTER_RANGES.forEach((range) => { counts[range.key] = 0; });
+    }
+    scoped.forEach((item) => {
+      if (field === 'provider') {
+        const providers = item.providers || [];
+        if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
+        providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
+      } else if (field === 'codec') {
+        const key = item.codec || 'UNKNOWN';
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'audioCodec') {
+        const key = item.audio_codec || 'UNKNOWN';
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'audioLanguage') {
+        const key = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages);
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'quality') {
+        const key = getScoreRangeKey(item?.quality?.score);
+        if (key) counts[key] += 1;
+      }
+    });
+    return counts;
   }
 
   function hasActiveFilters(state) {
@@ -224,14 +304,19 @@
     getItemSearchFields,
     applySearch,
     filterItems,
+    applyFilters,
     hasActiveFilters,
     resetFiltersState,
+    computeFilterCounts,
     isExportEnabled,
     canonicalProviderFilterKey,
     groupedProviderCounts,
     getQualityLevelFromScore,
     getItemQualityLevel,
     getScoredQualityLevel,
-    getQualityLevelClass
+    getQualityLevelClass,
+    normalizeScoreRangeKey,
+    matchesScoreRange,
+    getScoreRangeKey
   };
 });

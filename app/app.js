@@ -391,7 +391,7 @@ let allItems=[], categories=[], groups=[];
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
-      qualityExclude = false;
+      if (s.qualityExclude !== undefined)        qualityExclude        = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
