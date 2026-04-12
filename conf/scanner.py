@@ -144,14 +144,21 @@ def classify_resolution(width: int, height: int) -> str:
         return "SD"
     long_edge = max(width, height)
     short_edge = min(width, height)
-    # Handle scope/cropped encodes (e.g. ~3840x1600) by relying on long edge with a small tolerance.
-    if long_edge >= 3800 or short_edge >= 2100:
+    # 4K:
+    # - Keep UHD content (>=2160 on one axis),
+    # - Keep scope/cropped 4K encodes (~3840x1600) via long-edge tolerance,
+    # - Avoid promoting near-square ~2K sources (e.g. 2100x2100, 2560x2100).
+    if short_edge >= 2160 or (long_edge >= 3800 and short_edge >= 1500):
         return "4K"
     # 1080p: require a near-FHD long edge and enough vertical pixels for cropped scope encodes.
     # This avoids promoting 5:4 sources such as 1280x1024 to 1080p.
     if long_edge >= 1880 and short_edge >= 800:
         return "1080p"
-    if long_edge >= 1240 or short_edge >= 680:
+    # 720p:
+    # - Require a near-1280 long edge,
+    # - Accept cropped encodes with lower short edge,
+    # - Avoid promoting small near-square sources (e.g. 700x700).
+    if long_edge >= 1240 and short_edge >= 520:
         return "720p"
     return "SD"
 
