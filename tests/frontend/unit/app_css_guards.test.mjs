@@ -17,6 +17,6 @@ function cssBlock(source, selector, nextSelector) {
 test('mobile filters panel reserves bottom-nav space to avoid overlap', () => {
   const panelBlock = cssBlock(cssSource, '.mobile-filters-panel{', '.mobile-filters-panel.open');
   assert.match(panelBlock, /bottom:var\(--mobile-nav-safe-height\)/, 'mobile filters panel should reserve bottom nav area');
-  assert.match(panelBlock, /height:calc\(100dvh - 48px - var\(--mobile-nav-safe-height\)\)/, 'mobile filters panel height should subtract top bar + bottom nav');
-  assert.match(panelBlock, /max-height:calc\(100dvh - 48px - var\(--mobile-nav-safe-height\)\)/, 'mobile filters panel max-height should match reserved layout');
+  assert.match(panelBlock, /height:calc\(100dvh - 56px - var\(--mobile-nav-safe-height\)\)/, 'mobile filters panel height should subtract top bar + bottom nav');
+  assert.match(panelBlock, /max-height:calc\(100dvh - 56px - var\(--mobile-nav-safe-height\)\)/, 'mobile filters panel max-height should match reserved layout');
 });

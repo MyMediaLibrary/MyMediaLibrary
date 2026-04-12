@@ -2789,7 +2789,7 @@ let allItems=[], categories=[], groups=[];
   function setScanControlsState(isScanning) {
     const wasScanning = _isScanning;
     _isScanning = !!isScanning;
-    ['scanMainBtn', 'scanArrowBtn', 'mobileScanEntryBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
+    ['scanMainBtn', 'scanArrowBtn', 'mobileSettingsScanBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
@@ -3075,7 +3075,7 @@ let allItems=[], categories=[], groups=[];
     });
     // Sync stats bar
     const sbSrc = document.getElementById('statsBar');
-    document.querySelectorAll('#mobileStatsBar, #mobileFiltersStats').forEach(el => {
+    document.querySelectorAll('#mobileStatsBar').forEach(el => {
       if (sbSrc) el.innerHTML = sbSrc.innerHTML;
     });
     // Sync type pills
@@ -3501,10 +3501,91 @@ let allItems=[], categories=[], groups=[];
   }
 
   function switchStab(btn, tabId) {
+    if (isMobile()) return;
     document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';
+  }
+
+  let _settingsLayoutMode = null;
+
+  function applySettingsMobileLayout(options = {}) {
+    const { resetMobile = false, resetDesktop = false } = options;
+    const onMobile = isMobile();
+    const mode = onMobile ? 'mobile' : 'desktop';
+    const modeChanged = _settingsLayoutMode !== mode;
+    _settingsLayoutMode = mode;
+    const tabs = document.querySelector('.settings-tabs');
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    if (tabs) tabs.style.display = onMobile ? 'none' : '';
+    if (saveBtn) saveBtn.style.display = 'block';
+
+    const panels = document.querySelectorAll('.stab-panel[data-mobile-panel]');
+    const currentlyVisibleDesktopPanel = [...panels].find(panel => panel.style.display !== 'none')?.id || 'stab-library';
+    const currentlyExpandedMobilePanel = [...panels].find(panel =>
+      panel.querySelector('.settings-mobile-section-btn')?.getAttribute('aria-expanded') === 'true'
+    )?.id || null;
+
+    panels.forEach(panel => {
+      const headerBtn = panel.querySelector('.settings-mobile-section-btn');
+      const body = panel.querySelector('.settings-mobile-section-body');
+      if (!headerBtn || !body) return;
+
+      if (onMobile) {
+        panel.style.display = 'block';
+        if (resetMobile) {
+          headerBtn.setAttribute('aria-expanded', 'false');
+          body.classList.add('is-collapsed');
+        } else if (modeChanged) {
+          const shouldExpand = panel.id === currentlyVisibleDesktopPanel;
+          headerBtn.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+          body.classList.toggle('is-collapsed', !shouldExpand);
+        }
+      } else {
+        let targetPanel = 'stab-library';
+        if (!resetDesktop) {
+          targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
+        }
+        const isActive = panel.id === targetPanel;
+        panel.style.display = isActive ? 'block' : 'none';
+        headerBtn.setAttribute('aria-expanded', 'true');
+        body.classList.remove('is-collapsed');
+      }
+    });
+
+    const stabButtons = document.querySelectorAll('.stab');
+    if (!onMobile && stabButtons.length) {
+      let targetPanel = 'stab-library';
+      if (!resetDesktop) {
+        targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
+      }
+      stabButtons.forEach(btn => {
+        const onclick = btn.getAttribute('onclick') || '';
+        btn.classList.toggle('active', onclick.includes(`'${targetPanel}'`));
+      });
+    }
+  }
+
+  function toggleMobileSettingsSection(btn) {
+    if (!btn || !isMobile()) return;
+    const panel = btn.closest('.stab-panel');
+    const body = panel?.querySelector('.settings-mobile-section-body');
+    if (!body) return;
+    const willOpen = btn.getAttribute('aria-expanded') === 'false';
+    document.querySelectorAll('.stab-panel[data-mobile-panel]').forEach(p => {
+      const pBtn = p.querySelector('.settings-mobile-section-btn');
+      const pBody = p.querySelector('.settings-mobile-section-body');
+      if (!pBtn || !pBody) return;
+      const isCurrent = p === panel;
+      pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
+      pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
+    });
+  }
+
+  function openMobileScanFromSettings() {
+    closeSettings();
+    openMobileScanSheet();
   }
 
   function openSettings() {
@@ -3519,6 +3600,7 @@ let allItems=[], categories=[], groups=[];
       btn.style.display = 'block'; // always show — config.json is always writable
       btn.disabled = false;
     }
+    applySettingsMobileLayout({ resetMobile: true, resetDesktop: true });
   }
 
   function closeSettings() {
@@ -3528,6 +3610,11 @@ let allItems=[], categories=[], groups=[];
   function closeSettingsIfBackdrop(e) {
     if (e.target === document.getElementById('settingsOverlay')) closeSettings();
   }
+
+  window.addEventListener('resize', () => {
+    const overlay = document.getElementById('settingsOverlay');
+    if (overlay && overlay.style.display !== 'none') applySettingsMobileLayout();
+  });
 
   // ── LAYOUT TOGGLE ────────────────────────────────────
   
