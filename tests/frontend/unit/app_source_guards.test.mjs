@@ -26,6 +26,8 @@ test('quality select-all wiring is mapped in _dropdownSelectAll', () => {
   const block = functionBlock(appSource, '_dropdownSelectAll', 'toggleProviderFilter');
   assert.match(block, /'qualitySection': activeQualityLevels/, 'qualitySection should be mapped for select-all');
   assert.match(block, /'qualitySectionMobile': activeQualityLevels/, 'qualitySectionMobile should be mapped for select-all');
+  assert.match(block, /'folderSection': activeFolders/, 'folderSection should be mapped for select-all');
+  assert.match(block, /'folderSectionMobile': activeFolders/, 'folderSectionMobile should be mapped for select-all');
 });
 
 
@@ -94,6 +96,15 @@ test('renderResolutionFilter uses shared dropdown with include/exclude toggles',
   assert.match(block, /onToggleExclude:\s*'toggleResolutionExclude'/, 'resolution should expose include\/exclude toggle');
   assert.match(block, /t\('filters\.none'\)/, 'resolution should display a localized none value for missing metadata');
   assert.doesNotMatch(block, /provider-pill/, 'resolution should no longer render legacy pill markup');
+});
+
+test('renderFolderFilter uses shared dropdown with include/exclude toggles', () => {
+  const block = functionBlock(appSource, 'renderFolderFilter', 'qualityRangeLabel');
+  assert.match(block, /renderFilterDropdown\(/, 'folders should reuse shared dropdown renderer');
+  assert.match(block, /toggleFn:\s*'toggleFolderFilter'/, 'folders should use standard dropdown toggle');
+  assert.match(block, /clearFn:\s*'clearFolderFilter'/, 'folders should use standard dropdown clear');
+  assert.match(block, /onToggleExclude:\s*'toggleFolderExclude'/, 'folders should expose include\/exclude toggle');
+  assert.match(block, /baseItems\('folder'\)/, 'folder counts should be scoped through shared baseItems logic');
 });
 
 test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {

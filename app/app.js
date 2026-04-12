@@ -326,7 +326,8 @@ let allItems=[], categories=[], groups=[];
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=true;
-  let activeGroup='all', activeCat='all', activeType='all';
+  let activeGroup='all', activeType='all';
+  let activeFolders = new Set();
   let activeResolutions = new Set();
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
@@ -339,6 +340,7 @@ let allItems=[], categories=[], groups=[];
   let providerExclude = false;
   let resolutionExclude = false;
   let audioLanguageExclude = false;
+  let folderExclude = false;
   let qualityExclude = false;
   const SCORE_FILTER_RANGES = [
     { key: '0_20', min: 0, max: 20, maxInclusive: false, labelKey: 'filters.score.range_0_20', level: 1 },
@@ -421,7 +423,8 @@ let allItems=[], categories=[], groups=[];
   function saveState() {
     try {
       localStorage.setItem('mediaState', JSON.stringify({
-        activeGroup, activeCat, activeType,
+        activeGroup, activeType,
+        activeFolders: [...activeFolders],
         activeResolutions: [...activeResolutions],
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
@@ -429,7 +432,7 @@ let allItems=[], categories=[], groups=[];
         scoreMin,
         scoreMax,
         includeNoScore,
-        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, qualityExclude,
+        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, folderExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -442,7 +445,8 @@ let allItems=[], categories=[], groups=[];
       const s = JSON.parse(localStorage.getItem('mediaState') || '{}');
       if (s.activeType)                       activeType        = s.activeType;
       if (s.activeGroup)                      activeGroup       = s.activeGroup;
-      if (s.activeCat)                        activeCat         = s.activeCat;
+      if (Array.isArray(s.activeFolders))     activeFolders     = new Set(s.activeFolders.filter(Boolean));
+      else if (s.activeCat && s.activeCat !== 'all') activeFolders = new Set([s.activeCat]); // legacy single-folder state
       if (Array.isArray(s.activeProviders)) {
         activeProviders = new Set(
           s.activeProviders
@@ -479,6 +483,7 @@ let allItems=[], categories=[], groups=[];
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.resolutionExclude !== undefined)     resolutionExclude     = !!s.resolutionExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
+      if (s.folderExclude !== undefined)         folderExclude         = !!s.folderExclude;
       if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
@@ -491,6 +496,7 @@ let allItems=[], categories=[], groups=[];
       }
       // Re-render all filter pills with correct active states (no saveState)
       renderStorageBar();
+      renderFolderFilter();
       renderProviderFilter();
       renderResolutionFilter();
       renderCodecFilter();
@@ -796,13 +802,7 @@ let allItems=[], categories=[], groups=[];
         t('filters.by_group'), 'clickGroup', 'resetGroup');
     }
 
-    // --- CATEGORY BAR (scoped to active group) ---
-    const byC={};
-    baseItems('cat').forEach(i=>{ byC[i.category]=(byC[i.category]||0)+(i.size_b||0); });
-    const totalC=Object.values(byC).reduce((s,v)=>s+v,0);
-    html+=barBlock(byC, totalC, activeCat, catColorMap,
-      t('filters.by_category'), 'clickCat', 'resetCat');
-
+    if (!html) { sec.style.display='none'; sec.innerHTML=''; return; }
     sec.style.display='block';
     sec.innerHTML=html;
 
@@ -827,7 +827,6 @@ let allItems=[], categories=[], groups=[];
   
   function clickType(type) {
     activeType = (type !== 'all' && activeType === type) ? 'all' : type;
-    activeCat = 'all';
     syncTypePills();
     renderStorageBar();
     renderProviderFilter();
@@ -836,10 +835,10 @@ let allItems=[], categories=[], groups=[];
     onFilter();
   }
 
-  function clickGroup(k){ activeGroup=activeGroup===k?'all':k; activeCat='all'; onFilter(); }
-  function resetGroup() { activeGroup='all'; activeCat='all'; onFilter(); }
-  function clickCat(k)  { activeCat=activeCat===k?'all':k; onFilter(); }
-  function resetCat()   { activeCat='all'; onFilter(); }
+  function clickGroup(k){ activeGroup=activeGroup===k?'all':k; onFilter(); }
+  function resetGroup() { activeGroup='all'; onFilter(); }
+  function clickCat(k)  { if (activeFolders.has(k)) activeFolders.delete(k); else activeFolders.add(k); onFilter(); }
+  function resetCat()   { activeFolders.clear(); onFilter(); }
   // ── DROPDOWN FILTER INFRASTRUCTURE ───────────────────
   let openDropdown = null;
 
@@ -876,7 +875,7 @@ let allItems=[], categories=[], groups=[];
       return window.MMLLogic.hasActiveFilters({
         activeType,
         activeGroup,
-        activeCat,
+        activeFolders,
         activeResolutions,
         activeProviders,
         activeCodecs,
@@ -891,13 +890,14 @@ let allItems=[], categories=[], groups=[];
         videoCodecExclude,
         audioCodecExclude,
         audioLanguageExclude,
+        folderExclude,
         qualityExclude,
         searchQuery: getSearchQuery(),
       });
     }
     return activeType !== 'all'
       || activeGroup !== 'all'
-      || activeCat !== 'all'
+      || activeFolders.size > 0
       || activeResolutions.size > 0
       || activeProviders.size > 0
       || activeCodecs.size > 0
@@ -909,6 +909,7 @@ let allItems=[], categories=[], groups=[];
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
+      || folderExclude
       || getSearchQuery().length > 0;
   }
 
@@ -930,7 +931,7 @@ let allItems=[], categories=[], groups=[];
   function resetAllFilters() {
     activeType = 'all';
     activeGroup = 'all';
-    activeCat = 'all';
+    activeFolders.clear();
     activeResolutions.clear();
     activeProviders.clear();
     activeCodecs.clear();
@@ -945,6 +946,7 @@ let allItems=[], categories=[], groups=[];
     videoCodecExclude = false;
     audioCodecExclude = false;
     audioLanguageExclude = false;
+    folderExclude = false;
     qualityExclude = false;
 
     const searchDesktop = document.getElementById('searchInput');
@@ -1114,6 +1116,7 @@ let allItems=[], categories=[], groups=[];
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
+      'folderSection': activeFolders, 'folderSectionMobile': activeFolders,
       'qualitySection': activeQualityLevels, 'qualitySectionMobile': activeQualityLevels,
     };
     const activeSet = setMap[containerId];
@@ -1135,6 +1138,9 @@ let allItems=[], categories=[], groups=[];
   function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
+  function toggleFolderFilter(key) { if (activeFolders.has(key)) activeFolders.delete(key); else activeFolders.add(key); onFilter(); }
+  function clearFolderFilter() { activeFolders.clear(); onFilter(); }
+  function toggleFolderExclude() { folderExclude = !folderExclude; onFilter(); }
   function toggleQualityFilter(level) {
     const key = normalizeScoreRangeKey(level);
     if (!key) return;
@@ -1213,6 +1219,21 @@ let allItems=[], categories=[], groups=[];
         activeSet: activeAudioLanguages, toggleFn: 'toggleAudioLanguageFilter', clearFn: 'clearAudioLanguageFilter',
         getDisplay: k => getAudioLanguageSimpleDisplay(k),
         excludeMode: audioLanguageExclude, onToggleExclude: 'toggleAudioLanguageExclude' });
+    });
+  }
+
+  function renderFolderFilter() {
+    const base = baseItems('folder');
+    const counts = {};
+    base.forEach(i => {
+      const key = i.category || FILTER_NONE_KEY;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    ['folderSection', 'folderSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.by_category'),
+        activeSet: activeFolders, toggleFn: 'toggleFolderFilter', clearFn: 'clearFolderFilter',
+        getDisplay: k => (k === FILTER_NONE_KEY ? t('filters.none') : k),
+        excludeMode: folderExclude, onToggleExclude: 'toggleFolderExclude' });
     });
   }
 
@@ -1349,6 +1370,7 @@ let allItems=[], categories=[], groups=[];
   function onFilter() {
     syncTypePills();
     renderStorageBar();
+    renderFolderFilter();
     renderResolutionFilter();
     renderProviderFilter();
     renderCodecFilter();
@@ -1456,7 +1478,7 @@ let allItems=[], categories=[], groups=[];
     // Visibility order:
     // 1. Settings — type enabled (enableMovies/enableSeries)
     // 2. Settings — active categories (enabledCategories)
-    // 3. Sidebar filters — type, group, cat, provider, resolution, codec, search
+    // 3. Sidebar filters — type, group, folders, provider, resolution, codec, search
     // Note: visibleProviders affects logos/filter display only, NOT item visibility
     const q = getSearchQuery();
     let items=allItems;
@@ -1465,7 +1487,10 @@ let allItems=[], categories=[], groups=[];
     if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
-    if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
+    if (activeFolders.size > 0) {
+      if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
+      else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
+    }
     if (enableJellyseerr && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
@@ -1532,7 +1557,10 @@ let allItems=[], categories=[], groups=[];
     if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
-    if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
+    if (except!=='folder' && activeFolders.size > 0) {
+      if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
+      else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
+    }
     if (except!=='provider' && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
