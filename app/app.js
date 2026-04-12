@@ -1714,30 +1714,42 @@ let allItems=[], categories=[], groups=[];
       }
       return ''; // has providers but all hidden by visibility prefs
     }
+    const maxVisibleProviders = 5;
+    const shown = visP.slice(0, maxVisibleProviders);
+    const remaining = visP.length - shown.length;
     return '<div class="tl-providers">'
-      + visP.map(p => {
+      + shown.map(p => {
           const name=_pname(p), logo=_plogo(p);
           return logo
             ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
             : '<span class="tl-provider-name">'+escH(name)+'</span>';
         }).join('')
+      + (remaining > 0 ? '<span class="tl-provider-name" title="'+escH(t('stats.others'))+'">+'+remaining+'</span>' : '')
       + '</div>';
   }
   function cardHTML(item) {
     const plotText = (item.plot||'').trim();
     const qualityBadge = qualityBadgeHTML(item);
+    const infoParts = [];
+    if (item.group) infoParts.push('<span class="tl-cat tl-pill-ellipsis" style="color:#a78bfa">'+escH(item.group)+'</span>');
+    infoParts.push('<span class="tl-size">'+escH(item.size)+'</span>');
+    if (item.type==='tv'&&item.season_count) infoParts.push('<span class="tl-cat">'+item.season_count+'S</span>');
+    if (item.type==='tv'&&item.episode_count) infoParts.push('<span class="tl-cat">'+item.episode_count+'ep</span>');
+    if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
+      infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
+    }
     return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'" onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
         +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
-          +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
-          +(item.group?'<span class="tl-cat" style="color:#a78bfa">'+escH(item.group)+'</span>':'')
-          +'<span class="tl-cat">'+escH(item.category)+'</span>'
-          +'<span class="tl-size">'+escH(item.size)+'</span>'
-          +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
-          +(item.type==='tv'&&item.season_count?'<span class="tl-cat">'+item.season_count+'S</span>':'')+(item.type==='tv'&&item.episode_count?'<span class="tl-cat">'+item.episode_count+'ep</span>':'')+(item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1?'<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>':'')
+          +'<div class="tl-meta-row compact">'
+            +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+            +'<span class="tl-cat">'+escH(item.category)+'</span>'
+            +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+          +'</div>'
+          +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
         + providersBlock(item)
       +'</div>'
