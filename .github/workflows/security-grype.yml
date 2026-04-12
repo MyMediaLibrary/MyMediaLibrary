@@ -19,12 +19,20 @@ jobs:
       - name: Build local image
         run: docker build -t mymedialibrary:grype -f conf/Dockerfile .
 
-      - name: Scan image with Grype (table + JSON)
+      - name: Scan image with Grype (table)
         uses: anchore/scan-action@v7
         with:
           image: mymedialibrary:grype
-          output-format: table,json
-          output-file: grype-report.table,grype-report.json
+          output-format: table
+          output-file: grype-report.table
+          fail-build: false
+
+      - name: Scan image with Grype (json)
+        uses: anchore/scan-action@v7
+        with:
+          image: mymedialibrary:grype
+          output-format: json
+          output-file: grype-report.json
           fail-build: false
 
       - name: Upload Grype reports
