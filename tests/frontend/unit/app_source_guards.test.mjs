@@ -14,9 +14,11 @@ function functionBlock(source, functionName, nextFunctionName) {
   return source.slice(start, end);
 }
 
-test('renderQualityFilter relies on shared dropdown and has no stale noneCount reference', () => {
+test('renderQualityFilter renders slider + include_no_score control and has no stale noneCount reference', () => {
   const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
-  assert.match(block, /renderFilterDropdown\(/, 'renderQualityFilter should use shared renderFilterDropdown');
+  assert.match(block, /score-slider-min/, 'renderQualityFilter should render minimum score slider');
+  assert.match(block, /score-slider-max/, 'renderQualityFilter should render maximum score slider');
+  assert.match(block, /filters\.score\.include_no_score/, 'renderQualityFilter should render include-no-score checkbox');
   assert.doesNotMatch(block, /\bnoneCount\b/, 'renderQualityFilter should not reference stale noneCount');
 });
 
@@ -27,11 +29,11 @@ test('quality select-all wiring is mapped in _dropdownSelectAll', () => {
 });
 
 
-test('renderQualityFilter keeps score ranges visible even when all counts are zero', () => {
+test('renderQualityFilter auto-unchecks include_no_score only when leaving default range', () => {
   const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
-  assert.match(block, /SCORE_FILTER_RANGES\.forEach\(function\(range\)\s*\{\s*counts\[range\.key\]\s*=\s*0;/, 'score filter should keep all configured ranges in counts source');
-  assert.match(block, /renderFilterDropdown\(\{[\s\S]*counts,[\s\S]*label:\s*t\('filters\.score'\)/, 'score filter should render from complete counts map');
-  assert.doesNotMatch(block, /if\s*\(!total\)\s*\{\s*sec\.style\.display\s*=\s*'none'/, 'score filter should not hide when counts are zero');
+  assert.match(block, /const prevDefault = scoreMin === 0 && scoreMax === 100;/, 'slider update should track default-range transition');
+  assert.match(block, /if \(prevDefault && !nowDefault\) includeNoScore = false;/, 'include_no_score should auto-uncheck when restricting score range');
+  assert.doesNotMatch(block, /if \(!nowDefault\) includeNoScore = true;/, 'include_no_score should never be auto-rechecked');
 });
 
 test('standard dropdown sorting is centralized and stable by count then label', () => {

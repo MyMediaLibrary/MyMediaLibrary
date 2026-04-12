@@ -160,12 +160,16 @@
       (i) => i.providers || [],
       { matchNoneWhenSelected: true, withNoneExclusion: true }
     );
-    out = applySelectionFilter(
-      out,
-      new Set([...(state.activeQualityLevels || new Set())].map((k) => normalizeScoreRangeKey(k)).filter(Boolean)),
-      state.qualityExclude,
-      (i) => getScoreRangeKey(i)
-    );
+    const scoreMin = Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0;
+    const scoreMax = Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100;
+    const includeNoScore = state.includeNoScore !== undefined ? !!state.includeNoScore : true;
+    out = out.filter((i) => {
+      const score = Number(i?.quality?.score);
+      const hasScore = Number.isFinite(score);
+      const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+      if (includeNoScore) return inRange || !hasScore;
+      return inRange;
+    });
 
     return applySearch(out, state.searchQuery || '');
   }
@@ -181,7 +185,12 @@
     if (field === 'codec') nextState.activeCodecs = new Set();
     if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
     if (field === 'audioLanguage') nextState.activeAudioLanguages = new Set();
-    if (field === 'quality') nextState.activeQualityLevels = new Set();
+    if (field === 'quality') {
+      nextState.activeQualityLevels = new Set();
+      nextState.scoreMin = 0;
+      nextState.scoreMax = 100;
+      nextState.includeNoScore = true;
+    }
     const scoped = applyFilters(items, nextState);
     const counts = {};
     if (field === 'quality') {
@@ -226,13 +235,15 @@
       || state.activeCodecs.size > 0
       || state.activeAudioCodecs.size > 0
       || state.activeAudioLanguages.size > 0
+      || (Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0) > 0
+      || (Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100) < 100
+      || (state.includeNoScore !== undefined ? !state.includeNoScore : false)
       || state.activeQualityLevels.size > 0
       || state.providerExclude
       || state.resolutionExclude
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
-      || state.qualityExclude
       || !!(state.searchQuery || '').trim();
   }
 
@@ -247,6 +258,9 @@
       activeAudioCodecs: new Set(),
       activeAudioLanguages: new Set(),
       activeQualityLevels: new Set(),
+      scoreMin: 0,
+      scoreMax: 100,
+      includeNoScore: true,
       providerExclude: false,
       resolutionExclude: false,
       videoCodecExclude: false,

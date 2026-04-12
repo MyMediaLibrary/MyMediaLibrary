@@ -331,6 +331,9 @@ let allItems=[], categories=[], groups=[];
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
   let activeQualityLevels = new Set();
+  let scoreMin = 0;
+  let scoreMax = 100;
+  let includeNoScore = true;
   let audioCodecExclude = false;
   let videoCodecExclude = false;
   let providerExclude = false;
@@ -381,6 +384,9 @@ let allItems=[], categories=[], groups=[];
   function sanitizeScoreState() {
     activeQualityLevels.clear();
     qualityExclude = false;
+    scoreMin = 0;
+    scoreMax = 100;
+    includeNoScore = true;
     if (tSortCol === 'quality') tSortCol = null;
     ['sortSelect', 'sortSelectMobile'].forEach((id) => {
       const el = document.getElementById(id);
@@ -420,6 +426,9 @@ let allItems=[], categories=[], groups=[];
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
         activeQualityLevels: [...activeQualityLevels],
+        scoreMin,
+        scoreMax,
+        includeNoScore,
         audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
@@ -457,6 +466,14 @@ let allItems=[], categories=[], groups=[];
             .filter(Boolean)
         );
       }
+      if (isScoreEnabled() && Number.isFinite(Number(s.scoreMin))) scoreMin = Math.max(0, Math.min(100, Number(s.scoreMin)));
+      if (isScoreEnabled() && Number.isFinite(Number(s.scoreMax))) scoreMax = Math.max(0, Math.min(100, Number(s.scoreMax)));
+      if (isScoreEnabled() && scoreMin > scoreMax) {
+        const tmp = scoreMin;
+        scoreMin = scoreMax;
+        scoreMax = tmp;
+      }
+      if (isScoreEnabled() && s.includeNoScore !== undefined) includeNoScore = !!s.includeNoScore;
       if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
@@ -866,6 +883,9 @@ let allItems=[], categories=[], groups=[];
         activeAudioCodecs,
         activeAudioLanguages,
         activeQualityLevels,
+        scoreMin,
+        scoreMax,
+        includeNoScore,
         providerExclude,
         resolutionExclude,
         videoCodecExclude,
@@ -883,13 +903,12 @@ let allItems=[], categories=[], groups=[];
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
       || activeAudioLanguages.size > 0
-      || (isScoreEnabled() && activeQualityLevels.size > 0)
+      || (isScoreEnabled() && (scoreMin > 0 || scoreMax < 100 || !includeNoScore))
       || providerExclude
       || resolutionExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
-      || (isScoreEnabled() && qualityExclude)
       || getSearchQuery().length > 0;
   }
 
@@ -918,6 +937,9 @@ let allItems=[], categories=[], groups=[];
     activeAudioCodecs.clear();
     activeAudioLanguages.clear();
     activeQualityLevels.clear();
+    scoreMin = 0;
+    scoreMax = 100;
+    includeNoScore = true;
     providerExclude = false;
     resolutionExclude = false;
     videoCodecExclude = false;
@@ -1205,62 +1227,57 @@ let allItems=[], categories=[], groups=[];
       });
       return;
     }
-    const base = baseItems('quality');
-    const counts = {};
-    SCORE_FILTER_RANGES.forEach(function(range) { counts[range.key] = 0; });
-    base.forEach(i => {
-      const key = getScoreRangeKey(i?.quality?.score);
-      if (key) counts[key] += 1;
-    });
-
-    const invalidRanges = SCORE_FILTER_RANGES.filter(range => !range?.key || typeof counts[range.key] !== 'number');
-    if (invalidRanges.length) {
-      console.warn('[filters] score filter has invalid range config', invalidRanges);
-    }
-    if (!SCORE_FILTER_RANGES.some(range => range.key === '0_20')) {
-      console.warn('[filters] score filter expected key is missing from source config', SCORE_FILTER_RANGES);
-    }
-
-    logFiltersDebug('detected filters before score render', {
-      hasScore: true,
-      scoreOrderedKeys: sortFilterOptionsByCount(
-        SCORE_FILTER_RANGES.map(r => ({ key: r.key, count: counts[r.key] || 0 })),
-        qualityRangeLabel
-      ).map(r => r.key),
-      scoreCounts: counts,
-      baseItems: base.length,
-      scoredItems: Object.values(counts).reduce((sum, count) => sum + count, 0),
-    });
-
     ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
       const sec = document.getElementById(cid);
       if (!sec) {
         console.warn('[filters] score filter target container not found', cid);
         return;
       }
+      sec.style.display = '';
+      sec.innerHTML = ''
+        + '<div class="score-filter-panel">'
+        + '  <div class="score-filter-title">' + t('filters.score') + ' <span class="score-filter-range">' + scoreMin + '–' + scoreMax + '</span></div>'
+        + '  <div class="score-filter-sliders">'
+        + '    <input type="range" class="score-slider score-slider-min" min="0" max="100" step="1" value="' + scoreMin + '" aria-label="' + t('filters.score') + ' min"/>'
+        + '    <input type="range" class="score-slider score-slider-max" min="0" max="100" step="1" value="' + scoreMax + '" aria-label="' + t('filters.score') + ' max"/>'
+        + '  </div>'
+        + '  <div class="score-filter-edges"><span>0</span><span>100</span></div>'
+        + '  <label class="score-filter-checkbox"><input type="checkbox" class="score-no-score-toggle"' + (includeNoScore ? ' checked' : '') + '/> ' + t('filters.score.include_no_score') + '</label>'
+        + '</div>';
+      const minInput = sec.querySelector('.score-slider-min');
+      const maxInput = sec.querySelector('.score-slider-max');
+      const noScoreInput = sec.querySelector('.score-no-score-toggle');
+      const rangeText = sec.querySelector('.score-filter-range');
 
-      renderFilterDropdown({
-        containerId: cid,
-        counts,
-        label: t('filters.score'),
-        activeSet: activeQualityLevels,
-        toggleFn: 'toggleQualityFilter',
-        clearFn: 'clearQualityFilter',
-        getDisplay: k => qualityRangeLabel(k),
-        excludeMode: qualityExclude,
-        onToggleExclude: 'toggleQualityExclude',
-        getOptionPrefixHtml: k => {
-          const range = getScoreRangeByKey(k);
-          if (!range) return '';
-          return '<span class="score-range-dot ' + getQualityLevelClass(range.level) + '"></span>';
-        }
-      });
-
-      if (sec.style.display === 'none') {
-        console.warn('[filters] score filter expected but not rendered', { containerId: cid, counts });
-      } else {
-        logFiltersDebug('score filter injected in DOM', { containerId: cid, options: Object.keys(counts).length });
+      function syncRangeText() {
+        if (rangeText) rangeText.textContent = scoreMin + '–' + scoreMax;
       }
+      function updateFromSlider(changed) {
+        const prevDefault = scoreMin === 0 && scoreMax === 100;
+        const nextMin = Number(minInput?.value ?? scoreMin);
+        const nextMax = Number(maxInput?.value ?? scoreMax);
+        if (changed === 'min') scoreMin = Math.min(nextMin, nextMax);
+        else if (changed === 'max') scoreMax = Math.max(nextMax, nextMin);
+        else {
+          scoreMin = Math.min(nextMin, nextMax);
+          scoreMax = Math.max(nextMin, nextMax);
+        }
+        if (minInput) minInput.value = String(scoreMin);
+        if (maxInput) maxInput.value = String(scoreMax);
+        const nowDefault = scoreMin === 0 && scoreMax === 100;
+        if (prevDefault && !nowDefault) includeNoScore = false;
+        if (noScoreInput) noScoreInput.checked = includeNoScore;
+        syncRangeText();
+        onFilter();
+      }
+
+      minInput?.addEventListener('input', function() { updateFromSlider('min'); });
+      maxInput?.addEventListener('input', function() { updateFromSlider('max'); });
+      noScoreInput?.addEventListener('change', function(e) {
+        includeNoScore = !!e.target.checked;
+        onFilter();
+      });
+      syncRangeText();
     });
   }
 
@@ -1450,11 +1467,13 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
-    if (isScoreEnabled() && activeQualityLevels.size > 0) {
+    if (isScoreEnabled()) {
       items=items.filter(i=>{
-        const key = getScoreRangeKey(i?.quality?.score);
-        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
-        return key !== null && activeQualityLevels.has(key);
+        const score = Number(i?.quality?.score);
+        const hasScore = Number.isFinite(score);
+        const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+        if (includeNoScore) return inRange || !hasScore;
+        return inRange;
       });
     }
     return applySearch(items, q);
@@ -1515,11 +1534,13 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
-    if (isScoreEnabled() && except!=='quality' && activeQualityLevels.size > 0) {
+    if (isScoreEnabled() && except!=='quality') {
       items=items.filter(i=>{
-        const key = getScoreRangeKey(i?.quality?.score);
-        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
-        return key !== null && activeQualityLevels.has(key);
+        const score = Number(i?.quality?.score);
+        const hasScore = Number.isFinite(score);
+        const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+        if (includeNoScore) return inRange || !hasScore;
+        return inRange;
       });
     }
     return applySearch(items, q);
