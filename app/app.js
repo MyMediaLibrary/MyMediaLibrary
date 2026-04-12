@@ -841,13 +841,15 @@ let allItems=[], categories=[], groups=[];
     onFilter();
   }
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude }) {
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, orderedKeys, getOptionPrefixHtml }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const keys = Object.keys(counts).sort((a, b) => {
-      if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
-      return counts[b] - counts[a];
-    });
+    const keys = Array.isArray(orderedKeys) && orderedKeys.length
+      ? orderedKeys.filter(k => counts[k] !== undefined)
+      : Object.keys(counts).sort((a, b) => {
+        if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
+        return counts[b] - counts[a];
+      });
     if (!keys.length) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
 
@@ -896,8 +898,10 @@ let allItems=[], categories=[], groups=[];
     html += '</div>';
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
+      const prefixHtml = typeof getOptionPrefixHtml === 'function' ? getOptionPrefixHtml(key) : '';
       html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
         + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
+        + prefixHtml
         + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
         + '<span class="filter-dropdown-option-count">(' + counts[key] + ')</span>'
         + '</div>';
@@ -913,7 +917,6 @@ let allItems=[], categories=[], groups=[];
     if (raw === null || raw === undefined) return null;
     const value = String(raw).trim();
     if (!value) return null;
-    if (value === '__none__') return '__none__';
     if (SCORE_FILTER_RANGES.some(r => r.key === value)) return value;
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return null;
@@ -929,12 +932,16 @@ let allItems=[], categories=[], groups=[];
     return SCORE_FILTER_RANGES.find(r => r.key === key) || null;
   }
 
-  function getScoreRangeKey(score) {
+  function matchesScoreRange(score, rangeKey) {
     const value = Number(score);
     if (!Number.isFinite(value)) return null;
-    const range = SCORE_FILTER_RANGES.find(r =>
-      value >= r.min && (r.maxInclusive ? value <= r.max : value < r.max)
-    );
+    const range = getScoreRangeByKey(rangeKey);
+    if (!range) return false;
+    return value >= range.min && (range.maxInclusive ? value <= range.max : value < range.max);
+  }
+
+  function getScoreRangeKey(score) {
+    const range = SCORE_FILTER_RANGES.find(r => matchesScoreRange(score, r.key));
     return range ? range.key : null;
   }
 
@@ -964,6 +971,7 @@ let allItems=[], categories=[], groups=[];
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
+      'qualitySection': activeQualityLevels, 'qualitySectionMobile': activeQualityLevels,
     };
     const activeSet = setMap[containerId];
     if (activeSet) { keys.forEach(k => activeSet.add(k)); onFilter(); }
@@ -982,18 +990,9 @@ let allItems=[], categories=[], groups=[];
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
   function toggleQualityFilter(level) {
-    if (level === '__all__') {
-      clearQualityFilter();
-      return;
-    }
     const key = normalizeScoreRangeKey(level);
     if (!key) return;
-    if (activeQualityLevels.has(key)) {
-      activeQualityLevels.clear();
-    } else {
-      activeQualityLevels.clear();
-      activeQualityLevels.add(key);
-    }
+    if (activeQualityLevels.has(key)) activeQualityLevels.delete(key); else activeQualityLevels.add(key);
     onFilter();
   }
   function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
@@ -1081,11 +1080,9 @@ let allItems=[], categories=[], groups=[];
     const base = baseItems('quality');
     const counts = {};
     SCORE_FILTER_RANGES.forEach(function(range) { counts[range.key] = 0; });
-    let noneCount = 0;
     base.forEach(i => {
       const key = getScoreRangeKey(i?.quality?.score);
       if (key) counts[key] += 1;
-      else noneCount += 1;
     });
     const scoredTotal = Object.values(counts).reduce((s, n) => s + n, 0);
     const total = scoredTotal + noneCount;
@@ -1093,41 +1090,23 @@ let allItems=[], categories=[], groups=[];
       const sec = document.getElementById(cid);
       if (!sec) return;
       if (!total) { sec.style.display = 'none'; return; }
-      const selectedKey = [...activeQualityLevels][0] || '';
-      const triggerLabel = selectedKey === '__none__'
-        ? t('filters.score.none')
-        : (selectedKey ? escH(qualityRangeLabel(selectedKey)) : t('filters.score'));
-      const isOpen = openDropdown === cid;
-      let html = '<div class="storage-block"><div class="storage-title">' + t('filters.score') + '</div>'
-        + '<div class="filter-dropdown">'
-        + '<div class="filter-dropdown-trigger' + (selectedKey ? ' has-value' : '') + '" onclick="toggleDropdown(\'' + cid + '\')">'
-        + '<span class="filter-dropdown-label">' + triggerLabel + '</span>'
-        + (selectedKey ? '<span class="filter-dropdown-inline-clear" onclick="event.stopPropagation();clearQualityFilter()">✕</span>' : '')
-        + '<svg class="filter-dropdown-chevron' + (isOpen ? ' open' : '') + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
-        + '</div>'
-        + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>'
-        + '<div class="filter-dropdown-option" onclick="event.stopPropagation();toggleQualityFilter(\'__all__\')">'
-        + '<input type="checkbox"' + (selectedKey ? '' : ' checked') + ' tabindex="-1">'
-        + '<span class="filter-dropdown-option-label">' + t('filters.score.all') + '</span>'
-        + '<span class="filter-dropdown-option-count">(' + total + ')</span>'
-        + '</div>';
-      html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();toggleQualityFilter(\'__none__\')" data-key="__none__">'
-        + '<input type="checkbox"' + (selectedKey === '__none__' ? ' checked' : '') + ' tabindex="-1">'
-        + '<span class="filter-dropdown-option-label">' + t('filters.score.none') + '</span>'
-        + '<span class="filter-dropdown-option-count">(' + noneCount + ')</span>'
-        + '</div>';
-      SCORE_FILTER_RANGES.forEach(function(range) {
-        const checked = selectedKey === range.key;
-        html += '<div class="filter-dropdown-option filter-dropdown-option-score" onclick="event.stopPropagation();toggleQualityFilter(this.dataset.key)" data-key="' + range.key + '">'
-          + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
-          + '<span class="score-range-dot ' + getQualityLevelClass(range.level) + '"></span>'
-          + '<span class="filter-dropdown-option-label">' + escH(t(range.labelKey)) + '</span>'
-          + '<span class="filter-dropdown-option-count">(' + counts[range.key] + ')</span>'
-          + '</div>';
+      renderFilterDropdown({
+        containerId: cid,
+        counts,
+        label: t('filters.score'),
+        activeSet: activeQualityLevels,
+        toggleFn: 'toggleQualityFilter',
+        clearFn: 'clearQualityFilter',
+        getDisplay: k => qualityRangeLabel(k),
+        orderedKeys: SCORE_FILTER_RANGES.map(r => r.key),
+        excludeMode: qualityExclude,
+        onToggleExclude: 'toggleQualityExclude',
+        getOptionPrefixHtml: k => {
+          const range = getScoreRangeByKey(k);
+          if (!range) return '';
+          return '<span class="score-range-dot ' + getQualityLevelClass(range.level) + '"></span>';
+        }
       });
-      html += '</div></div></div>';
-      sec.style.display = 'block';
-      sec.innerHTML = html;
     });
   }
 
@@ -1322,10 +1301,9 @@ let allItems=[], categories=[], groups=[];
       }
     }
     if (activeQualityLevels.size > 0) {
-      const selectedScoreFilter = [...activeQualityLevels][0];
       items=items.filter(i=>{
         const key = getScoreRangeKey(i?.quality?.score);
-        if (selectedScoreFilter === '__none__') return key === null;
+        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
         return key !== null && activeQualityLevels.has(key);
       });
     }
@@ -1382,10 +1360,9 @@ let allItems=[], categories=[], groups=[];
       }
     }
     if (except!=='quality' && activeQualityLevels.size > 0) {
-      const selectedScoreFilter = [...activeQualityLevels][0];
       items=items.filter(i=>{
         const key = getScoreRangeKey(i?.quality?.score);
-        if (selectedScoreFilter === '__none__') return key === null;
+        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
         return key !== null && activeQualityLevels.has(key);
       });
     }
