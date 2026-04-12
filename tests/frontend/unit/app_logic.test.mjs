@@ -121,3 +121,113 @@ test('maps quality score and quality payload to 5-level ranking', () => {
   assert.equal(logic.getItemQualityLevel({}), 1);
   assert.equal(logic.getQualityLevelClass(3), 'quality-lvl-3');
 });
+
+test('score range helpers handle boundaries and missing values', () => {
+  assert.equal(logic.normalizeScoreRangeKey(1), '0_20');
+  assert.equal(logic.normalizeScoreRangeKey('5'), '80_100');
+  assert.equal(logic.normalizeScoreRangeKey('40_60'), '40_60');
+  assert.equal(logic.normalizeScoreRangeKey('invalid'), null);
+  assert.equal(logic.matchesScoreRange(0, '0_20'), true);
+  assert.equal(logic.matchesScoreRange(20, '0_20'), true);
+  assert.equal(logic.matchesScoreRange(21, '0_20'), false);
+  assert.equal(logic.matchesScoreRange(100, '80_100'), true);
+  assert.equal(logic.matchesScoreRange(undefined, '80_100'), false);
+});
+
+test('applyFilters handles multi-filters include/exclude consistently', () => {
+  const sample = [
+    {
+      title: 'A',
+      type: 'movie',
+      group: 'g1',
+      category: 'c1',
+      resolution: '4K',
+      codec: 'H.265',
+      audio_codec: 'DTS',
+      audio_languages_simple: 'VF',
+      providers: ['Netflix'],
+      quality: { score: 85 }
+    },
+    {
+      title: 'B',
+      type: 'tv',
+      group: 'g2',
+      category: 'c1',
+      resolution: '1080p',
+      codec: 'H.264',
+      audio_codec: 'AAC',
+      audio_languages_simple: 'VO',
+      providers: ['Prime Video'],
+      quality: { score: 35 }
+    },
+    {
+      title: 'C',
+      type: 'movie',
+      group: 'g1',
+      category: 'c2',
+      resolution: '4K',
+      codec: 'H.265',
+      audio_codec: 'AAC',
+      audio_languages_simple: 'MULTI',
+      providers: [],
+      quality: { score: 20 }
+    },
+    { title: 'D', type: 'movie', providers: ['Netflix'] }
+  ];
+
+  const state = baseState();
+  state.activeType = 'movie';
+  state.activeGroup = 'g1';
+  state.activeCat = 'c1';
+  state.activeResolution = '4K';
+  state.activeProviders = new Set(['Netflix']);
+  state.activeCodecs = new Set(['H.265']);
+  state.activeAudioCodecs = new Set(['DTS']);
+  state.activeAudioLanguages = new Set(['VF']);
+  state.activeQualityLevels = new Set(['80_100']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A']);
+
+  state.providerExclude = true;
+  assert.equal(logic.applyFilters(sample, state).length, 0);
+  state.providerExclude = false;
+  state.activeProviders = new Set(['__none__']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), [], 'other active filters still apply');
+  state.activeCat = 'all';
+  state.activeAudioCodecs = new Set(['AAC']);
+  state.activeAudioLanguages = new Set(['MULTI']);
+  state.activeQualityLevels = new Set(['0_20']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['C']);
+});
+
+test('quality include/exclude multi-range handles unscored items as expected', () => {
+  const qualityItems = [
+    { title: 'Q0', quality: { score: 0 } },
+    { title: 'Q20', quality: { score: 20 } },
+    { title: 'Q40', quality: { score: 40 } },
+    { title: 'Q60', quality: { score: 60 } },
+    { title: 'Q80', quality: { score: 80 } },
+    { title: 'Q100', quality: { score: 100 } },
+    { title: 'NoScore' }
+  ];
+  const state = baseState();
+  state.activeQualityLevels = new Set(['0_20', '80_100']);
+  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q0', 'Q20', 'Q100']);
+  state.qualityExclude = true;
+  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q40', 'Q60', 'Q80', 'NoScore']);
+});
+
+test('computeFilterCounts stays coherent with active filters and quality ranges', () => {
+  const sample = [
+    { title: 'A', providers: ['Netflix'], codec: 'H.265', audio_codec: 'DTS', audio_languages_simple: 'VF', quality: { score: 90 } },
+    { title: 'B', providers: ['Netflix', 'Prime Video'], codec: 'H.264', audio_codec: 'AAC', audio_languages_simple: 'VO', quality: { score: 50 } },
+    { title: 'C', providers: [], codec: 'H.264', audio_codec: 'AAC', audio_languages_simple: 'VO' }
+  ];
+  const state = baseState();
+  state.activeProviders = new Set(['Netflix']);
+  const codecCounts = logic.computeFilterCounts(sample, state, 'codec');
+  assert.deepEqual(codecCounts, { 'H.265': 1, 'H.264': 1 });
+
+  state.activeCodecs = new Set(['H.264']);
+  const qualityCounts = logic.computeFilterCounts(sample, state, 'quality');
+  assert.deepEqual(qualityCounts, { '0_20': 0, '20_40': 0, '40_60': 1, '60_80': 0, '80_100': 0 });
+});

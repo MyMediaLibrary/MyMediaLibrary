@@ -38,3 +38,9 @@ test('score filter is forced to last position after filter rendering', () => {
   assert.match(block, /renderQualityFilter\(\);/, 'score filter should be rendered in onFilter');
   assert.match(block, /ensureScoreFilterLast\(\);/, 'score filter should be repositioned to last slot after rendering');
 });
+
+test('restoreState restores persisted quality exclude mode', () => {
+  const block = functionBlock(appSource, 'restoreState');
+  assert.match(block, /s\.qualityExclude !== undefined/, 'restoreState should read qualityExclude from persisted mediaState');
+  assert.match(block, /qualityExclude\s*=\s*!!s\.qualityExclude/, 'restoreState should restore qualityExclude boolean');
+});
