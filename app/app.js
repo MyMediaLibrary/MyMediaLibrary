@@ -3451,31 +3451,65 @@ let allItems=[], categories=[], groups=[];
   function _cronHint(cron) {
     if (!cron || typeof cron !== 'string') return '';
     const parts = cron.trim().split(/\s+/);
-    if (parts.length !== 5) return 'Format invalide (5 champs requis)';
+    if (parts.length !== 5) return t('settings.system.cron_hint_invalid');
     const [min, hour, dom, month, dow] = parts;
-    const days = ['dim','lun','mar','mer','jeu','ven','sam'];
-    const months = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+    const days = [
+      t('settings.system.cron_days.sun'),
+      t('settings.system.cron_days.mon'),
+      t('settings.system.cron_days.tue'),
+      t('settings.system.cron_days.wed'),
+      t('settings.system.cron_days.thu'),
+      t('settings.system.cron_days.fri'),
+      t('settings.system.cron_days.sat')
+    ];
+    const months = [
+      t('settings.system.cron_months.jan'),
+      t('settings.system.cron_months.feb'),
+      t('settings.system.cron_months.mar'),
+      t('settings.system.cron_months.apr'),
+      t('settings.system.cron_months.may'),
+      t('settings.system.cron_months.jun'),
+      t('settings.system.cron_months.jul'),
+      t('settings.system.cron_months.aug'),
+      t('settings.system.cron_months.sep'),
+      t('settings.system.cron_months.oct'),
+      t('settings.system.cron_months.nov'),
+      t('settings.system.cron_months.dec')
+    ];
     const isAll = v => v === '*';
     const isNum = v => /^\d+$/.test(v);
     // Simple common patterns
     if (isAll(dom) && isAll(month) && isAll(dow)) {
-      if (isAll(min) && isAll(hour)) return 'Chaque minute';
-      if (isNum(min) && isNum(hour)) return 'Tous les jours à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
-      if (isAll(min) && isNum(hour)) return 'Toutes les heures, à ' + hour + 'h';
-      if (isNum(min) && isAll(hour)) return 'Chaque heure, à .' + min.padStart(2,'0');
+      if (isAll(min) && isAll(hour)) return t('settings.system.cron_hint_every_minute');
+      if (isNum(min) && isNum(hour)) return t('settings.system.cron_hint_daily_at', { hour: hour.padStart(2, '0'), minute: min.padStart(2, '0') });
+      if (isAll(min) && isNum(hour)) return t('settings.system.cron_hint_hourly_at_hour', { hour });
+      if (isNum(min) && isAll(hour)) return t('settings.system.cron_hint_every_hour_at_minute', { minute: min.padStart(2, '0') });
     }
     if (isNum(min) && isNum(hour) && isAll(dom) && isAll(month) && isNum(dow)) {
-      return 'Chaque ' + (days[parseInt(dow)] || 'jour?') + ' à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_weekly_day_at', {
+        day: days[parseInt(dow, 10)] || t('settings.system.cron_unknown_day'),
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
     if (isNum(min) && isNum(hour) && isNum(dom) && isAll(month) && isAll(dow)) {
-      return 'Le ' + dom + ' de chaque mois à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_monthly_day_at', {
+        day: dom,
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
     if (isNum(min) && isNum(hour) && isNum(dom) && isNum(month) && isAll(dow)) {
-      return 'Le ' + dom + ' ' + (months[parseInt(month)-1] || month) + ' à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_yearly_date_at', {
+        day: dom,
+        month: months[parseInt(month, 10) - 1] || month,
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
-    if (min === '0' && hour === '*/2' && isAll(dom) && isAll(month) && isAll(dow)) return 'Toutes les 2 heures';
+    if (min === '0' && hour === '*/2' && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_two_hours');
     const step = hour.match(/^\*\/(\d+)$/);
-    if (step && isAll(dom) && isAll(month) && isAll(dow)) return 'Toutes les ' + step[1] + 'h';
+    if (step && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_n_hours', { n: step[1] });
     return ''; // Unknown pattern — no hint
   }
 

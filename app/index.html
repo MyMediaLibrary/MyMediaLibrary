@@ -408,8 +408,9 @@
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.language">Langue</label>
               <select id="cfgLanguage" class="settings-input" style="width:auto" onchange="saveSettings()">
-                <option value="fr">🇫🇷 Français</option>
-                <option value="en">🇬🇧 English</option>
+                <option value="fr" data-i18n="settings.system.language_option_fr">🇫🇷 Français</option>
+                <option value="en" data-i18n="settings.system.language_option_en">🇬🇧 English</option>
+                <option value="es" data-i18n="settings.system.language_option_es">🇪🇸 Español</option>
               </select>
             </div>
             <div class="settings-row" style="margin-bottom:8px">
@@ -423,7 +424,7 @@
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:6px">
               <label class="settings-label" data-i18n="settings.system.cron">Scan automatique (cron)</label>
-              <input type="text" id="cfgScanCron" class="settings-input" placeholder="0 3 * * *" style="width:130px" oninput="updateCronHint()"/>
+              <input type="text" id="cfgScanCron" class="settings-input" data-i18n-placeholder="settings.system.cron_placeholder" placeholder="0 3 * * *" style="width:130px" oninput="updateCronHint()"/>
             </div>
             <div id="cfgCronHint" class="settings-note" style="margin-bottom:12px"></div>
             <div class="settings-row">
