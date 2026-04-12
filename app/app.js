@@ -2094,29 +2094,9 @@ let allItems=[], categories=[], groups=[];
       byAudioLangCount[key]=(byAudioLangCount[key]||0)+1;
       byAudioLangSize[key]=(byAudioLangSize[key]||0)+(i.size_b||0);
     });
-    const audioLangTotal = Object.values(byAudioLangCount).reduce((a,b)=>a+b,0);
-    const audioLangThreshold = audioLangTotal * 0.01;
-    const audioLangMainCount={};
-    const audioLangMainSize={};
-    let audioLangOthersCount=0;
-    let audioLangOthersSize=0;
-    Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]).forEach(([label,count])=>{
-      if (count >= audioLangThreshold) {
-        audioLangMainCount[label] = count;
-        audioLangMainSize[label] = byAudioLangSize[label] || 0;
-      } else {
-        audioLangOthersCount += count;
-        audioLangOthersSize += byAudioLangSize[label] || 0;
-      }
-    });
-    if (audioLangOthersCount > 0) {
-      const othersLabel = t('stats.others');
-      audioLangMainCount[othersLabel] = audioLangOthersCount;
-      audioLangMainSize[othersLabel] = audioLangOthersSize;
-    }
-    const hasLangData = Object.keys(audioLangMainCount).length > 0;
-    const audioLangEntriesCount = Object.entries(audioLangMainCount).sort((a,b)=>b[1]-a[1]);
-    const audioLangEntriesSize = Object.entries(audioLangMainSize).sort((a,b)=>b[1]-a[1]);
+    const hasLangData = Object.keys(byAudioLangCount).length > 0;
+    const audioLangEntriesCount = Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]);
+    const audioLangEntriesSize = Object.entries(byAudioLangSize).sort((a,b)=>b[1]-a[1]);
     const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
 
     // ── Resolution ───────────────────────────────────────

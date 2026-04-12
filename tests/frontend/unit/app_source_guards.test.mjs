@@ -135,3 +135,12 @@ test('codec filters keep UNKNOWN distinct from missing metadata', () => {
 test('tile metadata ellipsis pill can shrink in compact rows', () => {
   assert.match(appCss, /\.tl-meta-row\.tl-meta-row-ellipsis \.tl-pill-ellipsis\{flex:1 1 auto;min-width:0\}/, 'ellipsis pill should be shrinkable to preserve other compact badges');
 });
+
+test('audio language simplified stats keep all categories without auto-grouping into others', () => {
+  const statsPanelBlock = functionBlock(appSource, 'renderStatsPanel', 'renderStatsModal');
+  assert.match(statsPanelBlock, /const hasLangData = Object\.keys\(byAudioLangCount\)\.length > 0;/, 'audio language chart should be based on all simplified categories');
+  assert.match(statsPanelBlock, /const audioLangEntriesCount = Object\.entries\(byAudioLangCount\)\.sort\(\(a,b\)=>b\[1\]-a\[1\]\);/, 'audio language counts should be passed through without threshold grouping');
+  assert.match(statsPanelBlock, /const audioLangEntriesSize = Object\.entries\(byAudioLangSize\)\.sort\(\(a,b\)=>b\[1\]-a\[1\]\);/, 'audio language sizes should be passed through without threshold grouping');
+  assert.doesNotMatch(statsPanelBlock, /audioLangThreshold/, 'audio language chart should not apply a 1% threshold');
+  assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
+});
