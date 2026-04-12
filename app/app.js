@@ -1354,6 +1354,8 @@ let allItems=[], categories=[], groups=[];
 
   function parseQualityScore(item) {
     const raw = item?.quality?.score;
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === 'string' && raw.trim() === '') return null;
     const score = Number(raw);
     return Number.isFinite(score) ? score : null;
   }
