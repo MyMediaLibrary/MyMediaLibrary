@@ -315,13 +315,15 @@ let allItems=[], categories=[], groups=[];
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=true;
-  let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
+  let activeGroup='all', activeCat='all', activeType='all';
+  let activeResolutions = new Set();
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
   let activeQualityLevels = new Set();
   let audioCodecExclude = false;
   let videoCodecExclude = false;
   let providerExclude = false;
+  let resolutionExclude = false;
   let audioLanguageExclude = false;
   let qualityExclude = false;
   const SCORE_FILTER_RANGES = [
@@ -402,11 +404,12 @@ let allItems=[], categories=[], groups=[];
   function saveState() {
     try {
       localStorage.setItem('mediaState', JSON.stringify({
-        activeGroup, activeCat, activeResolution, activeType,
+        activeGroup, activeCat, activeType,
+        activeResolutions: [...activeResolutions],
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
         activeQualityLevels: [...activeQualityLevels],
-        audioCodecExclude, videoCodecExclude, providerExclude, audioLanguageExclude, qualityExclude,
+        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -427,7 +430,12 @@ let allItems=[], categories=[], groups=[];
             .filter(Boolean)
         );
       }
-      if (s.activeResolution)                 activeResolution  = s.activeResolution;
+      if (Array.isArray(s.activeResolutions)) {
+        activeResolutions = new Set(s.activeResolutions);
+      } else if (s.activeResolution && s.activeResolution !== 'all') {
+        // backward compatibility with legacy single-value resolution state
+        activeResolutions = new Set([s.activeResolution]);
+      }
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
@@ -441,6 +449,7 @@ let allItems=[], categories=[], groups=[];
       if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
+      if (s.resolutionExclude !== undefined)     resolutionExclude     = !!s.resolutionExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
       if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
@@ -840,13 +849,14 @@ let allItems=[], categories=[], groups=[];
         activeType,
         activeGroup,
         activeCat,
-        activeResolution,
+        activeResolutions,
         activeProviders,
         activeCodecs,
         activeAudioCodecs,
         activeAudioLanguages,
         activeQualityLevels,
         providerExclude,
+        resolutionExclude,
         videoCodecExclude,
         audioCodecExclude,
         audioLanguageExclude,
@@ -857,13 +867,14 @@ let allItems=[], categories=[], groups=[];
     return activeType !== 'all'
       || activeGroup !== 'all'
       || activeCat !== 'all'
-      || activeResolution !== 'all'
+      || activeResolutions.size > 0
       || activeProviders.size > 0
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
       || activeAudioLanguages.size > 0
       || (isScoreEnabled() && activeQualityLevels.size > 0)
       || providerExclude
+      || resolutionExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
@@ -890,13 +901,14 @@ let allItems=[], categories=[], groups=[];
     activeType = 'all';
     activeGroup = 'all';
     activeCat = 'all';
-    activeResolution = 'all';
+    activeResolutions.clear();
     activeProviders.clear();
     activeCodecs.clear();
     activeAudioCodecs.clear();
     activeAudioLanguages.clear();
     activeQualityLevels.clear();
     providerExclude = false;
+    resolutionExclude = false;
     videoCodecExclude = false;
     audioCodecExclude = false;
     audioLanguageExclude = false;
@@ -1041,6 +1053,7 @@ let allItems=[], categories=[], groups=[];
     // Determine the Set to update by mapping containerId to the active set variable
     const setMap = {
       'providerSection': activeProviders, 'providerSectionMobile': activeProviders, 'providerSectionTop': activeProviders,
+      'resolutionSection': activeResolutions, 'resolutionSectionMobile': activeResolutions,
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
@@ -1052,6 +1065,8 @@ let allItems=[], categories=[], groups=[];
 
   function toggleProviderFilter(key) { if (activeProviders.has(key)) activeProviders.delete(key); else activeProviders.add(key); onFilter(); }
   function clearProviderFilter() { activeProviders.clear(); onFilter(); }
+  function toggleResolutionFilter(key) { if (activeResolutions.has(key)) activeResolutions.delete(key); else activeResolutions.add(key); onFilter(); }
+  function clearResolutionFilter() { activeResolutions.clear(); onFilter(); }
   function toggleCodecFilter(key) { if (activeCodecs.has(key)) activeCodecs.delete(key); else activeCodecs.add(key); onFilter(); }
   function clearCodecFilter() { activeCodecs.clear(); onFilter(); }
   function toggleAudioCodecFilter(key) { if (activeAudioCodecs.has(key)) activeAudioCodecs.delete(key); else activeAudioCodecs.add(key); onFilter(); }
@@ -1059,6 +1074,7 @@ let allItems=[], categories=[], groups=[];
   function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
   function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
   function toggleProviderExclude() { providerExclude = !providerExclude; onFilter(); }
+  function toggleResolutionExclude() { resolutionExclude = !resolutionExclude; onFilter(); }
   function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
@@ -1219,34 +1235,31 @@ let allItems=[], categories=[], groups=[];
   }
 
   function renderResolutionFilter() {
-    const sec = document.getElementById('resolutionSection');
-    if (!sec) return;
-    let base = baseItems('resolution');
-    const ORDER = ['4K','1080p','720p','SD'];
-    const availableResolutions = new Set(base.map(i => i.resolution).filter(Boolean));
-    const resolutions = ORDER.filter(r => availableResolutions.has(r));
-    if (!resolutions.length) { sec.style.display='none'; return; }
-    const resetCls = 'provider-pill provider-pill-reset'+(activeResolution==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetResolution()">'+t('filters.all')+'</div>';
-    resolutions.forEach(r => {
-      const cls = 'provider-pill'+(activeResolution===r?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickResolution(this)" data-res="'+r+'">'        +'<span class="res-badge res-'+r+'">'+r+'</span>'        +'</div>';
+    const base = baseItems('resolution');
+    const counts = {};
+    base.forEach(i => {
+      const key = getNormalizedResolution(i);
+      counts[key] = (counts[key] || 0) + 1;
     });
-    sec.style.display='block';
-    sec.innerHTML='<div class="storage-block"><div class="storage-title">'+t('filters.resolution')+'</div><div class="provider-filter">'+pills+'</div></div>';
-    // mirror to top bar
-
-  }
-
-  function clickResolution(el) {
-    const k = el.dataset.res;
-    activeResolution = activeResolution === k ? 'all' : k;
-    onFilter();
-  }
-
-  function resetResolution() {
-    activeResolution = 'all';
-    onFilter();
+    const orderedPriority = ['480p', '576p', '720p', '1080p', '1440p', '2160p', '4K', '8K', 'SD', 'UNKNOWN'];
+    const orderedKeys = [
+      ...orderedPriority.filter(k => counts[k] !== undefined),
+      ...Object.keys(counts).filter(k => !orderedPriority.includes(k)).sort((a, b) => counts[b] - counts[a])
+    ];
+    ['resolutionSection', 'resolutionSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({
+        containerId: cid,
+        counts,
+        label: t('filters.resolution'),
+        activeSet: activeResolutions,
+        toggleFn: 'toggleResolutionFilter',
+        clearFn: 'clearResolutionFilter',
+        getDisplay: k => (k === 'UNKNOWN' ? t('filters.unknown') : k),
+        orderedKeys,
+        excludeMode: resolutionExclude,
+        onToggleExclude: 'toggleResolutionExclude',
+      });
+    });
   }
 
   function onFilter() {
@@ -1385,7 +1398,13 @@ let allItems=[], categories=[], groups=[];
         });
       }
     }
-    if (activeResolution!=='all') items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
+    if (activeResolutions.size > 0) {
+      if (resolutionExclude) {
+        items=items.filter(i=>!activeResolutions.has(getNormalizedResolution(i)));
+      } else {
+        items=items.filter(i=>activeResolutions.has(getNormalizedResolution(i)));
+      }
+    }
     if (activeCodecs.size > 0) {
       if (videoCodecExclude) {
         items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
@@ -1444,7 +1463,13 @@ let allItems=[], categories=[], groups=[];
         });
       }
     }
-    if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
+    if (except!=='resolution' && activeResolutions.size > 0) {
+      if (resolutionExclude) {
+        items=items.filter(i=>!activeResolutions.has(getNormalizedResolution(i)));
+      } else {
+        items=items.filter(i=>activeResolutions.has(getNormalizedResolution(i)));
+      }
+    }
     if (except!=='codec' && activeCodecs.size > 0) {
       if (videoCodecExclude) {
         items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
@@ -2913,7 +2938,7 @@ let allItems=[], categories=[], groups=[];
     if (mSort && dSort && mSort.value !== dSort.value) mSort.value = dSort.value;
     // Mirror filter sections to mobile panel
     // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
-    ['storageSection','resolutionSection'].forEach(id => {
+    ['storageSection'].forEach(id => {
       const src = document.getElementById(id);
       const dst = document.getElementById(id + 'Mobile');
       if (src && dst) dst.innerHTML = src.innerHTML;
