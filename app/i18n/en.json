@@ -63,6 +63,16 @@
     "by_group": "By group",
     "by_category": "By folder",
     "quality_score": "Quality score",
+    "score": {
+      "label": "Score",
+      "all": "All",
+      "none": "None",
+      "range_0_20": "0–20",
+      "range_20_40": "20–40",
+      "range_40_60": "40–60",
+      "range_60_80": "60–80",
+      "range_80_100": "80–100"
+    },
     "audio_language": "Audio language",
     "unknown": "Unknown",
     "select_all": "Select all",
