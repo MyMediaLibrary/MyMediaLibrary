@@ -5,6 +5,7 @@
       --accent-08:rgba(124,106,255,.08);
       --accent-20:rgba(124,106,255,.2);
       --accent-40:rgba(124,106,255,.4);
+      --mobile-nav-safe-height:calc(54px + env(safe-area-inset-bottom, 0px));
     }
     [data-theme="light"] {
       --bg:#f0f0f6; --surface:#f8f8fc; --card:#ffffff; --card-h:#f4f4fa;
@@ -438,9 +439,11 @@
     .mobile-topbar-title{font-family:'Syne',sans-serif;font-weight:800;font-size:15px}
     .mobile-topbar-btn{min-width:0;padding:8px 10px}
     .mobile-topbar-btn span{font-size:11px;white-space:nowrap}
-    .mobile-filters-panel{display:none;position:fixed;top:48px;left:0;right:0;z-index:149;
+    .mobile-filters-panel{display:none;position:fixed;top:48px;left:0;right:0;
+      bottom:var(--mobile-nav-safe-height);z-index:149;
       background:var(--surface);border-bottom:1px solid var(--border);
-      max-height:calc(100dvh - 48px);height:calc(100dvh - 48px);box-shadow:0 8px 24px rgba(0,0,0,.3);
+      max-height:calc(100dvh - 48px - var(--mobile-nav-safe-height));
+      height:calc(100dvh - 48px - var(--mobile-nav-safe-height));box-shadow:0 8px 24px rgba(0,0,0,.3);
       flex-direction:column;min-height:0}
     .mobile-filters-panel.open{display:flex}
     .mobile-filters-top{flex-shrink:0;padding:10px 12px 10px;border-bottom:1px solid var(--border);

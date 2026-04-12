@@ -1474,6 +1474,15 @@ def _normalize_providers(providers) -> list[str]:
             result.append(p["name"])
     return result
 
+def _strip_score_fields(item: dict) -> dict:
+    """Remove score-related fields from one item (in place) for score-disabled runs."""
+    if not isinstance(item, dict):
+        return item
+    item.pop("quality", None)
+    # Legacy compatibility: some older datasets stored top-level score payloads
+    item.pop("score", None)
+    return item
+
 def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
     Build one item dict from filesystem + NFO.
@@ -1659,9 +1668,15 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
         log.info(f"  Preserving {len(preserved)} items from other categories")
         for i in preserved:
+            if not score_enabled:
+                _strip_score_fields(i)
             i["id"] = item_id
             item_id += 1
         items = items + preserved
+
+    if not score_enabled:
+        for item in items:
+            _strip_score_fields(item)
 
     all_categories = sorted({i["category"] for i in items})
 
