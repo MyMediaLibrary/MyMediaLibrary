@@ -22,6 +22,9 @@ function baseState() {
     activeAudioCodecs: new Set(),
     activeAudioLanguages: new Set(),
     activeQualityLevels: new Set(),
+    scoreMin: 0,
+    scoreMax: 100,
+    includeNoScore: true,
     providerExclude: false,
     resolutionExclude: false,
     videoCodecExclude: false,
@@ -59,7 +62,7 @@ test('filters include/exclude and reset state behavior', () => {
   assert.equal(logic.hasActiveFilters(reset), true);
 });
 
-test('quality filter supports include/exclude with multi-select levels', () => {
+test('score filter defaults include unscored items', () => {
   const qualityItems = [
     { title: 'Unscored' },
     { title: 'Low', quality: { score: 18 } },
@@ -67,13 +70,8 @@ test('quality filter supports include/exclude with multi-select levels', () => {
     { title: 'High', quality: { score: 90 } }
   ];
   const state = baseState();
-  state.activeQualityLevels = new Set([1, 5]);
-  let filtered = logic.filterItems(qualityItems, state);
-  assert.deepEqual(filtered.map((i) => i.title), ['Low', 'High']);
-
-  state.qualityExclude = true;
-  filtered = logic.filterItems(qualityItems, state);
-  assert.deepEqual(filtered.map((i) => i.title), ['Unscored', 'Mid']);
+  const filtered = logic.filterItems(qualityItems, state);
+  assert.deepEqual(filtered.map((i) => i.title), ['Unscored', 'Low', 'Mid', 'High']);
 });
 
 test('resolution filter supports multi-select include/exclude and legacy single-value state', () => {
@@ -229,7 +227,9 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.activeCodecs = new Set(['H.265']);
   state.activeAudioCodecs = new Set(['DTS']);
   state.activeAudioLanguages = new Set(['VF']);
-  state.activeQualityLevels = new Set(['80_100']);
+  state.scoreMin = 80;
+  state.scoreMax = 100;
+  state.includeNoScore = false;
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A']);
 
   state.resolutionExclude = true;
@@ -244,25 +244,39 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.activeCat = 'all';
   state.activeAudioCodecs = new Set(['AAC']);
   state.activeAudioLanguages = new Set(['MULTI']);
-  state.activeQualityLevels = new Set(['0_20']);
+  state.scoreMin = 0;
+  state.scoreMax = 20;
+  state.includeNoScore = false;
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['C']);
 });
 
-test('quality include/exclude multi-range handles unscored items as expected', () => {
+test('score range + include_no_score behavior matches expected UX', () => {
   const qualityItems = [
     { title: 'Q0', quality: { score: 0 } },
-    { title: 'Q20', quality: { score: 20 } },
-    { title: 'Q40', quality: { score: 40 } },
-    { title: 'Q60', quality: { score: 60 } },
+    { title: 'Q10', quality: { score: 10 } },
+    { title: 'Q50', quality: { score: 50 } },
     { title: 'Q80', quality: { score: 80 } },
-    { title: 'Q100', quality: { score: 100 } },
     { title: 'NoScore' }
   ];
   const state = baseState();
-  state.activeQualityLevels = new Set(['0_20', '80_100']);
-  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q0', 'Q20', 'Q100']);
-  state.qualityExclude = true;
-  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q40', 'Q60', 'Q80', 'NoScore']);
+  // B. Restriction excludes no-score when includeNoScore is false.
+  state.scoreMin = 10;
+  state.scoreMax = 50;
+  state.includeNoScore = false;
+  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q10', 'Q50']);
+  // C. Manual re-check includes no-score again with same range.
+  state.includeNoScore = true;
+  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q10', 'Q50', 'NoScore']);
+  // D. Back to 0-100 does not force includeNoScore value.
+  state.scoreMin = 0;
+  state.scoreMax = 100;
+  state.includeNoScore = false;
+  assert.deepEqual(logic.applyFilters(qualityItems, state).map((i) => i.title), ['Q0', 'Q10', 'Q50', 'Q80']);
+  // E. Reset restores defaults.
+  const reset = logic.resetFiltersState();
+  assert.equal(reset.scoreMin, 0);
+  assert.equal(reset.scoreMax, 100);
+  assert.equal(reset.includeNoScore, true);
 });
 
 test('computeFilterCounts stays coherent with active filters and quality ranges', () => {

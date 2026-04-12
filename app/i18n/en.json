@@ -67,6 +67,7 @@
       "label": "Score",
       "all": "All",
       "none": "None",
+      "include_no_score": "Include items without score",
       "range_0_20": "0–20",
       "range_20_40": "20–40",
       "range_40_60": "40–60",
