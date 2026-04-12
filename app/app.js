@@ -968,11 +968,17 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  function buildDropdownFilterModel({ counts, getDisplay, pinFirst }) {
+  function buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet }) {
+    const activeKeys = activeSet instanceof Set ? [...activeSet] : [];
+    const activeLookup = new Set(activeKeys);
     const options = Object.keys(counts || {}).map((key) => ({
       key,
       count: Number(counts[key]) || 0
-    })).filter(option => option.count > 0);
+    })).filter(option => option.count > 0 || activeLookup.has(option.key));
+    activeKeys.forEach((key) => {
+      if (!key || options.some(option => option.key === key)) return;
+      options.push({ key, count: 0 });
+    });
     const pinned = pinFirst ? options.filter(option => option.key === pinFirst) : [];
     const remaining = pinFirst ? options.filter(option => option.key !== pinFirst) : options;
     return [
@@ -984,9 +990,9 @@ let allItems=[], categories=[], groups=[];
   function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, getOptionPrefixHtml }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const model = buildDropdownFilterModel({ counts, getDisplay, pinFirst });
+    const model = buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet });
     const keys = model.map(option => option.key);
-    if (!keys.length) { sec.style.display = 'none'; return; }
+    if (!keys.length && activeSet.size === 0) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
 
     const isOpen = openDropdown === containerId;
@@ -1039,7 +1045,7 @@ let allItems=[], categories=[], groups=[];
         + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
         + prefixHtml
         + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
-        + '<span class="filter-dropdown-option-count">(' + counts[key] + ')</span>'
+        + '<span class="filter-dropdown-option-count">(' + (Number(counts?.[key]) || 0) + ')</span>'
         + '</div>';
     });
     html += '</div></div></div>';

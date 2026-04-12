@@ -43,12 +43,14 @@ test('standard dropdown sorting is centralized and stable by count then label', 
 
   const modelBlock = functionBlock(appSource, 'buildDropdownFilterModel', 'renderFilterDropdown');
   assert.match(modelBlock, /sortFilterOptionsByCount\(remaining, getDisplay\)/, 'dropdown model should use centralized sort helper');
-  assert.match(modelBlock, /\.filter\(option => option\.count > 0\)/, 'dropdown model should hide zero-count options');
+  assert.match(modelBlock, /\.filter\(option => option\.count > 0 \|\| activeLookup\.has\(option\.key\)\)/, 'dropdown model should keep zero-count options only when currently active');
+  assert.match(modelBlock, /activeKeys\.forEach/, 'dropdown model should restore active keys missing from counts');
 });
 
 test('renderFilterDropdown hides empty filters when no positive-count options remain', () => {
   const block = functionBlock(appSource, 'renderFilterDropdown', 'normalizeScoreRangeKey');
-  assert.match(block, /if \(!keys\.length\) \{ sec\.style\.display = 'none'; return; \}/, 'dropdown should be hidden when no options are usable');
+  assert.match(block, /if \(!keys\.length && activeSet\.size === 0\) \{ sec\.style\.display = 'none'; return; \}/, 'dropdown should stay visible when active values must remain clearable');
+  assert.match(block, /buildDropdownFilterModel\(\{ counts, getDisplay, pinFirst, activeSet \}\)/, 'dropdown model should receive active set to preserve active zero-count options');
 });
 
 test('score filter is forced to last position after filter rendering', () => {
