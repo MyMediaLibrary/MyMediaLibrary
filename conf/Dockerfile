@@ -1,6 +1,6 @@
 FROM nginx:alpine
 
-RUN apk add --no-cache python3 dcron gettext
+RUN apk add --no-cache python3 dcron gettext tzdata
 
 WORKDIR /app
 

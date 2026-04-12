@@ -1243,7 +1243,9 @@ let allItems=[], categories=[], groups=[];
       sec.innerHTML = ''
         + '<div class="score-filter-panel">'
         + '  <div class="score-filter-title">' + t('filters.score') + ' <span class="score-filter-range">' + scoreMin + '–' + scoreMax + '</span></div>'
-        + '  <div class="score-filter-sliders">'
+        + '  <div class="score-double-slider" style="--range-min:' + scoreMin + ';--range-max:' + scoreMax + ';">'
+        + '    <div class="score-double-slider-track"></div>'
+        + '    <div class="score-double-slider-selected"></div>'
         + '    <input type="range" class="score-slider score-slider-min" min="0" max="100" step="1" value="' + scoreMin + '" aria-label="' + t('filters.score') + ' min"/>'
         + '    <input type="range" class="score-slider score-slider-max" min="0" max="100" step="1" value="' + scoreMax + '" aria-label="' + t('filters.score') + ' max"/>'
         + '  </div>'
@@ -1254,14 +1256,31 @@ let allItems=[], categories=[], groups=[];
       const maxInput = sec.querySelector('.score-slider-max');
       const noScoreInput = sec.querySelector('.score-no-score-toggle');
       const rangeText = sec.querySelector('.score-filter-range');
+      const rangeWrap = sec.querySelector('.score-double-slider');
 
       function syncRangeText() {
         if (rangeText) rangeText.textContent = scoreMin + '–' + scoreMax;
+        if (rangeWrap) {
+          rangeWrap.style.setProperty('--range-min', String(scoreMin));
+          rangeWrap.style.setProperty('--range-max', String(scoreMax));
+        }
+        if (minInput && maxInput) {
+          const minOnTop = scoreMin >= scoreMax - 2;
+          minInput.style.zIndex = minOnTop ? '3' : '2';
+          maxInput.style.zIndex = minOnTop ? '2' : '3';
+        }
       }
       function updateFromSlider(changed) {
         const prevDefault = scoreMin === 0 && scoreMax === 100;
-        const nextMin = Number(minInput?.value ?? scoreMin);
-        const nextMax = Number(maxInput?.value ?? scoreMax);
+        let nextMin = Number(minInput?.value ?? scoreMin);
+        let nextMax = Number(maxInput?.value ?? scoreMax);
+        if (changed === 'min' && nextMin > nextMax) {
+          nextMax = nextMin;
+          if (maxInput) maxInput.value = String(nextMax);
+        } else if (changed === 'max' && nextMax < nextMin) {
+          nextMin = nextMax;
+          if (minInput) minInput.value = String(nextMin);
+        }
         if (changed === 'min') scoreMin = Math.min(nextMin, nextMax);
         else if (changed === 'max') scoreMax = Math.max(nextMax, nextMin);
         else {
