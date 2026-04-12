@@ -131,6 +131,26 @@ class InventoryFlagCriticalTest(unittest.TestCase):
         self.assertTrue(merged["system"]["inventory_enabled"])
 
 
+class ScoreFeatureFlagCriticalTest(unittest.TestCase):
+    def test_default_config_score_flag_is_enabled(self):
+        self.assertIs(scanner._DEFAULT_CONFIG["system"]["enable_score"], True)
+
+    def test_score_flag_parser_defaults_to_enabled(self):
+        self.assertTrue(scanner._is_score_enabled({"system": {}}))
+        self.assertTrue(scanner._is_score_enabled({"system": {"enable_score": True}}))
+        self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": False}}))
+
+    def test_scan_media_item_skips_quality_payload_when_score_is_disabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            media_dir = root / "Films" / "Test Movie (2024)"
+            media_dir.mkdir(parents=True)
+            (media_dir / "test.mkv").write_text("x", encoding="utf-8")
+            cat = {"name": "Films", "type": "movie"}
+            item = scanner.scan_media_item(media_dir, root, cat, {}, enable_score=False)
+            self.assertNotIn("quality", item)
+
+
 class FolderEnabledCompatibilityTest(unittest.TestCase):
     def test_enabled_falls_back_to_visible_when_missing(self):
         self.assertTrue(scanner.is_folder_enabled({"visible": True}))

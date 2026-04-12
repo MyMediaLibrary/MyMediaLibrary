@@ -1345,6 +1345,7 @@ _DEFAULT_CONFIG: dict = {
         "log_level": "INFO",
         "needs_onboarding": True,
         "inventory_enabled": False,
+        "enable_score": True,
     },
     "folders": [],
     "enable_movies": True,
@@ -1412,6 +1413,11 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
     return system.get("inventory_enabled") is True
 
 
+def _is_score_enabled(cfg: dict | None) -> bool:
+    system = (cfg or {}).get("system") or {}
+    return system.get("enable_score", True) is not False
+
+
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:
     """
     Normalize folder active state to `enabled`.
@@ -1468,7 +1474,7 @@ def _normalize_providers(providers) -> list[str]:
             result.append(p["name"])
     return result
 
-def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
+def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
@@ -1550,7 +1556,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
     }
-    item["quality"] = compute_quality(item)
+    if enable_score:
+        item["quality"] = compute_quality(item)
     return item
 
 
@@ -1578,6 +1585,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     if normalize_folder_enabled_flags(cfg, drop_visible=True):
         save_config(cfg)
         cfg = load_config()
+    score_enabled = _is_score_enabled(cfg)
     inventory_enabled = _is_inventory_enabled(cfg)
     force_missing_folder_refs = {
         ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
@@ -1630,7 +1638,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             item_path = str(media_dir.relative_to(root))
             prev = existing.get(item_path, {})
 
-            item = scan_media_item(media_dir, root, cat, prev)
+            item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
             item["id"] = item_id
             items.append(item)
             if inventory_enabled:
@@ -1676,6 +1684,9 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         "providers_raw":       prev_data.get("providers_raw") or [],
         "config": {
             "library_path": LIBRARY_PATH,
+        },
+        "meta": {
+            "score_enabled": score_enabled,
         },
     }
     output_path = Path(OUTPUT_PATH)

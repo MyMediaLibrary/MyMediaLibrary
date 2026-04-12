@@ -161,7 +161,9 @@
       "log_path": "📄 Logs available on host: ./data/scanner.log",
       "export_json": "JSON export",
       "export_json_btn": "Download export",
-      "export_unavailable": "Library not loaded: export unavailable."
+      "export_unavailable": "Library not loaded: export unavailable.",
+      "enable_score": "Enable quality score",
+      "enable_score_hint": "When disabled, score is no longer computed during scan and is removed from sort/filter/stats."
     },
     "env_note": "⚙️ Read-only values are configured via compose.yaml.",
     "github_link": "GitHub project",
