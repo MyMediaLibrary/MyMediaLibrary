@@ -1223,15 +1223,14 @@ let allItems=[], categories=[], groups=[];
     if (!sec) return;
     let base = baseItems('resolution');
     const ORDER = ['4K','1080p','720p','SD'];
-    const counts = {};
-    base.forEach(i => { if (i.resolution) counts[i.resolution] = (counts[i.resolution]||0)+1; });
-    const resolutions = ORDER.filter(r => counts[r]);
+    const availableResolutions = new Set(base.map(i => i.resolution).filter(Boolean));
+    const resolutions = ORDER.filter(r => availableResolutions.has(r));
     if (!resolutions.length) { sec.style.display='none'; return; }
     const resetCls = 'provider-pill provider-pill-reset'+(activeResolution==='all'?' active':'');
     let pills = '<div class="'+resetCls+'" onclick="resetResolution()">'+t('filters.all')+'</div>';
     resolutions.forEach(r => {
       const cls = 'provider-pill'+(activeResolution===r?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickResolution(this)" data-res="'+r+'">'        +'<span class="res-badge res-'+r+'">'+r+'</span>'        +'<span style="margin-left:4px;font-size:11px">'+counts[r]+'</span>'        +'</div>';
+      pills += '<div class="'+cls+'" onclick="clickResolution(this)" data-res="'+r+'">'        +'<span class="res-badge res-'+r+'">'+r+'</span>'        +'</div>';
     });
     sec.style.display='block';
     sec.innerHTML='<div class="storage-block"><div class="storage-title">'+t('filters.resolution')+'</div><div class="provider-filter">'+pills+'</div></div>';

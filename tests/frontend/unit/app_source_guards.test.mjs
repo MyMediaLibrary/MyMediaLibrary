@@ -56,6 +56,12 @@ test('quality filter hard-disables itself when score feature is disabled', () =>
   assert.match(block, /if\s*\(!isScoreEnabled\(\)\)\s*\{/, 'renderQualityFilter should early-return when score is disabled');
 });
 
+test('renderResolutionFilter renders resolution labels without inline counts', () => {
+  const block = functionBlock(appSource, 'renderResolutionFilter', 'clickResolution');
+  assert.doesNotMatch(block, /counts\[r\]/, 'resolution pills should not inject per-resolution counts');
+  assert.doesNotMatch(block, /margin-left:4px;font-size:11px/, 'resolution pills should not render the legacy inline count span');
+});
+
 test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
   assert.match(block, /resolveScoreEnabled\(libraryMetaScoreEnabled\)/, 'loadLibrary should use centralized score resolution');
