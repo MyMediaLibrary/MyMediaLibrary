@@ -1124,6 +1124,14 @@ def migrate_env_to_config() -> None:
     if "inventory_enabled" not in sys_cfg:
         sys_cfg["inventory_enabled"] = False
         changed = True
+    if "enable_score" not in sys_cfg:
+        sys_cfg["enable_score"] = False
+        changed = True
+
+    ui_cfg = cfg.setdefault("ui", {})
+    if "synopsis_on_hover" not in ui_cfg:
+        ui_cfg["synopsis_on_hover"] = False
+        changed = True
 
     if changed:
         save_config(cfg)
@@ -1362,7 +1370,7 @@ _DEFAULT_CONFIG: dict = {
         "log_level": "INFO",
         "needs_onboarding": True,
         "inventory_enabled": False,
-        "enable_score": True,
+        "enable_score": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -1432,7 +1440,7 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
 
 def _is_score_enabled(cfg: dict | None) -> bool:
     system = (cfg or {}).get("system") or {}
-    return system.get("enable_score", True) is not False
+    return system.get("enable_score") is True
 
 
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:

@@ -336,7 +336,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=true;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -387,11 +387,11 @@ let allItems=[], categories=[], groups=[];
     if (typeof libraryMetaScoreEnabled === 'boolean') {
       return libraryMetaScoreEnabled;
     }
-    return true;
+    return false;
   }
 
   function isScoreEnabled() {
-    return enableScore !== false;
+    return enableScore === true;
   }
 
   function sanitizeScoreState() {
@@ -3145,7 +3145,7 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
-    _rw('cfgEnableScore', sys.enable_score !== false);
+    _rw('cfgEnableScore', sys.enable_score === true);
     updateCronHint();
 
     // Jellyseerr — editable from appConfig

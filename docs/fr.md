@@ -460,9 +460,13 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 - Langue (FR/EN)
 - Couleur d'accent (sélecteur + reset)
-- Synopsis au survol (on/off)
+- Synopsis au survol (on/off, **désactivé par défaut**)
+- Score de qualité (on/off, **désactivé par défaut**)
+- Inventaire brut `library_inventory.json` (on/off, **désactivé par défaut**)
 - Scan automatique (cron)
 - Niveau de log
 - Version
+
+> Le synopsis au survol, le score qualité et l'inventaire sont considérés comme des fonctionnalités avancées : ils sont opt-in et doivent être activés explicitement dans les paramètres.
 
 ---

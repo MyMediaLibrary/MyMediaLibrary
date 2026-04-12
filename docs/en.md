@@ -459,9 +459,13 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 
 - Language (FR/EN)
 - Accent color (picker + reset)
-- Synopsis on hover (on/off)
+- Synopsis on hover (on/off, **disabled by default**)
+- Quality score (on/off, **disabled by default**)
+- Raw inventory `library_inventory.json` (on/off, **disabled by default**)
 - Auto-scan (cron)
 - Log level
 - Version
+
+> Synopsis on hover, quality scoring, and raw inventory are advanced features: they are opt-in and must be enabled manually in settings.
 
 ---
