@@ -3149,13 +3149,19 @@ let allItems=[], categories=[], groups=[];
   function toggleJsrFields() {
     const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
     const jellyFields = document.getElementById('cfgJellyseerrFields');
+    const jellyBlock = document.getElementById('cfgJellyseerrBlock');
     const providersBlock = document.getElementById('cfgProvidersBlock');
     ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
     if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
+    if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
     if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
+    if (enabled) {
+      _setSettingsCollapsed('settingsJellyseerrBody', true);
+      _setSettingsCollapsed('settingsProvidersBody', true);
+    }
     if (!enabled) {
       _settingsJsrTestOk = false;
       const res = document.getElementById('cfgJsrTestResult');
@@ -3163,14 +3169,20 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
+  function _setSettingsCollapsed(targetId, collapsed) {
+    const panel = targetId ? document.getElementById(targetId) : null;
+    if (!panel) return;
+    const btn = document.querySelector(`.settings-collapsible[data-target="${targetId}"]`);
+    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    panel.classList.toggle('is-collapsed', collapsed);
+    panel.style.display = collapsed ? 'none' : 'block';
+  }
+
   function toggleSettingsCollapse(btn) {
     const targetId = btn?.dataset?.target;
-    const panel = targetId ? document.getElementById(targetId) : null;
-    if (!btn || !panel) return;
+    if (!btn || !targetId) return;
     const expanded = btn.getAttribute('aria-expanded') !== 'false';
-    btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-    panel.classList.toggle('is-collapsed', expanded);
-    panel.style.display = expanded ? 'none' : 'block';
+    _setSettingsCollapsed(targetId, expanded);
   }
 
   function _isFolderEnabled(folder) {
@@ -3281,7 +3293,7 @@ let allItems=[], categories=[], groups=[];
     if (!container) return;
     const folders = appConfig.folders || [];
     if (!folders.length) {
-      container.innerHTML = '<div class="settings-note">Aucun dossier détecté. Lancez un scan pour détecter les dossiers.</div>';
+      container.innerHTML = '<div class="settings-note">' + t('settings.library.no_folders') + '</div>';
       return;
     }
     const unknownCount = folders.filter(f => !f.missing && (f.type === null || f.type === undefined)).length;
@@ -3360,7 +3372,7 @@ let allItems=[], categories=[], groups=[];
       .filter(p => !_isOthersProviderName(p))
       .sort();
     const hasHidden = _hasHiddenProviders();
-    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">Aucun provider disponible.</div>'; return; }
+    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>'; return; }
     let html = '';
     provs.forEach(prov => {
       const checked = _provVisible(prov);
