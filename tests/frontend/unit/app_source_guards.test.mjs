@@ -55,3 +55,9 @@ test('quality filter hard-disables itself when score feature is disabled', () =>
   const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
   assert.match(block, /if\s*\(!isScoreEnabled\(\)\)\s*\{/, 'renderQualityFilter should early-return when score is disabled');
 });
+
+test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {
+  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(block, /resolveScoreEnabled\(libraryMetaScoreEnabled\)/, 'loadLibrary should use centralized score resolution');
+  assert.doesNotMatch(block, /enableScore\s*=\s*data\.meta\.score_enabled/, 'loadLibrary should not directly trust stale library meta score flag');
+});

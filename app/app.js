@@ -350,6 +350,17 @@ let allItems=[], categories=[], groups=[];
   let serverConfig = {};         // from library.json config block
   let appVersionInfo = null;     // loaded from /version.json
 
+  function resolveScoreEnabled(libraryMetaScoreEnabled = null) {
+    const configScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof configScoreEnabled === 'boolean') {
+      return configScoreEnabled;
+    }
+    if (typeof libraryMetaScoreEnabled === 'boolean') {
+      return libraryMetaScoreEnabled;
+    }
+    return true;
+  }
+
   function isScoreEnabled() {
     return enableScore !== false;
   }
@@ -552,9 +563,10 @@ let allItems=[], categories=[], groups=[];
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
       if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
       if (data.config) serverConfig = data.config;
-      if (typeof data?.meta?.score_enabled === 'boolean') {
-        enableScore = data.meta.score_enabled;
-      }
+      const libraryMetaScoreEnabled = typeof data?.meta?.score_enabled === 'boolean'
+        ? data.meta.score_enabled
+        : null;
+      enableScore = resolveScoreEnabled(libraryMetaScoreEnabled);
       applyScoreFeatureVisibility();
       renderStorageBar();
       renderProviderFilter();
@@ -672,7 +684,7 @@ let allItems=[], categories=[], groups=[];
       enableMovies     = appConfig.enable_movies ?? true;
       enableSeries     = appConfig.enable_series ?? true;
       enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
-      enableScore      = appConfig.system?.enable_score !== false;
+      enableScore      = resolveScoreEnabled();
 
       // Provider visibility: [] = all visible; non-empty array = whitelist
       const pv = appConfig.providers_visible;
