@@ -3075,7 +3075,7 @@ let allItems=[], categories=[], groups=[];
     });
     // Sync stats bar
     const sbSrc = document.getElementById('statsBar');
-    document.querySelectorAll('#mobileStatsBar, #mobileFiltersStats').forEach(el => {
+    document.querySelectorAll('#mobileStatsBar').forEach(el => {
       if (sbSrc) el.innerHTML = sbSrc.innerHTML;
     });
     // Sync type pills
@@ -3516,16 +3516,15 @@ let allItems=[], categories=[], groups=[];
     if (saveBtn) saveBtn.style.display = 'block';
 
     const panels = document.querySelectorAll('.stab-panel[data-mobile-panel]');
-    panels.forEach((panel, index) => {
+    panels.forEach(panel => {
       const headerBtn = panel.querySelector('.settings-mobile-section-btn');
       const body = panel.querySelector('.settings-mobile-section-body');
       if (!headerBtn || !body) return;
 
       if (onMobile) {
         panel.style.display = 'block';
-        const shouldExpand = index === 0;
-        headerBtn.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
-        body.classList.toggle('is-collapsed', !shouldExpand);
+        headerBtn.setAttribute('aria-expanded', 'false');
+        body.classList.add('is-collapsed');
       } else {
         const isActive = panel.id === 'stab-library';
         panel.style.display = isActive ? 'block' : 'none';
