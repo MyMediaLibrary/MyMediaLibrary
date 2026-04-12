@@ -1,0 +1,36 @@
+name: Security Scan (Grype)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  grype:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build local image
+        run: docker build -t mymedialibrary:grype -f conf/Dockerfile .
+
+      - name: Scan image with Grype (table + JSON)
+        uses: anchore/scan-action@v7
+        with:
+          image: mymedialibrary:grype
+          output-format: table,json
+          output-file: grype-report.table,grype-report.json
+          fail-build: false
+
+      - name: Upload Grype reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-report
+          path: |
+            grype-report.table
+            grype-report.json
