@@ -151,6 +151,7 @@
       "enable": "Enable",
       "url": "URL",
       "apikey": "API Key",
+      "apikey_saved": "API key already saved",
       "test": "Test connection",
       "providers_visible": "Provider visibility",
       "no_provider_available": "No provider available.",

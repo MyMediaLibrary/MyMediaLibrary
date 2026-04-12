@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "conf"))
@@ -178,6 +179,58 @@ class FolderEnabledCompatibilityTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertIs(cfg["folders"][0]["enabled"], True)
         self.assertNotIn("visible", cfg["folders"][0])
+
+
+class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
+    def test_payload_without_apikey_preserves_existing_secret(self):
+        payload = {"jellyseerr": {"enabled": True, "url": "https://example.test"}}
+        secrets = {"jellyseerr_apikey": "existing-secret"}
+
+        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+
+        self.assertEqual(action, "not modified")
+        self.assertEqual(secrets["jellyseerr_apikey"], "existing-secret")
+        self.assertNotIn("apikey", payload["jellyseerr"])
+
+    def test_payload_with_new_apikey_updates_secret(self):
+        payload = {"jellyseerr": {"apikey": "  new-secret  "}}
+        secrets = {"jellyseerr_apikey": "old-secret"}
+
+        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+
+        self.assertEqual(action, "updated")
+        self.assertEqual(secrets["jellyseerr_apikey"], "new-secret")
+        self.assertNotIn("jellyseerr", payload)
+
+    def test_payload_with_empty_apikey_does_not_overwrite_secret(self):
+        payload = {"jellyseerr": {"apikey": "   "}}
+        secrets = {"jellyseerr_apikey": "existing-secret"}
+
+        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+
+        self.assertEqual(action, "preserved")
+        self.assertEqual(secrets["jellyseerr_apikey"], "existing-secret")
+
+    def test_payload_with_explicit_clear_flag_removes_secret(self):
+        payload = {"jellyseerr": {"clear_apikey": True}}
+        secrets = {"jellyseerr_apikey": "existing-secret"}
+
+        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+
+        self.assertEqual(action, "cleared")
+        self.assertNotIn("jellyseerr_apikey", secrets)
+        self.assertNotIn("jellyseerr", payload)
+
+    def test_jsr_cfg_uses_preserved_secret_for_scan_config(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://example.test/"}}
+        secrets = {"jellyseerr_apikey": "kept-secret"}
+
+        with patch.object(scanner, "load_config", return_value=cfg), patch.object(scanner, "_load_secrets", return_value=secrets):
+            jsr = scanner._jsr_cfg()
+
+        self.assertTrue(jsr["enabled"])
+        self.assertEqual(jsr["url"], "https://example.test")
+        self.assertEqual(jsr["apikey"], "kept-secret")
 
 
 class HdrFallbackSafetyTest(unittest.TestCase):

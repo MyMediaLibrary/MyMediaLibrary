@@ -3173,6 +3173,11 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
     _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
     _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
+    const jsrKeyInput = _field('cfgJellyseerrKey');
+    if (jsrKeyInput) {
+      const hasStoredKey = appConfig.jellyseerr?.apikey === '***';
+      jsrKeyInput.placeholder = hasStoredKey ? t('settings.jellyseerr.apikey_saved') : '••••••••••••';
+    }
     toggleJsrFields();
 
     renderFoldersUI();
@@ -3271,12 +3276,14 @@ let allItems=[], categories=[], groups=[];
 
     const jEnabled = get('cfgEnableJellyseerr');
     const jUrl     = get('cfgJellyseerrUrl');
-    const jKey     = get('cfgJellyseerrKey');
-    if (jEnabled !== null || jUrl !== null || (jKey !== null && jKey !== '')) {
+    const jKeyRaw  = get('cfgJellyseerrKey');
+    const jKey     = (typeof jKeyRaw === 'string') ? jKeyRaw.trim() : '';
+    const hasNewJellyseerrKey = !!jKey && jKey !== '***';
+    if (jEnabled !== null || jUrl !== null || hasNewJellyseerrKey) {
       partial.jellyseerr = partial.jellyseerr || {};
       if (jEnabled !== null)           partial.jellyseerr.enabled = jEnabled;
       if (jUrl     !== null)           partial.jellyseerr.url     = jUrl;
-      if (jKey !== null && jKey !== '') partial.jellyseerr.apikey  = jKey;
+      if (hasNewJellyseerrKey)         partial.jellyseerr.apikey  = jKey;
     }
 
     // Gather folder type/activation — always include current state
@@ -4217,7 +4224,8 @@ let allItems=[], categories=[], groups=[];
     const res = document.getElementById('onbJsrTestResult');
     if (!res) return;
     _captureOnbJsr();
-    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) } });
+    const onbKey = (_onbJsr.key || '').trim();
+    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
     await _runJellyseerrConnectionTest(btn, res, () => {
       const next = document.getElementById('onbNextBtn');
       if (next) next.disabled = false;
@@ -4260,7 +4268,10 @@ let allItems=[], categories=[], groups=[];
       folders,
       enable_movies: folders.some(f => f.type === 'movie'),
       enable_series: folders.some(f => f.type === 'tv'),
-      jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) },
+      jellyseerr: (() => {
+        const onbKey = (_onbJsr.key || '').trim();
+        return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
+      })(),
       system: { language: _onbLang },
       ui: { theme: _onbTheme },
     };

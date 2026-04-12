@@ -151,6 +151,7 @@
       "enable": "Activer",
       "url": "URL",
       "apikey": "Clé API",
+      "apikey_saved": "Clé API déjà enregistrée",
       "test": "Tester la connexion",
       "providers_visible": "Visibilité des fournisseurs",
       "no_provider_available": "Aucun fournisseur disponible.",

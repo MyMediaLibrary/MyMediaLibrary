@@ -806,6 +806,51 @@ def _save_secrets(data: dict) -> None:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
 
 
+def _redact_config_payload(payload: dict) -> dict:
+    """Return a copy of payload with sensitive fields redacted for safe logging."""
+    safe_payload = copy.deepcopy(payload)
+    jsr = safe_payload.get("jellyseerr")
+    if isinstance(jsr, dict) and "apikey" in jsr:
+        jsr["apikey"] = "***"
+    return safe_payload
+
+
+def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
+    """
+    Apply Jellyseerr API key update policy from payload to secrets.
+
+    Rules:
+    - apikey missing        => not modified
+    - apikey empty/whitespace/"***" => preserved (no overwrite)
+    - apikey non-empty      => updated
+    - clear_apikey=true     => explicit clear
+    """
+    jsr = payload.get("jellyseerr")
+    if not isinstance(jsr, dict):
+        return "not modified"
+
+    clear_requested = jsr.pop("clear_apikey", False) is True
+    has_apikey_field = "apikey" in jsr
+    raw_apikey = jsr.pop("apikey", None) if has_apikey_field else None
+
+    if not jsr:
+        payload.pop("jellyseerr", None)
+
+    if clear_requested:
+        secrets.pop("jellyseerr_apikey", None)
+        return "cleared"
+
+    if not has_apikey_field:
+        return "not modified"
+
+    normalized = raw_apikey.strip() if isinstance(raw_apikey, str) else ""
+    if not normalized or normalized == "***":
+        return "preserved"
+
+    secrets["jellyseerr_apikey"] = normalized
+    return "updated"
+
+
 def _jsr_cfg() -> dict:
     """Read Jellyseerr settings. API key comes from /app/.secrets, rest from config.json."""
     cfg = load_config()
@@ -2173,26 +2218,34 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             cfg = load_config()
-            log.info(f"[config] Received: {json.dumps(payload)}")
-            # Extract apikey before merging — store in secrets, not config.json
-            new_apikey = None
-            if isinstance(payload.get("jellyseerr"), dict) and "apikey" in payload["jellyseerr"]:
-                new_apikey = payload["jellyseerr"].pop("apikey")
-                if not payload["jellyseerr"]:
-                    payload.pop("jellyseerr", None)
+            safe_payload = _redact_config_payload(payload)
+            log.info("[config] Received: %s", json.dumps(safe_payload))
+
+            secrets_before = _load_secrets()
+            secrets_after = dict(secrets_before)
+            jsr_key_action = _apply_jellyseerr_secret_update(payload, secrets_after)
+
             merged = deep_merge(cfg, payload)
             merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
             normalize_folder_enabled_flags(merged, drop_visible=True)
             # Ensure apikey never persists in config.json
             if "jellyseerr" in merged:
                 merged["jellyseerr"].pop("apikey", None)
+                merged["jellyseerr"].pop("clear_apikey", None)
             save_config(merged)
-            if new_apikey is not None and new_apikey != "***":
-                secrets = _load_secrets()
-                secrets["jellyseerr_apikey"] = new_apikey
-                _save_secrets(secrets)
-                log.info("[config] Jellyseerr API key saved to secrets")
-            log.info(f"[config] Saved")
+            if secrets_after != secrets_before:
+                _save_secrets(secrets_after)
+
+            if jsr_key_action == "updated":
+                log.info("[config] Jellyseerr API key updated")
+            elif jsr_key_action == "preserved":
+                log.info("[config] Jellyseerr API key preserved")
+            elif jsr_key_action == "cleared":
+                log.info("[config] Jellyseerr API key cleared (explicit request)")
+            else:
+                log.info("[config] Jellyseerr API key not modified")
+
+            log.info("[config] Saved")
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
