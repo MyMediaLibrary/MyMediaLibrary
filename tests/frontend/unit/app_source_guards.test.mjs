@@ -94,7 +94,7 @@ test('renderResolutionFilter uses shared dropdown with include/exclude toggles',
   assert.match(block, /toggleFn:\s*'toggleResolutionFilter'/, 'resolution should use standard dropdown toggle');
   assert.match(block, /clearFn:\s*'clearResolutionFilter'/, 'resolution should use standard dropdown clear');
   assert.match(block, /onToggleExclude:\s*'toggleResolutionExclude'/, 'resolution should expose include\/exclude toggle');
-  assert.match(block, /t\('filters\.none'\)/, 'resolution should display a localized none value for missing metadata');
+  assert.match(block, /getFilterDisplayValue\(k\)/, 'resolution should display a localized none value for missing metadata via centralized mapper');
   assert.doesNotMatch(block, /provider-pill/, 'resolution should no longer render legacy pill markup');
 });
 

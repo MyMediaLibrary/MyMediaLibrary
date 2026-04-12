@@ -111,13 +111,13 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getAudioLanguageSimpleDisplay(value) {
-    if (value === FILTER_NONE_KEY) return t('filters.none');
-    return value === 'UNKNOWN' ? t('filters.unknown') : value;
+    if (value === 'UNKNOWN') return t('filters.unknown');
+    return getFilterDisplayValue(value);
   }
 
   function getAudioCodecDisplay(normalized) {
     if (!normalized || normalized === FILTER_NONE_KEY || normalized === 'UNKNOWN')
-      return t('filters.none');
+      return getFilterDisplayValue(FILTER_NONE_KEY);
     const entry = Object.values(audioCodecMapping.mapping ?? {})
       .find(e => e.normalized === normalized);
     return entry?.display ?? normalized;
@@ -145,6 +145,17 @@ let allItems=[], categories=[], groups=[];
     if (!key) return null;
     if (key === FILTER_NONE_KEY || key === 'UNKNOWN') return FILTER_NONE_KEY;
     return key;
+  }
+
+  function normalizeFilterValue(key) {
+    const canonical = canonicalFilterMissingKey(key);
+    return canonical || key;
+  }
+
+  function getFilterDisplayValue(key, noneTranslationKey = 'filters.none') {
+    const normalized = normalizeFilterValue(key);
+    if (normalized === FILTER_NONE_KEY) return t(noneTranslationKey);
+    return normalized;
   }
 
   function getQualityLevelFromScore(score) {
@@ -312,7 +323,7 @@ let allItems=[], categories=[], groups=[];
     if (!key) return null;
     const lower = key.toLowerCase();
     if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
-    if (key === '__none__') return '__none__';
+    if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
     return key;
   }
   function _hasHiddenProviders(items = allItems) {
@@ -1167,7 +1178,10 @@ let allItems=[], categories=[], groups=[];
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
-        getDisplay: k => k === FILTER_NONE_KEY ? t('filters.no_provider') : _providerGroupLabel(k), pinFirst: FILTER_NONE_KEY,
+        getDisplay: k => {
+          if (k === FILTER_NONE_KEY) return getFilterDisplayValue(k, 'filters.no_provider');
+          return _providerGroupLabel(k);
+        }, pinFirst: FILTER_NONE_KEY,
         excludeMode: providerExclude, onToggleExclude: 'toggleProviderExclude' });
     });
   }
@@ -1181,7 +1195,7 @@ let allItems=[], categories=[], groups=[];
     });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
-        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k,
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => getFilterDisplayValue(k),
         excludeMode: videoCodecExclude, onToggleExclude: 'toggleVideoCodecExclude' });
     });
   }
@@ -1232,7 +1246,7 @@ let allItems=[], categories=[], groups=[];
     ['folderSection', 'folderSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.by_category'),
         activeSet: activeFolders, toggleFn: 'toggleFolderFilter', clearFn: 'clearFolderFilter',
-        getDisplay: k => (k === FILTER_NONE_KEY ? t('filters.none') : k),
+        getDisplay: k => getFilterDisplayValue(k),
         excludeMode: folderExclude, onToggleExclude: 'toggleFolderExclude' });
     });
   }
@@ -1360,7 +1374,7 @@ let allItems=[], categories=[], groups=[];
         activeSet: activeResolutions,
         toggleFn: 'toggleResolutionFilter',
         clearFn: 'clearResolutionFilter',
-        getDisplay: k => (k === FILTER_NONE_KEY ? t('filters.none') : k),
+        getDisplay: k => getFilterDisplayValue(k),
         excludeMode: resolutionExclude,
         onToggleExclude: 'toggleResolutionExclude',
       });
