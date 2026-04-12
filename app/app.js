@@ -3148,15 +3148,29 @@ let allItems=[], categories=[], groups=[];
 
   function toggleJsrFields() {
     const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
+    const jellyFields = document.getElementById('cfgJellyseerrFields');
+    const providersBlock = document.getElementById('cfgProvidersBlock');
     ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
+    if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
+    if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
     if (!enabled) {
       _settingsJsrTestOk = false;
       const res = document.getElementById('cfgJsrTestResult');
       if (res) res.textContent = '';
     }
+  }
+
+  function toggleSettingsCollapse(btn) {
+    const targetId = btn?.dataset?.target;
+    const panel = targetId ? document.getElementById(targetId) : null;
+    if (!btn || !panel) return;
+    const expanded = btn.getAttribute('aria-expanded') !== 'false';
+    btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    panel.classList.toggle('is-collapsed', expanded);
+    panel.style.display = expanded ? 'none' : 'block';
   }
 
   function _isFolderEnabled(folder) {

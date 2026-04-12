@@ -261,12 +261,13 @@
         <div class="settings-title" data-i18n="settings.title">⚙️ Paramètres</div>
       </div>
       <!-- SETTINGS TABS -->
-      <div style="display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface)">
-        <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">📁 Bibliothèque</button>
-        <button class="stab" onclick="switchStab(this,'stab-jellyseerr')" data-i18n="settings.tabs.jellyseerr">🔍 Jellyseerr</button>
-        <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">⚙️ Système</button>
+      <div class="settings-tabs">
+        <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">Bibliothèque</button>
+        <button class="stab" onclick="switchStab(this,'stab-configuration')" data-i18n="settings.tabs.configuration">Configuration</button>
+        <button class="stab" onclick="switchStab(this,'stab-connections')" data-i18n="settings.tabs.connections">Connexions</button>
+        <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">Système</button>
       </div>
-      <div class="settings-body" style="flex:1;overflow-y:auto;min-height:0">
+      <div class="settings-body">
 
         <!-- TAB: BIBLIOTHÈQUE -->
         <div id="stab-library" class="stab-panel">
@@ -290,31 +291,66 @@
           </div>
         </div>
 
-        <!-- TAB: JELLYSEERR -->
-        <div id="stab-jellyseerr" class="stab-panel" style="display:none">
+        <!-- TAB: CONFIGURATION -->
+        <div id="stab-configuration" class="stab-panel" style="display:none">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.enable">Activer</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
+              <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
+            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
-              <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
-                oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+              <label class="settings-label" data-i18n="settings.system.inventory_enabled">Générer l'inventaire brut</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
+            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Génère <code>library_inventory.json</code> en plus de <code>library.json</code> lors des scans.</div>
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
-              <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
-                oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+              <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
-            <div class="settings-row">
-              <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
-              <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
+            <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
+          </div>
+        </div>
+
+        <!-- TAB: CONNEXIONS -->
+        <div id="stab-connections" class="stab-panel" style="display:none">
+          <div class="settings-group">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="true">
+              <span class="settings-collapsible-title" data-i18n="settings.connections.jellyseerr_block">Jellyseerr</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body" id="settingsJellyseerrBody">
+              <div class="settings-row" style="margin-bottom:8px">
+                <label class="settings-label" data-i18n="settings.connections.enable_jellyseerr">Activer Jellyseerr</label>
+                <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
+              </div>
+              <div id="cfgJellyseerrFields">
+                <div class="settings-row" style="margin-bottom:8px">
+                  <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
+                  <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
+                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                </div>
+                <div class="settings-row" style="margin-bottom:8px">
+                  <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
+                  <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
+                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                </div>
+                <div class="settings-row">
+                  <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
+                  <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="settings-group">
-            <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.jellyseerr.providers_visible">Visibilité des providers</div>
-            <div id="cfgProviderToggles"></div>
+          <div class="settings-group" id="cfgProvidersBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProvidersBody" aria-expanded="true">
+              <span class="settings-collapsible-title" data-i18n="settings.connections.providers_block">Providers</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body" id="settingsProvidersBody">
+              <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.jellyseerr.providers_visible">Visibilité des providers</div>
+              <div id="cfgProviderToggles"></div>
+            </div>
           </div>
         </div>
 
@@ -335,21 +371,6 @@
                 <button class="settings-color-reset" onclick="resetAccent()" data-i18n="settings.system.accent_reset">Réinitialiser</button>
               </div>
             </div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
-            </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.inventory_enabled">Générer l'inventaire brut</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
-            </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Génère <code>library_inventory.json</code> en plus de <code>library.json</code> lors des scans.</div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
-            </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
           </div>
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:6px">
