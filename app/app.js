@@ -15,6 +15,10 @@ async function loadTranslations(lang) {
 function t(key, vars = {}) {
   const keys = key.split('.');
   let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
+  if (typeof val !== 'string') {
+    const labelVal = [...keys, 'label'].reduce((obj, k) => obj?.[k], TRANSLATIONS);
+    if (typeof labelVal === 'string') val = labelVal;
+  }
   if (typeof val !== 'string') { console.warn('Missing translation key:', key); return key; }
   Object.entries(vars).forEach(([k, v]) => { val = val.split(`{${k}}`).join(String(v)); });
   return val;
@@ -318,6 +322,13 @@ let allItems=[], categories=[], groups=[];
   let providerExclude = false;
   let audioLanguageExclude = false;
   let qualityExclude = false;
+  const SCORE_FILTER_RANGES = [
+    { key: '0_20', min: 0, max: 20, maxInclusive: false, labelKey: 'filters.score.range_0_20', level: 1 },
+    { key: '20_40', min: 20, max: 40, maxInclusive: false, labelKey: 'filters.score.range_20_40', level: 2 },
+    { key: '40_60', min: 40, max: 60, maxInclusive: false, labelKey: 'filters.score.range_40_60', level: 3 },
+    { key: '60_80', min: 60, max: 80, maxInclusive: false, labelKey: 'filters.score.range_60_80', level: 4 },
+    { key: '80_100', min: 80, max: 100, maxInclusive: true, labelKey: 'filters.score.range_80_100', level: 5 },
+  ];
   let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
@@ -355,7 +366,13 @@ let allItems=[], categories=[], groups=[];
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
-      if (Array.isArray(s.activeQualityLevels)) activeQualityLevels = new Set(s.activeQualityLevels.map(Number).filter(n => n >= 1 && n <= 5));
+      if (Array.isArray(s.activeQualityLevels)) {
+        activeQualityLevels = new Set(
+          s.activeQualityLevels
+            .map(normalizeScoreRangeKey)
+            .filter(Boolean)
+        );
+      }
       if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
@@ -378,6 +395,7 @@ let allItems=[], categories=[], groups=[];
       renderAudioCodecFilter();
       renderQualityFilter();
       renderAudioLanguageFilter();
+      ensureScoreFilterLast();
       syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
       updateGlobalResetButtons();
@@ -823,13 +841,15 @@ let allItems=[], categories=[], groups=[];
     onFilter();
   }
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude }) {
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, orderedKeys, getOptionPrefixHtml }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const keys = Object.keys(counts).sort((a, b) => {
-      if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
-      return counts[b] - counts[a];
-    });
+    const keys = Array.isArray(orderedKeys) && orderedKeys.length
+      ? orderedKeys.filter(k => counts[k] !== undefined)
+      : Object.keys(counts).sort((a, b) => {
+        if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
+        return counts[b] - counts[a];
+      });
     if (!keys.length) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
 
@@ -878,8 +898,10 @@ let allItems=[], categories=[], groups=[];
     html += '</div>';
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
+      const prefixHtml = typeof getOptionPrefixHtml === 'function' ? getOptionPrefixHtml(key) : '';
       html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
         + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
+        + prefixHtml
         + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
         + '<span class="filter-dropdown-option-count">(' + counts[key] + ')</span>'
         + '</div>';
@@ -889,6 +911,51 @@ let allItems=[], categories=[], groups=[];
     // Set indeterminate state for select-all checkbox (can't be set in HTML)
     const saEl = sec.querySelector('#' + selectAllId);
     if (saEl && indeterminate) saEl.indeterminate = true;
+  }
+
+  function normalizeScoreRangeKey(raw) {
+    if (raw === null || raw === undefined) return null;
+    const value = String(raw).trim();
+    if (!value) return null;
+    if (SCORE_FILTER_RANGES.some(r => r.key === value)) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    if (numeric === 1) return '0_20';
+    if (numeric === 2) return '20_40';
+    if (numeric === 3) return '40_60';
+    if (numeric === 4) return '60_80';
+    if (numeric === 5) return '80_100';
+    return null;
+  }
+
+  function getScoreRangeByKey(key) {
+    return SCORE_FILTER_RANGES.find(r => r.key === key) || null;
+  }
+
+  function matchesScoreRange(score, rangeKey) {
+    const value = Number(score);
+    if (!Number.isFinite(value)) return false;
+    const range = getScoreRangeByKey(rangeKey);
+    if (!range) return false;
+    return getQualityLevelFromScore(value) === range.level;
+  }
+
+  function getScoreRangeKey(score) {
+    const range = SCORE_FILTER_RANGES.find(r => matchesScoreRange(score, r.key));
+    return range ? range.key : null;
+  }
+
+  function ensureScoreFilterLast() {
+    const desktopContainer = document.querySelector('.sidebar-filters');
+    const desktopScore = document.getElementById('qualitySection');
+    if (desktopContainer && desktopScore && desktopScore.parentElement === desktopContainer) {
+      desktopContainer.appendChild(desktopScore);
+    }
+    const mobileContainer = document.getElementById('mobileFiltersPanel');
+    const mobileScore = document.getElementById('qualitySectionMobile');
+    if (mobileContainer && mobileScore && mobileScore.parentElement === mobileContainer) {
+      mobileContainer.appendChild(mobileScore);
+    }
   }
 
   function _dropdownSelectAll(containerId, clearFn, checked) {
@@ -904,6 +971,7 @@ let allItems=[], categories=[], groups=[];
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
+      'qualitySection': activeQualityLevels, 'qualitySectionMobile': activeQualityLevels,
     };
     const activeSet = setMap[containerId];
     if (activeSet) { keys.forEach(k => activeSet.add(k)); onFilter(); }
@@ -922,8 +990,8 @@ let allItems=[], categories=[], groups=[];
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
   function toggleQualityFilter(level) {
-    const key = Number(level);
-    if (!Number.isFinite(key)) return;
+    const key = normalizeScoreRangeKey(level);
+    if (!key) return;
     if (activeQualityLevels.has(key)) activeQualityLevels.delete(key); else activeQualityLevels.add(key);
     onFilter();
   }
@@ -1002,45 +1070,42 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  function qualityRangeLabel(level) {
-    if (level === 1) return '0–20';
-    if (level === 2) return '21–40';
-    if (level === 3) return '41–60';
-    if (level === 4) return '61–80';
-    if (level === 5) return '81–100';
-    return t('filters.unknown');
+  function qualityRangeLabel(key) {
+    const range = getScoreRangeByKey(key);
+    if (!range) return t('filters.unknown');
+    return t(range.labelKey);
   }
 
   function renderQualityFilter() {
     const base = baseItems('quality');
-    const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const counts = {};
+    SCORE_FILTER_RANGES.forEach(function(range) { counts[range.key] = 0; });
     base.forEach(i => {
-      const level = getScoredQualityLevel(i);
-      if (level !== null) counts[level] += 1;
+      const key = getScoreRangeKey(i?.quality?.score);
+      if (key) counts[key] += 1;
     });
     const total = Object.values(counts).reduce((s, n) => s + n, 0);
     ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
       const sec = document.getElementById(cid);
       if (!sec) return;
       if (!total) { sec.style.display = 'none'; return; }
-      const modeClass = qualityExclude ? ' is-exclude' : ' is-include';
-      const modeLabel = qualityExclude ? t('filters.exclude') : t('filters.include');
-      let pills = '<button class="filter-mode-toggle' + modeClass + '" type="button" onclick="toggleQualityExclude()">' + modeLabel + '</button>';
-      [1, 2, 3, 4, 5].forEach(function(level) {
-        const active = activeQualityLevels.has(level);
-        const classes = ['provider-pill', getQualityLevelClass(level)];
-        if (active) classes.push('active');
-        if (qualityExclude && active) classes.push('is-exclude');
-        pills += '<div class="' + classes.join(' ') + '" onclick="toggleQualityFilter(' + level + ')">'
-          + '<span>' + qualityRangeLabel(level) + '</span>'
-          + '<span class="quality-count">(' + counts[level] + ')</span>'
-          + '</div>';
+      renderFilterDropdown({
+        containerId: cid,
+        counts,
+        label: t('filters.score'),
+        activeSet: activeQualityLevels,
+        toggleFn: 'toggleQualityFilter',
+        clearFn: 'clearQualityFilter',
+        getDisplay: k => qualityRangeLabel(k),
+        orderedKeys: SCORE_FILTER_RANGES.map(r => r.key),
+        excludeMode: qualityExclude,
+        onToggleExclude: 'toggleQualityExclude',
+        getOptionPrefixHtml: k => {
+          const range = getScoreRangeByKey(k);
+          if (!range) return '';
+          return '<span class="score-range-dot ' + getQualityLevelClass(range.level) + '"></span>';
+        }
       });
-      if (activeQualityLevels.size > 0) {
-        pills += '<div class="provider-pill provider-pill-reset" onclick="clearQualityFilter()">✕</div>';
-      }
-      sec.style.display = 'block';
-      sec.innerHTML = '<div class="storage-block"><div class="storage-title">' + t('filters.quality_score') + '</div><div class="quality-filter">' + pills + '</div></div>';
     });
   }
 
@@ -1085,6 +1150,7 @@ let allItems=[], categories=[], groups=[];
     renderAudioCodecFilter();
     renderQualityFilter();
     renderAudioLanguageFilter();
+    ensureScoreFilterLast();
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') renderStatsPanel();
@@ -1234,17 +1300,11 @@ let allItems=[], categories=[], groups=[];
       }
     }
     if (activeQualityLevels.size > 0) {
-      if (qualityExclude) {
-        items=items.filter(i=>{
-          const level = getScoredQualityLevel(i);
-          return level === null || !activeQualityLevels.has(level);
-        });
-      } else {
-        items=items.filter(i=>{
-          const level = getScoredQualityLevel(i);
-          return level !== null && activeQualityLevels.has(level);
-        });
-      }
+      items=items.filter(i=>{
+        const key = getScoreRangeKey(i?.quality?.score);
+        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
+        return key !== null && activeQualityLevels.has(key);
+      });
     }
     return applySearch(items, q);
   }
@@ -1299,17 +1359,11 @@ let allItems=[], categories=[], groups=[];
       }
     }
     if (except!=='quality' && activeQualityLevels.size > 0) {
-      if (qualityExclude) {
-        items=items.filter(i=>{
-          const level = getScoredQualityLevel(i);
-          return level === null || !activeQualityLevels.has(level);
-        });
-      } else {
-        items=items.filter(i=>{
-          const level = getScoredQualityLevel(i);
-          return level !== null && activeQualityLevels.has(level);
-        });
-      }
+      items=items.filter(i=>{
+        const key = getScoreRangeKey(i?.quality?.score);
+        if (qualityExclude) return key === null || !activeQualityLevels.has(key);
+        return key !== null && activeQualityLevels.has(key);
+      });
     }
     return applySearch(items, q);
   }
@@ -2747,7 +2801,7 @@ let allItems=[], categories=[], groups=[];
     if (mSearch && dSearch && mSearch.value !== dSearch.value) mSearch.value = dSearch.value;
     // Mirror filter sections to mobile panel
     // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
-    ['storageSection','resolutionSection','qualitySection'].forEach(id => {
+    ['storageSection','resolutionSection'].forEach(id => {
       const src = document.getElementById(id);
       const dst = document.getElementById(id + 'Mobile');
       if (src && dst) dst.innerHTML = src.innerHTML;
