@@ -79,11 +79,23 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+
+def _resolve_log_level(raw_level: str | None) -> int:
+    return getattr(logging, str(raw_level or "INFO").upper(), logging.INFO)
+
+
+def _set_global_log_level(raw_level: str | None) -> None:
+    level = _resolve_log_level(raw_level)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    for handler in root_logger.handlers:
+        handler.setLevel(level)
 # Apply log_level from config.json if available (may be adjusted later via API too)
 try:
     with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
         _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
-    logging.getLogger().setLevel(getattr(logging, _cfg_loglevel.upper(), logging.INFO))
+    _set_global_log_level(_cfg_loglevel)
 except Exception:
     pass
 log = logging.getLogger("scanner")
@@ -118,7 +130,7 @@ _log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
 try:
     _fh = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=3)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    log.addHandler(_fh)
+    logging.getLogger().addHandler(_fh)
 except Exception:
     pass  # log file not writable in some environments
 
@@ -128,11 +140,16 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 def classify_resolution(width: int, height: int) -> str:
-    if width >= 3840 or height >= 2160:
+    if width <= 0 or height <= 0:
+        return "SD"
+    long_edge = max(width, height)
+    short_edge = min(width, height)
+    # Handle scope/cropped encodes (e.g. ~3840x1600) by relying on long edge with a small tolerance.
+    if long_edge >= 3800 or short_edge >= 2100:
         return "4K"
-    if width >= 1280 or height >= 720:
-        if height >= 1080 or width >= 1920:
-            return "1080p"
+    if long_edge >= 1880 or short_edge >= 1000:
+        return "1080p"
+    if long_edge >= 1240 or short_edge >= 680:
         return "720p"
     return "SD"
 
@@ -2162,7 +2179,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
-                logging.getLogger().setLevel(getattr(logging, new_level.upper(), logging.INFO))
+                _set_global_log_level(new_level)
             self._json(200, {"ok": True})
 
         elif path == "/api/providers-map":
