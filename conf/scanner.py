@@ -147,7 +147,9 @@ def classify_resolution(width: int, height: int) -> str:
     # Handle scope/cropped encodes (e.g. ~3840x1600) by relying on long edge with a small tolerance.
     if long_edge >= 3800 or short_edge >= 2100:
         return "4K"
-    if long_edge >= 1880 or short_edge >= 1000:
+    # 1080p: require a near-FHD long edge and enough vertical pixels for cropped scope encodes.
+    # This avoids promoting 5:4 sources such as 1280x1024 to 1080p.
+    if long_edge >= 1880 and short_edge >= 800:
         return "1080p"
     if long_edge >= 1240 or short_edge >= 680:
         return "720p"

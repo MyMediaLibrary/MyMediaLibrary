@@ -116,8 +116,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getAudioCodecDisplay(normalized) {
-    if (!normalized || normalized === FILTER_NONE_KEY || normalized === 'UNKNOWN')
+    if (!normalized || normalized === FILTER_NONE_KEY)
       return getFilterDisplayValue(FILTER_NONE_KEY);
+    if (normalized === 'UNKNOWN') return t('filters.unknown');
     const entry = Object.values(audioCodecMapping.mapping ?? {})
       .find(e => e.normalized === normalized);
     return entry?.display ?? normalized;
@@ -143,7 +144,7 @@ let allItems=[], categories=[], groups=[];
     if (raw === null || raw === undefined) return null;
     const key = String(raw).trim();
     if (!key) return null;
-    if (key === FILTER_NONE_KEY || key === 'UNKNOWN') return FILTER_NONE_KEY;
+    if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
     return key;
   }
 
@@ -1195,7 +1196,8 @@ let allItems=[], categories=[], groups=[];
     });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
-        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => getFilterDisplayValue(k),
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter',
+        getDisplay: k => k === 'UNKNOWN' ? t('filters.unknown') : getFilterDisplayValue(k),
         excludeMode: videoCodecExclude, onToggleExclude: 'toggleVideoCodecExclude' });
     });
   }
@@ -3145,7 +3147,7 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
-    _rw('cfgEnableScore', sys.enable_score === true);
+    _rw('cfgEnableScore', isScoreEnabled());
     updateCronHint();
 
     // Jellyseerr — editable from appConfig

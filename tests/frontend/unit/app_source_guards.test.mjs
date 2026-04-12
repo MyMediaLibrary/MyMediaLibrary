@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const appSource = fs.readFileSync(path.resolve('app/app.js'), 'utf8');
+const appCss = fs.readFileSync(path.resolve('app/app.css'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
@@ -111,4 +112,26 @@ test('loadLibrary resolves score feature from config first, then library metadat
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
   assert.match(block, /resolveScoreEnabled\(libraryMetaScoreEnabled\)/, 'loadLibrary should use centralized score resolution');
   assert.doesNotMatch(block, /enableScore\s*=\s*data\.meta\.score_enabled/, 'loadLibrary should not directly trust stale library meta score flag');
+});
+
+test('loadSettings score toggle reflects effective runtime score state', () => {
+  const block = functionBlock(appSource, 'loadSettings', 'toggleJsrFields');
+  assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
+  assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
+});
+
+test('codec filters keep UNKNOWN distinct from missing metadata', () => {
+  const canonicalBlock = functionBlock(appSource, 'canonicalFilterMissingKey', 'normalizeFilterValue');
+  assert.match(canonicalBlock, /if \(key === FILTER_NONE_KEY\) return FILTER_NONE_KEY;/, 'missing key mapper should only collapse explicit none placeholder');
+  assert.doesNotMatch(canonicalBlock, /UNKNOWN/, 'missing key mapper should not collapse UNKNOWN into none');
+
+  const codecFilterBlock = functionBlock(appSource, 'renderCodecFilter', 'renderAudioCodecFilter');
+  assert.match(codecFilterBlock, /k === 'UNKNOWN' \? t\('filters\.unknown'\) : getFilterDisplayValue\(k\)/, 'video codec filter should display UNKNOWN with a distinct label');
+
+  const audioCodecBlock = functionBlock(appSource, 'getAudioCodecDisplay', 'getNormalizedVideoCodec');
+  assert.match(audioCodecBlock, /if \(normalized === 'UNKNOWN'\) return t\('filters\.unknown'\);/, 'audio codec display should keep UNKNOWN distinct');
+});
+
+test('tile metadata ellipsis pill can shrink in compact rows', () => {
+  assert.match(appCss, /\.tl-meta-row\.tl-meta-row-ellipsis \.tl-pill-ellipsis\{flex:1 1 auto;min-width:0\}/, 'ellipsis pill should be shrinkable to preserve other compact badges');
 });
