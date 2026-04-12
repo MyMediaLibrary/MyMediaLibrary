@@ -137,7 +137,6 @@
     .sidebar-sort-reset{display:flex;align-items:flex-end;gap:8px}
     .sort-inline-wrap{flex:1;min-width:0}
     .sidebar-sort-reset .filter-reset-btn{width:auto;flex-shrink:0;white-space:nowrap;padding:7px 10px}
-    .sidebar-sort-reset .storage-title{margin-bottom:3px}
     .sidebar-resizer{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;z-index:10;display:flex;align-items:center;justify-content:center}
     .sidebar-resizer::after{content:'';display:block;width:2px;height:40px;background:var(--border);border-radius:2px;transition:background .2s}
     .sidebar-resizer:hover::after,.sidebar-resizer.dragging::after{background:var(--accent)}
