@@ -1635,7 +1635,10 @@ let allItems=[], categories=[], groups=[];
     if (btnD) btnD.style.display = 'none';
     onFilter();
   }
-  document.getElementById('sortSelect').addEventListener('change',render);
+  document.getElementById('sortSelect').addEventListener('change', function() {
+    render();
+    saveState();
+  });
 
 
 
