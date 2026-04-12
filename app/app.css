@@ -189,7 +189,7 @@
     .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
       display:flex;align-items:center;justify-content:center;padding:16px}
     .settings-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;
-      width:min(100%, 760px);max-width:760px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
+      width:min(100%, 500px);max-width:700px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
       display:flex;flex-direction:column;height:min(88vh, 820px)}
     .settings-header{display:flex;align-items:center;justify-content:space-between;
       padding:16px 20px;border-bottom:1px solid var(--border)}
