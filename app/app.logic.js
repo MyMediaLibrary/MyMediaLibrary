@@ -132,7 +132,13 @@
     let out = items.slice();
     if (state.activeType && state.activeType !== 'all') out = out.filter((i) => i.type === state.activeType);
     if (state.activeGroup && state.activeGroup !== 'all') out = out.filter((i) => i.group === state.activeGroup);
-    if (state.activeCat && state.activeCat !== 'all') out = out.filter((i) => i.category === state.activeCat);
+    const activeFolders = state.activeFolders instanceof Set
+      ? state.activeFolders
+      : (state.activeCat && state.activeCat !== 'all' ? new Set([state.activeCat]) : new Set());
+    if (activeFolders.size > 0) {
+      if (state.folderExclude) out = out.filter((i) => !activeFolders.has(i.category || PROVIDER_NONE_KEY));
+      else out = out.filter((i) => activeFolders.has(i.category || PROVIDER_NONE_KEY));
+    }
     const activeResolutions = state.activeResolutions instanceof Set
       ? state.activeResolutions
       : (state.activeResolution && state.activeResolution !== 'all' ? new Set([state.activeResolution]) : new Set());
@@ -181,6 +187,7 @@
   function computeFilterCounts(items, state, field) {
     const nextState = { ...state };
     if (field === 'resolution') nextState.activeResolutions = new Set();
+    if (field === 'folder') nextState.activeFolders = new Set();
     if (field === 'provider') nextState.activeProviders = new Set();
     if (field === 'codec') nextState.activeCodecs = new Set();
     if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
@@ -203,6 +210,9 @@
         providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
       } else if (field === 'resolution') {
         const key = item.resolution || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'folder') {
+        const key = item.category || PROVIDER_NONE_KEY;
         counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'codec') {
         const key = item.codec || PROVIDER_NONE_KEY;
@@ -229,7 +239,7 @@
       : !!(state.activeResolution && state.activeResolution !== 'all');
     return state.activeType !== 'all'
       || state.activeGroup !== 'all'
-      || state.activeCat !== 'all'
+      || (state.activeFolders instanceof Set ? state.activeFolders.size > 0 : !!(state.activeCat && state.activeCat !== 'all'))
       || hasResolutionValues
       || state.activeProviders.size > 0
       || state.activeCodecs.size > 0
@@ -244,6 +254,7 @@
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
+      || !!state.folderExclude
       || !!(state.searchQuery || '').trim();
   }
 
@@ -252,6 +263,7 @@
       activeType: 'all',
       activeGroup: 'all',
       activeCat: 'all',
+      activeFolders: new Set(),
       activeResolutions: new Set(),
       activeProviders: new Set(),
       activeCodecs: new Set(),
@@ -266,6 +278,7 @@
       videoCodecExclude: false,
       audioCodecExclude: false,
       audioLanguageExclude: false,
+      folderExclude: false,
       qualityExclude: false,
       searchQuery: ''
     };

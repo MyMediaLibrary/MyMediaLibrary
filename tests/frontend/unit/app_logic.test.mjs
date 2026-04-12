@@ -16,6 +16,7 @@ function baseState() {
     activeType: 'all',
     activeGroup: 'all',
     activeCat: 'all',
+    activeFolders: new Set(),
     activeResolutions: new Set(),
     activeProviders: new Set(),
     activeCodecs: new Set(),
@@ -30,6 +31,7 @@ function baseState() {
     videoCodecExclude: false,
     audioCodecExclude: false,
     audioLanguageExclude: false,
+    folderExclude: false,
     qualityExclude: false,
     searchQuery: ''
   };
@@ -221,7 +223,7 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   const state = baseState();
   state.activeType = 'movie';
   state.activeGroup = 'g1';
-  state.activeCat = 'c1';
+  state.activeFolders = new Set(['c1']);
   state.activeResolutions = new Set(['4K']);
   state.activeProviders = new Set(['Netflix']);
   state.activeCodecs = new Set(['H.265']);
@@ -241,7 +243,7 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.providerExclude = false;
   state.activeProviders = new Set(['__none__']);
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), [], 'other active filters still apply');
-  state.activeCat = 'all';
+  state.activeFolders.clear();
   state.activeAudioCodecs = new Set(['AAC']);
   state.activeAudioLanguages = new Set(['MULTI']);
   state.scoreMin = 0;
@@ -293,4 +295,24 @@ test('computeFilterCounts stays coherent with active filters and quality ranges'
   state.activeCodecs = new Set(['H.264']);
   const qualityCounts = logic.computeFilterCounts(sample, state, 'quality');
   assert.deepEqual(qualityCounts, { '0_20': 0, '20_40': 0, '40_60': 1, '60_80': 0, '80_100': 0 });
+});
+
+test('folder filter supports multi-select include/exclude and legacy single-folder state', () => {
+  const sample = [
+    { title: 'A', category: 'Films' },
+    { title: 'B', category: 'Anime' },
+    { title: 'C', category: 'Docs' },
+    { title: 'D' }
+  ];
+  const state = baseState();
+  state.activeFolders = new Set(['Films', 'Anime']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A', 'B']);
+
+  state.folderExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['C', 'D']);
+
+  const legacyState = baseState();
+  legacyState.activeFolders = undefined;
+  legacyState.activeCat = 'Docs';
+  assert.deepEqual(logic.applyFilters(sample, legacyState).map((i) => i.title), ['C']);
 });
