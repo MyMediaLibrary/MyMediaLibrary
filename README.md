@@ -61,6 +61,15 @@ Accéder à `http://localhost:8094` — un assistant de configuration s'affiche 
 docker compose pull && docker compose up -d
 ```
 
+### Scan sécurité (Grype)
+
+```bash
+docker build -t mymedialibrary:local -f conf/Dockerfile .
+grype mymedialibrary:local
+```
+
+> Workflow CI optionnel: **Security Scan (Grype)** s’exécute chaque semaine (et en manuel) puis publie les rapports table/JSON en artifacts.
+
 ### Contribution & Licence
 
 Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
@@ -119,6 +128,15 @@ Open `http://localhost:8094` — a setup wizard appears on first launch.
 ```bash
 docker compose pull && docker compose up -d
 ```
+
+### Security scan (Grype)
+
+```bash
+docker build -t mymedialibrary:local -f conf/Dockerfile .
+grype mymedialibrary:local
+```
+
+> Optional CI workflow: **Security Scan (Grype)** runs weekly and on manual trigger, then publishes table/JSON reports as artifacts.
 
 ### Contributing & License
 
