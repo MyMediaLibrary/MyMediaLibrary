@@ -1258,22 +1258,27 @@ let allItems=[], categories=[], groups=[];
       const rangeText = sec.querySelector('.score-filter-range');
       const rangeWrap = sec.querySelector('.score-double-slider');
 
+      let draftScoreMin = scoreMin;
+      let draftScoreMax = scoreMax;
+      let hasPendingDraft = false;
+
       function syncRangeText() {
-        if (rangeText) rangeText.textContent = scoreMin + '–' + scoreMax;
+        if (rangeText) rangeText.textContent = draftScoreMin + '–' + draftScoreMax;
         if (rangeWrap) {
-          rangeWrap.style.setProperty('--range-min', String(scoreMin));
-          rangeWrap.style.setProperty('--range-max', String(scoreMax));
+          rangeWrap.style.setProperty('--range-min', String(draftScoreMin));
+          rangeWrap.style.setProperty('--range-max', String(draftScoreMax));
         }
         if (minInput && maxInput) {
-          const minOnTop = scoreMin >= scoreMax - 2;
+          const minOnTop = draftScoreMin >= draftScoreMax - 2;
           minInput.style.zIndex = minOnTop ? '3' : '2';
           maxInput.style.zIndex = minOnTop ? '2' : '3';
         }
       }
-      function updateFromSlider(changed) {
-        const prevDefault = scoreMin === 0 && scoreMax === 100;
-        let nextMin = Number(minInput?.value ?? scoreMin);
-        let nextMax = Number(maxInput?.value ?? scoreMax);
+      function updateDraftFromSlider(changed) {
+        const currentMin = Number(minInput?.value ?? draftScoreMin);
+        const currentMax = Number(maxInput?.value ?? draftScoreMax);
+        let nextMin = Number.isFinite(currentMin) ? currentMin : draftScoreMin;
+        let nextMax = Number.isFinite(currentMax) ? currentMax : draftScoreMax;
         if (changed === 'min' && nextMin > nextMax) {
           nextMax = nextMin;
           if (maxInput) maxInput.value = String(nextMax);
@@ -1281,23 +1286,36 @@ let allItems=[], categories=[], groups=[];
           nextMin = nextMax;
           if (minInput) minInput.value = String(nextMin);
         }
-        if (changed === 'min') scoreMin = Math.min(nextMin, nextMax);
-        else if (changed === 'max') scoreMax = Math.max(nextMax, nextMin);
-        else {
-          scoreMin = Math.min(nextMin, nextMax);
-          scoreMax = Math.max(nextMin, nextMax);
-        }
-        if (minInput) minInput.value = String(scoreMin);
-        if (maxInput) maxInput.value = String(scoreMax);
+        draftScoreMin = Math.max(0, Math.min(100, Math.min(nextMin, nextMax)));
+        draftScoreMax = Math.max(0, Math.min(100, Math.max(nextMin, nextMax)));
+        if (minInput) minInput.value = String(draftScoreMin);
+        if (maxInput) maxInput.value = String(draftScoreMax);
+        hasPendingDraft = draftScoreMin !== scoreMin || draftScoreMax !== scoreMax;
+        syncRangeText();
+      }
+
+      function commitDraftScoreRange() {
+        if (!hasPendingDraft) return;
+        const prevDefault = scoreMin === 0 && scoreMax === 100;
+        scoreMin = draftScoreMin;
+        scoreMax = draftScoreMax;
         const nowDefault = scoreMin === 0 && scoreMax === 100;
         if (prevDefault && !nowDefault) includeNoScore = false;
         if (noScoreInput) noScoreInput.checked = includeNoScore;
-        syncRangeText();
+        hasPendingDraft = false;
         onFilter();
       }
 
-      minInput?.addEventListener('input', function() { updateFromSlider('min'); });
-      maxInput?.addEventListener('input', function() { updateFromSlider('max'); });
+      minInput?.addEventListener('input', function() { updateDraftFromSlider('min'); });
+      maxInput?.addEventListener('input', function() { updateDraftFromSlider('max'); });
+      minInput?.addEventListener('change', commitDraftScoreRange);
+      maxInput?.addEventListener('change', commitDraftScoreRange);
+      minInput?.addEventListener('pointerup', commitDraftScoreRange);
+      maxInput?.addEventListener('pointerup', commitDraftScoreRange);
+      minInput?.addEventListener('touchend', commitDraftScoreRange);
+      maxInput?.addEventListener('touchend', commitDraftScoreRange);
+      minInput?.addEventListener('mouseup', commitDraftScoreRange);
+      maxInput?.addEventListener('mouseup', commitDraftScoreRange);
       noScoreInput?.addEventListener('change', function(e) {
         includeNoScore = !!e.target.checked;
         onFilter();
