@@ -309,9 +309,14 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableSeries"/><span class="toggle-switch-slider"></span></label>
             </div>
           </div>
-          <div class="settings-group">
-            <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.library.folders">Dossiers détectés</div>
-            <div id="cfgFoldersContainer"></div>
+          <div class="settings-group settings-subgroup">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsFoldersBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.library.folders">Dossiers détectés</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body is-collapsed" id="settingsFoldersBody">
+              <div id="cfgFoldersContainer"></div>
+            </div>
           </div>
           </div>
         </div>
@@ -351,15 +356,17 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group settings-subgroup">
-            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="true">
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.connections.enable_jellyseerr">Activer Jellyseerr</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+          </div>
+          <div class="settings-group settings-subgroup" id="cfgJellyseerrBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="false">
               <span class="settings-collapsible-title" data-i18n="settings.connections.jellyseerr_block">Jellyseerr</span>
               <span class="settings-collapsible-icon">▾</span>
             </button>
-            <div class="settings-collapsible-body" id="settingsJellyseerrBody">
-              <div class="settings-row" style="margin-bottom:8px">
-                <label class="settings-label" data-i18n="settings.connections.enable_jellyseerr">Activer Jellyseerr</label>
-                <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
-              </div>
+            <div class="settings-collapsible-body is-collapsed" id="settingsJellyseerrBody">
               <div id="cfgJellyseerrFields">
                 <div class="settings-row" style="margin-bottom:8px">
                   <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
@@ -379,12 +386,11 @@
             </div>
           </div>
           <div class="settings-group settings-subgroup" id="cfgProvidersBlock">
-            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProvidersBody" aria-expanded="true">
-              <span class="settings-collapsible-title" data-i18n="settings.connections.providers_block">Providers</span>
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProvidersBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.providers_visibility">Visibilité des fournisseurs</span>
               <span class="settings-collapsible-icon">▾</span>
             </button>
-            <div class="settings-collapsible-body" id="settingsProvidersBody">
-              <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.jellyseerr.providers_visible">Visibilité des providers</div>
+            <div class="settings-collapsible-body is-collapsed" id="settingsProvidersBody">
               <div id="cfgProviderToggles"></div>
             </div>
           </div>

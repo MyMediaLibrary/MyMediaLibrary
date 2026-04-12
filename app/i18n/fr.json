@@ -115,6 +115,7 @@
     "close": "Fermer",
     "saved": "✓ Sauvegardé",
     "save_error": "Erreur lors de la sauvegarde : {msg}",
+    "providers_visibility": "Visibilité des fournisseurs",
     "tabs": {
       "library": "Bibliothèque",
       "configuration": "Configuration",
@@ -123,7 +124,7 @@
     },
     "connections": {
       "jellyseerr_block": "Jellyseerr",
-      "providers_block": "Providers",
+      "providers_block": "Fournisseurs",
       "enable_jellyseerr": "Activer Jellyseerr"
     },
     "library": {
@@ -143,6 +144,7 @@
         "null": "— type —"
       },
       "missing": "Dossier introuvable",
+      "no_folders": "Aucun dossier détecté. Lancez un scan pour détecter les dossiers.",
       "env_defined": "Défini via compose.yaml"
     },
     "jellyseerr": {
@@ -150,7 +152,8 @@
       "url": "URL",
       "apikey": "Clé API",
       "test": "Tester la connexion",
-      "providers_visible": "Visibilité des providers",
+      "providers_visible": "Visibilité des fournisseurs",
+      "no_provider_available": "Aucun fournisseur disponible.",
       "visible": "Visible",
       "hidden": "Masqué"
     },

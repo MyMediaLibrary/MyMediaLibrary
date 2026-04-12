@@ -115,7 +115,7 @@
     "close": "Close",
     "saved": "✓ Saved",
     "save_error": "Error saving: {msg}",
-    "providers_visibility": "Providers visibility",
+    "providers_visibility": "Visibilidad de proveedores",
     "tabs": {
       "library": "Library",
       "configuration": "Configuration",
