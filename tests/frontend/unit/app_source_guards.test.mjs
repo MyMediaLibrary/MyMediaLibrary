@@ -56,10 +56,13 @@ test('quality filter hard-disables itself when score feature is disabled', () =>
   assert.match(block, /if\s*\(!isScoreEnabled\(\)\)\s*\{/, 'renderQualityFilter should early-return when score is disabled');
 });
 
-test('renderResolutionFilter renders resolution labels without inline counts', () => {
-  const block = functionBlock(appSource, 'renderResolutionFilter', 'clickResolution');
-  assert.doesNotMatch(block, /counts\[r\]/, 'resolution pills should not inject per-resolution counts');
-  assert.doesNotMatch(block, /margin-left:4px;font-size:11px/, 'resolution pills should not render the legacy inline count span');
+test('renderResolutionFilter uses shared dropdown with include/exclude toggles', () => {
+  const block = functionBlock(appSource, 'renderResolutionFilter', 'onFilter');
+  assert.match(block, /renderFilterDropdown\(/, 'resolution should reuse shared dropdown renderer');
+  assert.match(block, /toggleFn:\s*'toggleResolutionFilter'/, 'resolution should use standard dropdown toggle');
+  assert.match(block, /clearFn:\s*'clearResolutionFilter'/, 'resolution should use standard dropdown clear');
+  assert.match(block, /onToggleExclude:\s*'toggleResolutionExclude'/, 'resolution should expose include\/exclude toggle');
+  assert.doesNotMatch(block, /provider-pill/, 'resolution should no longer render legacy pill markup');
 });
 
 test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {

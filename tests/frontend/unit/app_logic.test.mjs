@@ -16,13 +16,14 @@ function baseState() {
     activeType: 'all',
     activeGroup: 'all',
     activeCat: 'all',
-    activeResolution: 'all',
+    activeResolutions: new Set(),
     activeProviders: new Set(),
     activeCodecs: new Set(),
     activeAudioCodecs: new Set(),
     activeAudioLanguages: new Set(),
     activeQualityLevels: new Set(),
     providerExclude: false,
+    resolutionExclude: false,
     videoCodecExclude: false,
     audioCodecExclude: false,
     audioLanguageExclude: false,
@@ -73,6 +74,26 @@ test('quality filter supports include/exclude with multi-select levels', () => {
   state.qualityExclude = true;
   filtered = logic.filterItems(qualityItems, state);
   assert.deepEqual(filtered.map((i) => i.title), ['Unscored', 'Mid']);
+});
+
+test('resolution filter supports multi-select include/exclude and legacy single-value state', () => {
+  const sample = [
+    { title: 'A', resolution: '720p' },
+    { title: 'B', resolution: '1080p' },
+    { title: 'C', resolution: '4K' },
+    { title: 'D' }
+  ];
+  const state = baseState();
+  state.activeResolutions = new Set(['720p', '1080p']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A', 'B']);
+
+  state.resolutionExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['C', 'D']);
+
+  const legacyState = baseState();
+  legacyState.activeResolutions = undefined;
+  legacyState.activeResolution = '4K';
+  assert.deepEqual(logic.applyFilters(sample, legacyState).map((i) => i.title), ['C']);
 });
 
 test('export button enablement and stale-safe behavior', () => {
@@ -180,13 +201,17 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.activeType = 'movie';
   state.activeGroup = 'g1';
   state.activeCat = 'c1';
-  state.activeResolution = '4K';
+  state.activeResolutions = new Set(['4K']);
   state.activeProviders = new Set(['Netflix']);
   state.activeCodecs = new Set(['H.265']);
   state.activeAudioCodecs = new Set(['DTS']);
   state.activeAudioLanguages = new Set(['VF']);
   state.activeQualityLevels = new Set(['80_100']);
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A']);
+
+  state.resolutionExclude = true;
+  assert.equal(logic.applyFilters(sample, state).length, 0);
+  state.resolutionExclude = false;
 
   state.providerExclude = true;
   assert.equal(logic.applyFilters(sample, state).length, 0);

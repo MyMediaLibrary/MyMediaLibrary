@@ -133,7 +133,17 @@
     if (state.activeType && state.activeType !== 'all') out = out.filter((i) => i.type === state.activeType);
     if (state.activeGroup && state.activeGroup !== 'all') out = out.filter((i) => i.group === state.activeGroup);
     if (state.activeCat && state.activeCat !== 'all') out = out.filter((i) => i.category === state.activeCat);
-    if (state.activeResolution && state.activeResolution !== 'all') out = out.filter((i) => i.resolution === state.activeResolution);
+    const activeResolutions = state.activeResolutions instanceof Set
+      ? state.activeResolutions
+      : (state.activeResolution && state.activeResolution !== 'all' ? new Set([state.activeResolution]) : new Set());
+    if (activeResolutions.size > 0) {
+      out = applySelectionFilter(
+        out,
+        activeResolutions,
+        !!state.resolutionExclude,
+        (i) => i.resolution || 'UNKNOWN'
+      );
+    }
 
     out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || 'UNKNOWN');
     out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || 'UNKNOWN');
@@ -166,6 +176,7 @@
 
   function computeFilterCounts(items, state, field) {
     const nextState = { ...state };
+    if (field === 'resolution') nextState.activeResolutions = new Set();
     if (field === 'provider') nextState.activeProviders = new Set();
     if (field === 'codec') nextState.activeCodecs = new Set();
     if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
@@ -181,6 +192,9 @@
         const providers = item.providers || [];
         if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
         providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
+      } else if (field === 'resolution') {
+        const key = item.resolution || 'UNKNOWN';
+        counts[key] = (counts[key] || 0) + 1;
       } else if (field === 'codec') {
         const key = item.codec || 'UNKNOWN';
         counts[key] = (counts[key] || 0) + 1;
@@ -199,16 +213,20 @@
   }
 
   function hasActiveFilters(state) {
+    const hasResolutionValues = state.activeResolutions instanceof Set
+      ? state.activeResolutions.size > 0
+      : !!(state.activeResolution && state.activeResolution !== 'all');
     return state.activeType !== 'all'
       || state.activeGroup !== 'all'
       || state.activeCat !== 'all'
-      || state.activeResolution !== 'all'
+      || hasResolutionValues
       || state.activeProviders.size > 0
       || state.activeCodecs.size > 0
       || state.activeAudioCodecs.size > 0
       || state.activeAudioLanguages.size > 0
       || state.activeQualityLevels.size > 0
       || state.providerExclude
+      || state.resolutionExclude
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
@@ -221,13 +239,14 @@
       activeType: 'all',
       activeGroup: 'all',
       activeCat: 'all',
-      activeResolution: 'all',
+      activeResolutions: new Set(),
       activeProviders: new Set(),
       activeCodecs: new Set(),
       activeAudioCodecs: new Set(),
       activeAudioLanguages: new Set(),
       activeQualityLevels: new Set(),
       providerExclude: false,
+      resolutionExclude: false,
       videoCodecExclude: false,
       audioCodecExclude: false,
       audioLanguageExclude: false,
