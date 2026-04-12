@@ -1348,37 +1348,51 @@ let allItems=[], categories=[], groups=[];
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
 
+  function getSidebarSortValue() {
+    return document.getElementById('sortSelect')?.value || 'title-asc';
+  }
+
+  function parseQualityScore(item) {
+    const raw = item?.quality?.score;
+    const score = Number(raw);
+    return Number.isFinite(score) ? score : null;
+  }
+
+  function compareBySidebarSort(a,b,v) {
+    if (v === 'score-asc' || v === 'score-desc') {
+      const aScore = parseQualityScore(a);
+      const bScore = parseQualityScore(b);
+      const aHasScore = aScore !== null;
+      const bHasScore = bScore !== null;
+      if (!aHasScore && !bHasScore) return 0;
+      if (!aHasScore) return 1;
+      if (!bHasScore) return -1;
+      return v === 'score-desc' ? bScore - aScore : aScore - bScore;
+    }
+    switch(v){
+      case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
+      case 'title-desc':   return (b.title||'').localeCompare(a.title||'');
+      case 'year-desc':    return (b.year||'0')-(a.year||'0');
+      case 'year-asc':     return (a.year||'9999')-(b.year||'9999');
+      case 'size-desc':    return (b.size_b||0)-(a.size_b||0);
+      case 'size-asc':     return (a.size_b||0)-(b.size_b||0);
+      case 'added-desc':   return (b.added_ts||0)-(a.added_ts||0);
+      case 'category-asc': return (a.category||'').localeCompare(b.category||'');
+      default:             return 0;
+    }
+  }
+
   function sortItems(items) {
-    const v=document.getElementById('sortSelect').value;
-    return [...items].sort((a,b)=>{
-      if (v === 'score-asc' || v === 'score-desc') {
-        const aScore = Number(a.quality?.score);
-        const bScore = Number(b.quality?.score);
-        const aHasScore = Number.isFinite(aScore);
-        const bHasScore = Number.isFinite(bScore);
-        if (!aHasScore && !bHasScore) return 0;
-        if (!aHasScore) return 1;
-        if (!bHasScore) return -1;
-        return v === 'score-desc' ? bScore - aScore : aScore - bScore;
-      }
-      switch(v){
-        case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
-        case 'title-desc':   return (b.title||'').localeCompare(a.title||'');
-        case 'year-desc':    return (b.year||'0')-(a.year||'0');
-        case 'year-asc':     return (a.year||'9999')-(b.year||'9999');
-        case 'size-desc':    return (b.size_b||0)-(a.size_b||0);
-        case 'size-asc':     return (a.size_b||0)-(b.size_b||0);
-        case 'added-desc':   return (b.added_ts||0)-(a.added_ts||0);
-        case 'category-asc': return (a.category||'').localeCompare(b.category||'');
-      }
-    });
+    const v=getSidebarSortValue();
+    return [...items].sort((a,b)=>compareBySidebarSort(a,b,v));
   }
 
   function sortByCol(col){ tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render(); }
 
   function sortItemsTable(items) {
-    const col = tSortCol ?? 'title';
-    const dir = tSortCol ? tSortDir : 1;
+    if (!tSortCol) return sortItems(items);
+    const col = tSortCol;
+    const dir = tSortDir;
     return [...items].sort((a,b)=>{
       switch(col){
         case 'title':    return (a.title||'').localeCompare(b.title||'')*dir;
@@ -1386,7 +1400,14 @@ let allItems=[], categories=[], groups=[];
         case 'size':     return ((a.size_b||0)-(b.size_b||0))*dir;
         case 'files':    return ((a.file_count||0)-(b.file_count||0))*dir;
         case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*dir;
-        case 'quality':  return ((Number(a.quality?.score)||-1)-(Number(b.quality?.score)||-1))*dir;
+        case 'quality': {
+          const aScore = parseQualityScore(a);
+          const bScore = parseQualityScore(b);
+          if (aScore === null && bScore === null) return 0;
+          if (aScore === null) return 1;
+          if (bScore === null) return -1;
+          return (aScore-bScore)*dir;
+        }
         case 'category': return (a.category||'').localeCompare(b.category||'')*dir;
         case 'group':    return (a.group||'').localeCompare(b.group||'')*dir;
       }
