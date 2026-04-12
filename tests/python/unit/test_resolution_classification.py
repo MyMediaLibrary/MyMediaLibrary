@@ -17,6 +17,13 @@ class ResolutionClassificationTests(unittest.TestCase):
     def test_scope_4k_is_not_downgraded_to_1080p(self):
         self.assertEqual(scanner.classify_resolution(3828, 1592), "4K")
 
+    def test_atypical_5_4_sources_are_not_promoted_to_1080p(self):
+        self.assertEqual(scanner.classify_resolution(1280, 1024), "720p")
+        self.assertEqual(scanner.classify_resolution(1360, 1024), "720p")
+
+    def test_scope_1080p_keeps_1080p_when_long_edge_is_full_hd(self):
+        self.assertEqual(scanner.classify_resolution(1920, 804), "1080p")
+
 
 if __name__ == "__main__":
     unittest.main()

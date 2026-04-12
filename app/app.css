@@ -451,6 +451,7 @@
     .tl-meta{display:flex;flex-direction:column;gap:4px;padding-right:36px}
     .tl-meta-row{display:flex;gap:4px;align-items:center;min-width:0;flex-wrap:nowrap}
     .tl-meta-row > *{flex-shrink:0}
+    .tl-meta-row.tl-meta-row-ellipsis .tl-pill-ellipsis{flex:1 1 auto;min-width:0}
     .tl-meta-row.compact{gap:3px}
     .tl-meta-row.compact .tl-cat{font-size:9px;padding:1px 5px}
     .tl-meta-row.compact .res-badge{font-size:9px;padding:1px 4px}

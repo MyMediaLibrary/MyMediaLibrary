@@ -3,6 +3,8 @@
 
 OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 LOG_PATH="${LOG_PATH:-/data/scanner.log}"
+TZ="${TZ:-UTC}"
+export TZ
 
 echo "=== MyMediaLibrary ==="
 echo "LIBRARY_PATH : ${LIBRARY_PATH:-/mnt/media/library}"

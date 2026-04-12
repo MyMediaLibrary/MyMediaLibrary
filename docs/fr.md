@@ -44,7 +44,7 @@ Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')`
 
 ### Fuseau horaire (`TZ`)
 
-Le conteneur lit la variable d'environnement `TZ` (fallback `UTC`) au démarrage. Cette valeur dépend du runtime système/conteneur (Docker/OS hôte) et est propagée au scanner et au cron.
+Au démarrage, l'entrypoint exporte `TZ="${TZ:-UTC}"` avant de lancer les services de scan. En pratique, l'API scanner, le scan initial et les scans cron utilisent tous `TZ` (par défaut `UTC` si absent).
 
 Impacts principaux :
 - horodatages des logs (ex: `scanner.log`)

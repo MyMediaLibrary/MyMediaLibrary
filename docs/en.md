@@ -43,7 +43,7 @@ Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` w
 
 ### Timezone (`TZ`)
 
-The container reads the `TZ` environment variable at startup (fallback: `UTC`). This depends on the system/container runtime (Docker/host OS) and is propagated to scanner and cron.
+At startup, the entrypoint exports `TZ="${TZ:-UTC}"` before launching scanner services. In practice this means scanner API, initial scan and cron scans all run with `TZ` (default `UTC` when unset).
 
 Main impact areas:
 - log timestamps (for example `scanner.log`)
