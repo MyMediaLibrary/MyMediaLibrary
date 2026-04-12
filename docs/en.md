@@ -199,6 +199,7 @@ Main library filters now use a unified dropdown architecture (same behavior on d
 - **Video codecs**
 - **Audio codecs**
 - **Streaming providers**
+- **Score** (dual-handle slider, only when scoring is enabled)
 
 Shared capabilities:
 - multi-selection
@@ -242,11 +243,12 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 
 ## 9. Quality Scoring
 
-Each media item receives a global **quality score out of 100**. This score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+Quality scoring is an **optional** feature controlled by `system.enable_score` (default: `false`).
+When enabled, media items receive a global **quality score out of 100**. The score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
 
-### Score filter (0–100 slider)
+### Score filter (0–100 slider, when enabled)
 
-The score filter is no longer a dropdown: it is a **dual-handle slider** with two bounds:
+The score filter is not a dropdown anymore: it is a **dual-handle slider** with two bounds:
 - `min`
 - `max`
 
@@ -401,11 +403,16 @@ Hovering the quality badge shows a complete detailed tooltip:
 The `enable_score` system setting can disable the feature entirely.
 
 When disabled:
-- no score computation in backend scan
-- score fields removed from `library.json`
-- no score rendering in UI
-- no score filter
-- score-based sorting/stats disabled
+- backend scan fully bypasses quality score computation
+- score fields are removed from `library.json` (no mixed score/no-score dataset after a scan)
+- score UI is hidden (badges, score column, score tooltip)
+- score filter slider is hidden
+- score-based sorting and score statistics are disabled
+- score columns are excluded from CSV export
+
+When re-enabled:
+- score UI controls become available again immediately
+- a new scan is required to regenerate score data in `library.json`
 
 ### Key behaviors
 
