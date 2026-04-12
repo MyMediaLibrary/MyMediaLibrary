@@ -53,12 +53,28 @@
 
 <!-- MOBILE TOPBAR -->
 <div class="mobile-topbar" id="mobileTopbar">
-  <div class="mobile-topbar-title">📼 MyMediaLibrary</div>
-  <button class="icon-btn mobile-topbar-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()">
+  <button class="icon-btn mobile-topbar-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()" data-i18n-title="mobile.filters" title="Filtres" aria-label="Filtres">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
     </svg>
     <span data-i18n="mobile.filters">Filtres</span>
+  </button>
+  <button class="icon-btn mobile-topbar-btn" id="mobileThemeBtn" onclick="toggleTheme()" data-i18n-title="mobile.toggle_theme" title="Thème sombre / clair" aria-label="Thème sombre / clair">
+    <svg id="themeIconMobile" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+      <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+      <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+    <span data-i18n="mobile.theme_short">Thème</span>
+  </button>
+  <button class="icon-btn mobile-topbar-btn" id="mobileSettingsBtn" onclick="openSettings()" data-i18n-title="settings.title" title="Paramètres" aria-label="Paramètres">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+    <span data-i18n="mobile.settings_short">Paramètres</span>
   </button>
 </div>
 
@@ -268,9 +284,17 @@
         <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">Système</button>
       </div>
       <div class="settings-body">
+        <button type="button" class="scan-btn mobile-settings-scan-btn" id="mobileSettingsScanBtn" onclick="openMobileScanSheet()">
+          <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
+        </button>
 
         <!-- TAB: BIBLIOTHÈQUE -->
-        <div id="stab-library" class="stab-panel">
+        <div id="stab-library" class="stab-panel" data-mobile-panel="library">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="true">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.library">Bibliothèque</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.library.path">Chemin bibliothèque</label>
@@ -289,10 +313,16 @@
             <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.library.folders">Dossiers détectés</div>
             <div id="cfgFoldersContainer"></div>
           </div>
+          </div>
         </div>
 
         <!-- TAB: CONFIGURATION -->
-        <div id="stab-configuration" class="stab-panel" style="display:none">
+        <div id="stab-configuration" class="stab-panel" style="display:none" data-mobile-panel="configuration">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.configuration">Configuration</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
@@ -310,10 +340,16 @@
             </div>
             <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
           </div>
+          </div>
         </div>
 
         <!-- TAB: CONNEXIONS -->
-        <div id="stab-connections" class="stab-panel" style="display:none">
+        <div id="stab-connections" class="stab-panel" style="display:none" data-mobile-panel="connections">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.connections">Connexions</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
             <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="true">
               <span class="settings-collapsible-title" data-i18n="settings.connections.jellyseerr_block">Jellyseerr</span>
@@ -352,10 +388,16 @@
               <div id="cfgProviderToggles"></div>
             </div>
           </div>
+          </div>
         </div>
 
         <!-- TAB: SYSTÈME -->
-        <div id="stab-system" class="stab-panel" style="display:none">
+        <div id="stab-system" class="stab-panel" style="display:none" data-mobile-panel="system">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.system">Système</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.language">Langue</label>
@@ -405,6 +447,7 @@
               <span style="color:var(--border);user-select:none">·</span>
               <a id="settingsDocLink" href="/docs.html?lang=fr" target="_blank" rel="noopener" class="settings-ext-link" data-i18n="settings.doc_link">Documentation</a>
             </div>
+          </div>
           </div>
         </div>
 
@@ -466,17 +509,6 @@
       <div id="audioCodecSectionMobile"></div>
       <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
       <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
-    </div>
-    <div class="mobile-filters-bottom">
-      <button class="scan-btn mobile-bottom-scan-btn" id="mobileScanEntryBtn" onclick="openMobileScanSheet()">
-        <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
-      </button>
-      <button class="icon-btn mobile-bottom-icon-btn" onclick="toggleTheme()">
-        <span data-i18n="mobile.toggle_theme">🌓</span>
-      </button>
-      <button class="icon-btn mobile-bottom-icon-btn" onclick="openSettings()">
-        <span data-i18n="settings.title">⚙️</span>
-      </button>
     </div>
   </div>
   <div id="mobileScanSheet" class="mobile-sheet-backdrop" onclick="closeMobileScanSheetIfBackdrop(event)">
