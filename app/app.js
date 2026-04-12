@@ -192,6 +192,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getQualityTooltipText(item) {
+    if (!isScoreEnabled()) return '';
     const quality = item?.quality;
     const score = Number(quality?.score);
     if (!Number.isFinite(score)) return '';
@@ -230,6 +231,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function qualityBadgeHTML(item, extraClass = '') {
+    if (!isScoreEnabled()) return '';
     const score = item?.quality?.score;
     if (!Number.isFinite(Number(score))) return '';
     const levelClass = getQualityLevelClass(getItemQualityLevel(item));
@@ -312,7 +314,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=true;
   let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
@@ -348,6 +350,44 @@ let allItems=[], categories=[], groups=[];
   let serverConfig = {};         // from library.json config block
   let appVersionInfo = null;     // loaded from /version.json
 
+  function isScoreEnabled() {
+    return enableScore !== false;
+  }
+
+  function sanitizeScoreState() {
+    activeQualityLevels.clear();
+    qualityExclude = false;
+    if (tSortCol === 'quality') tSortCol = null;
+    ['sortSelect', 'sortSelectMobile'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && (el.value === 'score-asc' || el.value === 'score-desc')) el.value = 'title-asc';
+    });
+  }
+
+  function applyScoreFeatureVisibility() {
+    const scoreOn = isScoreEnabled();
+    if (!scoreOn) sanitizeScoreState();
+    ['sortSelect', 'sortSelectMobile'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      ['score-asc', 'score-desc'].forEach((value) => {
+        const option = el.querySelector(`option[value="${value}"]`);
+        if (option) option.style.display = scoreOn ? '' : 'none';
+      });
+      if (!scoreOn && (el.value === 'score-asc' || el.value === 'score-desc')) {
+        el.value = 'title-asc';
+      }
+    });
+    ['qualitySection', 'qualitySectionMobile'].forEach((id) => {
+      const sec = document.getElementById(id);
+      if (!sec) return;
+      if (!scoreOn) {
+        sec.style.display = 'none';
+        sec.innerHTML = '';
+      }
+    });
+  }
+
   function saveState() {
     try {
       localStorage.setItem('mediaState', JSON.stringify({
@@ -380,7 +420,7 @@ let allItems=[], categories=[], groups=[];
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
-      if (Array.isArray(s.activeQualityLevels)) {
+      if (isScoreEnabled() && Array.isArray(s.activeQualityLevels)) {
         activeQualityLevels = new Set(
           s.activeQualityLevels
             .map(normalizeScoreRangeKey)
@@ -391,7 +431,7 @@ let allItems=[], categories=[], groups=[];
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
-      if (s.qualityExclude !== undefined)        qualityExclude        = !!s.qualityExclude;
+      if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -410,6 +450,7 @@ let allItems=[], categories=[], groups=[];
       renderQualityFilter();
       renderAudioLanguageFilter();
       ensureScoreFilterLast();
+      applyScoreFeatureVisibility();
       syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
       updateGlobalResetButtons();
@@ -511,6 +552,10 @@ let allItems=[], categories=[], groups=[];
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
       if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
       if (data.config) serverConfig = data.config;
+      if (typeof data?.meta?.score_enabled === 'boolean') {
+        enableScore = data.meta.score_enabled;
+      }
+      applyScoreFeatureVisibility();
       renderStorageBar();
       renderProviderFilter();
       renderResolutionFilter();
@@ -627,6 +672,7 @@ let allItems=[], categories=[], groups=[];
       enableMovies     = appConfig.enable_movies ?? true;
       enableSeries     = appConfig.enable_series ?? true;
       enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
+      enableScore      = appConfig.system?.enable_score !== false;
 
       // Provider visibility: [] = all visible; non-empty array = whitelist
       const pv = appConfig.providers_visible;
@@ -646,6 +692,7 @@ let allItems=[], categories=[], groups=[];
       }
 
       _updateTypeFilterVisibility();
+      applyScoreFeatureVisibility();
     } catch(e) {
       console.warn('loadConfig error:', e);
     }
@@ -803,12 +850,12 @@ let allItems=[], categories=[], groups=[];
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
       || activeAudioLanguages.size > 0
-      || activeQualityLevels.size > 0
+      || (isScoreEnabled() && activeQualityLevels.size > 0)
       || providerExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
-      || qualityExclude
+      || (isScoreEnabled() && qualityExclude)
       || getSearchQuery().length > 0;
   }
 
@@ -1091,6 +1138,16 @@ let allItems=[], categories=[], groups=[];
   }
 
   function renderQualityFilter() {
+    if (!isScoreEnabled()) {
+      ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
+        const sec = document.getElementById(cid);
+        if (sec) {
+          sec.style.display = 'none';
+          sec.innerHTML = '';
+        }
+      });
+      return;
+    }
     const base = baseItems('quality');
     const counts = {};
     SCORE_FILTER_RANGES.forEach(function(range) { counts[range.key] = 0; });
@@ -1339,7 +1396,7 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
-    if (activeQualityLevels.size > 0) {
+    if (isScoreEnabled() && activeQualityLevels.size > 0) {
       items=items.filter(i=>{
         const key = getScoreRangeKey(i?.quality?.score);
         if (qualityExclude) return key === null || !activeQualityLevels.has(key);
@@ -1398,7 +1455,7 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
-    if (except!=='quality' && activeQualityLevels.size > 0) {
+    if (isScoreEnabled() && except!=='quality' && activeQualityLevels.size > 0) {
       items=items.filter(i=>{
         const key = getScoreRangeKey(i?.quality?.score);
         if (qualityExclude) return key === null || !activeQualityLevels.has(key);
@@ -1455,6 +1512,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   function compareBySidebarSort(a,b,v) {
+    if (!isScoreEnabled() && (v === 'score-asc' || v === 'score-desc')) {
+      v = 'title-asc';
+    }
     if (v === 'score-asc' || v === 'score-desc') {
       const aScore = parseQualityScore(a);
       const bScore = parseQualityScore(b);
@@ -1483,7 +1543,10 @@ let allItems=[], categories=[], groups=[];
     return [...items].sort((a,b)=>compareBySidebarSort(a,b,v));
   }
 
-  function sortByCol(col){ tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render(); }
+  function sortByCol(col){
+    if (!isScoreEnabled() && col === 'quality') return;
+    tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render();
+  }
 
   function sortItemsTable(items) {
     if (!tSortCol) return sortItems(items);
@@ -1497,6 +1560,7 @@ let allItems=[], categories=[], groups=[];
         case 'files':    return ((a.file_count||0)-(b.file_count||0))*dir;
         case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*dir;
         case 'quality': {
+          if (!isScoreEnabled()) return 0;
           const aScore = parseQualityScore(a);
           const bScore = parseQualityScore(b);
           if (aScore === null && bScore === null) return 0;
@@ -1602,7 +1666,7 @@ let allItems=[], categories=[], groups=[];
         +'<td class="col-year">'+(item.year||'-')+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
-        +'<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>'
+        +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
@@ -1618,7 +1682,7 @@ let allItems=[], categories=[], groups=[];
       +th('title',t('table.title'))+th('year',t('table.year'))
       +(hg?th('group',t('table.group')):'')
       +th('category',t('table.category'))
-      +th('quality',t('table.quality'))
+      +(isScoreEnabled() ? th('quality',t('table.quality')) : '')
       +'<th>'+t('table.resolution')+'</th><th>'+t('table.codec')+'</th>'
       +'<th>'+t('table.audio_codec')+'</th><th>'+t('table.audio_languages')+'</th>'
       +th('size',t('table.size'))+th('files',t('table.files'))+th('added',t('table.added'))
@@ -1630,9 +1694,16 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
+    const includeScore = isScoreEnabled();
     const headers=[
       t('table.title'), t('table.year'), hg ? t('table.group') : null, t('table.category'),
-      'quality_score', 'quality_level', 'quality_video', 'quality_audio', 'quality_languages', 'quality_size', 'quality_penalty_total',
+      includeScore ? 'quality_score' : null,
+      includeScore ? 'quality_level' : null,
+      includeScore ? 'quality_video' : null,
+      includeScore ? 'quality_audio' : null,
+      includeScore ? 'quality_languages' : null,
+      includeScore ? 'quality_size' : null,
+      includeScore ? 'quality_penalty_total' : null,
       t('table.resolution'), 'HDR', t('table.codec'), t('table.audio_codec'),
       t('table.audio_languages')+' (simple)', t('table.audio_languages')+' (raw)', 'Runtime (min)',
       t('table.size'), 'Size (B)', t('table.files'), t('table.added'), t('table.streaming')
@@ -1641,13 +1712,13 @@ let allItems=[], categories=[], groups=[];
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
       csvC(i.category),
-      Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '',
-      Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : ''),
-      i.quality?.video ?? '',
-      i.quality?.audio ?? '',
-      i.quality?.languages ?? '',
-      i.quality?.size ?? '',
-      i.quality?.penalty_total ?? '',
+      includeScore ? (Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '') : null,
+      includeScore ? (Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '')) : null,
+      includeScore ? (i.quality?.video ?? '') : null,
+      includeScore ? (i.quality?.audio ?? '') : null,
+      includeScore ? (i.quality?.languages ?? '') : null,
+      includeScore ? (i.quality?.size ?? '') : null,
+      includeScore ? (i.quality?.penalty_total ?? '') : null,
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
@@ -2190,54 +2261,57 @@ let allItems=[], categories=[], groups=[];
         + '<div id="yearViewDecade" style="display:none">'+decadeChart+'</div>'
         + '</div>';
 
-      const qualityLevelRanges = {
-        1: '0–20',
-        2: '21–40',
-        3: '41–60',
-        4: '61–80',
-        5: '81–100'
-      };
-      const qualityCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      let qualityScoreTotal = 0;
-      let qualityScoreItems = 0;
-      items.forEach((i) => {
-        const score = Number(i?.quality?.score);
-        if (!Number.isFinite(score)) return;
-        const level = getItemQualityLevel(i);
-        if (qualityCounts[level] !== undefined) qualityCounts[level] += 1;
-        qualityScoreTotal += score;
-        qualityScoreItems += 1;
-      });
-      function qualityLevelColor(level) {
-        return ({
-          1: '#ef4444',
-          2: '#f97316',
-          3: '#facc15',
-          4: '#84cc16',
-          5: '#16a34a'
-        })[level] || '#64748b';
-      }
-      function makeQualityLevelBarChart() {
-        if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
-        const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
-        const maxV = Math.max(...entries.map(([,v]) => v), 1);
-        return '<div class="quality-bars">'
-          + entries.map(([lvl, val]) => {
-            const pct = Math.max(0, Math.min(100, (val / maxV) * 100));
-            return '<div class="quality-bar-row">'
-              + '<div class="quality-bar-label">'+qualityLevelRanges[lvl]+'</div>'
-              + '<div class="quality-bar-track"><div class="quality-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+qualityLevelColor(lvl)+'"></div></div>'
-              + '<div class="quality-bar-val">'+val+'</div>'
-              + '</div>';
-          }).join('')
+      let qualityChartHtml = '';
+      if (isScoreEnabled()) {
+        const qualityLevelRanges = {
+          1: '0–20',
+          2: '21–40',
+          3: '41–60',
+          4: '61–80',
+          5: '81–100'
+        };
+        const qualityCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+        let qualityScoreTotal = 0;
+        let qualityScoreItems = 0;
+        items.forEach((i) => {
+          const score = Number(i?.quality?.score);
+          if (!Number.isFinite(score)) return;
+          const level = getItemQualityLevel(i);
+          if (qualityCounts[level] !== undefined) qualityCounts[level] += 1;
+          qualityScoreTotal += score;
+          qualityScoreItems += 1;
+        });
+        function qualityLevelColor(level) {
+          return ({
+            1: '#ef4444',
+            2: '#f97316',
+            3: '#facc15',
+            4: '#84cc16',
+            5: '#16a34a'
+          })[level] || '#64748b';
+        }
+        function makeQualityLevelBarChart() {
+          if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
+          const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
+          const maxV = Math.max(...entries.map(([,v]) => v), 1);
+          return '<div class="quality-bars">'
+            + entries.map(([lvl, val]) => {
+              const pct = Math.max(0, Math.min(100, (val / maxV) * 100));
+              return '<div class="quality-bar-row">'
+                + '<div class="quality-bar-label">'+qualityLevelRanges[lvl]+'</div>'
+                + '<div class="quality-bar-track"><div class="quality-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+qualityLevelColor(lvl)+'"></div></div>'
+                + '<div class="quality-bar-val">'+val+'</div>'
+                + '</div>';
+            }).join('')
+            + '</div>';
+        }
+        const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
+        qualityChartHtml = '<div class="stats-block">'
+          + '<div class="stats-block-title">'+t('stats.quality_distribution')+'</div>'
+          + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
+          + makeQualityLevelBarChart()
           + '</div>';
       }
-      const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
-      const qualityChartHtml = '<div class="stats-block">'
-        + '<div class="stats-block-title">'+t('stats.quality_distribution')+'</div>'
-        + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
-        + makeQualityLevelBarChart()
-        + '</div>';
       const audioLangChartHtml = hasLangData
         ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count')
         : '';
@@ -2893,6 +2967,7 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
+    _rw('cfgEnableScore', sys.enable_score !== false);
     updateCronHint();
 
     // Jellyseerr — editable from appConfig
@@ -2933,7 +3008,7 @@ let allItems=[], categories=[], groups=[];
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
                  'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight',
-                 'cfgInventoryEnabled'];
+                 'cfgInventoryEnabled','cfgEnableScore'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
 
@@ -2992,12 +3067,14 @@ let allItems=[], categories=[], groups=[];
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
-    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null) {
+    const enableScoreCfg = get('cfgEnableScore');
+    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
       if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
+      if (enableScoreCfg !== null) partial.system.enable_score = enableScoreCfg;
     }
 
     try {

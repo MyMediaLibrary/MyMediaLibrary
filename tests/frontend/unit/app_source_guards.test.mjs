@@ -44,3 +44,14 @@ test('restoreState restores persisted quality exclude mode', () => {
   assert.match(block, /s\.qualityExclude !== undefined/, 'restoreState should read qualityExclude from persisted mediaState');
   assert.match(block, /qualityExclude\s*=\s*!!s\.qualityExclude/, 'restoreState should restore qualityExclude boolean');
 });
+
+test('score feature visibility is centrally applied and sanitizes stale score state', () => {
+  const block = functionBlock(appSource, 'applyScoreFeatureVisibility', 'hasActiveFilters');
+  assert.match(block, /if\s*\(!scoreOn\)\s*sanitizeScoreState\(\)/, 'score visibility should sanitize stale score state when disabled');
+  assert.match(block, /option\.style\.display = scoreOn \? '' : 'none'/, 'score sort options should be hidden when score is disabled');
+});
+
+test('quality filter hard-disables itself when score feature is disabled', () => {
+  const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
+  assert.match(block, /if\s*\(!isScoreEnabled\(\)\)\s*\{/, 'renderQualityFilter should early-return when score is disabled');
+});

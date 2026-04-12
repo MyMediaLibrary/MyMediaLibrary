@@ -344,6 +344,11 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Génère <code>library_inventory.json</code> en plus de <code>library.json</code> lors des scans.</div>
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
           </div>
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:6px">

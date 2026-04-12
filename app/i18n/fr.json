@@ -161,7 +161,9 @@
       "log_path": "📄 Logs accessibles sur l'hôte : ./data/scanner.log",
       "export_json": "Export JSON",
       "export_json_btn": "Télécharger l'export",
-      "export_unavailable": "Bibliothèque non chargée : impossible d'exporter."
+      "export_unavailable": "Bibliothèque non chargée : impossible d'exporter.",
+      "enable_score": "Activer le score de qualité",
+      "enable_score_hint": "Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats."
     },
     "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml.",
     "github_link": "Projet GitHub",
