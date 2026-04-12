@@ -189,12 +189,13 @@
     .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
       display:flex;align-items:center;justify-content:center;padding:16px}
     .settings-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;
-      width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
-      display:flex;flex-direction:column;height:520px}
+      width:min(100%, 980px);max-width:980px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;
+      display:flex;flex-direction:column;height:min(88vh, 820px)}
     .settings-header{display:flex;align-items:center;justify-content:space-between;
       padding:16px 20px;border-bottom:1px solid var(--border)}
     .settings-title{font-family:'Syne',sans-serif;font-weight:700;font-size:15px}
-    .settings-body{padding:20px;display:flex;flex-direction:column;gap:20px}
+    .settings-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface);flex-shrink:0}
+    .settings-body{padding:20px;display:flex;flex-direction:column;gap:20px;flex:1;overflow-y:auto;min-height:0}
     .settings-group{display:flex;flex-direction:column;gap:10px}
     .settings-group-title{font-size:11px;font-weight:700;text-transform:uppercase;
       letter-spacing:.08em;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border)}
@@ -221,6 +222,15 @@
     .toggle-switch input:checked + .toggle-switch-slider:before{transform:translateX(16px)}
     .settings-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;
       justify-content:flex-end;gap:8px}
+    .settings-collapsible{width:100%;display:flex;align-items:center;justify-content:space-between;
+      background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;
+      cursor:pointer;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;font-weight:700}
+    .settings-collapsible:hover{border-color:var(--accent)}
+    .settings-collapsible-icon{color:var(--muted);transition:transform .2s ease}
+    .settings-collapsible[aria-expanded="false"] .settings-collapsible-icon{transform:rotate(-90deg)}
+    .settings-collapsible-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .25s ease,opacity .25s ease;opacity:1;overflow:hidden}
+    .settings-collapsible-body.is-collapsed{grid-template-rows:0fr;opacity:.65}
+    #cfgJellyseerrFields{display:block}
     /* RESOLUTION BADGE */
     .res-badge{display:inline-block;font-size:10px;font-weight:700;font-family:'Syne',sans-serif;
       padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:4px}
