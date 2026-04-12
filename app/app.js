@@ -1325,7 +1325,7 @@ let allItems=[], categories=[], groups=[];
         + '    <input type="range" class="score-slider score-slider-min" min="0" max="100" step="1" value="' + scoreMin + '" aria-label="' + t('filters.score') + ' min"/>'
         + '    <input type="range" class="score-slider score-slider-max" min="0" max="100" step="1" value="' + scoreMax + '" aria-label="' + t('filters.score') + ' max"/>'
         + '  </div>'
-        + '  <div class="score-filter-meta"><div class="score-filter-edges"><span>0</span><span>100</span></div><div class="score-filter-current" aria-live="polite">' + scoreMin + '–' + scoreMax + '</div></div>'
+        + '  <div class="score-filter-meta"><div class="score-filter-current" aria-live="polite">' + scoreMin + '–' + scoreMax + '</div></div>'
         + '  <label class="score-filter-checkbox"><input type="checkbox" class="score-no-score-toggle"' + (includeNoScore ? ' checked' : '') + '/> ' + t('filters.score.include_no_score') + '</label>'
         + '</div></div>';
       const minInput = sec.querySelector('.score-slider-min');
