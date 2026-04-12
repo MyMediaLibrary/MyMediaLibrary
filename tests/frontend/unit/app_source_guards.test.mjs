@@ -29,8 +29,24 @@ test('quality select-all wiring is mapped in _dropdownSelectAll', () => {
 
 test('renderQualityFilter keeps score ranges visible even when all counts are zero', () => {
   const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
-  assert.match(block, /orderedKeys\s*=\s*SCORE_FILTER_RANGES\.map\(r => r\.key\)/, 'score filter should render all configured ranges');
+  assert.match(block, /SCORE_FILTER_RANGES\.forEach\(function\(range\)\s*\{\s*counts\[range\.key\]\s*=\s*0;/, 'score filter should keep all configured ranges in counts source');
+  assert.match(block, /renderFilterDropdown\(\{[\s\S]*counts,[\s\S]*label:\s*t\('filters\.score'\)/, 'score filter should render from complete counts map');
   assert.doesNotMatch(block, /if\s*\(!total\)\s*\{\s*sec\.style\.display\s*=\s*'none'/, 'score filter should not hide when counts are zero');
+});
+
+test('standard dropdown sorting is centralized and stable by count then label', () => {
+  const sortBlock = functionBlock(appSource, 'sortFilterOptionsByCount', 'buildDropdownFilterModel');
+  assert.match(sortBlock, /if \(b\.count !== a\.count\) return b\.count - a\.count;/, 'options should be sorted by descending dynamic count');
+  assert.match(sortBlock, /localeCompare\(/, 'equal counts should use stable label-based tie-breaker');
+
+  const modelBlock = functionBlock(appSource, 'buildDropdownFilterModel', 'renderFilterDropdown');
+  assert.match(modelBlock, /sortFilterOptionsByCount\(remaining, getDisplay\)/, 'dropdown model should use centralized sort helper');
+  assert.match(modelBlock, /\.filter\(option => option\.count > 0\)/, 'dropdown model should hide zero-count options');
+});
+
+test('renderFilterDropdown hides empty filters when no positive-count options remain', () => {
+  const block = functionBlock(appSource, 'renderFilterDropdown', 'normalizeScoreRangeKey');
+  assert.match(block, /if \(!keys\.length\) \{ sec\.style\.display = 'none'; return; \}/, 'dropdown should be hidden when no options are usable');
 });
 
 test('score filter is forced to last position after filter rendering', () => {
@@ -62,6 +78,7 @@ test('renderResolutionFilter uses shared dropdown with include/exclude toggles',
   assert.match(block, /toggleFn:\s*'toggleResolutionFilter'/, 'resolution should use standard dropdown toggle');
   assert.match(block, /clearFn:\s*'clearResolutionFilter'/, 'resolution should use standard dropdown clear');
   assert.match(block, /onToggleExclude:\s*'toggleResolutionExclude'/, 'resolution should expose include\/exclude toggle');
+  assert.match(block, /t\('filters\.none'\)/, 'resolution should display a localized none value for missing metadata');
   assert.doesNotMatch(block, /provider-pill/, 'resolution should no longer render legacy pill markup');
 });
 
