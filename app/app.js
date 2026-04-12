@@ -377,7 +377,7 @@ let allItems=[], categories=[], groups=[];
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
-      if (s.qualityExclude !== undefined)        qualityExclude        = !!s.qualityExclude;
+      qualityExclude = false;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -1084,7 +1084,8 @@ let allItems=[], categories=[], groups=[];
       const key = getScoreRangeKey(i?.quality?.score);
       if (key) counts[key] += 1;
     });
-    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    const scoredTotal = Object.values(counts).reduce((s, n) => s + n, 0);
+    const total = scoredTotal + noneCount;
     ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
       const sec = document.getElementById(cid);
       if (!sec) return;
