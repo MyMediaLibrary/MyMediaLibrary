@@ -394,9 +394,7 @@
     .score-range-dot{display:inline-block;width:9px;height:9px;border-radius:999px;flex-shrink:0;border:1px solid transparent}
     .score-range-dot.quality-lvl-1,.score-range-dot.quality-lvl-2,.score-range-dot.quality-lvl-3,
     .score-range-dot.quality-lvl-4,.score-range-dot.quality-lvl-5{color:transparent}
-    .score-filter-panel{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--card)}
-    .score-filter-title{display:flex;justify-content:space-between;align-items:center;font-family:'Syne',sans-serif;font-size:12px;color:var(--muted)}
-    .score-filter-range{color:var(--text);font-weight:700}
+    .score-filter-panel{display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--card)}
     .score-double-slider{position:relative;height:24px}
     .score-double-slider-track,
     .score-double-slider-selected{position:absolute;left:0;right:0;top:50%;height:8px;transform:translateY(-50%);border-radius:999px}
@@ -426,7 +424,9 @@
       width:16px;height:16px;border-radius:50%;border:2px solid var(--accent);
       background:var(--surface);pointer-events:auto;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.35);
     }
-    .score-filter-edges{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+    .score-filter-meta{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .score-filter-edges{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);min-width:68px}
+    .score-filter-current{font-family:'Syne',sans-serif;font-size:11px;font-weight:700;color:var(--text);letter-spacing:.02em}
     .score-filter-checkbox{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);cursor:pointer}
     .score-filter-checkbox input[type=checkbox]{accent-color:var(--accent)}
     .filter-dropdown-header{display:flex;align-items:center;justify-content:space-between;padding:7px 12px 5px;border-bottom:1px solid var(--border);gap:8px}

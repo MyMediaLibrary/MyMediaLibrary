@@ -38,6 +38,27 @@ function applyTranslations() {
 
 let allItems=[], categories=[], groups=[];
   const FILTER_NONE_KEY = '__none__';
+  const FILTER_ORDER = [
+    'type',
+    'folder',
+    'streaming',
+    'resolution',
+    'video_codec',
+    'audio_codec',
+    'audio_language',
+    'score'
+  ];
+  const FILTER_SECTION_IDS = {
+    type: { desktop: 'typeSection', mobile: 'mobileTypeSection' },
+    storage: { desktop: 'storageSection', mobile: 'storageSectionMobile' },
+    folder: { desktop: 'folderSection', mobile: 'folderSectionMobile' },
+    streaming: { desktop: 'providerSection', mobile: 'providerSectionMobile' },
+    resolution: { desktop: 'resolutionSection', mobile: 'resolutionSectionMobile' },
+    video_codec: { desktop: 'codecSection', mobile: 'codecSectionMobile' },
+    audio_codec: { desktop: 'audioCodecSection', mobile: 'audioCodecSectionMobile' },
+    audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
+    score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
+  };
   let libraryExportSource = null; // raw library.json payload used for export
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
@@ -519,8 +540,8 @@ let allItems=[], categories=[], groups=[];
       renderResolutionFilter();
       renderCodecFilter();
       renderAudioCodecFilter();
-      renderQualityFilter();
       renderAudioLanguageFilter();
+      renderQualityFilter();
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
@@ -1109,14 +1130,25 @@ let allItems=[], categories=[], groups=[];
 
   function ensureScoreFilterLast() {
     const desktopContainer = document.querySelector('.sidebar-filters');
-    const desktopScore = document.getElementById('qualitySection');
-    if (desktopContainer && desktopScore && desktopScore.parentElement === desktopContainer) {
-      desktopContainer.appendChild(desktopScore);
+    if (desktopContainer) {
+      // Enforce canonical filter order first, keep storage as a separate contextual block at the end.
+      const desktopOrder = ['type', ...FILTER_ORDER.filter(k => k !== 'type'), 'storage'];
+      desktopOrder.forEach(key => {
+        const sectionId = FILTER_SECTION_IDS[key]?.desktop;
+        if (!sectionId) return;
+        const section = document.getElementById(sectionId);
+        if (section && section.parentElement === desktopContainer) desktopContainer.appendChild(section);
+      });
     }
-    const mobileContainer = document.getElementById('mobileFiltersPanel');
-    const mobileScore = document.getElementById('qualitySectionMobile');
-    if (mobileContainer && mobileScore && mobileScore.parentElement === mobileContainer) {
-      mobileContainer.appendChild(mobileScore);
+    const mobileContainer = document.querySelector('#mobileFiltersPanel .mobile-filters-body');
+    if (mobileContainer) {
+      const mobileOrder = ['type', ...FILTER_ORDER.filter(k => k !== 'type'), 'storage'];
+      mobileOrder.forEach(key => {
+        const sectionId = FILTER_SECTION_IDS[key]?.mobile;
+        if (!sectionId) return;
+        const section = document.getElementById(sectionId);
+        if (section && section.parentElement === mobileContainer) mobileContainer.appendChild(section);
+      });
     }
   }
 
@@ -1284,21 +1316,22 @@ let allItems=[], categories=[], groups=[];
       }
       sec.style.display = '';
       sec.innerHTML = ''
+        + '<div class="storage-block">'
+        + '<div class="storage-title">' + t('filters.score') + '</div>'
         + '<div class="score-filter-panel">'
-        + '  <div class="score-filter-title">' + t('filters.score') + ' <span class="score-filter-range">' + scoreMin + '–' + scoreMax + '</span></div>'
         + '  <div class="score-double-slider" style="--range-min:' + scoreMin + ';--range-max:' + scoreMax + ';">'
         + '    <div class="score-double-slider-track"></div>'
         + '    <div class="score-double-slider-selected"></div>'
         + '    <input type="range" class="score-slider score-slider-min" min="0" max="100" step="1" value="' + scoreMin + '" aria-label="' + t('filters.score') + ' min"/>'
         + '    <input type="range" class="score-slider score-slider-max" min="0" max="100" step="1" value="' + scoreMax + '" aria-label="' + t('filters.score') + ' max"/>'
         + '  </div>'
-        + '  <div class="score-filter-edges"><span>0</span><span>100</span></div>'
+        + '  <div class="score-filter-meta"><div class="score-filter-edges"><span>0</span><span>100</span></div><div class="score-filter-current" aria-live="polite">' + scoreMin + '–' + scoreMax + '</div></div>'
         + '  <label class="score-filter-checkbox"><input type="checkbox" class="score-no-score-toggle"' + (includeNoScore ? ' checked' : '') + '/> ' + t('filters.score.include_no_score') + '</label>'
-        + '</div>';
+        + '</div></div>';
       const minInput = sec.querySelector('.score-slider-min');
       const maxInput = sec.querySelector('.score-slider-max');
       const noScoreInput = sec.querySelector('.score-no-score-toggle');
-      const rangeText = sec.querySelector('.score-filter-range');
+      const rangeText = sec.querySelector('.score-filter-current');
       const rangeWrap = sec.querySelector('.score-double-slider');
 
       let draftScoreMin = scoreMin;
@@ -1393,12 +1426,12 @@ let allItems=[], categories=[], groups=[];
     syncTypePills();
     renderStorageBar();
     renderFolderFilter();
-    renderResolutionFilter();
     renderProviderFilter();
+    renderResolutionFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
-    renderQualityFilter();
     renderAudioLanguageFilter();
+    renderQualityFilter();
     ensureScoreFilterLast();
     renderStats(filterItems());
     if (currentTab==='library') render();

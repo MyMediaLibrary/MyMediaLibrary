@@ -144,3 +144,18 @@ test('audio language simplified stats keep all categories without auto-grouping 
   assert.doesNotMatch(statsPanelBlock, /audioLangThreshold/, 'audio language chart should not apply a 1% threshold');
   assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
 });
+
+test('filter order is centralized and explicit for desktop and mobile', () => {
+  assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'streaming',\s*'resolution',\s*'video_codec',\s*'audio_codec',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
+  const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');
+  assert.match(reorderBlock, /const desktopOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'desktop order should be derived from centralized filter order');
+  assert.match(reorderBlock, /const mobileOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'mobile order should be derived from the same centralized filter order');
+});
+
+test('score filter UI uses a standard section label and avoids header range duplication', () => {
+  const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
+  assert.match(block, /<div class=\"storage-title\">' \+ t\('filters\.score'\) \+ '<\/div>'/, 'score filter should render a standard section title above its panel');
+  assert.match(block, /score-filter-current/, 'score filter should expose current selected range in its body');
+  assert.doesNotMatch(block, /score-filter-title/, 'score filter should not use a custom embedded title row');
+  assert.doesNotMatch(block, /score-filter-range/, 'score filter should not render the old top-right range label');
+});
