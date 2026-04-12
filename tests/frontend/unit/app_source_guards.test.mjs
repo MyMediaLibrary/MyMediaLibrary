@@ -36,6 +36,16 @@ test('renderQualityFilter auto-unchecks include_no_score only when leaving defau
   assert.doesNotMatch(block, /if \(!nowDefault\) includeNoScore = true;/, 'include_no_score should never be auto-rechecked');
 });
 
+test('renderQualityFilter keeps drag updates visual-only and commits filtering on release', () => {
+  const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
+  assert.match(block, /function updateDraftFromSlider\(changed\)/, 'renderQualityFilter should track draft score values during drag');
+  assert.match(block, /function commitDraftScoreRange\(\)/, 'renderQualityFilter should separate commit from draft updates');
+  assert.match(block, /minInput\?\.addEventListener\('input', function\(\) \{ updateDraftFromSlider\('min'\); \}\);/, 'min slider input should only update draft values');
+  assert.match(block, /maxInput\?\.addEventListener\('input', function\(\) \{ updateDraftFromSlider\('max'\); \}\);/, 'max slider input should only update draft values');
+  assert.match(block, /addEventListener\('change', commitDraftScoreRange\)/, 'slider should commit score range on change');
+  assert.match(block, /addEventListener\('pointerup', commitDraftScoreRange\)/, 'slider should commit score range on pointer release');
+});
+
 test('standard dropdown sorting is centralized and stable by count then label', () => {
   const sortBlock = functionBlock(appSource, 'sortFilterOptionsByCount', 'buildDropdownFilterModel');
   assert.match(sortBlock, /if \(b\.count !== a\.count\) return b\.count - a\.count;/, 'options should be sorted by descending dynamic count');
