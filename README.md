@@ -11,7 +11,7 @@
 <a name="français"></a>
 ## 🇫🇷 Français
 
-Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et séries. Scanne les fichiers `.nfo` (Kodi/Jellyfin), affiche une interface web filtrée, tourne dans un unique conteneur Docker. _Projet développé en vibe-coding avec l’aide de l’IA._
+Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et séries. Scanne les fichiers `.nfo` (Kodi/Jellyfin/Emby), affiche une interface web filtrée, tourne dans un unique conteneur Docker. _Projet développé en vibe-coding avec l’aide de l’IA._
 
 **→ [Documentation complète](docs/fr.md)**
 
@@ -79,7 +79,7 @@ Contributions bienvenues — ouvrez une issue ou une PR. Licence MIT.
 <a name="english"></a>
 ## 🇬🇧 English
 
-Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` files (Kodi/Jellyfin), serves a filterable web interface, runs in a single Docker container. _Built using vibe coding with AI assistance._
+Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` files (Kodi/Jellyfin/Emby), serves a filterable web interface, runs in a single Docker container. _Built using vibe coding with AI assistance._
 
 **→ [Full documentation](docs/en.md)**
 
