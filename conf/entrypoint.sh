@@ -37,7 +37,7 @@ echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
 
 # Initial scan on startup — also runs migrate_env_to_config() which populates config.json
 echo "[entrypoint] Running initial scan..."
-python3 /app/scanner.py
+python3 /app/scanner.py --quick
 
 # Read scan_cron from config.json — sole source of truth
 SCAN_CRON=$(python3 -c "
@@ -67,7 +67,7 @@ WRAPPER="/app/scan_cron.sh"
 cat > "$WRAPPER" << 'WRAPEOF'
 #!/bin/sh
 . /app/scanner_env.sh
-exec python3 /app/scanner.py
+exec python3 /app/scanner.py --full
 WRAPEOF
 chmod +x "$WRAPPER"
 
