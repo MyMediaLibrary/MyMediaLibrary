@@ -3,15 +3,16 @@
 ## Table of contents
 
 1. [Overview](#1-overview)
-2. [Installation](#2-installation)
-3. [Library structure](#3-library-structure)
-4. [Onboarding](#4-onboarding)
-5. [Web interface](#5-web-interface)
-6. [Filters](#6-filters)
-7. [Streaming providers](#7-streaming-providers)
-8. [Statistics](#8-statistics)
-9. [Settings](#9-settings)
-10. [Technical architecture](#10-technical-architecture)
+2. [Technical architecture](#2-technical-architecture)
+3. [Installation](#3-installation)
+4. [Library structure](#4-library-structure)
+5. [Onboarding](#5-onboarding)
+6. [Web interface](#6-web-interface)
+7. [Filters](#7-filters)
+8. [Streaming providers](#8-streaming-providers)
+9. [Quality Scoring](#9-quality-scoring)
+10. [Statistics](#10-statistics)
+11. [Settings](#11-settings)
 
 ---
 
@@ -26,7 +27,32 @@
 
 ---
 
-## 2. Installation
+## 2. Technical architecture
+
+### Stack
+
+- **Container**: nginx:alpine + Python 3 + dcron (single image)
+- **Frontend**: HTML/CSS + vanilla JS (no framework)
+- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
+- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
+
+### Internationalisation
+
+Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
+
+### Timezone (`TZ`)
+
+At startup, the entrypoint exports `TZ="${TZ:-UTC}"` before launching scanner services. In practice this means scanner API, initial scan and cron scans all run with `TZ` (default `UTC` when unset).
+
+Main impact areas:
+- log timestamps (for example `scanner.log`)
+- technical timestamps (scan state, execution times)
+- UI displays based on timestamps
+
+---
+
+## 3. Installation
 
 **Requirements:** Docker + Docker Compose, library with `.nfo` files.
 
@@ -62,6 +88,7 @@ services:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `LIBRARY_PATH` | ✅ | — | Root path of the library inside the container |
+| `TZ` | ❌ | `UTC` | Container timezone (logs and timestamps) |
 | `APP_PASSWORD` | ❌ | — | Password (enables login screen) |
 
 Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
@@ -74,7 +101,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 3. Library structure
+## 4. Library structure
 
 The scanner reads the **direct subdirectories** of `LIBRARY_PATH`. Each subdirectory is a **folder** that you assign a type to (Movies, Series, Ignore) from the interface.
 
@@ -121,7 +148,7 @@ environment:
 
 ---
 
-## 4. Onboarding
+## 5. Onboarding
 
 The setup wizard appears on first launch (or when `config.json` is missing/empty).
 
@@ -134,7 +161,7 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 ---
 
-## 5. Web interface
+## 6. Web interface
 
 ### Views
 
@@ -163,35 +190,40 @@ Each card displays:
 
 ---
 
-## 6. Filters
+## 7. Filters
 
-### Pill filters (low cardinality)
+Main library filters now use a unified dropdown architecture (same behavior on desktop/mobile) for:
+- **Folders**
+- **Resolution**
+- **Audio languages**
+- **Video codecs**
+- **Audio codecs**
+- **Streaming providers**
+- **Score** (dual-handle slider, only when scoring is enabled)
 
-- **Type** — All / Movies / Series
-- **Resolution** — All / 4K / 1080p / 720p / SD
-- **Group** — by configured folder
+Shared capabilities:
+- multi-selection
+- per-filter **Include / Exclude** mode
+- **Select all** action
+- dynamic counts (faceted logic: computed against other active filters)
+- descending sort by item count
+- zero-count options hidden
+- active options kept visible even when count reaches 0
+- filter state persisted and restored after reload
 
-These filters are rendered as pill buttons (single selection).
+> The **Type** filter (All / Movies / Series) remains a dedicated quick control.
 
-### Multi-select dropdown filters (high cardinality)
+### User example
 
-- **Streaming (FR)** — available providers (Netflix, Prime Video…) + "No provider" option
-- **Video codec** — H.264, H.265/HEVC, AV1…
-- **Audio codec** — AAC, AC3, EAC3, TrueHD…
-
-These filters use a dropdown with checkboxes. Selection is multiple (OR logic: an item passes if it matches **at least one** of the selected codecs/providers). Selection state is persisted in `localStorage`.
-
-#### "No provider" option
-
-In the Streaming filter, a special **"No provider"** option is shown first. It filters items that have no streaming provider associated.
-
-#### Dynamic counts
-
-The counts displayed in each dropdown correspond to items matching the **other active filters** (faceted search logic — `baseItems(except)` excludes the current filter from the count calculation).
+1. Open **Audio languages**.
+2. Select `French` + `English` (multi-select).
+3. Switch to **Exclude** mode to remove these languages from results.
+4. Use **Select all** to toggle all currently visible options.
+5. Notice options are automatically sorted by current matching volume.
 
 ---
 
-## 7. Streaming providers
+## 8. Streaming providers
 
 Streaming enrichment is optional and relies on **Jellyseerr**.
 
@@ -209,7 +241,194 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 
 ---
 
-## 8. Statistics
+## 9. Quality Scoring
+
+Quality scoring is an **optional** feature controlled by `system.enable_score` (default: `false`).
+When enabled, media items receive a global **quality score out of 100**. The score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+
+### Score filter (0–100 slider, when enabled)
+
+The score filter is not a dropdown anymore: it is a **dual-handle slider** with two bounds:
+- `min`
+- `max`
+
+Filtering rule:
+
+```text
+score >= min && score <= max
+```
+
+The slider updates displayed values in real-time while dragging, then applies filtering when released (smooth UX without expensive continuous re-filtering).
+
+### Items without score
+
+Dedicated option: **Include items without score**.
+
+Behavior:
+- enabled by default (range 0–100)
+- automatically disabled when the range is narrowed from default
+- can be manually re-enabled at any time
+
+### Score colors (visual consistency)
+
+Score colors follow a consistent gradient across the app:
+
+```text
+red → orange → yellow → light green → dark green
+```
+
+Used for:
+- score badges
+- slider visual markers
+- consistent quality-level visuals in stats/UI
+
+### Score structure
+
+| Criterion | Points |
+|---|---:|
+| Video | 50 |
+| Audio | 20 |
+| Languages | 15 |
+| Size | 15 |
+| **Total** | **100** |
+
+### Detailed criteria
+
+#### 🎥 Video (50)
+
+| Sub-criterion | Value | Points |
+|---|---|---:|
+| Resolution | 2160p | 25 |
+| Resolution | 1080p | 20 |
+| Resolution | 720p | 10 |
+| Resolution | SD | 5 |
+| Resolution | Unknown | 8 |
+| Codec | AV1 / HEVC / H.265 | 15 |
+| Codec | H.264 / AVC | 10 |
+| Codec | Legacy (MPEG-2, VC-1, Xvid, DivX) | 3 |
+| Codec | Unknown | 6 |
+| HDR | Dolby Vision | 10 |
+| HDR | HDR10+ | 8 |
+| HDR | HDR10 / HLG | 5 |
+| HDR | SDR | 0 |
+| HDR | Unknown | 0 |
+
+#### 🔊 Audio (20)
+
+| Audio codec | Points |
+|---|---:|
+| TrueHD / Atmos | 20 |
+| DTS-HD | 18 |
+| DTS | 15 |
+| EAC3 | 12 |
+| AC3 | 10 |
+| AAC | 6 |
+| MP3 / MP2 | 3 |
+| Unknown | 8 |
+
+#### 🌍 Languages (15)
+
+| Language profile | Points |
+|---|---:|
+| MULTI (French + others) | 15 |
+| French only | 10 |
+| Original language only (VO) | 5 |
+| Unknown | 3 |
+
+#### 💾 Size (15)
+
+| Consistency state | Points |
+|---|---:|
+| Coherent | 15 |
+| Too large | 8 |
+| Too small | 5 |
+| Unknown | 5 |
+
+##### Size references (optimal range)
+
+| Resolution | Codec | Optimal size |
+|---|---|---|
+| 1080p | H.265 | 2–10 GB |
+| 1080p | H.264 | 4–15 GB |
+| 4K | H.265 | 8–25 GB |
+| 720p | All | 2–6 GB |
+| SD | All | 500 MB – 2 GB |
+
+### Penalties
+
+Penalties are applied to correct incoherent combinations and avoid inflated scores in weak technical profiles.
+
+| Situation | Penalty | Explanation |
+|---|---|---|
+| High video quality + weak audio | -10 / -5 | A very sharp image with poor sound creates an unbalanced viewing experience. |
+| High resolution + legacy codec | -8 / -4 | HD/4K video encoded with an older codec often indicates less efficient compression quality. |
+| Good video + limited languages | -5 | The file quality is good, but usability is lower for users needing more language options. |
+| Inconsistent size | -5 | A file that is too small or too large for its profile can indicate uneven quality. |
+
+> Maximum applied penalty: 20 points.
+
+### Final score
+
+```text
+Final Score = Base Score - Penalties
+Clamped between 0 and 100
+```
+
+### Quality levels
+
+```text
+0–20   → Level 1
+21–40  → Level 2
+41–60  → Level 3
+61–80  → Level 4
+81–100 → Level 5
+```
+
+### UI integration
+
+Quality scoring is visible throughout the interface:
+- badge on media cards
+- table column
+- CSV export
+- statistics
+
+### Tooltip
+
+Hovering the quality badge shows a complete detailed tooltip:
+- full breakdown by category
+- applied penalties
+
+### Full score disable (`enable_score`)
+
+The `enable_score` system setting can disable the feature entirely.
+
+When disabled:
+- backend scan fully bypasses quality score computation
+- score fields are removed from `library.json` (no mixed score/no-score dataset after a scan)
+- score UI is hidden (badges, score column, score tooltip)
+- score filter slider is hidden
+- score-based sorting and score statistics are disabled
+- score columns are excluded from CSV export
+
+When re-enabled:
+- score UI controls become available again immediately
+- a new scan is required to regenerate score data in `library.json`
+
+### Key behaviors
+
+- filters persist and restore after reload
+- zero-count options are hidden (except active ones)
+- empty filter sections are automatically hidden
+- option order updates dynamically by counts
+- UI reacts immediately to configuration changes (for example score OFF)
+
+### Stats
+
+Statistics include score distribution views to provide a global quality analysis of the library.
+
+---
+
+## 10. Statistics
 
 The Statistics tab displays:
 
@@ -227,7 +446,7 @@ All charts are filtered by the active library filters.
 
 ---
 
-## 9. Settings
+## 11. Settings
 
 Accessible via the ⚙️ icon at the bottom of the sidebar.
 
@@ -247,23 +466,13 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 
 - Language (FR/EN)
 - Accent color (picker + reset)
-- Synopsis on hover (on/off)
+- Synopsis on hover (on/off, **disabled by default**)
+- Quality score (on/off, **disabled by default**)
+- Raw inventory `library_inventory.json` (on/off, **disabled by default**)
 - Auto-scan (cron)
 - Log level
 - Version
 
+> Synopsis on hover, quality scoring, and raw inventory are advanced features: they are opt-in and must be enabled manually in settings.
+
 ---
-
-## 10. Technical architecture
-
-### Stack
-
-- **Container**: nginx:alpine + Python 3 + dcron (single image)
-- **Frontend**: HTML/CSS + vanilla JS (no framework)
-- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
-- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
-- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
-
-### Internationalisation
-
-Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.

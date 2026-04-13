@@ -8,6 +8,13 @@
   const PROVIDER_OTHERS_KEY = '__others__';
   const PROVIDER_NONE_KEY = '__none__';
   const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  const SCORE_FILTER_RANGES = [
+    { key: '0_20', level: 1 },
+    { key: '20_40', level: 2 },
+    { key: '40_60', level: 3 },
+    { key: '60_80', level: 4 },
+    { key: '80_100', level: 5 },
+  ];
 
   function normalizeAudioLanguageCode(raw) {
     if (typeof raw !== 'string') return null;
@@ -18,13 +25,13 @@
   }
 
   function simplifyAudioLanguages(codes) {
-    if (!Array.isArray(codes)) return 'UNKNOWN';
+    if (!Array.isArray(codes)) return PROVIDER_NONE_KEY;
     const normalized = new Set();
     codes.forEach((code) => {
       const norm = normalizeAudioLanguageCode(code);
       if (norm) normalized.add(norm);
     });
-    if (normalized.size === 0) return 'UNKNOWN';
+    if (normalized.size === 0) return PROVIDER_NONE_KEY;
     if (normalized.size === 1 && normalized.has('fra')) return 'VF';
     if (normalized.has('fra') && normalized.size > 1) return 'MULTI';
     return 'VO';
@@ -79,42 +86,175 @@
     });
   }
 
-  function filterItems(items, state) {
+  function normalizeScoreRangeKey(raw) {
+    if (raw === null || raw === undefined) return null;
+    const value = String(raw).trim();
+    if (!value) return null;
+    if (SCORE_FILTER_RANGES.some((r) => r.key === value)) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return SCORE_FILTER_RANGES.find((r) => r.level === numeric)?.key || null;
+  }
+
+  function getScoreRangeKey(input) {
+    const level = (input && typeof input === 'object')
+      ? getScoredQualityLevel(input)
+      : getScoredQualityLevel({ quality: { score: input } });
+    if (level === null) return null;
+    return SCORE_FILTER_RANGES.find((r) => r.level === level)?.key || null;
+  }
+
+  function matchesScoreRange(score, rangeKey) {
+    const normalized = normalizeScoreRangeKey(rangeKey);
+    if (!normalized) return false;
+    return getScoreRangeKey(score) === normalized;
+  }
+
+  function applySelectionFilter(items, activeSet, excludeMode, readValue, options = {}) {
+    if (!activeSet || activeSet.size === 0) return items;
+    const matchNoneWhenSelected = !!options.matchNoneWhenSelected;
+    const withNoneExclusion = !!options.withNoneExclusion;
+    return items.filter((item) => {
+      const read = readValue(item);
+      const values = Array.isArray(read) ? read.filter((v) => v !== null && v !== undefined) : [read];
+      const hasNone = values.length === 0;
+      const matches = values.some((value) => activeSet.has(value));
+      if (excludeMode) {
+        if (withNoneExclusion && activeSet.has(PROVIDER_NONE_KEY) && hasNone) return false;
+        return !matches;
+      }
+      if (matchNoneWhenSelected && activeSet.has(PROVIDER_NONE_KEY) && hasNone) return true;
+      return matches;
+    });
+  }
+
+  function applyFilters(items, state) {
     let out = items.slice();
-    if (state.activeResolution !== 'all') out = out.filter((i) => i.resolution === state.activeResolution);
-
-    if (state.activeAudioLanguages.size > 0) {
-      if (state.audioLanguageExclude) {
-        out = out.filter((i) => !state.activeAudioLanguages.has(i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)));
-      } else {
-        out = out.filter((i) => state.activeAudioLanguages.has(i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)));
-      }
+    if (state.activeType && state.activeType !== 'all') out = out.filter((i) => i.type === state.activeType);
+    if (state.activeGroup && state.activeGroup !== 'all') out = out.filter((i) => i.group === state.activeGroup);
+    const activeFolders = state.activeFolders instanceof Set
+      ? state.activeFolders
+      : (state.activeCat && state.activeCat !== 'all' ? new Set([state.activeCat]) : new Set());
+    if (activeFolders.size > 0) {
+      if (state.folderExclude) out = out.filter((i) => !activeFolders.has(i.category || PROVIDER_NONE_KEY));
+      else out = out.filter((i) => activeFolders.has(i.category || PROVIDER_NONE_KEY));
+    }
+    const activeResolutions = state.activeResolutions instanceof Set
+      ? state.activeResolutions
+      : (state.activeResolution && state.activeResolution !== 'all' ? new Set([state.activeResolution]) : new Set());
+    if (activeResolutions.size > 0) {
+      out = applySelectionFilter(
+        out,
+        activeResolutions,
+        !!state.resolutionExclude,
+        (i) => i.resolution || PROVIDER_NONE_KEY
+      );
     }
 
-    if (state.activeProviders.size > 0) {
-      if (state.providerExclude) {
-        out = out.filter((i) => !(i.providers || []).some((p) => state.activeProviders.has(p)));
-      } else {
-        out = out.filter((i) => (i.providers || []).some((p) => state.activeProviders.has(p)));
-      }
-    }
+    out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || PROVIDER_NONE_KEY);
+    out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || PROVIDER_NONE_KEY);
+    out = applySelectionFilter(
+      out,
+      state.activeAudioLanguages,
+      state.audioLanguageExclude,
+      (i) => (i.audio_languages_simple === 'UNKNOWN' ? PROVIDER_NONE_KEY : (i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)))
+    );
+    out = applySelectionFilter(
+      out,
+      state.activeProviders,
+      state.providerExclude,
+      (i) => i.providers || [],
+      { matchNoneWhenSelected: true, withNoneExclusion: true }
+    );
+    const scoreMin = Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0;
+    const scoreMax = Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100;
+    const includeNoScore = state.includeNoScore !== undefined ? !!state.includeNoScore : true;
+    out = out.filter((i) => {
+      const score = Number(i?.quality?.score);
+      const hasScore = Number.isFinite(score);
+      const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+      if (includeNoScore) return inRange || !hasScore;
+      return inRange;
+    });
 
     return applySearch(out, state.searchQuery || '');
   }
 
+  function filterItems(items, state) {
+    return applyFilters(items, state);
+  }
+
+  function computeFilterCounts(items, state, field) {
+    const nextState = { ...state };
+    if (field === 'resolution') nextState.activeResolutions = new Set();
+    if (field === 'folder') nextState.activeFolders = new Set();
+    if (field === 'provider') nextState.activeProviders = new Set();
+    if (field === 'codec') nextState.activeCodecs = new Set();
+    if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
+    if (field === 'audioLanguage') nextState.activeAudioLanguages = new Set();
+    if (field === 'quality') {
+      nextState.activeQualityLevels = new Set();
+      nextState.scoreMin = 0;
+      nextState.scoreMax = 100;
+      nextState.includeNoScore = true;
+    }
+    const scoped = applyFilters(items, nextState);
+    const counts = {};
+    if (field === 'quality') {
+      SCORE_FILTER_RANGES.forEach((range) => { counts[range.key] = 0; });
+    }
+    scoped.forEach((item) => {
+      if (field === 'provider') {
+        const providers = item.providers || [];
+        if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
+        providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
+      } else if (field === 'resolution') {
+        const key = item.resolution || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'folder') {
+        const key = item.category || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'codec') {
+        const key = item.codec || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'audioCodec') {
+        const key = item.audio_codec || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'audioLanguage') {
+        const key = item.audio_languages_simple === 'UNKNOWN'
+          ? PROVIDER_NONE_KEY
+          : (item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages));
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'quality') {
+        const key = getScoreRangeKey(item);
+        if (key) counts[key] += 1;
+      }
+    });
+    return counts;
+  }
+
   function hasActiveFilters(state) {
+    const hasResolutionValues = state.activeResolutions instanceof Set
+      ? state.activeResolutions.size > 0
+      : !!(state.activeResolution && state.activeResolution !== 'all');
     return state.activeType !== 'all'
       || state.activeGroup !== 'all'
-      || state.activeCat !== 'all'
-      || state.activeResolution !== 'all'
+      || (state.activeFolders instanceof Set ? state.activeFolders.size > 0 : !!(state.activeCat && state.activeCat !== 'all'))
+      || hasResolutionValues
       || state.activeProviders.size > 0
       || state.activeCodecs.size > 0
       || state.activeAudioCodecs.size > 0
       || state.activeAudioLanguages.size > 0
+      || (Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0) > 0
+      || (Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100) < 100
+      || (state.includeNoScore !== undefined ? !state.includeNoScore : false)
+      || state.activeQualityLevels.size > 0
       || state.providerExclude
+      || state.resolutionExclude
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
+      || !!state.folderExclude
       || !!(state.searchQuery || '').trim();
   }
 
@@ -123,15 +263,23 @@
       activeType: 'all',
       activeGroup: 'all',
       activeCat: 'all',
-      activeResolution: 'all',
+      activeFolders: new Set(),
+      activeResolutions: new Set(),
       activeProviders: new Set(),
       activeCodecs: new Set(),
       activeAudioCodecs: new Set(),
       activeAudioLanguages: new Set(),
+      activeQualityLevels: new Set(),
+      scoreMin: 0,
+      scoreMax: 100,
+      includeNoScore: true,
       providerExclude: false,
+      resolutionExclude: false,
       videoCodecExclude: false,
       audioCodecExclude: false,
       audioLanguageExclude: false,
+      folderExclude: false,
+      qualityExclude: false,
       searchQuery: ''
     };
   }
@@ -169,6 +317,35 @@
     return byProvider;
   }
 
+  function getQualityLevelFromScore(score) {
+    const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+    if (safeScore <= 20) return 1;
+    if (safeScore <= 40) return 2;
+    if (safeScore <= 60) return 3;
+    if (safeScore <= 80) return 4;
+    return 5;
+  }
+
+  function getItemQualityLevel(item) {
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(item?.quality?.score);
+  }
+
+  function getScoredQualityLevel(item) {
+    const score = Number(item?.quality?.score);
+    if (!Number.isFinite(score)) return null;
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(score);
+  }
+
+  function getQualityLevelClass(level) {
+    const safeLevel = Number(level);
+    if (safeLevel >= 1 && safeLevel <= 5) return `quality-lvl-${safeLevel}`;
+    return 'quality-lvl-unknown';
+  }
+
   return {
     normalizeAudioLanguageCode,
     simplifyAudioLanguages,
@@ -177,10 +354,19 @@
     getItemSearchFields,
     applySearch,
     filterItems,
+    applyFilters,
     hasActiveFilters,
     resetFiltersState,
+    computeFilterCounts,
     isExportEnabled,
     canonicalProviderFilterKey,
-    groupedProviderCounts
+    groupedProviderCounts,
+    getQualityLevelFromScore,
+    getItemQualityLevel,
+    getScoredQualityLevel,
+    getQualityLevelClass,
+    normalizeScoreRangeKey,
+    matchesScoreRange,
+    getScoreRangeKey
   };
 });

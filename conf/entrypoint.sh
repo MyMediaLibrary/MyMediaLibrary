@@ -2,10 +2,14 @@
 # entrypoint.sh — nginx + cron + scanner + scan API server
 
 OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
+LOG_PATH="${LOG_PATH:-/data/scanner.log}"
+TZ="${TZ:-UTC}"
+export TZ
 
 echo "=== MyMediaLibrary ==="
 echo "LIBRARY_PATH : ${LIBRARY_PATH:-/mnt/media/library}"
 echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
+echo "LOG_PATH     : ${LOG_PATH}"
 echo ""
 
 # Create /app/.secrets if missing (stores Jellyseerr API key securely)
@@ -53,6 +57,8 @@ ENV_FILE="/app/scanner_env.sh"
 cat > "$ENV_FILE" << ENVEOF
 export LIBRARY_PATH="${LIBRARY_PATH:-/mnt/media/library}"
 export OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
+export LOG_PATH="${LOG_PATH:-/data/scanner.log}"
+export TZ="${TZ:-UTC}"
 ENVEOF
 chmod 600 "$ENV_FILE"
 
@@ -61,7 +67,7 @@ WRAPPER="/app/scan_cron.sh"
 cat > "$WRAPPER" << 'WRAPEOF'
 #!/bin/sh
 . /app/scanner_env.sh
-exec python3 /app/scanner.py >> /var/log/scanner.log 2>&1
+exec python3 /app/scanner.py
 WRAPEOF
 chmod +x "$WRAPPER"
 

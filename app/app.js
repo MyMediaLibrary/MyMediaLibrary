@@ -15,6 +15,10 @@ async function loadTranslations(lang) {
 function t(key, vars = {}) {
   const keys = key.split('.');
   let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
+  if (typeof val !== 'string') {
+    const labelVal = [...keys, 'label'].reduce((obj, k) => obj?.[k], TRANSLATIONS);
+    if (typeof labelVal === 'string') val = labelVal;
+  }
   if (typeof val !== 'string') { console.warn('Missing translation key:', key); return key; }
   Object.entries(vars).forEach(([k, v]) => { val = val.split(`{${k}}`).join(String(v)); });
   return val;
@@ -33,6 +37,28 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+  const FILTER_NONE_KEY = '__none__';
+  const FILTER_ORDER = [
+    'type',
+    'folder',
+    'streaming',
+    'resolution',
+    'video_codec',
+    'audio_codec',
+    'audio_language',
+    'score'
+  ];
+  const FILTER_SECTION_IDS = {
+    type: { desktop: 'typeSection', mobile: 'mobileTypeSection' },
+    storage: { desktop: 'storageSection', mobile: 'storageSectionMobile' },
+    folder: { desktop: 'folderSection', mobile: 'folderSectionMobile' },
+    streaming: { desktop: 'providerSection', mobile: 'providerSectionMobile' },
+    resolution: { desktop: 'resolutionSection', mobile: 'resolutionSectionMobile' },
+    video_codec: { desktop: 'codecSection', mobile: 'codecSectionMobile' },
+    audio_codec: { desktop: 'audioCodecSection', mobile: 'audioCodecSectionMobile' },
+    audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
+    score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
+  };
   let libraryExportSource = null; // raw library.json payload used for export
   let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
   let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
@@ -86,13 +112,13 @@ let allItems=[], categories=[], groups=[];
     if (window.MMLLogic?.simplifyAudioLanguages) {
       return window.MMLLogic.simplifyAudioLanguages(codes);
     }
-    if (!Array.isArray(codes)) return 'UNKNOWN';
+    if (!Array.isArray(codes)) return FILTER_NONE_KEY;
     const normalized = new Set();
     codes.forEach(code => {
       const norm = normalizeAudioLanguageCode(code);
       if (norm) normalized.add(norm);
     });
-    if (normalized.size === 0) return 'UNKNOWN';
+    if (normalized.size === 0) return FILTER_NONE_KEY;
     if (normalized.size === 1 && normalized.has('fra')) return 'VF';
     if (normalized.has('fra') && normalized.size > 1) return 'MULTI';
     return 'VO';
@@ -100,28 +126,31 @@ let allItems=[], categories=[], groups=[];
 
   function getAudioLanguageSimple(item) {
     const mapped = item?.audio_languages_simple;
-    if (mapped === 'VF' || mapped === 'VO' || mapped === 'MULTI' || mapped === 'UNKNOWN') return mapped;
+    if (mapped === 'VF' || mapped === 'VO' || mapped === 'MULTI' || mapped === FILTER_NONE_KEY) return mapped;
+    if (mapped === 'UNKNOWN') return FILTER_NONE_KEY; // legacy persisted value
     return simplifyAudioLanguages(item?.audio_languages ?? []);
   }
 
   function getAudioLanguageSimpleDisplay(value) {
-    return value === 'UNKNOWN' ? t('filters.unknown') : value;
+    if (value === 'UNKNOWN') return t('filters.unknown');
+    return getFilterDisplayValue(value);
   }
 
   function getAudioCodecDisplay(normalized) {
-    if (!normalized || normalized === 'UNKNOWN')
-      return audioCodecMapping.fallback?.display ?? 'Unknown';
+    if (!normalized || normalized === FILTER_NONE_KEY)
+      return getFilterDisplayValue(FILTER_NONE_KEY);
+    if (normalized === 'UNKNOWN') return t('filters.unknown');
     const entry = Object.values(audioCodecMapping.mapping ?? {})
       .find(e => e.normalized === normalized);
     return entry?.display ?? normalized;
   }
 
   function getNormalizedVideoCodec(item) {
-    return item?.codec || 'UNKNOWN';
+    return item?.codec || FILTER_NONE_KEY;
   }
 
   function getNormalizedAudioCodec(item) {
-    return item?.audio_codec || 'UNKNOWN';
+    return item?.audio_codec || FILTER_NONE_KEY;
   }
 
   function getAudioCodecLabel(item) {
@@ -129,7 +158,139 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getNormalizedResolution(item) {
-    return item?.resolution || 'UNKNOWN';
+    return item?.resolution || FILTER_NONE_KEY;
+  }
+
+  function canonicalFilterMissingKey(raw) {
+    if (raw === null || raw === undefined) return null;
+    const key = String(raw).trim();
+    if (!key) return null;
+    if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
+    return key;
+  }
+
+  function normalizeFilterValue(key) {
+    const canonical = canonicalFilterMissingKey(key);
+    return canonical || key;
+  }
+
+  function getFilterDisplayValue(key, noneTranslationKey = 'filters.none') {
+    const normalized = normalizeFilterValue(key);
+    if (normalized === FILTER_NONE_KEY) return t(noneTranslationKey);
+    return normalized;
+  }
+
+  function canonicalAudioLanguageFilterKey(raw) {
+    const key = canonicalFilterMissingKey(raw);
+    if (key === 'UNKNOWN') return FILTER_NONE_KEY; // legacy persisted value for audio language only
+    return key;
+  }
+
+  function getQualityLevelFromScore(score) {
+    if (window.MMLLogic?.getQualityLevelFromScore) {
+      return window.MMLLogic.getQualityLevelFromScore(score);
+    }
+    const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+    if (safeScore <= 20) return 1;
+    if (safeScore <= 40) return 2;
+    if (safeScore <= 60) return 3;
+    if (safeScore <= 80) return 4;
+    return 5;
+  }
+
+  function getItemQualityLevel(item) {
+    if (window.MMLLogic?.getItemQualityLevel) {
+      return window.MMLLogic.getItemQualityLevel(item);
+    }
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(item?.quality?.score);
+  }
+
+  function getScoredQualityLevel(item) {
+    if (window.MMLLogic?.getScoredQualityLevel) {
+      return window.MMLLogic.getScoredQualityLevel(item);
+    }
+    const score = Number(item?.quality?.score);
+    if (!Number.isFinite(score)) return null;
+    const rawLevel = Number(item?.quality?.level);
+    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
+    return getQualityLevelFromScore(score);
+  }
+
+  function getQualityLevelClass(level) {
+    if (window.MMLLogic?.getQualityLevelClass) {
+      return window.MMLLogic.getQualityLevelClass(level);
+    }
+    const safeLevel = Number(level);
+    if (safeLevel >= 1 && safeLevel <= 5) return `quality-lvl-${safeLevel}`;
+    return 'quality-lvl-unknown';
+  }
+
+  const QUALITY_PENALTY_LABELS = {
+    audio_video_mismatch: 'quality_tooltip.penalties.audio_video_mismatch',
+    audio_video_imbalance: 'quality_tooltip.penalties.audio_video_imbalance',
+    legacy_codec_high_res: 'quality_tooltip.penalties.legacy_codec_high_res',
+    legacy_codec_mid_res: 'quality_tooltip.penalties.legacy_codec_mid_res',
+    premium_video_weak_languages: 'quality_tooltip.penalties.premium_video_weak_languages',
+    size_video_mismatch: 'quality_tooltip.penalties.size_video_mismatch'
+  };
+
+  function getQualityPenaltyLabel(code) {
+    const key = QUALITY_PENALTY_LABELS[code];
+    return key ? t(key) : code;
+  }
+
+  function getQualityTooltipText(item) {
+    if (!isScoreEnabled()) return '';
+    const quality = item?.quality;
+    const score = Number(quality?.score);
+    if (!Number.isFinite(score)) return '';
+
+    const lines = [
+      `${t('quality_tooltip.score')}: ${Math.round(score)}`,
+      '',
+      `${t('quality_tooltip.video')}: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
+      `${t('quality_tooltip.audio')}: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
+      `${t('quality_tooltip.languages')}: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
+      `${t('quality_tooltip.size')}: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
+    ];
+
+    const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];
+    if (penalties.length) {
+      lines.push('', `${t('quality_tooltip.penalties.title')}:`);
+      penalties.forEach(penalty => {
+        const label = getQualityPenaltyLabel(String(penalty?.code || '').trim());
+        const value = Number(penalty?.value);
+        const valueLabel = Number.isFinite(value) ? ` (-${Math.abs(Math.round(value))})` : '';
+        lines.push(`- ${label}${valueLabel}`);
+      });
+    }
+
+    return lines.join('\n');
+  }
+
+  function escapeAttrMultiline(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\r?\n/g, '&#10;');
+  }
+
+  function qualityBadgeHTML(item, extraClass = '') {
+    if (!isScoreEnabled()) return '';
+    const score = item?.quality?.score;
+    if (!Number.isFinite(Number(score))) return '';
+    const levelClass = getQualityLevelClass(getItemQualityLevel(item));
+    const tooltip = getQualityTooltipText(item);
+    const tooltipAttr = tooltip ? ' data-quality-tooltip="'+escapeAttrMultiline(tooltip)+'"' : '';
+    const tooltipHandlers = tooltip
+      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="handleQualityBadgeLeave(this)"'
+      : '';
+    return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
   function getProviderNames(item) {
@@ -190,7 +351,7 @@ let allItems=[], categories=[], groups=[];
     if (!key) return null;
     const lower = key.toLowerCase();
     if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
-    if (key === '__none__') return '__none__';
+    if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
     return key;
   }
   function _hasHiddenProviders(items = allItems) {
@@ -203,26 +364,114 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true;
-  let activeGroup='all', activeCat='all', activeResolution='all', activeType='all';
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
+  let activeGroup='all', activeType='all';
+  let activeFolders = new Set();
+  let activeResolutions = new Set();
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
   let activeAudioLanguages = new Set();
+  let activeQualityLevels = new Set();
+  let scoreMin = 0;
+  let scoreMax = 100;
+  let includeNoScore = true;
   let audioCodecExclude = false;
   let videoCodecExclude = false;
   let providerExclude = false;
+  let resolutionExclude = false;
   let audioLanguageExclude = false;
+  let folderExclude = false;
+  let qualityExclude = false;
+  const SCORE_FILTER_RANGES = [
+    { key: '0_20', min: 0, max: 20, maxInclusive: false, labelKey: 'filters.score.range_0_20', level: 1 },
+    { key: '20_40', min: 20, max: 40, maxInclusive: false, labelKey: 'filters.score.range_20_40', level: 2 },
+    { key: '40_60', min: 40, max: 60, maxInclusive: false, labelKey: 'filters.score.range_40_60', level: 3 },
+    { key: '60_80', min: 60, max: 80, maxInclusive: false, labelKey: 'filters.score.range_60_80', level: 4 },
+    { key: '80_100', min: 80, max: 100, maxInclusive: true, labelKey: 'filters.score.range_80_100', level: 5 },
+  ];
+
+  function isFiltersDebugEnabled() {
+    try {
+      return window.__MML_DEBUG_FILTERS__ === true || localStorage.getItem('mml_debug_filters') === '1';
+    } catch (e) {
+      return window.__MML_DEBUG_FILTERS__ === true;
+    }
+  }
+
+  function logFiltersDebug(message, payload) {
+    if (!isFiltersDebugEnabled()) return;
+    if (payload !== undefined) console.info('[filters]', message, payload);
+    else console.info('[filters]', message);
+  }
   let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
   let appVersionInfo = null;     // loaded from /version.json
 
+  function resolveScoreEnabled(libraryMetaScoreEnabled = null) {
+    const configScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof configScoreEnabled === 'boolean') {
+      return configScoreEnabled;
+    }
+    if (typeof libraryMetaScoreEnabled === 'boolean') {
+      return libraryMetaScoreEnabled;
+    }
+    return false;
+  }
+
+  function isScoreEnabled() {
+    return enableScore === true;
+  }
+
+  function sanitizeScoreState() {
+    activeQualityLevels.clear();
+    qualityExclude = false;
+    scoreMin = 0;
+    scoreMax = 100;
+    includeNoScore = true;
+    if (tSortCol === 'quality') tSortCol = null;
+    ['sortSelect', 'sortSelectMobile'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && (el.value === 'score-asc' || el.value === 'score-desc')) el.value = 'title-asc';
+    });
+  }
+
+  function applyScoreFeatureVisibility() {
+    const scoreOn = isScoreEnabled();
+    if (!scoreOn) sanitizeScoreState();
+    ['sortSelect', 'sortSelectMobile'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      ['score-asc', 'score-desc'].forEach((value) => {
+        const option = el.querySelector(`option[value="${value}"]`);
+        if (option) option.style.display = scoreOn ? '' : 'none';
+      });
+      if (!scoreOn && (el.value === 'score-asc' || el.value === 'score-desc')) {
+        el.value = 'title-asc';
+      }
+    });
+    ['qualitySection', 'qualitySectionMobile'].forEach((id) => {
+      const sec = document.getElementById(id);
+      if (!sec) return;
+      if (!scoreOn) {
+        sec.style.display = 'none';
+        sec.innerHTML = '';
+      }
+    });
+  }
+
   function saveState() {
     try {
       localStorage.setItem('mediaState', JSON.stringify({
-        activeGroup, activeCat, activeResolution, activeType,
+        activeGroup, activeType,
+        activeFolders: [...activeFolders],
+        activeResolutions: [...activeResolutions],
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
         activeAudioLanguages: [...activeAudioLanguages],
-        audioCodecExclude, videoCodecExclude, providerExclude, audioLanguageExclude,
+        activeQualityLevels: [...activeQualityLevels],
+        scoreMin,
+        scoreMax,
+        includeNoScore,
+        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, folderExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -235,7 +484,8 @@ let allItems=[], categories=[], groups=[];
       const s = JSON.parse(localStorage.getItem('mediaState') || '{}');
       if (s.activeType)                       activeType        = s.activeType;
       if (s.activeGroup)                      activeGroup       = s.activeGroup;
-      if (s.activeCat)                        activeCat         = s.activeCat;
+      if (Array.isArray(s.activeFolders))     activeFolders     = new Set(s.activeFolders.filter(Boolean));
+      else if (s.activeCat && s.activeCat !== 'all') activeFolders = new Set([s.activeCat]); // legacy single-folder state
       if (Array.isArray(s.activeProviders)) {
         activeProviders = new Set(
           s.activeProviders
@@ -243,14 +493,37 @@ let allItems=[], categories=[], groups=[];
             .filter(Boolean)
         );
       }
-      if (s.activeResolution)                 activeResolution  = s.activeResolution;
-      if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs);
-      if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs);
-      if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages);
+      if (Array.isArray(s.activeResolutions)) {
+        activeResolutions = new Set(s.activeResolutions.map(canonicalFilterMissingKey).filter(Boolean));
+      } else if (s.activeResolution && s.activeResolution !== 'all') {
+        // backward compatibility with legacy single-value resolution state
+        activeResolutions = new Set([canonicalFilterMissingKey(s.activeResolution)].filter(Boolean));
+      }
+      if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs.map(canonicalFilterMissingKey).filter(Boolean));
+      if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs.map(canonicalFilterMissingKey).filter(Boolean));
+      if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages.map(canonicalAudioLanguageFilterKey).filter(Boolean));
+      if (isScoreEnabled() && Array.isArray(s.activeQualityLevels)) {
+        activeQualityLevels = new Set(
+          s.activeQualityLevels
+            .map(normalizeScoreRangeKey)
+            .filter(Boolean)
+        );
+      }
+      if (isScoreEnabled() && Number.isFinite(Number(s.scoreMin))) scoreMin = Math.max(0, Math.min(100, Number(s.scoreMin)));
+      if (isScoreEnabled() && Number.isFinite(Number(s.scoreMax))) scoreMax = Math.max(0, Math.min(100, Number(s.scoreMax)));
+      if (isScoreEnabled() && scoreMin > scoreMax) {
+        const tmp = scoreMin;
+        scoreMin = scoreMax;
+        scoreMax = tmp;
+      }
+      if (isScoreEnabled() && s.includeNoScore !== undefined) includeNoScore = !!s.includeNoScore;
       if (s.audioCodecExclude !== undefined)     audioCodecExclude     = !!s.audioCodecExclude;
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
+      if (s.resolutionExclude !== undefined)     resolutionExclude     = !!s.resolutionExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
+      if (s.folderExclude !== undefined)         folderExclude         = !!s.folderExclude;
+      if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -262,11 +535,15 @@ let allItems=[], categories=[], groups=[];
       }
       // Re-render all filter pills with correct active states (no saveState)
       renderStorageBar();
+      renderFolderFilter();
       renderProviderFilter();
       renderResolutionFilter();
       renderCodecFilter();
       renderAudioCodecFilter();
       renderAudioLanguageFilter();
+      renderQualityFilter();
+      ensureScoreFilterLast();
+      applyScoreFeatureVisibility();
       syncTypePills();
       if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
       updateGlobalResetButtons();
@@ -368,6 +645,11 @@ let allItems=[], categories=[], groups=[];
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
       if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
       if (data.config) serverConfig = data.config;
+      const libraryMetaScoreEnabled = typeof data?.meta?.score_enabled === 'boolean'
+        ? data.meta.score_enabled
+        : null;
+      enableScore = resolveScoreEnabled(libraryMetaScoreEnabled);
+      applyScoreFeatureVisibility();
       renderStorageBar();
       renderProviderFilter();
       renderResolutionFilter();
@@ -484,6 +766,7 @@ let allItems=[], categories=[], groups=[];
       enableMovies     = appConfig.enable_movies ?? true;
       enableSeries     = appConfig.enable_series ?? true;
       enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
+      enableScore      = resolveScoreEnabled();
 
       // Provider visibility: [] = all visible; non-empty array = whitelist
       const pv = appConfig.providers_visible;
@@ -503,6 +786,7 @@ let allItems=[], categories=[], groups=[];
       }
 
       _updateTypeFilterVisibility();
+      applyScoreFeatureVisibility();
     } catch(e) {
       console.warn('loadConfig error:', e);
     }
@@ -557,13 +841,7 @@ let allItems=[], categories=[], groups=[];
         t('filters.by_group'), 'clickGroup', 'resetGroup');
     }
 
-    // --- CATEGORY BAR (scoped to active group) ---
-    const byC={};
-    baseItems('cat').forEach(i=>{ byC[i.category]=(byC[i.category]||0)+(i.size_b||0); });
-    const totalC=Object.values(byC).reduce((s,v)=>s+v,0);
-    html+=barBlock(byC, totalC, activeCat, catColorMap,
-      t('filters.by_category'), 'clickCat', 'resetCat');
-
+    if (!html) { sec.style.display='none'; sec.innerHTML=''; return; }
     sec.style.display='block';
     sec.innerHTML=html;
 
@@ -588,7 +866,6 @@ let allItems=[], categories=[], groups=[];
   
   function clickType(type) {
     activeType = (type !== 'all' && activeType === type) ? 'all' : type;
-    activeCat = 'all';
     syncTypePills();
     renderStorageBar();
     renderProviderFilter();
@@ -597,10 +874,10 @@ let allItems=[], categories=[], groups=[];
     onFilter();
   }
 
-  function clickGroup(k){ activeGroup=activeGroup===k?'all':k; activeCat='all'; onFilter(); }
-  function resetGroup() { activeGroup='all'; activeCat='all'; onFilter(); }
-  function clickCat(k)  { activeCat=activeCat===k?'all':k; onFilter(); }
-  function resetCat()   { activeCat='all'; onFilter(); }
+  function clickGroup(k){ activeGroup=activeGroup===k?'all':k; onFilter(); }
+  function resetGroup() { activeGroup='all'; onFilter(); }
+  function clickCat(k)  { if (activeFolders.has(k)) activeFolders.delete(k); else activeFolders.add(k); onFilter(); }
+  function resetCat()   { activeFolders.clear(); onFilter(); }
   // ── DROPDOWN FILTER INFRASTRUCTURE ───────────────────
   let openDropdown = null;
 
@@ -637,31 +914,41 @@ let allItems=[], categories=[], groups=[];
       return window.MMLLogic.hasActiveFilters({
         activeType,
         activeGroup,
-        activeCat,
-        activeResolution,
+        activeFolders,
+        activeResolutions,
         activeProviders,
         activeCodecs,
         activeAudioCodecs,
         activeAudioLanguages,
+        activeQualityLevels,
+        scoreMin,
+        scoreMax,
+        includeNoScore,
         providerExclude,
+        resolutionExclude,
         videoCodecExclude,
         audioCodecExclude,
         audioLanguageExclude,
+        folderExclude,
+        qualityExclude,
         searchQuery: getSearchQuery(),
       });
     }
     return activeType !== 'all'
       || activeGroup !== 'all'
-      || activeCat !== 'all'
-      || activeResolution !== 'all'
+      || activeFolders.size > 0
+      || activeResolutions.size > 0
       || activeProviders.size > 0
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
       || activeAudioLanguages.size > 0
+      || (isScoreEnabled() && (scoreMin > 0 || scoreMax < 100 || !includeNoScore))
       || providerExclude
+      || resolutionExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
+      || folderExclude
       || getSearchQuery().length > 0;
   }
 
@@ -683,16 +970,23 @@ let allItems=[], categories=[], groups=[];
   function resetAllFilters() {
     activeType = 'all';
     activeGroup = 'all';
-    activeCat = 'all';
-    activeResolution = 'all';
+    activeFolders.clear();
+    activeResolutions.clear();
     activeProviders.clear();
     activeCodecs.clear();
     activeAudioCodecs.clear();
     activeAudioLanguages.clear();
+    activeQualityLevels.clear();
+    scoreMin = 0;
+    scoreMax = 100;
+    includeNoScore = true;
     providerExclude = false;
+    resolutionExclude = false;
     videoCodecExclude = false;
     audioCodecExclude = false;
     audioLanguageExclude = false;
+    folderExclude = false;
+    qualityExclude = false;
 
     const searchDesktop = document.getElementById('searchInput');
     if (searchDesktop) searchDesktop.value = '';
@@ -706,14 +1000,40 @@ let allItems=[], categories=[], groups=[];
     onFilter();
   }
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude }) {
+  function sortFilterOptionsByCount(options, getDisplay) {
+    return options.slice().sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      const aLabel = String(getDisplay ? getDisplay(a.key) : a.key);
+      const bLabel = String(getDisplay ? getDisplay(b.key) : b.key);
+      return aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base', numeric: true });
+    });
+  }
+
+  function buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet }) {
+    const activeKeys = activeSet instanceof Set ? [...activeSet] : [];
+    const activeLookup = new Set(activeKeys);
+    const options = Object.keys(counts || {}).map((key) => ({
+      key,
+      count: Number(counts[key]) || 0
+    })).filter(option => option.count > 0 || activeLookup.has(option.key));
+    activeKeys.forEach((key) => {
+      if (!key || options.some(option => option.key === key)) return;
+      options.push({ key, count: 0 });
+    });
+    const pinned = pinFirst ? options.filter(option => option.key === pinFirst) : [];
+    const remaining = pinFirst ? options.filter(option => option.key !== pinFirst) : options;
+    return [
+      ...pinned,
+      ...sortFilterOptionsByCount(remaining, getDisplay)
+    ];
+  }
+
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, getOptionPrefixHtml }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const keys = Object.keys(counts).sort((a, b) => {
-      if (pinFirst) { if (a === pinFirst) return -1; if (b === pinFirst) return 1; }
-      return counts[b] - counts[a];
-    });
-    if (!keys.length) { sec.style.display = 'none'; return; }
+    const model = buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet });
+    const keys = model.map(option => option.key);
+    if (!keys.length && activeSet.size === 0) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
 
     const isOpen = openDropdown === containerId;
@@ -761,10 +1081,12 @@ let allItems=[], categories=[], groups=[];
     html += '</div>';
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
+      const prefixHtml = typeof getOptionPrefixHtml === 'function' ? getOptionPrefixHtml(key) : '';
       html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
         + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
+        + prefixHtml
         + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
-        + '<span class="filter-dropdown-option-count">(' + counts[key] + ')</span>'
+        + '<span class="filter-dropdown-option-count">(' + (Number(counts?.[key]) || 0) + ')</span>'
         + '</div>';
     });
     html += '</div></div></div>';
@@ -772,6 +1094,62 @@ let allItems=[], categories=[], groups=[];
     // Set indeterminate state for select-all checkbox (can't be set in HTML)
     const saEl = sec.querySelector('#' + selectAllId);
     if (saEl && indeterminate) saEl.indeterminate = true;
+  }
+
+  function normalizeScoreRangeKey(raw) {
+    if (raw === null || raw === undefined) return null;
+    const value = String(raw).trim();
+    if (!value) return null;
+    if (SCORE_FILTER_RANGES.some(r => r.key === value)) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    if (numeric === 1) return '0_20';
+    if (numeric === 2) return '20_40';
+    if (numeric === 3) return '40_60';
+    if (numeric === 4) return '60_80';
+    if (numeric === 5) return '80_100';
+    return null;
+  }
+
+  function getScoreRangeByKey(key) {
+    return SCORE_FILTER_RANGES.find(r => r.key === key) || null;
+  }
+
+  function matchesScoreRange(score, rangeKey) {
+    const value = Number(score);
+    if (!Number.isFinite(value)) return false;
+    const range = getScoreRangeByKey(rangeKey);
+    if (!range) return false;
+    return getQualityLevelFromScore(value) === range.level;
+  }
+
+  function getScoreRangeKey(score) {
+    const range = SCORE_FILTER_RANGES.find(r => matchesScoreRange(score, r.key));
+    return range ? range.key : null;
+  }
+
+  function ensureScoreFilterLast() {
+    const desktopContainer = document.querySelector('.sidebar-filters');
+    if (desktopContainer) {
+      // Enforce canonical filter order first, keep storage as a separate contextual block at the end.
+      const desktopOrder = ['type', ...FILTER_ORDER.filter(k => k !== 'type'), 'storage'];
+      desktopOrder.forEach(key => {
+        const sectionId = FILTER_SECTION_IDS[key]?.desktop;
+        if (!sectionId) return;
+        const section = document.getElementById(sectionId);
+        if (section && section.parentElement === desktopContainer) desktopContainer.appendChild(section);
+      });
+    }
+    const mobileContainer = document.querySelector('#mobileFiltersPanel .mobile-filters-body');
+    if (mobileContainer) {
+      const mobileOrder = ['type', ...FILTER_ORDER.filter(k => k !== 'type'), 'storage'];
+      mobileOrder.forEach(key => {
+        const sectionId = FILTER_SECTION_IDS[key]?.mobile;
+        if (!sectionId) return;
+        const section = document.getElementById(sectionId);
+        if (section && section.parentElement === mobileContainer) mobileContainer.appendChild(section);
+      });
+    }
   }
 
   function _dropdownSelectAll(containerId, clearFn, checked) {
@@ -784,9 +1162,12 @@ let allItems=[], categories=[], groups=[];
     // Determine the Set to update by mapping containerId to the active set variable
     const setMap = {
       'providerSection': activeProviders, 'providerSectionMobile': activeProviders, 'providerSectionTop': activeProviders,
+      'resolutionSection': activeResolutions, 'resolutionSectionMobile': activeResolutions,
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
+      'folderSection': activeFolders, 'folderSectionMobile': activeFolders,
+      'qualitySection': activeQualityLevels, 'qualitySectionMobile': activeQualityLevels,
     };
     const activeSet = setMap[containerId];
     if (activeSet) { keys.forEach(k => activeSet.add(k)); onFilter(); }
@@ -794,6 +1175,8 @@ let allItems=[], categories=[], groups=[];
 
   function toggleProviderFilter(key) { if (activeProviders.has(key)) activeProviders.delete(key); else activeProviders.add(key); onFilter(); }
   function clearProviderFilter() { activeProviders.clear(); onFilter(); }
+  function toggleResolutionFilter(key) { if (activeResolutions.has(key)) activeResolutions.delete(key); else activeResolutions.add(key); onFilter(); }
+  function clearResolutionFilter() { activeResolutions.clear(); onFilter(); }
   function toggleCodecFilter(key) { if (activeCodecs.has(key)) activeCodecs.delete(key); else activeCodecs.add(key); onFilter(); }
   function clearCodecFilter() { activeCodecs.clear(); onFilter(); }
   function toggleAudioCodecFilter(key) { if (activeAudioCodecs.has(key)) activeAudioCodecs.delete(key); else activeAudioCodecs.add(key); onFilter(); }
@@ -801,16 +1184,28 @@ let allItems=[], categories=[], groups=[];
   function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
   function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
   function toggleProviderExclude() { providerExclude = !providerExclude; onFilter(); }
+  function toggleResolutionExclude() { resolutionExclude = !resolutionExclude; onFilter(); }
   function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
+  function toggleFolderFilter(key) { if (activeFolders.has(key)) activeFolders.delete(key); else activeFolders.add(key); onFilter(); }
+  function clearFolderFilter() { activeFolders.clear(); onFilter(); }
+  function toggleFolderExclude() { folderExclude = !folderExclude; onFilter(); }
+  function toggleQualityFilter(level) {
+    const key = normalizeScoreRangeKey(level);
+    if (!key) return;
+    if (activeQualityLevels.has(key)) activeQualityLevels.delete(key); else activeQualityLevels.add(key);
+    onFilter();
+  }
+  function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
+  function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
     const base = baseItems('provider');
     const counts = {};
     const noneCount = base.filter(i => !i.providers || !i.providers.length).length;
-    if (noneCount > 0) counts['__none__'] = noneCount;
+    if (noneCount > 0) counts[FILTER_NONE_KEY] = noneCount;
     base.forEach(i => {
       _itemProviderGroups(i).forEach(name => {
         counts[name] = (counts[name]||0) + 1;
@@ -822,7 +1217,10 @@ let allItems=[], categories=[], groups=[];
       if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
-        getDisplay: k => k === '__none__' ? t('filters.no_provider') : _providerGroupLabel(k), pinFirst: '__none__',
+        getDisplay: k => {
+          if (k === FILTER_NONE_KEY) return getFilterDisplayValue(k, 'filters.no_provider');
+          return _providerGroupLabel(k);
+        }, pinFirst: FILTER_NONE_KEY,
         excludeMode: providerExclude, onToggleExclude: 'toggleProviderExclude' });
     });
   }
@@ -836,7 +1234,8 @@ let allItems=[], categories=[], groups=[];
     });
     ['codecSection', 'codecSectionMobile'].forEach(function(cid) {
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.codec'),
-        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter', getDisplay: k => k,
+        activeSet: activeCodecs, toggleFn: 'toggleCodecFilter', clearFn: 'clearCodecFilter',
+        getDisplay: k => k === 'UNKNOWN' ? t('filters.unknown') : getFilterDisplayValue(k),
         excludeMode: videoCodecExclude, onToggleExclude: 'toggleVideoCodecExclude' });
     });
   }
@@ -877,46 +1276,163 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  function renderResolutionFilter() {
-    const sec = document.getElementById('resolutionSection');
-    if (!sec) return;
-    let base = baseItems('resolution');
-    const ORDER = ['4K','1080p','720p','SD'];
+  function renderFolderFilter() {
+    const base = baseItems('folder');
     const counts = {};
-    base.forEach(i => { if (i.resolution) counts[i.resolution] = (counts[i.resolution]||0)+1; });
-    const resolutions = ORDER.filter(r => counts[r]);
-    if (!resolutions.length) { sec.style.display='none'; return; }
-    const resetCls = 'provider-pill provider-pill-reset'+(activeResolution==='all'?' active':'');
-    let pills = '<div class="'+resetCls+'" onclick="resetResolution()">'+t('filters.all')+'</div>';
-    resolutions.forEach(r => {
-      const cls = 'provider-pill'+(activeResolution===r?' active':'');
-      pills += '<div class="'+cls+'" onclick="clickResolution(this)" data-res="'+r+'">'        +'<span class="res-badge res-'+r+'">'+r+'</span>'        +'<span style="margin-left:4px;font-size:11px">'+counts[r]+'</span>'        +'</div>';
+    base.forEach(i => {
+      const key = i.category || FILTER_NONE_KEY;
+      counts[key] = (counts[key] || 0) + 1;
     });
-    sec.style.display='block';
-    sec.innerHTML='<div class="storage-block"><div class="storage-title">'+t('filters.resolution')+'</div><div class="provider-filter">'+pills+'</div></div>';
-    // mirror to top bar
-
+    ['folderSection', 'folderSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.by_category'),
+        activeSet: activeFolders, toggleFn: 'toggleFolderFilter', clearFn: 'clearFolderFilter',
+        getDisplay: k => getFilterDisplayValue(k),
+        excludeMode: folderExclude, onToggleExclude: 'toggleFolderExclude' });
+    });
   }
 
-  function clickResolution(el) {
-    const k = el.dataset.res;
-    activeResolution = activeResolution === k ? 'all' : k;
-    onFilter();
+  function qualityRangeLabel(key) {
+    const range = getScoreRangeByKey(key);
+    if (!range) return t('filters.unknown');
+    return t(range.labelKey);
   }
 
-  function resetResolution() {
-    activeResolution = 'all';
-    onFilter();
+  function renderQualityFilter() {
+    if (!isScoreEnabled()) {
+      ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
+        const sec = document.getElementById(cid);
+        if (sec) {
+          sec.style.display = 'none';
+          sec.innerHTML = '';
+        }
+      });
+      return;
+    }
+    ['qualitySection', 'qualitySectionMobile'].forEach(function(cid) {
+      const sec = document.getElementById(cid);
+      if (!sec) {
+        console.warn('[filters] score filter target container not found', cid);
+        return;
+      }
+      sec.style.display = '';
+      sec.innerHTML = ''
+        + '<div class="storage-block">'
+        + '<div class="storage-title">' + t('filters.score') + '</div>'
+        + '<div class="score-filter-panel">'
+        + '  <div class="score-double-slider" style="--range-min:' + scoreMin + ';--range-max:' + scoreMax + ';">'
+        + '    <div class="score-double-slider-track"></div>'
+        + '    <div class="score-double-slider-selected"></div>'
+        + '    <input type="range" class="score-slider score-slider-min" min="0" max="100" step="1" value="' + scoreMin + '" aria-label="' + t('filters.score') + ' min"/>'
+        + '    <input type="range" class="score-slider score-slider-max" min="0" max="100" step="1" value="' + scoreMax + '" aria-label="' + t('filters.score') + ' max"/>'
+        + '  </div>'
+        + '  <div class="score-filter-meta"><div class="score-filter-current" aria-live="polite">' + scoreMin + '–' + scoreMax + '</div></div>'
+        + '  <label class="score-filter-checkbox"><input type="checkbox" class="score-no-score-toggle"' + (includeNoScore ? ' checked' : '') + '/> ' + t('filters.score.include_no_score') + '</label>'
+        + '</div></div>';
+      const minInput = sec.querySelector('.score-slider-min');
+      const maxInput = sec.querySelector('.score-slider-max');
+      const noScoreInput = sec.querySelector('.score-no-score-toggle');
+      const rangeText = sec.querySelector('.score-filter-current');
+      const rangeWrap = sec.querySelector('.score-double-slider');
+
+      let draftScoreMin = scoreMin;
+      let draftScoreMax = scoreMax;
+      let hasPendingDraft = false;
+
+      function syncRangeText() {
+        if (rangeText) rangeText.textContent = draftScoreMin + '–' + draftScoreMax;
+        if (rangeWrap) {
+          rangeWrap.style.setProperty('--range-min', String(draftScoreMin));
+          rangeWrap.style.setProperty('--range-max', String(draftScoreMax));
+        }
+        if (minInput && maxInput) {
+          const minOnTop = draftScoreMin >= draftScoreMax - 2;
+          minInput.style.zIndex = minOnTop ? '3' : '2';
+          maxInput.style.zIndex = minOnTop ? '2' : '3';
+        }
+      }
+      function updateDraftFromSlider(changed) {
+        const currentMin = Number(minInput?.value ?? draftScoreMin);
+        const currentMax = Number(maxInput?.value ?? draftScoreMax);
+        let nextMin = Number.isFinite(currentMin) ? currentMin : draftScoreMin;
+        let nextMax = Number.isFinite(currentMax) ? currentMax : draftScoreMax;
+        if (changed === 'min' && nextMin > nextMax) {
+          nextMax = nextMin;
+          if (maxInput) maxInput.value = String(nextMax);
+        } else if (changed === 'max' && nextMax < nextMin) {
+          nextMin = nextMax;
+          if (minInput) minInput.value = String(nextMin);
+        }
+        draftScoreMin = Math.max(0, Math.min(100, Math.min(nextMin, nextMax)));
+        draftScoreMax = Math.max(0, Math.min(100, Math.max(nextMin, nextMax)));
+        if (minInput) minInput.value = String(draftScoreMin);
+        if (maxInput) maxInput.value = String(draftScoreMax);
+        hasPendingDraft = draftScoreMin !== scoreMin || draftScoreMax !== scoreMax;
+        syncRangeText();
+      }
+
+      function commitDraftScoreRange() {
+        if (!hasPendingDraft) return;
+        const prevDefault = scoreMin === 0 && scoreMax === 100;
+        scoreMin = draftScoreMin;
+        scoreMax = draftScoreMax;
+        const nowDefault = scoreMin === 0 && scoreMax === 100;
+        if (prevDefault && !nowDefault) includeNoScore = false;
+        if (noScoreInput) noScoreInput.checked = includeNoScore;
+        hasPendingDraft = false;
+        onFilter();
+      }
+
+      minInput?.addEventListener('input', function() { updateDraftFromSlider('min'); });
+      maxInput?.addEventListener('input', function() { updateDraftFromSlider('max'); });
+      minInput?.addEventListener('change', commitDraftScoreRange);
+      maxInput?.addEventListener('change', commitDraftScoreRange);
+      minInput?.addEventListener('pointerup', commitDraftScoreRange);
+      maxInput?.addEventListener('pointerup', commitDraftScoreRange);
+      minInput?.addEventListener('touchend', commitDraftScoreRange);
+      maxInput?.addEventListener('touchend', commitDraftScoreRange);
+      minInput?.addEventListener('mouseup', commitDraftScoreRange);
+      maxInput?.addEventListener('mouseup', commitDraftScoreRange);
+      noScoreInput?.addEventListener('change', function(e) {
+        includeNoScore = !!e.target.checked;
+        onFilter();
+      });
+      syncRangeText();
+    });
+  }
+
+  function renderResolutionFilter() {
+    const base = baseItems('resolution');
+    const counts = {};
+    base.forEach(i => {
+      const key = getNormalizedResolution(i);
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    ['resolutionSection', 'resolutionSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({
+        containerId: cid,
+        counts,
+        label: t('filters.resolution'),
+        activeSet: activeResolutions,
+        toggleFn: 'toggleResolutionFilter',
+        clearFn: 'clearResolutionFilter',
+        getDisplay: k => getFilterDisplayValue(k),
+        excludeMode: resolutionExclude,
+        onToggleExclude: 'toggleResolutionExclude',
+      });
+    });
   }
 
   function onFilter() {
     syncTypePills();
     renderStorageBar();
-    renderResolutionFilter();
+    renderFolderFilter();
     renderProviderFilter();
+    renderResolutionFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
     renderAudioLanguageFilter();
+    renderQualityFilter();
+    ensureScoreFilterLast();
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') renderStatsPanel();
@@ -1017,7 +1533,7 @@ let allItems=[], categories=[], groups=[];
     // Visibility order:
     // 1. Settings — type enabled (enableMovies/enableSeries)
     // 2. Settings — active categories (enabledCategories)
-    // 3. Sidebar filters — type, group, cat, provider, resolution, codec, search
+    // 3. Sidebar filters — type, group, folders, provider, resolution, codec, search
     // Note: visibleProviders affects logos/filter display only, NOT item visibility
     const q = getSearchQuery();
     let items=allItems;
@@ -1026,24 +1542,33 @@ let allItems=[], categories=[], groups=[];
     if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
-    if (activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
+    if (activeFolders.size > 0) {
+      if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
+      else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
+    }
     if (enableJellyseerr && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
           const hasNone = !i.providers || !i.providers.length;
-          if (activeProviders.has('__none__') && hasNone) return false;
+          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
       }
     }
-    if (activeResolution!=='all') items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
+    if (activeResolutions.size > 0) {
+      if (resolutionExclude) {
+        items=items.filter(i=>!activeResolutions.has(getNormalizedResolution(i)));
+      } else {
+        items=items.filter(i=>activeResolutions.has(getNormalizedResolution(i)));
+      }
+    }
     if (activeCodecs.size > 0) {
       if (videoCodecExclude) {
         items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
@@ -1065,6 +1590,15 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
     }
+    if (isScoreEnabled()) {
+      items=items.filter(i=>{
+        const score = Number(i?.quality?.score);
+        const hasScore = Number.isFinite(score);
+        const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+        if (includeNoScore) return inRange || !hasScore;
+        return inRange;
+      });
+    }
     return applySearch(items, q);
   }
 
@@ -1078,24 +1612,33 @@ let allItems=[], categories=[], groups=[];
     if (enabledCategories)   items=items.filter(i=>_catVisible(i.category));
     if (activeType!=='all')  items=items.filter(i=>i.type===activeType);
     if (except!=='group'  && activeGroup!=='all') items=items.filter(i=>i.group===activeGroup);
-    if (except!=='cat'    && activeCat!=='all')   items=items.filter(i=>i.category===activeCat);
+    if (except!=='folder' && activeFolders.size > 0) {
+      if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
+      else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
+    }
     if (except!=='provider' && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
           const hasNone = !i.providers || !i.providers.length;
-          if (activeProviders.has('__none__') && hasNone) return false;
+          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has('__none__') && (!i.providers || !i.providers.length)) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
       }
     }
-    if (except!=='resolution'  && activeResolution!=='all')   items=items.filter(i=>getNormalizedResolution(i)===activeResolution);
+    if (except!=='resolution' && activeResolutions.size > 0) {
+      if (resolutionExclude) {
+        items=items.filter(i=>!activeResolutions.has(getNormalizedResolution(i)));
+      } else {
+        items=items.filter(i=>activeResolutions.has(getNormalizedResolution(i)));
+      }
+    }
     if (except!=='codec' && activeCodecs.size > 0) {
       if (videoCodecExclude) {
         items=items.filter(i=>!activeCodecs.has(getNormalizedVideoCodec(i)));
@@ -1116,6 +1659,15 @@ let allItems=[], categories=[], groups=[];
       } else {
         items=items.filter(i=>activeAudioLanguages.has(getAudioLanguageSimple(i)));
       }
+    }
+    if (isScoreEnabled() && except!=='quality') {
+      items=items.filter(i=>{
+        const score = Number(i?.quality?.score);
+        const hasScore = Number.isFinite(score);
+        const inRange = hasScore && score >= scoreMin && score <= scoreMax;
+        if (includeNoScore) return inRange || !hasScore;
+        return inRange;
+      });
     }
     return applySearch(items, q);
   }
@@ -1154,27 +1706,59 @@ let allItems=[], categories=[], groups=[];
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
 
-  function sortItems(items) {
-    const v=document.getElementById('sortSelect').value;
-    return [...items].sort((a,b)=>{
-      switch(v){
-        case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
-        case 'title-desc':   return (b.title||'').localeCompare(a.title||'');
-        case 'year-desc':    return (b.year||'0')-(a.year||'0');
-        case 'year-asc':     return (a.year||'9999')-(b.year||'9999');
-        case 'size-desc':    return (b.size_b||0)-(a.size_b||0);
-        case 'size-asc':     return (a.size_b||0)-(b.size_b||0);
-        case 'added-desc':   return (b.added_ts||0)-(a.added_ts||0);
-        case 'category-asc': return (a.category||'').localeCompare(b.category||'');
-      }
-    });
+  function getSidebarSortValue() {
+    return document.getElementById('sortSelect')?.value || 'title-asc';
   }
 
-  function sortByCol(col){ tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render(); }
+  function parseQualityScore(item) {
+    const raw = item?.quality?.score;
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === 'string' && raw.trim() === '') return null;
+    const score = Number(raw);
+    return Number.isFinite(score) ? score : null;
+  }
+
+  function compareBySidebarSort(a,b,v) {
+    if (!isScoreEnabled() && (v === 'score-asc' || v === 'score-desc')) {
+      v = 'title-asc';
+    }
+    if (v === 'score-asc' || v === 'score-desc') {
+      const aScore = parseQualityScore(a);
+      const bScore = parseQualityScore(b);
+      const aHasScore = aScore !== null;
+      const bHasScore = bScore !== null;
+      if (!aHasScore && !bHasScore) return 0;
+      if (!aHasScore) return 1;
+      if (!bHasScore) return -1;
+      return v === 'score-desc' ? bScore - aScore : aScore - bScore;
+    }
+    switch(v){
+      case 'title-asc':    return (a.title||'').localeCompare(b.title||'');
+      case 'title-desc':   return (b.title||'').localeCompare(a.title||'');
+      case 'year-desc':    return (b.year||'0')-(a.year||'0');
+      case 'year-asc':     return (a.year||'9999')-(b.year||'9999');
+      case 'size-desc':    return (b.size_b||0)-(a.size_b||0);
+      case 'size-asc':     return (a.size_b||0)-(b.size_b||0);
+      case 'added-desc':   return (b.added_ts||0)-(a.added_ts||0);
+      case 'category-asc': return (a.category||'').localeCompare(b.category||'');
+      default:             return 0;
+    }
+  }
+
+  function sortItems(items) {
+    const v=getSidebarSortValue();
+    return [...items].sort((a,b)=>compareBySidebarSort(a,b,v));
+  }
+
+  function sortByCol(col){
+    if (!isScoreEnabled() && col === 'quality') return;
+    tSortDir=tSortCol===col?tSortDir*-1:1; tSortCol=col; render();
+  }
 
   function sortItemsTable(items) {
-    const col = tSortCol ?? 'title';
-    const dir = tSortCol ? tSortDir : 1;
+    if (!tSortCol) return sortItems(items);
+    const col = tSortCol;
+    const dir = tSortDir;
     return [...items].sort((a,b)=>{
       switch(col){
         case 'title':    return (a.title||'').localeCompare(b.title||'')*dir;
@@ -1182,6 +1766,15 @@ let allItems=[], categories=[], groups=[];
         case 'size':     return ((a.size_b||0)-(b.size_b||0))*dir;
         case 'files':    return ((a.file_count||0)-(b.file_count||0))*dir;
         case 'added':    return ((a.added_ts||0)-(b.added_ts||0))*dir;
+        case 'quality': {
+          if (!isScoreEnabled()) return 0;
+          const aScore = parseQualityScore(a);
+          const bScore = parseQualityScore(b);
+          if (aScore === null && bScore === null) return 0;
+          if (aScore === null) return 1;
+          if (bScore === null) return -1;
+          return (aScore-bScore)*dir;
+        }
         case 'category': return (a.category||'').localeCompare(b.category||'')*dir;
         case 'group':    return (a.group||'').localeCompare(b.group||'')*dir;
       }
@@ -1204,28 +1797,42 @@ let allItems=[], categories=[], groups=[];
       }
       return ''; // has providers but all hidden by visibility prefs
     }
+    const maxVisibleProviders = 5;
+    const shown = visP.slice(0, maxVisibleProviders);
+    const remaining = visP.length - shown.length;
     return '<div class="tl-providers">'
-      + visP.map(p => {
+      + shown.map(p => {
           const name=_pname(p), logo=_plogo(p);
           return logo
             ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
             : '<span class="tl-provider-name">'+escH(name)+'</span>';
         }).join('')
+      + (remaining > 0 ? '<span class="tl-provider-name" title="'+escH(t('stats.others'))+'">+'+remaining+'</span>' : '')
       + '</div>';
   }
   function cardHTML(item) {
     const plotText = (item.plot||'').trim();
-    return '<div class="tl-card"'+(plotText?' onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+    const qualityBadge = qualityBadgeHTML(item);
+    const infoParts = [];
+    if (item.group) infoParts.push('<span class="tl-cat tl-pill-ellipsis" style="color:#a78bfa">'+escH(item.group)+'</span>');
+    infoParts.push('<span class="tl-size">'+escH(item.size)+'</span>');
+    if (item.type==='tv'&&item.season_count) infoParts.push('<span class="tl-cat">'+item.season_count+'S</span>');
+    if (item.type==='tv'&&item.episode_count) infoParts.push('<span class="tl-cat">'+item.episode_count+'ep</span>');
+    if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
+      infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
+    }
+    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'" onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+      +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
         +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
-          +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
-          +(item.group?'<span class="tl-cat" style="color:#a78bfa">'+escH(item.group)+'</span>':'')
-          +'<span class="tl-cat">'+escH(item.category)+'</span>'
-          +'<span class="tl-size">'+escH(item.size)+'</span>'
-          +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
-          +(item.type==='tv'&&item.season_count?'<span class="tl-cat">'+item.season_count+'S</span>':'')+(item.type==='tv'&&item.episode_count?'<span class="tl-cat">'+item.episode_count+'ep</span>':'')+(item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1?'<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>':'')
+          +'<div class="tl-meta-row compact">'
+            +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+            +'<span class="tl-cat">'+escH(item.category)+'</span>'
+            +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+          +'</div>'
+          +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
         + providersBlock(item)
       +'</div>'
@@ -1259,6 +1866,7 @@ let allItems=[], categories=[], groups=[];
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
           +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
           +'<span class="cat-badge">'+escH(item.category)+'</span>'
+          +(qualityBadgeHTML(item, 'quality-badge-inline') || '')
           +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
@@ -1277,6 +1885,7 @@ let allItems=[], categories=[], groups=[];
         +'<td class="col-year">'+(item.year||'-')+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
+        +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
         +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
@@ -1292,6 +1901,7 @@ let allItems=[], categories=[], groups=[];
       +th('title',t('table.title'))+th('year',t('table.year'))
       +(hg?th('group',t('table.group')):'')
       +th('category',t('table.category'))
+      +(isScoreEnabled() ? th('quality',t('table.quality')) : '')
       +'<th>'+t('table.resolution')+'</th><th>'+t('table.codec')+'</th>'
       +'<th>'+t('table.audio_codec')+'</th><th>'+t('table.audio_languages')+'</th>'
       +th('size',t('table.size'))+th('files',t('table.files'))+th('added',t('table.added'))
@@ -1303,11 +1913,31 @@ let allItems=[], categories=[], groups=[];
   function exportCSV() {
     const items=filterItems();
     const hg=items.some(i=>i.group);
-    const headers=[t('table.title'),t('table.year'),hg?t('table.group'):null,t('table.category'),t('table.resolution'),'HDR',t('table.codec'),t('table.audio_codec'),t('table.audio_languages')+' (simple)',t('table.audio_languages')+' (raw)','Runtime (min)',t('table.size'),'Size (B)',t('table.files'),t('table.added'),t('table.streaming')].filter(Boolean);
+    const includeScore = isScoreEnabled();
+    const headers=[
+      t('table.title'), t('table.year'), hg ? t('table.group') : null, t('table.category'),
+      includeScore ? 'quality_score' : null,
+      includeScore ? 'quality_level' : null,
+      includeScore ? 'quality_video' : null,
+      includeScore ? 'quality_audio' : null,
+      includeScore ? 'quality_languages' : null,
+      includeScore ? 'quality_size' : null,
+      includeScore ? 'quality_penalty_total' : null,
+      t('table.resolution'), 'HDR', t('table.codec'), t('table.audio_codec'),
+      t('table.audio_languages')+' (simple)', t('table.audio_languages')+' (raw)', 'Runtime (min)',
+      t('table.size'), 'Size (B)', t('table.files'), t('table.added'), t('table.streaming')
+    ].filter(Boolean);
     const rows=items.map(i=>[
       csvC(i.title),csvC(i.year||''),
       hg?csvC(i.group||''):null,
       csvC(i.category),
+      includeScore ? (Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '') : null,
+      includeScore ? (Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '')) : null,
+      includeScore ? (i.quality?.video ?? '') : null,
+      includeScore ? (i.quality?.audio ?? '') : null,
+      includeScore ? (i.quality?.languages ?? '') : null,
+      includeScore ? (i.quality?.size ?? '') : null,
+      includeScore ? (i.quality?.penalty_total ?? '') : null,
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
@@ -1332,15 +1962,18 @@ let allItems=[], categories=[], groups=[];
 
   // ── VIEW ─────────────────────────────────────────────
   function setView(v, silent) {
-    currentView=v;
-    document.getElementById('gridBtn').classList.toggle('active',v==='grid');
-    document.getElementById('tableBtn').classList.toggle('active',v==='table');
+    const nextView = (v === 'table') ? 'table' : 'grid';
+    if (currentView === nextView) return;
+    currentView=nextView;
+    document.getElementById('gridBtn').classList.toggle('active',nextView==='grid');
+    document.getElementById('tableBtn').classList.toggle('active',nextView==='table');
     // Sort visible only in grid view
     const sortEl = document.getElementById('sortSelect');
     const sortSec = document.getElementById('sortSection');
-    if (sortEl) sortEl.style.display = v==='grid' ? '' : 'none';
-    if (sortSec) sortSec.style.display = v==='grid' ? '' : 'none';
+    if (sortEl) sortEl.style.display = nextView==='grid' ? '' : 'none';
+    if (sortSec) sortSec.style.display = nextView==='grid' ? '' : 'none';
     render();
+    if (!silent) saveState();
   }
 
   // ── UTILS ────────────────────────────────────────────
@@ -1386,7 +2019,16 @@ let allItems=[], categories=[], groups=[];
     if (btnD) btnD.style.display = 'none';
     onFilter();
   }
-  document.getElementById('sortSelect').addEventListener('change',render);
+  document.getElementById('sortSelect').addEventListener('change', function() {
+    render();
+    saveState();
+  });
+  document.getElementById('sortSelectMobile')?.addEventListener('change', function() {
+    const desktopSort = document.getElementById('sortSelect');
+    if (desktopSort) desktopSort.value = this.value;
+    render();
+    saveState();
+  });
 
 
 
@@ -1491,29 +2133,9 @@ let allItems=[], categories=[], groups=[];
       byAudioLangCount[key]=(byAudioLangCount[key]||0)+1;
       byAudioLangSize[key]=(byAudioLangSize[key]||0)+(i.size_b||0);
     });
-    const audioLangTotal = Object.values(byAudioLangCount).reduce((a,b)=>a+b,0);
-    const audioLangThreshold = audioLangTotal * 0.01;
-    const audioLangMainCount={};
-    const audioLangMainSize={};
-    let audioLangOthersCount=0;
-    let audioLangOthersSize=0;
-    Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]).forEach(([label,count])=>{
-      if (count >= audioLangThreshold) {
-        audioLangMainCount[label] = count;
-        audioLangMainSize[label] = byAudioLangSize[label] || 0;
-      } else {
-        audioLangOthersCount += count;
-        audioLangOthersSize += byAudioLangSize[label] || 0;
-      }
-    });
-    if (audioLangOthersCount > 0) {
-      const othersLabel = t('stats.others');
-      audioLangMainCount[othersLabel] = audioLangOthersCount;
-      audioLangMainSize[othersLabel] = audioLangOthersSize;
-    }
-    const hasLangData = Object.keys(audioLangMainCount).length > 0;
-    const audioLangEntriesCount = Object.entries(audioLangMainCount).sort((a,b)=>b[1]-a[1]);
-    const audioLangEntriesSize = Object.entries(audioLangMainSize).sort((a,b)=>b[1]-a[1]);
+    const hasLangData = Object.keys(byAudioLangCount).length > 0;
+    const audioLangEntriesCount = Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]);
+    const audioLangEntriesSize = Object.entries(byAudioLangSize).sort((a,b)=>b[1]-a[1]);
     const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
 
     // ── Resolution ───────────────────────────────────────
@@ -1747,9 +2369,9 @@ let allItems=[], categories=[], groups=[];
       ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
     ];
     const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
-    const provPieHtml=provEntries.length
+    const provPieHtml = provEntries.length
       ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
-      : '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
+      : '';
 
     // Cross tables
     const crossGroupRows = Object.entries(provByGroup).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
@@ -1838,25 +2460,81 @@ let allItems=[], categories=[], groups=[];
         + '<div id="yearViewDecade" style="display:none">'+decadeChart+'</div>'
         + '</div>';
 
+      let qualityChartHtml = '';
+      if (isScoreEnabled()) {
+        const qualityLevelRanges = {
+          1: '0–20',
+          2: '21–40',
+          3: '41–60',
+          4: '61–80',
+          5: '81–100'
+        };
+        const qualityCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+        let qualityScoreTotal = 0;
+        let qualityScoreItems = 0;
+        items.forEach((i) => {
+          const score = Number(i?.quality?.score);
+          if (!Number.isFinite(score)) return;
+          const level = getItemQualityLevel(i);
+          if (qualityCounts[level] !== undefined) qualityCounts[level] += 1;
+          qualityScoreTotal += score;
+          qualityScoreItems += 1;
+        });
+        function qualityLevelColor(level) {
+          return ({
+            1: '#ef4444',
+            2: '#f97316',
+            3: '#facc15',
+            4: '#84cc16',
+            5: '#16a34a'
+          })[level] || '#64748b';
+        }
+        function makeQualityLevelBarChart() {
+          if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
+          const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
+          const maxV = Math.max(...entries.map(([,v]) => v), 1);
+          return '<div class="quality-bars">'
+            + entries.map(([lvl, val]) => {
+              const pct = Math.max(0, Math.min(100, (val / maxV) * 100));
+              return '<div class="quality-bar-row">'
+                + '<div class="quality-bar-label">'+qualityLevelRanges[lvl]+'</div>'
+                + '<div class="quality-bar-track"><div class="quality-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+qualityLevelColor(lvl)+'"></div></div>'
+                + '<div class="quality-bar-val">'+val+'</div>'
+                + '</div>';
+            }).join('')
+            + '</div>';
+        }
+        const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
+        qualityChartHtml = '<div class="stats-block">'
+          + '<div class="stats-block-title">'+t('stats.quality_distribution')+'</div>'
+          + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
+          + makeQualityLevelBarChart()
+          + '</div>';
+      }
+      const audioLangChartHtml = hasLangData
+        ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count')
+        : '';
 
 
 
 
+
+    const topChartsHtml = [
+      switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size'),
+      provPieHtml,
+      (resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
+      (codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : ''),
+      (audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : ''),
+      audioLangChartHtml,
+      qualityChartHtml
+    ].filter(Boolean).join('');
 
     return ''
-      // 1. Pie charts
-      +'<div class="stats-row">'
-        +(hasGroups ? switchablePie('grp',t('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : '')
-        +switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size')
-        +(resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : '')
-        +(codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : '')
-        +(audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : '')
-        +(hasLangData ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count') : '')
-        +provPieHtml
-      +'</div>'
-      // 2. Années / décennies
-      +'<div style="margin-bottom:0">'+yearDecadeHtml+'</div>'
-      // 3. Courbes d'évolution
+      // 1. Dossier / Provider / Résolution / Codecs / Langue audio / Score
+      +'<div class="stats-row">'+topChartsHtml+'</div>'
+      // 2. Répartition par année (pleine largeur)
+      +yearDecadeHtml
+      // 3. Évolution (pleine largeur)
       +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 
@@ -2144,14 +2822,13 @@ let allItems=[], categories=[], groups=[];
   function setScanControlsState(isScanning) {
     const wasScanning = _isScanning;
     _isScanning = !!isScanning;
-    ['scanMainBtn', 'scanArrowBtn', 'mobileScanEntryBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
+    ['scanMainBtn', 'scanArrowBtn', 'mobileSettingsScanBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
       });
     if (!wasScanning && _isScanning) {
       document.getElementById('scanDropdown')?.classList.remove('open');
-      closeMobileActionsMenu();
       closeMobileScanSheet();
     }
   }
@@ -2162,11 +2839,33 @@ let allItems=[], categories=[], groups=[];
     const wrap = document.getElementById('scanBtnWrap');
     document.querySelectorAll('.scan-dropdown').forEach(d => { if(d!==dd) d.classList.remove('open'); });
     if (!dd.classList.contains('open')) {
+      const viewportPad = 8;
+      const dropdownGap = 6;
       const r = wrap.getBoundingClientRect();
-      dd.style.bottom = (window.innerHeight - r.top + 6) + 'px';
-      dd.style.top = 'auto';
+
+      dd.style.visibility = 'hidden';
+      dd.style.display = 'block';
+      dd.style.top = '0px';
+      dd.style.bottom = 'auto';
+      const dropdownHeight = dd.offsetHeight;
+      dd.style.display = '';
+      dd.style.visibility = '';
+
+      const spaceBelow = window.innerHeight - r.bottom - dropdownGap - viewportPad;
+      const spaceAbove = r.top - dropdownGap - viewportPad;
+      const openDown = spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove;
+
+      if (openDown) {
+        dd.style.top = Math.max(viewportPad, r.bottom + dropdownGap) + 'px';
+        dd.style.bottom = 'auto';
+      } else {
+        dd.style.bottom = Math.max(viewportPad, window.innerHeight - r.top + dropdownGap) + 'px';
+        dd.style.top = 'auto';
+      }
+
       dd.style.left = r.left + 'px';
       dd.style.minWidth = r.width + 'px';
+      dd.style.maxHeight = Math.max(120, window.innerHeight - (viewportPad * 2)) + 'px';
     }
     dd.classList.toggle('open');
   }
@@ -2177,7 +2876,6 @@ let allItems=[], categories=[], groups=[];
   function triggerScan(mode = _scanMode) {
     if (_isScanning) return;
     selectScanMode(mode);
-    closeMobileActionsMenu();
     closeMobileScanSheet();
     setScanControlsState(true);
     _logOffset = 0;
@@ -2333,29 +3031,10 @@ let allItems=[], categories=[], groups=[];
 
   // ── MOBILE NAV ───────────────────────────────────────
   let currentMobileTab = 'library';
-  let mobileActionsMenuOpen = false;
   let mobileScanSheetOpen = false;
-
-  function toggleMobileActionsMenu(event) {
-    if (event) event.stopPropagation();
-    mobileActionsMenuOpen = !mobileActionsMenuOpen;
-    const menu = document.getElementById('mobileActionsMenu');
-    const btn = document.getElementById('mobileActionsBtn');
-    if (menu) menu.classList.toggle('open', mobileActionsMenuOpen);
-    if (btn) btn.style.color = mobileActionsMenuOpen ? 'var(--accent)' : '';
-  }
-
-  function closeMobileActionsMenu() {
-    mobileActionsMenuOpen = false;
-    const menu = document.getElementById('mobileActionsMenu');
-    const btn = document.getElementById('mobileActionsBtn');
-    if (menu) menu.classList.remove('open');
-    if (btn) btn.style.color = '';
-  }
 
   function openMobileScanSheet() {
     if (_isScanning) return;
-    closeMobileActionsMenu();
     mobileScanSheetOpen = true;
     document.getElementById('mobileScanSheet')?.classList.add('open');
   }
@@ -2374,11 +3053,10 @@ let allItems=[], categories=[], groups=[];
   let mobileFiltersOpen = false;
 
   function toggleMobileFilters() {
-    closeMobileActionsMenu();
     mobileFiltersOpen = !mobileFiltersOpen;
     const panel = document.getElementById('mobileFiltersPanel');
     const btn   = document.getElementById('mobileFilterBtn');
-    if (panel) panel.style.display = mobileFiltersOpen ? 'block' : 'none';
+    if (panel) panel.classList.toggle('open', mobileFiltersOpen);
     if (btn)   btn.style.color = mobileFiltersOpen ? 'var(--accent)' : '';
     if (mobileFiltersOpen) syncMobileFilters();
   }
@@ -2387,7 +3065,7 @@ let allItems=[], categories=[], groups=[];
     mobileFiltersOpen = false;
     const panel = document.getElementById('mobileFiltersPanel');
     const btn   = document.getElementById('mobileFilterBtn');
-    if (panel) panel.style.display = 'none';
+    if (panel) panel.classList.remove('open');
     if (btn)   btn.style.color = '';
   }
 
@@ -2418,9 +3096,12 @@ let allItems=[], categories=[], groups=[];
     const mSearch = document.getElementById('searchInputMobile');
     const dSearch = document.getElementById('searchInput');
     if (mSearch && dSearch && mSearch.value !== dSearch.value) mSearch.value = dSearch.value;
+    const mSort = document.getElementById('sortSelectMobile');
+    const dSort = document.getElementById('sortSelect');
+    if (mSort && dSort && mSort.value !== dSort.value) mSort.value = dSort.value;
     // Mirror filter sections to mobile panel
     // Mirror pills-based sections only; dropdown sections render directly to both desktop+mobile
-    ['storageSection','resolutionSection'].forEach(id => {
+    ['storageSection'].forEach(id => {
       const src = document.getElementById(id);
       const dst = document.getElementById(id + 'Mobile');
       if (src && dst) dst.innerHTML = src.innerHTML;
@@ -2485,12 +3166,18 @@ let allItems=[], categories=[], groups=[];
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
+    _rw('cfgEnableScore', isScoreEnabled());
     updateCronHint();
 
     // Jellyseerr — editable from appConfig
     _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
     _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
     _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
+    const jsrKeyInput = _field('cfgJellyseerrKey');
+    if (jsrKeyInput) {
+      const hasStoredKey = appConfig.jellyseerr?.apikey === '***';
+      jsrKeyInput.placeholder = hasStoredKey ? t('settings.jellyseerr.apikey_saved') : '••••••••••••';
+    }
     toggleJsrFields();
 
     renderFoldersUI();
@@ -2499,15 +3186,41 @@ let allItems=[], categories=[], groups=[];
 
   function toggleJsrFields() {
     const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
+    const jellyFields = document.getElementById('cfgJellyseerrFields');
+    const jellyBlock = document.getElementById('cfgJellyseerrBlock');
+    const providersBlock = document.getElementById('cfgProvidersBlock');
     ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
+    if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
+    if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
+    if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
+    if (enabled) {
+      _setSettingsCollapsed('settingsJellyseerrBody', true);
+      _setSettingsCollapsed('settingsProvidersBody', true);
+    }
     if (!enabled) {
       _settingsJsrTestOk = false;
       const res = document.getElementById('cfgJsrTestResult');
       if (res) res.textContent = '';
     }
+  }
+
+  function _setSettingsCollapsed(targetId, collapsed) {
+    const panel = targetId ? document.getElementById(targetId) : null;
+    if (!panel) return;
+    const btn = document.querySelector(`.settings-collapsible[data-target="${targetId}"]`);
+    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    panel.classList.toggle('is-collapsed', collapsed);
+    panel.style.display = collapsed ? 'none' : 'block';
+  }
+
+  function toggleSettingsCollapse(btn) {
+    const targetId = btn?.dataset?.target;
+    if (!btn || !targetId) return;
+    const expanded = btn.getAttribute('aria-expanded') !== 'false';
+    _setSettingsCollapsed(targetId, expanded);
   }
 
   function _isFolderEnabled(folder) {
@@ -2525,7 +3238,7 @@ let allItems=[], categories=[], groups=[];
   function _hasEditableFields() {
     const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
                  'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight',
-                 'cfgInventoryEnabled'];
+                 'cfgInventoryEnabled','cfgEnableScore'];
     return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
   }
 
@@ -2563,12 +3276,14 @@ let allItems=[], categories=[], groups=[];
 
     const jEnabled = get('cfgEnableJellyseerr');
     const jUrl     = get('cfgJellyseerrUrl');
-    const jKey     = get('cfgJellyseerrKey');
-    if (jEnabled !== null || jUrl !== null || (jKey !== null && jKey !== '')) {
+    const jKeyRaw  = get('cfgJellyseerrKey');
+    const jKey     = (typeof jKeyRaw === 'string') ? jKeyRaw.trim() : '';
+    const hasNewJellyseerrKey = !!jKey && jKey !== '***';
+    if (jEnabled !== null || jUrl !== null || hasNewJellyseerrKey) {
       partial.jellyseerr = partial.jellyseerr || {};
       if (jEnabled !== null)           partial.jellyseerr.enabled = jEnabled;
       if (jUrl     !== null)           partial.jellyseerr.url     = jUrl;
-      if (jKey !== null && jKey !== '') partial.jellyseerr.apikey  = jKey;
+      if (hasNewJellyseerrKey)         partial.jellyseerr.apikey  = jKey;
     }
 
     // Gather folder type/activation — always include current state
@@ -2584,12 +3299,14 @@ let allItems=[], categories=[], groups=[];
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
-    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null) {
+    const enableScoreCfg = get('cfgEnableScore');
+    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
       if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
+      if (enableScoreCfg !== null) partial.system.enable_score = enableScoreCfg;
     }
 
     try {
@@ -2616,7 +3333,7 @@ let allItems=[], categories=[], groups=[];
     if (!container) return;
     const folders = appConfig.folders || [];
     if (!folders.length) {
-      container.innerHTML = '<div class="settings-note">Aucun dossier détecté. Lancez un scan pour détecter les dossiers.</div>';
+      container.innerHTML = '<div class="settings-note">' + t('settings.library.no_folders') + '</div>';
       return;
     }
     const unknownCount = folders.filter(f => !f.missing && (f.type === null || f.type === undefined)).length;
@@ -2695,7 +3412,7 @@ let allItems=[], categories=[], groups=[];
       .filter(p => !_isOthersProviderName(p))
       .sort();
     const hasHidden = _hasHiddenProviders();
-    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">Aucun provider disponible.</div>'; return; }
+    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>'; return; }
     let html = '';
     provs.forEach(prov => {
       const checked = _provVisible(prov);
@@ -2734,31 +3451,65 @@ let allItems=[], categories=[], groups=[];
   function _cronHint(cron) {
     if (!cron || typeof cron !== 'string') return '';
     const parts = cron.trim().split(/\s+/);
-    if (parts.length !== 5) return 'Format invalide (5 champs requis)';
+    if (parts.length !== 5) return t('settings.system.cron_hint_invalid');
     const [min, hour, dom, month, dow] = parts;
-    const days = ['dim','lun','mar','mer','jeu','ven','sam'];
-    const months = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+    const days = [
+      t('settings.system.cron_days.sun'),
+      t('settings.system.cron_days.mon'),
+      t('settings.system.cron_days.tue'),
+      t('settings.system.cron_days.wed'),
+      t('settings.system.cron_days.thu'),
+      t('settings.system.cron_days.fri'),
+      t('settings.system.cron_days.sat')
+    ];
+    const months = [
+      t('settings.system.cron_months.jan'),
+      t('settings.system.cron_months.feb'),
+      t('settings.system.cron_months.mar'),
+      t('settings.system.cron_months.apr'),
+      t('settings.system.cron_months.may'),
+      t('settings.system.cron_months.jun'),
+      t('settings.system.cron_months.jul'),
+      t('settings.system.cron_months.aug'),
+      t('settings.system.cron_months.sep'),
+      t('settings.system.cron_months.oct'),
+      t('settings.system.cron_months.nov'),
+      t('settings.system.cron_months.dec')
+    ];
     const isAll = v => v === '*';
     const isNum = v => /^\d+$/.test(v);
     // Simple common patterns
     if (isAll(dom) && isAll(month) && isAll(dow)) {
-      if (isAll(min) && isAll(hour)) return 'Chaque minute';
-      if (isNum(min) && isNum(hour)) return 'Tous les jours à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
-      if (isAll(min) && isNum(hour)) return 'Toutes les heures, à ' + hour + 'h';
-      if (isNum(min) && isAll(hour)) return 'Chaque heure, à .' + min.padStart(2,'0');
+      if (isAll(min) && isAll(hour)) return t('settings.system.cron_hint_every_minute');
+      if (isNum(min) && isNum(hour)) return t('settings.system.cron_hint_daily_at', { hour: hour.padStart(2, '0'), minute: min.padStart(2, '0') });
+      if (isAll(min) && isNum(hour)) return t('settings.system.cron_hint_hourly_at_hour', { hour });
+      if (isNum(min) && isAll(hour)) return t('settings.system.cron_hint_every_hour_at_minute', { minute: min.padStart(2, '0') });
     }
     if (isNum(min) && isNum(hour) && isAll(dom) && isAll(month) && isNum(dow)) {
-      return 'Chaque ' + (days[parseInt(dow)] || 'jour?') + ' à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_weekly_day_at', {
+        day: days[parseInt(dow, 10)] || t('settings.system.cron_unknown_day'),
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
     if (isNum(min) && isNum(hour) && isNum(dom) && isAll(month) && isAll(dow)) {
-      return 'Le ' + dom + ' de chaque mois à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_monthly_day_at', {
+        day: dom,
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
     if (isNum(min) && isNum(hour) && isNum(dom) && isNum(month) && isAll(dow)) {
-      return 'Le ' + dom + ' ' + (months[parseInt(month)-1] || month) + ' à ' + hour.padStart(2,'0') + 'h' + min.padStart(2,'0');
+      return t('settings.system.cron_hint_yearly_date_at', {
+        day: dom,
+        month: months[parseInt(month, 10) - 1] || month,
+        hour: hour.padStart(2, '0'),
+        minute: min.padStart(2, '0')
+      });
     }
-    if (min === '0' && hour === '*/2' && isAll(dom) && isAll(month) && isAll(dow)) return 'Toutes les 2 heures';
+    if (min === '0' && hour === '*/2' && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_two_hours');
     const step = hour.match(/^\*\/(\d+)$/);
-    if (step && isAll(dom) && isAll(month) && isAll(dow)) return 'Toutes les ' + step[1] + 'h';
+    if (step && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_n_hours', { n: step[1] });
     return ''; // Unknown pattern — no hint
   }
 
@@ -2836,14 +3587,94 @@ let allItems=[], categories=[], groups=[];
   }
 
   function switchStab(btn, tabId) {
+    if (isMobile()) return;
     document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';
   }
 
+  let _settingsLayoutMode = null;
+
+  function applySettingsMobileLayout(options = {}) {
+    const { resetMobile = false, resetDesktop = false } = options;
+    const onMobile = isMobile();
+    const mode = onMobile ? 'mobile' : 'desktop';
+    const modeChanged = _settingsLayoutMode !== mode;
+    _settingsLayoutMode = mode;
+    const tabs = document.querySelector('.settings-tabs');
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    if (tabs) tabs.style.display = onMobile ? 'none' : '';
+    if (saveBtn) saveBtn.style.display = 'block';
+
+    const panels = document.querySelectorAll('.stab-panel[data-mobile-panel]');
+    const currentlyVisibleDesktopPanel = [...panels].find(panel => panel.style.display !== 'none')?.id || 'stab-library';
+    const currentlyExpandedMobilePanel = [...panels].find(panel =>
+      panel.querySelector('.settings-mobile-section-btn')?.getAttribute('aria-expanded') === 'true'
+    )?.id || null;
+
+    panels.forEach(panel => {
+      const headerBtn = panel.querySelector('.settings-mobile-section-btn');
+      const body = panel.querySelector('.settings-mobile-section-body');
+      if (!headerBtn || !body) return;
+
+      if (onMobile) {
+        panel.style.display = 'block';
+        if (resetMobile) {
+          headerBtn.setAttribute('aria-expanded', 'false');
+          body.classList.add('is-collapsed');
+        } else if (modeChanged) {
+          const shouldExpand = panel.id === currentlyVisibleDesktopPanel;
+          headerBtn.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+          body.classList.toggle('is-collapsed', !shouldExpand);
+        }
+      } else {
+        let targetPanel = 'stab-library';
+        if (!resetDesktop) {
+          targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
+        }
+        const isActive = panel.id === targetPanel;
+        panel.style.display = isActive ? 'block' : 'none';
+        headerBtn.setAttribute('aria-expanded', 'true');
+        body.classList.remove('is-collapsed');
+      }
+    });
+
+    const stabButtons = document.querySelectorAll('.stab');
+    if (!onMobile && stabButtons.length) {
+      let targetPanel = 'stab-library';
+      if (!resetDesktop) {
+        targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
+      }
+      stabButtons.forEach(btn => {
+        const onclick = btn.getAttribute('onclick') || '';
+        btn.classList.toggle('active', onclick.includes(`'${targetPanel}'`));
+      });
+    }
+  }
+
+  function toggleMobileSettingsSection(btn) {
+    if (!btn || !isMobile()) return;
+    const panel = btn.closest('.stab-panel');
+    const body = panel?.querySelector('.settings-mobile-section-body');
+    if (!body) return;
+    const willOpen = btn.getAttribute('aria-expanded') === 'false';
+    document.querySelectorAll('.stab-panel[data-mobile-panel]').forEach(p => {
+      const pBtn = p.querySelector('.settings-mobile-section-btn');
+      const pBody = p.querySelector('.settings-mobile-section-body');
+      if (!pBtn || !pBody) return;
+      const isCurrent = p === panel;
+      pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
+      pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
+    });
+  }
+
+  function openMobileScanFromSettings() {
+    closeSettings();
+    openMobileScanSheet();
+  }
+
   function openSettings() {
-    closeMobileActionsMenu();
     closeMobileScanSheet();
     _settingsJsrTestOk = false;
     loadSettings();
@@ -2855,6 +3686,7 @@ let allItems=[], categories=[], groups=[];
       btn.style.display = 'block'; // always show — config.json is always writable
       btn.disabled = false;
     }
+    applySettingsMobileLayout({ resetMobile: true, resetDesktop: true });
   }
 
   function closeSettings() {
@@ -2864,6 +3696,11 @@ let allItems=[], categories=[], groups=[];
   function closeSettingsIfBackdrop(e) {
     if (e.target === document.getElementById('settingsOverlay')) closeSettings();
   }
+
+  window.addEventListener('resize', () => {
+    const overlay = document.getElementById('settingsOverlay');
+    if (overlay && overlay.style.display !== 'none') applySettingsMobileLayout();
+  });
 
   // ── LAYOUT TOGGLE ────────────────────────────────────
   
@@ -2887,8 +3724,9 @@ let allItems=[], categories=[], groups=[];
   // ── PLOT TOOLTIP ─────────────────────────────────────
   let _tt = null;
   let _ttTimer;
+  let _scoreTt = null;
 
-  function showPlot(el, text) {
+  function showPlot(el, text, delayMs = 400) {
     if (!enablePlot || isMobile()) return;
     if (!_tt) _tt = document.getElementById('plotTooltip');
     if (!text || !_tt) return;
@@ -2896,7 +3734,7 @@ let allItems=[], categories=[], groups=[];
     _ttTimer = setTimeout(() => {
       _tt.textContent = text;
       _tt.classList.add('visible');
-    }, 400);
+    }, delayMs);
     document.addEventListener('mousemove', _moveTT);
   }
 
@@ -2915,6 +3753,40 @@ let allItems=[], categories=[], groups=[];
     _tt.style.top  = Math.min(y, maxY) + 'px';
   }
 
+  function showQualityTooltip(el, event) {
+    if (isMobile()) return;
+    hidePlot();
+    if (!_scoreTt) _scoreTt = document.getElementById('scoreTooltip');
+    if (!_scoreTt) return;
+    const text = el?.dataset?.qualityTooltip || '';
+    if (!text) return;
+    _scoreTt.textContent = text.replace(/&#10;/g, '\n');
+    _scoreTt.classList.add('visible');
+    moveQualityTooltip(event);
+  }
+
+  function moveQualityTooltip(e) {
+    if (!_scoreTt || !_scoreTt.classList.contains('visible') || !e) return;
+    const x = e.clientX + 14, y = e.clientY + 14;
+    const maxX = window.innerWidth  - _scoreTt.offsetWidth  - 10;
+    const maxY = window.innerHeight - _scoreTt.offsetHeight - 10;
+    _scoreTt.style.left = Math.min(x, maxX) + 'px';
+    _scoreTt.style.top  = Math.min(y, maxY) + 'px';
+  }
+
+  function hideQualityTooltip() {
+    if (_scoreTt) _scoreTt.classList.remove('visible');
+  }
+
+  function handleQualityBadgeLeave(el) {
+    hideQualityTooltip();
+    if (!enablePlot || isMobile()) return;
+    const card = el?.closest?.('.tl-card');
+    if (!card || !card.matches(':hover')) return;
+    const plotText = (card.getAttribute('data-plot') || '').trim();
+    if (plotText) showPlot(card, plotText, 0);
+  }
+
   // ── KEYBOARD SHORTCUTS ──────────────────────────────
   // Close mobile popovers on outside tap
   document.addEventListener('click', e => {
@@ -2923,13 +3795,6 @@ let allItems=[], categories=[], groups=[];
       const btn   = document.getElementById('mobileFilterBtn');
       if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
         closeMobileFilters();
-      }
-    }
-    if (mobileActionsMenuOpen) {
-      const menu = document.getElementById('mobileActionsMenu');
-      const btn = document.getElementById('mobileActionsBtn');
-      if (menu && !menu.contains(e.target) && btn && !btn.contains(e.target)) {
-        closeMobileActionsMenu();
       }
     }
   });
@@ -2975,7 +3840,6 @@ let allItems=[], categories=[], groups=[];
       if (escapeSearchInteraction()) return;
       const overlay = document.getElementById('settingsOverlay');
       if (overlay && overlay.style.display !== 'none') closeSettings();
-      closeMobileActionsMenu();
       if (mobileScanSheetOpen) closeMobileScanSheet();
     }
   });
@@ -3394,7 +4258,8 @@ let allItems=[], categories=[], groups=[];
     const res = document.getElementById('onbJsrTestResult');
     if (!res) return;
     _captureOnbJsr();
-    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) } });
+    const onbKey = (_onbJsr.key || '').trim();
+    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
     await _runJellyseerrConnectionTest(btn, res, () => {
       const next = document.getElementById('onbNextBtn');
       if (next) next.disabled = false;
@@ -3437,7 +4302,10 @@ let allItems=[], categories=[], groups=[];
       folders,
       enable_movies: folders.some(f => f.type === 'movie'),
       enable_series: folders.some(f => f.type === 'tv'),
-      jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(_onbJsr.key ? {apikey: _onbJsr.key} : {}) },
+      jellyseerr: (() => {
+        const onbKey = (_onbJsr.key || '').trim();
+        return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
+      })(),
       system: { language: _onbLang },
       ui: { theme: _onbTheme },
     };

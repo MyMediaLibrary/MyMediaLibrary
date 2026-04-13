@@ -54,18 +54,26 @@
 <!-- MOBILE TOPBAR -->
 <div class="mobile-topbar" id="mobileTopbar">
   <div class="mobile-topbar-title">📼 MyMediaLibrary</div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <button class="icon-btn mobile-topbar-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()">
+  <div class="mobile-topbar-actions">
+    <button class="icon-btn mobile-topbar-icon-btn" id="mobileFilterBtn" onclick="toggleMobileFilters()" data-i18n-title="mobile.filters" title="Filtres" aria-label="Filtres">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
       </svg>
-      <span data-i18n="mobile.filters">Filtres</span>
     </button>
-    <button class="icon-btn mobile-topbar-btn" id="mobileActionsBtn" onclick="toggleMobileActionsMenu(event)" data-i18n-title="mobile.actions_menu">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>
+    <button class="icon-btn mobile-topbar-icon-btn" id="mobileThemeBtn" onclick="toggleTheme()" data-i18n-title="mobile.toggle_theme" title="Thème sombre / clair" aria-label="Thème sombre / clair">
+      <svg id="themeIconMobile" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+        <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
       </svg>
-      <span data-i18n="mobile.actions_short">⋯</span>
+    </button>
+    <button class="icon-btn mobile-topbar-icon-btn" id="mobileSettingsBtn" onclick="openSettings()" data-i18n-title="settings.title" title="Paramètres" aria-label="Paramètres">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
     </button>
   </div>
 </div>
@@ -77,52 +85,53 @@
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-resizer" id="sidebarResizer"></div>
 
+  <div class="sidebar-top">
   <!-- BRAND + TOGGLE -->
   <div class="sidebar-brand sidebar-section" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
     <div style="min-width:0;flex:1">
       <div class="brand-logo" style="font-size:16px;font-weight:800;font-family:'Syne',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📼 MyMediaLibrary</div>
-      <div class="brand-sub" id="brandSub" style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+      <div class="brand-sub" id="brandSub" style="display:none"></div>
     </div>
+  </div>
+
+  <!-- STATS KPIs -->
+  <div class="sidebar-section" style="width:100%">
+    <div class="stats-bar" id="statsBar"></div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="sidebar-section" style="width:100%">
+    <div class="sidebar-search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+      </svg>
+      <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off"/>
+      <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
+    </div>
+  </div>
+
+  <div class="sidebar-section sidebar-sort-reset" style="width:100%">
+    <div class="storage-block sort-inline-wrap" id="sortSection">
+      <select class="tab-sort-select" id="sortSelect" style="width:100%;padding-left:10px">
+        <option value="" disabled selected data-i18n="sort.label">Trier par</option>
+        <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
+        <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
+        <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
+        <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
+        <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
+        <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
+        <option value="score-desc" data-i18n="sort.score_desc">Score ↓</option>
+        <option value="score-asc" data-i18n="sort.score_asc">Score ↑</option>
+        <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
+      </select>
+    </div>
+    <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
+  </div>
 
   </div>
 
   <!-- FILTERS WRAPPER (column in sidebar, row in top) -->
   <div class="sidebar-filters">
-    <!-- STATS KPIs -->
-    <div class="sidebar-section" style="width:100%">
-      <div class="stats-bar" id="statsBar"></div>
-    </div>
-
-    <!-- SEARCH -->
-    <div class="sidebar-section" style="width:100%">
-      <div class="sidebar-search-wrap">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-        </svg>
-        <input type="search" id="searchInput" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off"/>
-        <button class="search-clear" id="searchClear" onclick="clearSearch()" style="display:none" type="button">✕</button>
-      </div>
-    </div>
-    <div class="sidebar-section" style="width:100%">
-      <button class="filter-reset-btn" id="globalFilterResetBtn" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
-    </div>
-
-    <!-- SORT (library only) -->
-    <div class="sidebar-section" id="sortSection" style="width:100%">
-      <div class="storage-block">
-        <div class="storage-title" data-i18n="filters.sort_by">Trier par</div>
-        <select class="tab-sort-select" id="sortSelect" style="width:100%;padding-left:10px">
-          <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
-          <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
-          <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
-          <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
-          <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
-          <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
-          <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
-        </select>
-      </div>
-    </div>
-
     <!-- TYPE FILTER -->
     <div class="sidebar-section" id="typeSection" style="width:100%">
       <div class="storage-block">
@@ -137,6 +146,7 @@
 
     <!-- CATEGORY / GROUP FILTERS -->
     <div class="sidebar-section" id="storageSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="folderSection" style="display:none;width:100%"></div>
 
     <!-- RESOLUTION FILTER -->
     <div class="sidebar-section" id="resolutionSection" style="display:none;width:100%"></div>
@@ -145,15 +155,13 @@
     <div class="sidebar-section" id="providerSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="codecSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="qualitySection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="audioLanguageSection" style="display:none;width:100%"></div>
   </div>
 
-  <!-- BOTTOM: NAV + SCAN + THEME (hidden in top mode) -->
-  <div class="sidebar-bottom" style="margin-top:auto">
-
-    <!-- SCAN + THEME -->
-    <div class="sidebar-section" style="padding-top:12px;border-top:1px solid var(--border)">
-      <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:10px"></div>
+  <div class="sidebar-bottom">
+    <div class="sidebar-section sidebar-global-actions">
+      <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0">
         <div class="scan-btn-wrap" id="scanBtnWrap" style="flex:1;min-width:0;overflow:hidden">
           <button class="scan-btn scan-btn-main" id="scanMainBtn" onclick="triggerScan()" style="width:100%;justify-content:center">
@@ -269,15 +277,24 @@
         <div class="settings-title" data-i18n="settings.title">⚙️ Paramètres</div>
       </div>
       <!-- SETTINGS TABS -->
-      <div style="display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface)">
-        <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">📁 Bibliothèque</button>
-        <button class="stab" onclick="switchStab(this,'stab-jellyseerr')" data-i18n="settings.tabs.jellyseerr">🔍 Jellyseerr</button>
-        <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">⚙️ Système</button>
+      <div class="settings-tabs">
+        <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">Bibliothèque</button>
+        <button class="stab" onclick="switchStab(this,'stab-configuration')" data-i18n="settings.tabs.configuration">Configuration</button>
+        <button class="stab" onclick="switchStab(this,'stab-connections')" data-i18n="settings.tabs.connections">Connexions</button>
+        <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">Système</button>
       </div>
-      <div class="settings-body" style="flex:1;overflow-y:auto;min-height:0">
+      <div class="settings-body">
+        <button type="button" class="scan-btn mobile-settings-scan-btn" id="mobileSettingsScanBtn" onclick="openMobileScanFromSettings()">
+          <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
+        </button>
 
         <!-- TAB: BIBLIOTHÈQUE -->
-        <div id="stab-library" class="stab-panel">
+        <div id="stab-library" class="stab-panel" data-mobile-panel="library">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.library">Bibliothèque</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.library.path">Chemin bibliothèque</label>
@@ -292,57 +309,26 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableSeries"/><span class="toggle-switch-slider"></span></label>
             </div>
           </div>
-          <div class="settings-group">
-            <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.library.folders">Dossiers détectés</div>
-            <div id="cfgFoldersContainer"></div>
+          <div class="settings-group settings-library-folders-group">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsFoldersBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.library.folders">Dossiers détectés</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body is-collapsed" id="settingsFoldersBody">
+              <div id="cfgFoldersContainer"></div>
+            </div>
+          </div>
           </div>
         </div>
 
-        <!-- TAB: JELLYSEERR -->
-        <div id="stab-jellyseerr" class="stab-panel" style="display:none">
+        <!-- TAB: CONFIGURATION -->
+        <div id="stab-configuration" class="stab-panel" style="display:none" data-mobile-panel="configuration">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.configuration">Configuration</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.enable">Activer</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
-            </div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
-              <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
-                oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
-            </div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
-              <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
-                oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
-            </div>
-            <div class="settings-row">
-              <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
-              <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
-            </div>
-          </div>
-          <div class="settings-group">
-            <div class="settings-group-title" style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="settings.jellyseerr.providers_visible">Visibilité des providers</div>
-            <div id="cfgProviderToggles"></div>
-          </div>
-        </div>
-
-        <!-- TAB: SYSTÈME -->
-        <div id="stab-system" class="stab-panel" style="display:none">
-          <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.language">Langue</label>
-              <select id="cfgLanguage" class="settings-input" style="width:auto" onchange="saveSettings()">
-                <option value="fr">🇫🇷 Français</option>
-                <option value="en">🇬🇧 English</option>
-              </select>
-            </div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.accent">Couleur d'accent</label>
-              <div class="settings-color-wrap">
-                <input type="color" id="cfgAccentColor"/>
-                <button class="settings-color-reset" onclick="resetAccent()" data-i18n="settings.system.accent_reset">Réinitialiser</button>
-              </div>
-            </div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
@@ -353,11 +339,92 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Génère <code>library_inventory.json</code> en plus de <code>library.json</code> lors des scans.</div>
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+            <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
+          </div>
+          </div>
+        </div>
+
+        <!-- TAB: CONNEXIONS -->
+        <div id="stab-connections" class="stab-panel" style="display:none" data-mobile-panel="connections">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.connections">Connexions</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
+          <div class="settings-group settings-subgroup">
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.connections.enable_jellyseerr">Activer Jellyseerr</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+          </div>
+          <div class="settings-group settings-subgroup" id="cfgJellyseerrBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.connections.jellyseerr_block">Jellyseerr</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body is-collapsed" id="settingsJellyseerrBody">
+              <div id="cfgJellyseerrFields">
+                <div class="settings-row" style="margin-bottom:8px">
+                  <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
+                  <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
+                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                </div>
+                <div class="settings-row" style="margin-bottom:8px">
+                  <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
+                  <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
+                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                </div>
+                <div class="settings-row">
+                  <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
+                  <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group settings-subgroup" id="cfgProvidersBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProvidersBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.providers_visibility">Visibilité des fournisseurs</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body is-collapsed" id="settingsProvidersBody">
+              <div id="cfgProviderToggles"></div>
+            </div>
+          </div>
+          </div>
+        </div>
+
+        <!-- TAB: SYSTÈME -->
+        <div id="stab-system" class="stab-panel" style="display:none" data-mobile-panel="system">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.system">Système</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
+          <div class="settings-group">
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.language">Langue</label>
+              <select id="cfgLanguage" class="settings-input" style="width:auto" onchange="saveSettings()">
+                <option value="fr" data-i18n="settings.system.language_option_fr">🇫🇷 Français</option>
+                <option value="en" data-i18n="settings.system.language_option_en">🇬🇧 English</option>
+                <option value="es" data-i18n="settings.system.language_option_es">🇪🇸 Español</option>
+              </select>
+            </div>
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.system.accent">Couleur d'accent</label>
+              <div class="settings-color-wrap">
+                <input type="color" id="cfgAccentColor"/>
+                <button class="settings-color-reset" onclick="resetAccent()" data-i18n="settings.system.accent_reset">Réinitialiser</button>
+              </div>
+            </div>
           </div>
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:6px">
               <label class="settings-label" data-i18n="settings.system.cron">Scan automatique (cron)</label>
-              <input type="text" id="cfgScanCron" class="settings-input" placeholder="0 3 * * *" style="width:130px" oninput="updateCronHint()"/>
+              <input type="text" id="cfgScanCron" class="settings-input" data-i18n-placeholder="settings.system.cron_placeholder" placeholder="0 3 * * *" style="width:130px" oninput="updateCronHint()"/>
             </div>
             <div id="cfgCronHint" class="settings-note" style="margin-bottom:12px"></div>
             <div class="settings-row">
@@ -388,6 +455,7 @@
               <a id="settingsDocLink" href="/docs.html?lang=fr" target="_blank" rel="noopener" class="settings-ext-link" data-i18n="settings.doc_link">Documentation</a>
             </div>
           </div>
+          </div>
         </div>
 
         <div class="settings-note" id="settingsServerNote" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px" data-i18n="settings.env_note">
@@ -402,11 +470,8 @@
   </div>
 
   <!-- MOBILE FILTERS PANEL (slide-down overlay) -->
-  <div id="mobileFiltersPanel" style="display:none;position:fixed;top:48px;left:0;right:0;z-index:149;
-    background:var(--surface);border-bottom:1px solid var(--border);
-    padding:12px 14px 16px;max-height:70vh;overflow-y:auto;
-    box-shadow:0 8px 24px rgba(0,0,0,.3)">
-    <div style="margin-bottom:10px">
+  <div id="mobileFiltersPanel" class="mobile-filters-panel">
+    <div class="mobile-filters-top">
       <div class="sidebar-search-wrap">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
@@ -414,37 +479,43 @@
         <input type="search" id="searchInputMobile" data-i18n-placeholder="filters.search" placeholder="Rechercher..." autocomplete="off" oninput="onMobileSearchInput(this.value)"/>
         <button class="search-clear" id="searchClearMobile" onclick="clearSearchMobile()" style="display:none" type="button">✕</button>
       </div>
-    </div>
-    <div style="margin-bottom:10px">
-      <button class="filter-reset-btn" id="globalFilterResetBtnMobile" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser les filtres</button>
-    </div>
-    <div id="mobileTypeSection" style="margin-bottom:8px">
-      <div class="storage-block">
-        <div class="storage-title" data-i18n="filters.type">Type</div>
-        <div class="provider-filter" id="typeFilterMobile">
-          <div class="provider-pill provider-pill-reset active" onclick="clickType('all')" data-i18n="filters.type_all">Tous</div>
-          <div class="provider-pill" onclick="clickType('movie')" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
-          <div class="provider-pill" onclick="clickType('tv')" data-type="tv" data-i18n="filters.type_tv">📺 Séries</div>
+      <div class="mobile-filters-sort-row">
+        <div class="storage-block sort-inline-wrap">
+          <select class="tab-sort-select" id="sortSelectMobile" style="width:100%;padding-left:10px">
+            <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
+            <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
+            <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
+            <option value="year-asc" data-i18n="sort.year_asc">Année ↑</option>
+            <option value="size-desc" data-i18n="sort.size_desc">Taille ↓</option>
+            <option value="size-asc" data-i18n="sort.size_asc">Taille ↑</option>
+            <option value="score-desc" data-i18n="sort.score_desc">Score ↓</option>
+            <option value="score-asc" data-i18n="sort.score_asc">Score ↑</option>
+            <option value="added-desc" data-i18n="sort.added_desc">Récent</option>
+          </select>
         </div>
+        <button class="filter-reset-btn" id="globalFilterResetBtnMobile" onclick="resetAllFilters()" type="button" data-i18n="filters.reset_all" disabled>Réinitialiser</button>
       </div>
     </div>
-    <div id="storageSectionMobile" style="margin-bottom:8px"></div>
-    <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
-    <div id="providerSectionMobile" style="margin-bottom:8px"></div>
-    <div id="codecSectionMobile" style="margin-bottom:8px"></div>
-    <div id="audioCodecSectionMobile"></div>
-    <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
-  </div>
-  <div id="mobileActionsMenu" class="mobile-actions-menu">
-    <button class="mobile-actions-item" id="mobileScanEntryBtn" onclick="openMobileScanSheet()">
-      <span data-i18n="mobile.scan_library">Scanner la bibliothèque</span>
-    </button>
-    <button class="mobile-actions-item" onclick="openSettings(); closeMobileActionsMenu();">
-      <span data-i18n="settings.title">⚙️ Paramètres</span>
-    </button>
-    <button class="mobile-actions-item" onclick="toggleTheme(); closeMobileActionsMenu();">
-      <span data-i18n="mobile.toggle_theme">Thème sombre / clair</span>
-    </button>
+    <div class="mobile-filters-body">
+      <div id="mobileTypeSection" style="margin-bottom:8px">
+        <div class="storage-block">
+          <div class="storage-title" data-i18n="filters.type">Type</div>
+          <div class="provider-filter" id="typeFilterMobile">
+            <div class="provider-pill provider-pill-reset active" onclick="clickType('all')" data-i18n="filters.type_all">Tous</div>
+            <div class="provider-pill" onclick="clickType('movie')" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
+            <div class="provider-pill" onclick="clickType('tv')" data-type="tv" data-i18n="filters.type_tv">📺 Séries</div>
+          </div>
+        </div>
+      </div>
+      <div id="storageSectionMobile" style="margin-bottom:8px"></div>
+      <div id="folderSectionMobile" style="margin-bottom:8px"></div>
+      <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
+      <div id="providerSectionMobile" style="margin-bottom:8px"></div>
+      <div id="codecSectionMobile" style="margin-bottom:8px"></div>
+      <div id="audioCodecSectionMobile"></div>
+      <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
+      <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
+    </div>
   </div>
   <div id="mobileScanSheet" class="mobile-sheet-backdrop" onclick="closeMobileScanSheetIfBackdrop(event)">
     <div class="mobile-sheet">
@@ -481,6 +552,7 @@
   </nav>
 
   <div id="plotTooltip" class="plot-tooltip"></div>
+  <div id="scoreTooltip" class="plot-tooltip score-tooltip"></div>
   <button id="mobileBackToTop" class="mobile-backtop" onclick="document.querySelector('.main-content').scrollTo({top:0,behavior:'smooth'})">↑</button>
   <button id="backToTop" onclick="document.querySelector('.main-content').scrollTo({top:0,behavior:'smooth'})"
     style="position:fixed;bottom:24px;right:24px;width:40px;height:40px;border-radius:50%;

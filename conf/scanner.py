@@ -79,21 +79,58 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+
+def _resolve_log_level(raw_level: str | None) -> int:
+    return getattr(logging, str(raw_level or "INFO").upper(), logging.INFO)
+
+
+def _set_global_log_level(raw_level: str | None) -> None:
+    level = _resolve_log_level(raw_level)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    for handler in root_logger.handlers:
+        handler.setLevel(level)
 # Apply log_level from config.json if available (may be adjusted later via API too)
 try:
     with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
         _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
-    logging.getLogger().setLevel(getattr(logging, _cfg_loglevel.upper(), logging.INFO))
+    _set_global_log_level(_cfg_loglevel)
 except Exception:
     pass
 log = logging.getLogger("scanner")
+
+try:
+    from conf.scoring import compute_quality
+except Exception:
+    try:
+        from scoring import compute_quality
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
+            e,
+        )
+
+        def compute_quality(item: dict) -> dict:
+            return {
+                "score": 0,
+                "level": 1,
+                "base_score": 0,
+                "penalty_total": 0,
+                "video": 0,
+                "audio": 0,
+                "languages": 0,
+                "size": 0,
+                "penalties": [{"code": "scoring_unavailable", "value": 0}],
+            }
+
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
 _log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
 try:
     _fh = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=3)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    log.addHandler(_fh)
+    logging.getLogger().addHandler(_fh)
 except Exception:
     pass  # log file not writable in some environments
 
@@ -103,11 +140,25 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 def classify_resolution(width: int, height: int) -> str:
-    if width >= 3840 or height >= 2160:
+    if width <= 0 or height <= 0:
+        return "SD"
+    long_edge = max(width, height)
+    short_edge = min(width, height)
+    # 4K:
+    # - Keep UHD content (>=2160 on one axis),
+    # - Keep scope/cropped 4K encodes (~3840x1600) via long-edge tolerance,
+    # - Avoid promoting near-square ~2K sources (e.g. 2100x2100, 2560x2100).
+    if short_edge >= 2160 or (long_edge >= 3800 and short_edge >= 1500):
         return "4K"
-    if width >= 1280 or height >= 720:
-        if height >= 1080 or width >= 1920:
-            return "1080p"
+    # 1080p: require a near-FHD long edge and enough vertical pixels for cropped scope encodes.
+    # This avoids promoting 5:4 sources such as 1280x1024 to 1080p.
+    if long_edge >= 1880 and short_edge >= 800:
+        return "1080p"
+    # 720p:
+    # - Require a near-1280 long edge,
+    # - Accept cropped encodes with lower short edge,
+    # - Avoid promoting small near-square sources (e.g. 700x700).
+    if long_edge >= 1240 and short_edge >= 520:
         return "720p"
     return "SD"
 
@@ -524,6 +575,7 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
                 result["codec"] = normalize_codec(raw_codec)
             hdr = _xml_text(video, "hdrtype")
             result["hdr"] = bool(hdr and hdr.strip())
+            result["hdr_type"] = hdr
             rt = _xml_text(video, "duration") or _xml_text(root, "runtime")
             if rt:
                 try:
@@ -689,6 +741,7 @@ def find_episode_nfo(series_dir: Path) -> dict:
                         "resolution":         classify_resolution(w, h),
                         "codec":              normalize_codec(raw_codec),
                         "hdr":                bool(hdr_raw and hdr_raw.strip()),
+                        "hdr_type":           hdr_raw,
                         "runtime_min":        runtime_min,
                         "audio_codec_raw":    ac["raw"],
                         "audio_codec":        ac["normalized"],
@@ -751,6 +804,51 @@ def _save_secrets(data: dict) -> None:
         os.chmod(SECRETS_PATH, 0o600)
     except Exception as e:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
+
+
+def _redact_config_payload(payload: dict) -> dict:
+    """Return a copy of payload with sensitive fields redacted for safe logging."""
+    safe_payload = copy.deepcopy(payload)
+    jsr = safe_payload.get("jellyseerr")
+    if isinstance(jsr, dict) and "apikey" in jsr:
+        jsr["apikey"] = "***"
+    return safe_payload
+
+
+def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
+    """
+    Apply Jellyseerr API key update policy from payload to secrets.
+
+    Rules:
+    - apikey missing        => not modified
+    - apikey empty/whitespace/"***" => preserved (no overwrite)
+    - apikey non-empty      => updated
+    - clear_apikey=true     => explicit clear
+    """
+    jsr = payload.get("jellyseerr")
+    if not isinstance(jsr, dict):
+        return "not modified"
+
+    clear_requested = jsr.pop("clear_apikey", False) is True
+    has_apikey_field = "apikey" in jsr
+    raw_apikey = jsr.pop("apikey", None) if has_apikey_field else None
+
+    if not jsr:
+        payload.pop("jellyseerr", None)
+
+    if clear_requested:
+        secrets.pop("jellyseerr_apikey", None)
+        return "cleared"
+
+    if not has_apikey_field:
+        return "not modified"
+
+    normalized = raw_apikey.strip() if isinstance(raw_apikey, str) else ""
+    if not normalized or normalized == "***":
+        return "preserved"
+
+    secrets["jellyseerr_apikey"] = normalized
+    return "updated"
 
 
 def _jsr_cfg() -> dict:
@@ -1080,6 +1178,14 @@ def migrate_env_to_config() -> None:
     if "inventory_enabled" not in sys_cfg:
         sys_cfg["inventory_enabled"] = False
         changed = True
+    if "enable_score" not in sys_cfg:
+        sys_cfg["enable_score"] = False
+        changed = True
+
+    ui_cfg = cfg.setdefault("ui", {})
+    if "synopsis_on_hover" not in ui_cfg:
+        ui_cfg["synopsis_on_hover"] = False
+        changed = True
 
     if changed:
         save_config(cfg)
@@ -1318,6 +1424,7 @@ _DEFAULT_CONFIG: dict = {
         "log_level": "INFO",
         "needs_onboarding": True,
         "inventory_enabled": False,
+        "enable_score": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -1385,6 +1492,11 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
     return system.get("inventory_enabled") is True
 
 
+def _is_score_enabled(cfg: dict | None) -> bool:
+    system = (cfg or {}).get("system") or {}
+    return system.get("enable_score") is True
+
+
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:
     """
     Normalize folder active state to `enabled`.
@@ -1441,7 +1553,16 @@ def _normalize_providers(providers) -> list[str]:
             result.append(p["name"])
     return result
 
-def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
+def _strip_score_fields(item: dict) -> dict:
+    """Remove score-related fields from one item (in place) for score-disabled runs."""
+    if not isinstance(item, dict):
+        return item
+    item.pop("quality", None)
+    # Legacy compatibility: some older datasets stored top-level score payloads
+    item.pop("score", None)
+    return item
+
+def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
@@ -1486,7 +1607,11 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
     tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
     size_b = get_dir_size(media_dir)
 
-    return {
+    hdr_current = bool(nfo_meta.get("hdr", False))
+    hdr_type_current = (nfo_meta.get("hdr_type") or "").strip() or None
+    hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
+
+    item = {
         "path":              item_path,
         "title":             title,
         "raw":               raw_name,
@@ -1514,10 +1639,15 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict) -> dict:
         "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
-        "hdr":               nfo_meta.get("hdr", False),
+        "hdr":               hdr_current,
+        "hdr_type":          hdr_type_value,
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
     }
+    if enable_score:
+        item["quality"] = compute_quality(item)
+    return item
+
 
 
 def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None:
@@ -1543,6 +1673,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     if normalize_folder_enabled_flags(cfg, drop_visible=True):
         save_config(cfg)
         cfg = load_config()
+    score_enabled = _is_score_enabled(cfg)
     inventory_enabled = _is_inventory_enabled(cfg)
     force_missing_folder_refs = {
         ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
@@ -1595,7 +1726,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             item_path = str(media_dir.relative_to(root))
             prev = existing.get(item_path, {})
 
-            item = scan_media_item(media_dir, root, cat, prev)
+            item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
             item["id"] = item_id
             items.append(item)
             if inventory_enabled:
@@ -1616,9 +1747,15 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
         log.info(f"  Preserving {len(preserved)} items from other categories")
         for i in preserved:
+            if not score_enabled:
+                _strip_score_fields(i)
             i["id"] = item_id
             item_id += 1
         items = items + preserved
+
+    if not score_enabled:
+        for item in items:
+            _strip_score_fields(item)
 
     all_categories = sorted({i["category"] for i in items})
 
@@ -1641,6 +1778,9 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         "providers_raw":       prev_data.get("providers_raw") or [],
         "config": {
             "library_path": LIBRARY_PATH,
+        },
+        "meta": {
+            "score_enabled": score_enabled,
         },
     }
     output_path = Path(OUTPUT_PATH)
@@ -2078,30 +2218,38 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             cfg = load_config()
-            log.info(f"[config] Received: {json.dumps(payload)}")
-            # Extract apikey before merging — store in secrets, not config.json
-            new_apikey = None
-            if isinstance(payload.get("jellyseerr"), dict) and "apikey" in payload["jellyseerr"]:
-                new_apikey = payload["jellyseerr"].pop("apikey")
-                if not payload["jellyseerr"]:
-                    payload.pop("jellyseerr", None)
+            safe_payload = _redact_config_payload(payload)
+            log.info("[config] Received: %s", json.dumps(safe_payload))
+
+            secrets_before = _load_secrets()
+            secrets_after = dict(secrets_before)
+            jsr_key_action = _apply_jellyseerr_secret_update(payload, secrets_after)
+
             merged = deep_merge(cfg, payload)
             merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
             normalize_folder_enabled_flags(merged, drop_visible=True)
             # Ensure apikey never persists in config.json
             if "jellyseerr" in merged:
                 merged["jellyseerr"].pop("apikey", None)
+                merged["jellyseerr"].pop("clear_apikey", None)
             save_config(merged)
-            if new_apikey is not None and new_apikey != "***":
-                secrets = _load_secrets()
-                secrets["jellyseerr_apikey"] = new_apikey
-                _save_secrets(secrets)
-                log.info("[config] Jellyseerr API key saved to secrets")
-            log.info(f"[config] Saved")
+            if secrets_after != secrets_before:
+                _save_secrets(secrets_after)
+
+            if jsr_key_action == "updated":
+                log.info("[config] Jellyseerr API key updated")
+            elif jsr_key_action == "preserved":
+                log.info("[config] Jellyseerr API key preserved")
+            elif jsr_key_action == "cleared":
+                log.info("[config] Jellyseerr API key cleared (explicit request)")
+            else:
+                log.info("[config] Jellyseerr API key not modified")
+
+            log.info("[config] Saved")
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
-                logging.getLogger().setLevel(getattr(logging, new_level.upper(), logging.INFO))
+                _set_global_log_level(new_level)
             self._json(200, {"ok": True})
 
         elif path == "/api/providers-map":
