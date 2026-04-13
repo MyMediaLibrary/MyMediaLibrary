@@ -659,20 +659,6 @@
     .scan-btn:disabled{opacity:.5;cursor:not-allowed;filter:none}
     #onbNextBtn:disabled{background:var(--border)!important;color:var(--muted)!important;cursor:not-allowed!important}
     .scan-btn svg{flex-shrink:0}
-    .scan-btn-arrow{background:var(--accent);border:none;border-left:1px solid rgba(255,255,255,.2);
-      border-radius:0 var(--radius) var(--radius) 0;color:#fff;padding:8px 8px;cursor:pointer;
-      transition:all var(--transition);display:flex;align-items:center}
-    .scan-btn-arrow:hover{filter:brightness(1.15)}
-    .scan-btn-main{border-radius:var(--radius) 0 0 var(--radius);padding-right:10px}
-    .scan-dropdown{position:fixed;top:auto;left:auto;background:var(--surface);
-      border:1px solid var(--border);border-radius:var(--radius);min-width:200px;
-      box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:200;overflow:hidden;display:none}
-    .scan-dropdown.open{display:block}
-    .scan-dropdown-item{padding:10px 14px;font-size:13px;cursor:pointer;
-      display:flex;flex-direction:column;gap:2px;transition:background var(--transition)}
-    .scan-dropdown-item:hover{background:var(--card-h)}
-    .scan-dropdown-item .sd-label{font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:var(--text)}
-    .scan-dropdown-item .sd-desc{font-size:11px;color:var(--muted)}
     /* SCAN LOG PANEL */
     .scan-log-panel{position:fixed;bottom:20px;right:20px;width:420px;max-width:calc(100vw - 32px);
       background:var(--surface);border:1px solid var(--border);border-radius:14px;

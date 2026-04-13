@@ -593,10 +593,6 @@ let allItems=[], categories=[], groups=[];
       await loadTranslations(lang);
     }
     applyTranslations();
-    // Refresh scan button label with translated mode name
-    const scanLbl = document.getElementById('scanBtnLabel');
-    if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
-
     // Backend is the source of truth for onboarding state.
     const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
       ? appConfig.needs_onboarding
@@ -2798,93 +2794,34 @@ let allItems=[], categories=[], groups=[];
   }
 
   // ── SCAN ──────────────────────────────────────────────
-  let _scanMode = 'quick';
   let _pollTimer = null;
   let _logOffset = 0;
   let _isScanning = false;
 
-  const SCAN_MODE_LABELS = {
-    quick:   () => t('scan.mode_quick'),
-    full:    () => t('scan.mode_full'),
-  };
-
-  function _scanModeLabel(mode) {
-    const fn = SCAN_MODE_LABELS[mode];
-    return fn ? fn() : t('scan.start');
-  }
-
-  function selectScanMode(mode) {
-    _scanMode = mode;
-    document.getElementById('scanBtnLabel').textContent = _scanModeLabel(mode);
-    document.getElementById('scanDropdown').classList.remove('open');
-  }
-
   function setScanControlsState(isScanning) {
     const wasScanning = _isScanning;
     _isScanning = !!isScanning;
-    ['scanMainBtn', 'scanArrowBtn', 'mobileSettingsScanBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
+    ['scanMainBtn', 'mobileSettingsScanBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
       });
     if (!wasScanning && _isScanning) {
-      document.getElementById('scanDropdown')?.classList.remove('open');
       closeMobileScanSheet();
     }
   }
 
-  function toggleScanDropdown(e) {
-    e.stopPropagation();
-    const dd = document.getElementById('scanDropdown');
-    const wrap = document.getElementById('scanBtnWrap');
-    document.querySelectorAll('.scan-dropdown').forEach(d => { if(d!==dd) d.classList.remove('open'); });
-    if (!dd.classList.contains('open')) {
-      const viewportPad = 8;
-      const dropdownGap = 6;
-      const r = wrap.getBoundingClientRect();
-
-      dd.style.visibility = 'hidden';
-      dd.style.display = 'block';
-      dd.style.top = '0px';
-      dd.style.bottom = 'auto';
-      const dropdownHeight = dd.offsetHeight;
-      dd.style.display = '';
-      dd.style.visibility = '';
-
-      const spaceBelow = window.innerHeight - r.bottom - dropdownGap - viewportPad;
-      const spaceAbove = r.top - dropdownGap - viewportPad;
-      const openDown = spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove;
-
-      if (openDown) {
-        dd.style.top = Math.max(viewportPad, r.bottom + dropdownGap) + 'px';
-        dd.style.bottom = 'auto';
-      } else {
-        dd.style.bottom = Math.max(viewportPad, window.innerHeight - r.top + dropdownGap) + 'px';
-        dd.style.top = 'auto';
-      }
-
-      dd.style.left = r.left + 'px';
-      dd.style.minWidth = r.width + 'px';
-      dd.style.maxHeight = Math.max(120, window.innerHeight - (viewportPad * 2)) + 'px';
-    }
-    dd.classList.toggle('open');
-  }
-  document.addEventListener('click', () => {
-    document.getElementById('scanDropdown')?.classList.remove('open');
-  });
-
-  function triggerScan(mode = _scanMode) {
+  function triggerScan() {
     if (_isScanning) return;
-    selectScanMode(mode);
     closeMobileScanSheet();
     setScanControlsState(true);
     _logOffset = 0;
-    openScanLog(_scanMode);
+    openScanLog();
 
     fetch('/api/scan/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: _scanMode}),
+      body: JSON.stringify({mode: 'full'}),
     })
     .then(r => r.json())
     .then(data => {
@@ -2944,10 +2881,10 @@ let allItems=[], categories=[], groups=[];
       .catch(() => { setScanControlsState(false); });
   }
 
-  function openScanLog(mode) {
+  function openScanLog() {
     const panel = document.getElementById('scanLogPanel');
     panel.classList.remove('viewer');
-    document.getElementById('scanLogTitle').textContent = 'Scan — ' + _scanModeLabel(mode);
+    document.getElementById('scanLogTitle').textContent = 'Scan';
     document.getElementById('scanLogBody').innerHTML = '';
     setScanStatus('running');
     panel.classList.add('open');
@@ -2999,12 +2936,11 @@ let allItems=[], categories=[], groups=[];
     const dot = document.getElementById('scanStatusDot');
     dot.className = 'scan-status-dot ' + (status || '');
     const title = document.getElementById('scanLogTitle');
-    const mode = _scanModeLabel(_scanMode);
     const suffix = status === 'running' ? t('scan.status_running')
                  : status === 'done'    ? t('scan.status_done')
                  : status === 'error'   ? t('scan.status_error')
                  : '';
-    title.textContent = 'Scan — ' + mode + suffix;
+    title.textContent = 'Scan' + suffix;
   }
 
   function syncScanState() {
