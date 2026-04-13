@@ -4318,7 +4318,7 @@ let allItems=[], categories=[], groups=[];
       return;
     }
 
-    const mode = (_onbJsr.enabled && _onbJsr.url) ? 'full' : 'quick';
+    const mode = 'quick';
     try {
       await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})});
     } catch(e) {}
