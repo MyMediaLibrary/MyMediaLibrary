@@ -1689,7 +1689,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
 
 
 
-def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None:
+def run_quick(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0

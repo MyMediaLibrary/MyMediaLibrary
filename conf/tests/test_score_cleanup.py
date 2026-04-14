@@ -65,7 +65,7 @@ class ScoreCleanupTest(unittest.TestCase):
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
                  patch.object(scanner, "build_categories_from_config", return_value=categories), \
                  patch.object(scanner, "scan_media_item", side_effect=self._make_scan_item):
-                scanner.run_quick(only_category="Movies", scan_mode="quick")
+                scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertFalse(payload["meta"]["score_enabled"])
@@ -115,7 +115,7 @@ class ScoreCleanupTest(unittest.TestCase):
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
                  patch.object(scanner, "build_categories_from_config", return_value=categories), \
                  patch.object(scanner, "scan_media_item", side_effect=self._make_scan_item):
-                scanner.run_quick(only_category="Movies", scan_mode="quick")
+                scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertTrue(payload["meta"]["score_enabled"])
