@@ -1599,11 +1599,15 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
+    `id` is computed using the same helper as library_inventory.json so both
+    files share identical stable IDs.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
     mtime     = media_dir.stat().st_mtime
     is_tv     = cat["type"] == "tv"
+    media_type = "tv" if is_tv else "movie"
+    lib_id     = _inventory_item_id(media_type, cat["name"], raw_name)
 
     # --- NFO metadata ---
     nfo_meta = {}
@@ -1645,6 +1649,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
+        # id must be first — identical to library_inventory.json for cross-file matching
+        "id":                lib_id,
         "path":              item_path,
         "title":             title,
         "raw":               raw_name,
@@ -1674,8 +1680,10 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
+        # Enriched fields preserved from previous library.json — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
+        "quality":           prev.get("quality"),  # preserved during quick scan; overwritten by phase 3
     }
     return item
 
@@ -1737,7 +1745,6 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         pass
 
     items = []
-    item_id = 0
     scanned_paths = set()
 
     active_cats = [c for c in categories if not only_category or c["name"] == only_category]
@@ -1756,13 +1763,13 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
                 continue
 
             item_path = str(media_dir.relative_to(root))
+            # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
+            # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
             item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
-            item["id"] = item_id
             items.append(item)
             scanned_paths.add(item_path)
-            item_id += 1
 
         count = len(items) - cat_items_before
         # Incremental write after each folder
@@ -1776,8 +1783,10 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         for i in preserved:
             if not score_enabled:
                 _strip_score_fields(i)
-            i["id"] = item_id
-            item_id += 1
+            # Ensure preserved items use the string id format (may be an old integer id)
+            i_media_type = "tv" if i.get("type") == "tv" else "movie"
+            i_folder = Path(i.get("path", "")).name
+            i["id"] = _inventory_item_id(i_media_type, i.get("category", ""), i_folder)
         items = items + preserved
 
     if not score_enabled:
