@@ -2391,7 +2391,7 @@ let allItems=[], categories=[], groups=[];
       }
 
       const catBars = catBarEntries.map(([cat,cnt],idx)=>
-        makeHBar(cat, cnt, allItems.length, PALETTE[idx%PALETTE.length])
+        makeHBar(getFilterDisplayValue(cat), cnt, allItems.length, PALETTE[idx%PALETTE.length])
       ).join('');
 
       const globalEncart = '<div class="stats-block">'
@@ -2516,10 +2516,10 @@ let allItems=[], categories=[], groups=[];
 
 
     const topChartsHtml = [
-      switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size'),
+      switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => getFilterDisplayValue(k), 'size'),
       provPieHtml,
       (resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
-      (codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : ''),
+      (codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => getFilterDisplayValue(k), 'count') : ''),
       (audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : ''),
       audioLangChartHtml,
       qualityChartHtml
