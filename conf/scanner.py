@@ -345,7 +345,7 @@ def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
         return []
 
     if single in SPECIAL_LANGUAGE_MARKERS:
-        log.info(f"[SCAN] Audio language marker detected (no direct ISO code): {single!r} in item {item_title!r}")
+        log.debug(f"[SCAN] Audio language marker detected (no direct ISO code): {single!r} in item {item_title!r}")
         return []
 
     norm = _normalize_lang_code(single)
@@ -360,13 +360,13 @@ def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
             suffix = ""
             if len(parsed) > len(rec_preview) or len(unknown_chunks) > len(ignored_preview):
                 suffix = f" (truncated: recognized={len(parsed)}, ignored={len(unknown_chunks)})"
-            log.info(
+            log.debug(
                 f"[SCAN] Partially parsed audio language value: {single!r} in item {item_title!r} "
                 f"-> recognized={rec_preview}, ignored={ignored_preview}{suffix}"
             )
         return parsed
 
-    log.warning(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
+    log.debug(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
     return []
 
 
@@ -895,7 +895,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors='replace')[:300]
         if e.code in (404, 500) and "Unable to retrieve" in body:
-            log.info(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
+            log.debug(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
             return _JSR_NOT_FOUND
         log.warning(f"Jellyseerr HTTP {e.code} for {path}: {body}")
         return _JSR_ERROR
@@ -1343,7 +1343,7 @@ def write_inventory_json_non_blocking(
     forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
     forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
-    log.info("[SCAN] Inventory write started")
+    log.debug("[SCAN] Inventory write started")
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
         existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
@@ -1379,7 +1379,7 @@ def write_inventory_json_non_blocking(
             )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
+        log.debug(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
         log.warning(f"[SCAN] Inventory write failed: {e}")
 
@@ -1420,7 +1420,7 @@ def write_json(data: dict, output_path: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    log.info(f"Written: {output_path}")
+    log.debug(f"Written: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -1713,7 +1713,7 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             continue
         ftype = folder.get("type")
         if not ftype or ftype == "ignore":
-            log.info(f"[SCAN] Skipping folder [{fname}] — no type configured")
+            log.debug(f"[SCAN] Skipping folder [{fname}] — no type configured")
 
     if not categories:
         is_first_scan = not Path(OUTPUT_PATH).exists()
@@ -1763,11 +1763,9 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
             item_id += 1
 
         count = len(items) - cat_items_before
-        log.info(f'[SCAN] Folder [{cat["folder"]}]: {count} item(s) found')
-
         # Incremental write after each folder
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
-        log.info(f'[SCAN] library.json updated — {len(items)} item(s) total so far')
+        log.info(f'[SCAN] Folder [{cat["folder"]}] done — {count} item(s) found')
 
     # When filtering by category, preserve items from other categories
     if only_category:
@@ -1795,25 +1793,49 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     except Exception:
         size_str = "?"
     elapsed = time.monotonic() - _t0
-    log.info(f"[SCAN] Phase 1 done — {len(items)} item(s) total ({size_str})")
     if _nfo_stats["failed"] > 0:
         log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
     else:
         log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
+
+    # Audio codec stats
     audio_dist: dict = {}
     for item in items:
         ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
-    parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio codecs: {' / '.join(parts) if parts else 'none'}")
+    audio_parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Audio codecs detected: {len(audio_dist)}")
+    log.debug(f"[SCAN] Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
+
+    # Audio language stats
     lang_dist: dict = {}
     for item in items:
-        for l in (item.get("audio_languages") or []):
-            lang_dist[l] = lang_dist.get(l, 0) + 1
-    if lang_dist:
-        lparts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
-        log.info(f"[SCAN] Audio languages: {' / '.join(lparts)}")
-    log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s")
+        for lang in (item.get("audio_languages") or []):
+            lang_dist[lang] = lang_dist.get(lang, 0) + 1
+    lang_parts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Audio languages detected: {len(lang_dist)}")
+    if lang_parts:
+        log.debug(f"[SCAN] Audio languages detail: {' / '.join(lang_parts)}")
+
+    # Video codec stats
+    video_dist: dict = {}
+    for item in items:
+        vc = item.get("codec") or "unknown"
+        video_dist[vc] = video_dist.get(vc, 0) + 1
+    video_parts = [f"{k}×{v}" for k, v in sorted(video_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Video codecs detected: {len(video_dist)}")
+    log.debug(f"[SCAN] Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
+
+    # Resolution stats
+    res_dist: dict = {}
+    for item in items:
+        r = item.get("resolution") or "unknown"
+        res_dist[r] = res_dist.get(r, 0) + 1
+    res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
+    log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+
+    log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
 
 
 
@@ -1867,9 +1889,17 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     enriched = 0
 
+    # Build category display-name → raw folder name lookup for consistent log labels
+    try:
+        _enrich_cfg = load_config()
+        _enrich_cats = build_categories_from_config(_enrich_cfg)
+        _cat_folder_by_name = {c["name"]: c["folder"] for c in _enrich_cats}
+    except Exception:
+        _cat_folder_by_name = {}
+
     # Load provider map (file-based normalization, reloaded each scan)
     provider_map = load_provider_map()
-    log.info(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
+    log.debug(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
 
     # providers_meta maps normalized name → {logo, logo_url} — stored at top level
     # Seed from existing data (migration: items may still have {name, logo} objects)
@@ -1900,7 +1930,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     sorted_by_cat = sorted(by_cat.items())
     n_enrich_cats = len(sorted_by_cat)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
-        log.info(f"[SCAN] Enriching folder [{cat_name}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
+        cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
+        log.info(f"[SCAN] Enriching folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -1938,7 +1969,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         data["providers_raw"]      = sorted(providers_raw_meta.keys())
         data["enriched_at"]        = datetime.now().isoformat()
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_name}] done — library.json updated ({enriched} enriched so far)")
+        log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
@@ -1988,16 +2019,20 @@ def run_scoring(only_category: str | None = None) -> None:
         log.info("[SCAN] No items to score.")
         return
 
+    # Build category display-name → raw folder name lookup for consistent log labels
+    cat_folder_by_name = {c["name"]: c["folder"] for c in build_categories_from_config(cfg)}
+
     scored_total = 0
     sorted_score_cats = sorted(by_cat.items())
     n_score_cats = len(sorted_score_cats)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
-        log.info(f"[SCAN] Scoring folder [{cat_name}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
+        cat_folder = cat_folder_by_name.get(cat_name, cat_name)
+        log.info(f"[SCAN] Scoring folder [{cat_folder}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
         for item in cat_items:
             item["quality"] = compute_quality(item)
             scored_total += 1
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_name}] scored — library.json updated")
+        log.info(f"[SCAN] Folder [{cat_folder}] scored")
 
     elapsed = time.monotonic() - _t0
     log.info(f"[SCAN] Phase 3 completed — {scored_total} item(s) scored in {elapsed:.1f}s")
@@ -2094,7 +2129,7 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
             merged = partial_doc
         merged = cleanup_inventory_transient_fields(merged)
         write_json(merged, INVENTORY_OUTPUT_PATH)
-        log.info(f"[SCAN] Inventory: folder [{cat['folder']}] — {len(cat_inv_items)} item(s), library_inventory.json updated")
+        log.info(f"[SCAN] Inventory: folder [{cat['folder']}] done — {len(cat_inv_items)} item(s)")
 
     # Final pass: full merge + optional missing reconciliation
     final_doc = {
@@ -2133,7 +2168,8 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     if missing_items:
         names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
         suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
-        log.info(f"[SCAN] Inventory: {len(missing_items)} missing item(s): {', '.join(names)}{suffix}")
+        log.info(f"[SCAN] Inventory: {len(missing_items)} missing item(s)")
+        log.debug(f"[SCAN] Inventory missing: {', '.join(names)}{suffix}")
     else:
         log.info("[SCAN] Inventory: no missing items")
 
