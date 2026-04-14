@@ -174,7 +174,7 @@ let allItems=[], categories=[], groups=[];
     return canonical || key;
   }
 
-  function getFilterDisplayValue(key, noneTranslationKey = 'filters.none') {
+  function getFilterDisplayValue(key, noneTranslationKey = 'filters.unknown') {
     const normalized = normalizeFilterValue(key);
     if (normalized === FILTER_NONE_KEY) return t(noneTranslationKey);
     return normalized;
