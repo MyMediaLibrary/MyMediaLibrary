@@ -6,9 +6,8 @@ Scans LIBRARY_PATH and generates a library.json file.
 Modes:
   --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
   --full     All 4 phases: filesystem scan, Jellyseerr (force re-fetch), scoring, inventory.
-  --enrich   All 4 phases: filesystem scan, Jellyseerr (missing only), scoring, inventory.
   --reset    Delete library.json and exit.
-  (default)  Same as --enrich.
+  (default)  Same as --full.
 
 Phases:
   1. Filesystem + NFO scan — builds library.json, writes after each folder.
@@ -1297,7 +1296,7 @@ def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -
         "status": "present",
         "first_seen_at": now_utc,
         "last_seen_at": now_utc,
-        "last_checked_at": now_utc,
+        "last_checked_at": now_utc,  # always after last_seen_at, before video_files
         "video_files": [_make_inventory_video_file(vf, now_utc) for vf in _list_video_files(media_dir)],
     }
     if media_type == "tv":
@@ -1314,7 +1313,7 @@ def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -
                     "status": "present",
                     "first_seen_at": now_utc,
                     "last_seen_at": now_utc,
-                    "last_checked_at": now_utc,
+                    "last_checked_at": now_utc,  # always after last_seen_at, before video_files
                     "video_files": [_make_inventory_video_file(vf, now_utc) for vf in sub_video_files],
                 })
         except Exception:
@@ -2297,15 +2296,14 @@ _srv_state = {
 }
 _srv_proc = None
 
-VALID_MODES = {"quick", "enrich", "full", "default"}
+VALID_MODES = {"quick", "full", "default"}
 
 
 def _scanner_cmd(mode: str) -> list[str]:
     base = [sys.executable, __file__]
-    if mode == "quick":  return base + ["--quick"]
-    if mode == "enrich": return base + ["--enrich"]
-    if mode == "full":   return base + ["--full"]
-    return base
+    if mode == "quick": return base + ["--quick"]
+    if mode == "full":  return base + ["--full"]
+    return base + ["--full"]  # default → full
 
 
 def _run_scan_bg(mode: str):
@@ -2524,6 +2522,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
                 _set_global_log_level(new_level)
+
+            # Trigger a quick scan when folder configuration changed (type or enabled state)
+            folders_changed = "folders" in payload
+            if folders_changed and not _is_scan_locked():
+                log.info("[config] Folder configuration changed — triggering quick scan")
+                threading.Thread(target=_run_scan_bg, args=("quick",), daemon=True).start()
+            elif folders_changed:
+                log.info("[config] Folder configuration changed — scan already running, skipping auto quick scan")
+
             self._json(200, {"ok": True})
 
         elif path == "/api/providers-map":
@@ -2562,15 +2569,13 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--quick",  action="store_true",
-        help="Filesystem + NFO scan only, no provider enrichment")
-    mode_group.add_argument("--enrich", action="store_true",
-        help="Filesystem + NFO scan + fetch missing providers (default)")
-    mode_group.add_argument("--full",   action="store_true",
-        help="Filesystem + NFO scan + force re-fetch ALL providers")
-    mode_group.add_argument("--serve",  action="store_true",
+    mode_group.add_argument("--quick", action="store_true",
+        help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
+    mode_group.add_argument("--full",  action="store_true",
+        help="All 4 phases: filesystem scan + Jellyseerr + scoring + inventory (default)")
+    mode_group.add_argument("--serve", action="store_true",
         help="Start HTTP API server on 127.0.0.1:8095")
-    mode_group.add_argument("--reset",  action="store_true",
+    mode_group.add_argument("--reset", action="store_true",
         help="Delete library.json and exit")
     parser.add_argument("--category", default=None, metavar="NAME",
         help="Restrict scan to a single category name")
@@ -2590,12 +2595,9 @@ def main():
     if args.quick:
         lock_mode = "quick"
         mode_label = "--quick"
-    elif args.full:
+    else:
         lock_mode = "full"
         mode_label = "--full"
-    else:
-        lock_mode = "enrich"
-        mode_label = "--enrich (default)"
 
     try:
         with _scan_lock(lock_mode):
@@ -2606,15 +2608,10 @@ def main():
 
             if args.quick:
                 run_quick(only_category=args.category)
-            elif args.full:
+            else:
+                # --full or default
                 run_quick(only_category=args.category)
                 run_enrich(force=True, only_category=args.category)
-                run_scoring(only_category=args.category)
-                run_inventory(scan_mode="full", only_category=args.category)
-            else:
-                # --enrich or default
-                run_quick(only_category=args.category)
-                run_enrich(force=False, only_category=args.category)
                 run_scoring(only_category=args.category)
                 run_inventory(scan_mode="full", only_category=args.category)
 
