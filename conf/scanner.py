@@ -1738,11 +1738,11 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
     item_id = 0
     scanned_paths = set()
 
-    for cat in categories:
-        if only_category and cat["name"] != only_category:
-            continue
+    active_cats = [c for c in categories if not only_category or c["name"] == only_category]
+    n_cats = len(active_cats)
 
-        log.info(f"[SCAN] Processing folder [{cat['folder']}] — type={cat['type']}")
+    for cat_idx, cat in enumerate(active_cats, 1):
+        log.info(f"[SCAN] Processing folder [{cat['folder']}] ({cat_idx}/{n_cats}) — type={cat['type']}")
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
             log.warning(f"[SCAN] Folder not found on filesystem: {cat_dir}")
@@ -1784,8 +1784,10 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         for item in items:
             _strip_score_fields(item)
 
-    # Final write (includes preserved items for only_category case)
-    _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
+    # Only_category: final write is required to include preserved items from other categories.
+    # Normal full scan: the last per-folder incremental write already captured all items — skip.
+    if only_category:
+        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
     try:
         size_mb = Path(OUTPUT_PATH).stat().st_size / (1024*1024)
@@ -1895,8 +1897,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     failed_ids      = []
     not_found_count = 0
     not_found_ids   = []
-    for cat_name, cat_items in sorted(by_cat.items()):
-        log.info(f"[SCAN] Enriching folder [{cat_name}] — {len(cat_items)} item(s)")
+    sorted_by_cat = sorted(by_cat.items())
+    n_enrich_cats = len(sorted_by_cat)
+    for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
+        log.info(f"[SCAN] Enriching folder [{cat_name}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -1985,8 +1989,10 @@ def run_scoring(only_category: str | None = None) -> None:
         return
 
     scored_total = 0
-    for cat_name, cat_items in sorted(by_cat.items()):
-        log.info(f"[SCAN] Scoring folder [{cat_name}] — {len(cat_items)} item(s)")
+    sorted_score_cats = sorted(by_cat.items())
+    n_score_cats = len(sorted_score_cats)
+    for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
+        log.info(f"[SCAN] Scoring folder [{cat_name}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
         for item in cat_items:
             item["quality"] = compute_quality(item)
             scored_total += 1
@@ -2051,16 +2057,16 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
 
     all_new_items: list[dict] = []
 
-    for cat in categories:
-        if only_category and cat["name"] != only_category:
-            continue
+    active_inv_cats = [c for c in categories if not only_category or c["name"] == only_category]
+    n_inv_cats = len(active_inv_cats)
 
+    for cat_idx, cat in enumerate(active_inv_cats, 1):
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
             log.warning(f"[SCAN] Inventory: folder not found: {cat_dir}")
             continue
 
-        log.info(f"[SCAN] Inventory: processing folder [{cat['folder']}] — type={cat['type']}")
+        log.info(f"[SCAN] Inventory: processing folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) — type={cat['type']}")
         cat_inv_items: list[dict] = []
         for media_dir in sorted(cat_dir.iterdir()):
             if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
