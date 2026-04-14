@@ -4,15 +4,16 @@
 
 1. [Vue d'ensemble](#1-vue-densemble)
 2. [Architecture technique](#2-architecture-technique)
-3. [Installation](#3-installation)
-4. [Structure de la bibliothèque](#4-structure-de-la-bibliothèque)
-5. [Configuration initiale](#5-configuration-initiale)
-6. [Interface web](#6-interface-web)
-7. [Filtres](#7-filtres)
-8. [Plateformes de streaming](#8-plateformes-de-streaming)
-9. [Score de qualité](#9-score-de-qualité)
-10. [Statistiques](#10-statistiques)
-11. [Paramètres](#11-paramètres)
+3. [Scanner](#3-scanner)
+4. [Installation](#4-installation)
+5. [Structure de la bibliothèque](#5-structure-de-la-bibliothèque)
+6. [Configuration initiale](#6-configuration-initiale)
+7. [Interface web](#7-interface-web)
+8. [Filtres](#8-filtres)
+9. [Plateformes de streaming](#9-plateformes-de-streaming)
+10. [Score de qualité](#10-score-de-qualité)
+11. [Statistiques](#11-statistiques)
+12. [Paramètres](#12-paramètres)
 
 ---
 
@@ -53,7 +54,134 @@ Impacts principaux :
 
 ---
 
-## 3. Installation
+## 3. Scanner
+
+Le scanner est le composant central de MyMediaLibrary. Il lit le filesystem, parse les fichiers `.nfo` et produit les fichiers JSON consommés par l'interface web.
+
+### Vue d'ensemble
+
+Le scanner (`scanner.py`) analyse le contenu de `LIBRARY_PATH` et génère :
+
+| Fichier | Rôle |
+|---|---|
+| `/data/library.json` | Index principal — chargé par l'interface web |
+| `/data/library_inventory.json` | Suivi présence/absence des médias (optionnel, activable dans Paramètres > Système) |
+
+### Modes de scan
+
+#### Scan rapide (quick)
+
+- Parcourt le filesystem et parse les fichiers `.nfo`
+- Écrit `library.json` de façon incrémentale, dossier par dossier
+- Conserve les données enrichies du scan précédent (providers streaming, score qualité)
+- N'appelle **pas** Jellyseerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
+
+#### Scan complet (full)
+
+Enchaîne 4 phases dans l'ordre :
+
+1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
+2. **Jellyseerr** — récupération des plateformes de streaming FR pour chaque titre
+3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
+4. **Inventaire** — mise à jour de `library_inventory.json` (si activé dans les paramètres)
+
+> Chaque phase lit la sortie de la phase précédente depuis le disque. Les phases sont entièrement séparées.
+
+### Déclencheurs
+
+| Origine | Mode | Déclenchement |
+|---|---|---|
+| Démarrage du conteneur | Rapide | Automatique via `entrypoint.sh` |
+| Assistant de configuration | Rapide | Bouton "Lancer le scan" en fin d'onboarding |
+| Bouton "Scan" dans l'UI | Complet | Via la page Scanner |
+| Cron | Complet | Planification automatique (Paramètres > Système) |
+| Modification des dossiers | Rapide | Automatique après une sauvegarde dans Paramètres > Bibliothèque |
+
+### Verrou anti-concurrence
+
+Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/data/.scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI) et éviter des écritures simultanées corrompant `library.json`.
+
+Si un scan est déjà en cours :
+- Un scan déclenché via l'UI reçoit une réponse d'erreur (HTTP 409)
+- Un scan planifié (cron ou démarrage) est ignoré avec un message dans les logs
+
+### Logs
+
+Les logs sont disponibles dans `data/scanner.log` (chemin hôte) et consultables dans Paramètres > Système.
+
+| Niveau | Contenu |
+|---|---|
+| `INFO` | Progression des phases, avancement par dossier, durées, statistiques détectées (codecs vidéo/audio, langues, résolutions) |
+| `DEBUG` | Détails techniques : résultats Jellyseerr par item, parsing NFO, items non trouvés, détails inventaire |
+
+### Format `library.json`
+
+Fichier principal consommé par l'interface web. Structure globale :
+
+```json
+{
+  "scanned_at": "2025-04-14T20:00:00.000000",
+  "library_path": "/mnt/media/library",
+  "total_items": 3289,
+  "items": [ ... ],
+  "meta": { "score_enabled": true }
+}
+```
+
+Exemple d'item :
+
+```json
+{
+  "id": "movie:Movies:The.Dark.Knight.2008",
+  "path": "Movies/The.Dark.Knight.2008",
+  "title": "The Dark Knight",
+  "year": "2008",
+  "category": "Movies",
+  "type": "movie",
+  "size": "14.0 GB",
+  "resolution": "1080p",
+  "codec": "HEVC",
+  "audio_codec": "TRUEHD",
+  "audio_languages": ["fra", "eng"],
+  "providers": ["Netflix", "Canal+"],
+  "quality": { "score": 87, "level": 5 }
+}
+```
+
+Le champ `id` est la clé stable de chaque item. Format : `{type}:{category}:{nom_du_dossier}`. Il est identique dans `library.json` et `library_inventory.json` pour le même média.
+
+### Format `library_inventory.json`
+
+Fichier optionnel (activer dans Paramètres > Système) qui conserve l'historique de présence de chaque média et de ses fichiers vidéo.
+
+Champs principaux de chaque item :
+
+| Champ | Description |
+|---|---|
+| `id` | Identifiant partagé avec `library.json` |
+| `status` | `"present"` ou `"missing"` |
+| `first_seen_at` | Date de première apparition (jamais modifiée ensuite) |
+| `last_seen_at` | Dernière date à laquelle l'item a été détecté sur le filesystem |
+| `last_checked_at` | Date du dernier scan l'ayant évalué (mis à jour même si l'item est absent) |
+| `video_files` | Liste des fichiers vidéo avec leur propre historique |
+
+Un item passe à `"missing"` lorsque son dossier n'est plus détecté lors d'un scan complet couvrant tous les dossiers. L'historique est conservé.
+
+### Préservation des données (scan rapide)
+
+Lors d'un scan rapide, les données enrichies par les scans complets précédents sont conservées sans être recalculées :
+
+| Champ | Source | Comportement |
+|---|---|---|
+| `providers` | Phase 2 (Jellyseerr) | Copié depuis le `library.json` existant |
+| `providers_fetched` | Phase 2 | Copié depuis le `library.json` existant |
+| `quality` | Phase 3 (scoring) | Copié depuis le `library.json` existant |
+
+Le `library.json` existant est chargé **une seule fois** au démarrage du scan, puis utilisé comme référence immuable pour tous les lookups. Les nouveaux items n'ayant pas d'entrée précédente sont créés sans enrichissement — leurs données seront calculées lors du prochain scan complet.
+
+---
+
+## 4. Installation
 
 **Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo`.
 
@@ -102,7 +230,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 4. Structure de la bibliothèque
+## 5. Structure de la bibliothèque
 
 Le scanner lit les **sous-dossiers directs** de `LIBRARY_PATH`. Chaque sous-dossier est un **dossier** auquel on assigne un type (Films, Séries, Ignorer) depuis l'interface.
 
@@ -149,7 +277,7 @@ environment:
 
 ---
 
-## 5. Configuration initiale
+## 6. Configuration initiale
 
 L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide).
 
@@ -162,7 +290,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 ---
 
-## 6. Interface web
+## 7. Interface web
 
 ### Vues
 
@@ -191,7 +319,7 @@ Chaque tuile affiche :
 
 ---
 
-## 7. Filtres
+## 8. Filtres
 
 Les filtres principaux utilisent une architecture unifiée de dropdowns (même comportement desktop/mobile) pour :
 - **Dossiers**
@@ -224,7 +352,7 @@ Fonctionnalités communes :
 
 ---
 
-## 8. Plateformes de streaming
+## 9. Plateformes de streaming
 
 L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
 
@@ -242,7 +370,7 @@ Chaque plateforme peut être masquée dans les paramètres (onglet Jellyseerr �
 
 ---
 
-## 9. Score de qualité
+## 10. Score de qualité
 
 Le score de qualité est une fonctionnalité **optionnelle** pilotée par `system.enable_score` (valeur par défaut : `false`).
 Quand il est activé, chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
@@ -429,7 +557,7 @@ Les statistiques incluent une distribution des scores pour analyser la qualité 
 
 ---
 
-## 10. Statistiques
+## 11. Statistiques
 
 L'onglet Statistiques affiche :
 
@@ -447,7 +575,7 @@ Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 
 ---
 
-## 11. Paramètres
+## 12. Paramètres
 
 Accessible via l'icône ⚙️ en bas de la barre latérale.
 
