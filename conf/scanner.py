@@ -21,7 +21,9 @@ Filters (combinable with any mode):
 """
 
 import argparse
+import contextlib
 import copy
+import fcntl
 import http.server
 import json
 import logging
@@ -81,6 +83,7 @@ OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
+SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -2231,6 +2234,56 @@ def _clean_title(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Inter-process scan lock (fcntl — works across startup, cron, and API scans)
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _scan_lock(mode: str):
+    """Acquire an exclusive inter-process lock for the duration of a scan.
+
+    Uses fcntl.flock on SCAN_LOCK_PATH so any process (startup, cron, API
+    subprocess) sees the same lock state.  Raises BlockingIOError immediately
+    if another scan is already running.
+    """
+    lock_path = Path(SCAN_LOCK_PATH)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.close()
+        raise
+    try:
+        fd.write(f"{os.getpid()} {mode}\n")
+        fd.flush()
+        log.info(f"[SCAN] Scan lock acquired — mode={mode}")
+        yield
+    finally:
+        try:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fd.close()
+        log.info("[SCAN] Scan lock released")
+
+
+def _is_scan_locked() -> bool:
+    """Non-blocking probe: return True if the scan lock is currently held by any process."""
+    lock_path = Path(SCAN_LOCK_PATH)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "w") as fd:
+            try:
+                fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                return False
+            except BlockingIOError:
+                return True
+    except Exception:
+        return False  # Fail open — never block a scan due to a lock-check error
+
+
+# ---------------------------------------------------------------------------
 # HTTP server (--serve mode)
 # ---------------------------------------------------------------------------
 
@@ -2424,6 +2477,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             with _srv_lock:
                 if _srv_state["status"] == "running":
                     self._json(409, {"error": "scan already running"}); return
+            if _is_scan_locked():
+                log.info("[SCAN] Scan already running — refusing new scan request")
+                self._json(409, {"error": "scan already running"}); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
@@ -2518,6 +2574,9 @@ def main():
         help="Delete library.json and exit")
     parser.add_argument("--category", default=None, metavar="NAME",
         help="Restrict scan to a single category name")
+    parser.add_argument("--origin", default="manual",
+        choices=["manual", "startup", "cron"],
+        help="Scan origin for logging (manual/startup/cron)")
     args = parser.parse_args()
 
     if args.serve:
@@ -2528,36 +2587,50 @@ def main():
         run_reset()
         return
 
-    _t_main = time.monotonic()
-
     if args.quick:
+        lock_mode = "quick"
         mode_label = "--quick"
     elif args.full:
+        lock_mode = "full"
         mode_label = "--full"
     else:
+        lock_mode = "enrich"
         mode_label = "--enrich (default)"
-    log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Starting scan {mode_label}")
-    log.info(f"[SCAN] ═══════════════════════════════════")
 
-    if args.quick:
-        run_quick(only_category=args.category)
-    elif args.full:
-        run_quick(only_category=args.category)
-        run_enrich(force=True, only_category=args.category)
-        run_scoring(only_category=args.category)
-        run_inventory(scan_mode="full", only_category=args.category)
-    else:
-        # --enrich or default
-        run_quick(only_category=args.category)
-        run_enrich(force=False, only_category=args.category)
-        run_scoring(only_category=args.category)
-        run_inventory(scan_mode="full", only_category=args.category)
+    try:
+        with _scan_lock(lock_mode):
+            _t_main = time.monotonic()
+            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] Starting scan {mode_label}")
+            log.info(f"[SCAN] ═══════════════════════════════════")
 
-    elapsed = time.monotonic() - _t_main
-    log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
-    log.info(f"[SCAN] ═══════════════════════════════════")
+            if args.quick:
+                run_quick(only_category=args.category)
+            elif args.full:
+                run_quick(only_category=args.category)
+                run_enrich(force=True, only_category=args.category)
+                run_scoring(only_category=args.category)
+                run_inventory(scan_mode="full", only_category=args.category)
+            else:
+                # --enrich or default
+                run_quick(only_category=args.category)
+                run_enrich(force=False, only_category=args.category)
+                run_scoring(only_category=args.category)
+                run_inventory(scan_mode="full", only_category=args.category)
+
+            elapsed = time.monotonic() - _t_main
+            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
+            log.info(f"[SCAN] ═══════════════════════════════════")
+
+    except BlockingIOError:
+        if args.origin == "startup":
+            log.warning("[SCAN] Startup scan skipped — another scan is already running")
+        elif args.origin == "cron":
+            log.warning("[SCAN] Cron scan skipped — another scan is already running")
+        else:
+            log.warning("[SCAN] Scan already running — refusing new scan request")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
