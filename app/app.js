@@ -551,7 +551,6 @@ let allItems=[], categories=[], groups=[];
   }
   let currentView='grid', currentTab='library';
   let tSortCol=null, tSortDir=1;
-  let providerColorMap={};
 
   const PALETTE=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa',
     '#f97316','#34d399','#60a5fa','#f472b6','#facc15',
@@ -631,9 +630,6 @@ let allItems=[], categories=[], groups=[];
       }));
       groups.forEach((g,i)=>{ groupColorMap[g]=PALETTE[i%PALETTE.length]; });
       categories.forEach((c,i)=>{ catColorMap[c]=PALETTE[i%PALETTE.length]; });
-      // Build provider color map from unique provider names
-      const pNames=[...new Set(allItems.flatMap(i=>(i.providers||[]).map(_pname)))].filter(Boolean).sort();
-      pNames.forEach((n,i)=>{ providerColorMap[n]=PALETTE[(i+5)%PALETTE.length]; });
       const d=new Date(data.scanned_at);
       const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
       document.getElementById('scanInfo').innerHTML=
