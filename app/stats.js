@@ -106,11 +106,7 @@
       return '<p style="color:var(--muted);padding:40px">'+getDep('t')('library.no_results')+'</p>';
     }
 
-    const isFiltered = items.length < allItems.length;
     if (!items.length) return '<p style="color:var(--muted);padding:40px">'+getDep('t')('library.no_results')+'</p>';
-
-    const totalBytes = items.reduce((s,i)=>s+(i.size_b||0),0);
-    const totalFiles = items.reduce((s,i)=>s+(i.file_count||0),0);
 
     // ── Helpers ──────────────────────────────────────────
     function makePie(entries, colorFn, valFn, labelFn, fmtFn) {
@@ -149,7 +145,7 @@
           +'<div class="pie-leg-val">'+fmtFn(val)+'</div>'
           +'<div class="pie-leg-pct">'+pct+'%</div>'
           +'</div>';
-      }).join('')+(entries.length>12?'<div style="font-size:11px;color:var(--muted);padding-top:2px">+' + (entries.length-12) + ' autres</div>':'')+'</div>';
+      }).join('')+(entries.length>12?'<div style="font-size:11px;color:var(--muted);padding-top:2px">+' + (entries.length-12) + ' '+getDep('t')('stats.others')+'</div>':'')+'</div>';
       return '<div class="pie-wrap">'+svg+legend+'</div>';
     }
 
@@ -234,7 +230,6 @@
       if (!byProv[name].logo) byProv[name].logo = getDep('_plogo')(p);
     }));
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
-    const maxPC = provEntries[0]?.[1].count||1;
     const provColors=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa','#f97316','#34d399','#60a5fa','#f472b6'];
 
     // ── Monthly curve ─────────────────────────────────────
@@ -252,27 +247,23 @@
       if(!allByMonth[mk]) allByMonth[mk]={count:0,size:0};
       allByMonth[mk].count+=v.count; allByMonth[mk].size+=v.size;
     });
-    const allByDayKeys = Object.keys(allByDay);
     const keys = Object.keys(allByMonth);
 
-    // ── Years aggregation ──────────────────────────────────
-    const byYear={}, byYearCount={};
+    // ── Years aggregation (count only — no size) ───────────
+    const byYearCount={};
     items.forEach(i=>{
       if(!i.year) return;
-      const y=String(i.year);
-      byYear[y]=(byYear[y]||0)+(i.size_b||0);
-      byYearCount[y]=(byYearCount[y]||0)+1;
+      byYearCount[String(i.year)]=(byYearCount[String(i.year)]||0)+1;
     });
-    const yearEntriesSize = Object.keys(byYear).sort((a,b)=>Number(a)-Number(b)).map(y=>[y,byYear[y]]);
     const yearEntriesCount = Object.keys(byYearCount).sort((a,b)=>Number(a)-Number(b)).map(y=>[y,byYearCount[y]]);
 
     function buildYearChart(period) {
-      if(!yearEntriesSize.length) return '<p style="font-size:12px;color:var(--muted)">'+getDep('t')('stats.not_enough_data')+'</p>';
+      if(!yearEntriesCount.length) return '<p style="font-size:12px;color:var(--muted)">'+getDep('t')('stats.not_enough_data')+'</p>';
 
-      let displayEntries = yearEntriesSize;
+      let displayEntries = yearEntriesCount;
       if(period==='decades') {
         const byDecade={};
-        yearEntriesSize.forEach(([y,v])=>{
+        yearEntriesCount.forEach(([y,v])=>{
           const decade = Math.floor(Number(y)/10)*10;
           const decadeKey = decade+'-'+(decade+9);
           byDecade[decadeKey]=(byDecade[decadeKey]||0)+v;
@@ -280,7 +271,7 @@
         displayEntries = Object.entries(byDecade).sort((a,b)=>Number(a[0].split('-')[0])-Number(b[0].split('-')[0]));
       }
 
-      return makeVBar(displayEntries, getDep('PALETTE'), period);
+      return makeVBar(displayEntries, getDep('PALETTE'));
     }
     window._buildYearChartGlobal = buildYearChart;
 
@@ -343,32 +334,31 @@
     }
     window._buildCurveForPeriodGlobal = buildCurveForPeriod;
 
-    function makeVBar(entries, colorPalette, period) {
+    function makeVBar(entries, colorPalette) {
       if(!entries.length) return '';
       const maxVal = Math.max(...entries.map(e=>e[1]),0);
       if(!maxVal) return '';
 
-      const W=800, H=160, PL=40, PR=16, PT=16, PB=40;
+      const W=800, H=160, PL=16, PR=16, PT=8, PB=40;
       const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
-      const barWidth = Math.max(8, Math.floor(iW/Math.max(n,1))-2);
+      const barWidth = Math.max(6, Math.floor(iW/Math.max(n,1))-2);
       const spacing = n>1 ? (iW-barWidth*n)/(n-1) : 0;
 
-      let bars='', labels='', values='';
+      let bars='', labels='';
       let x = PL;
       entries.forEach(([label,val],idx)=>{
         const barHeight = val/maxVal*iH;
         const y = PT+iH-barHeight;
         const col = colorPalette[idx%colorPalette.length];
 
-        bars += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barWidth+'" height="'+barHeight.toFixed(1)+'" fill="'+col+'" />';
-        values += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(y-4)+'" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">'+getDep('fmtSize')(val)+'</text>';
+        bars += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barWidth+'" height="'+barHeight.toFixed(1)+'" fill="'+col+'"><title>'+getDep('escH')(label)+' : '+val+'</title></rect>';
         labels += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(PT+iH+20)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+getDep('escH')(label)+'</text>';
 
         x += barWidth + spacing;
       });
 
       return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
-        +bars+values+labels+'</svg>';
+        +bars+labels+'</svg>';
     }
 
     // ── Category color helper ─────────────────────────────
