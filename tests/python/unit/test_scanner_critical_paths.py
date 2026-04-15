@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "conf"))
+sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
 

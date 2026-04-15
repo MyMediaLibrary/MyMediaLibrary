@@ -15,8 +15,6 @@ jobs:
           python-version: '3.11'
       - name: Run Python unit/integration tests
         run: python3 -m unittest discover -s tests/python -p 'test_*.py'
-      - name: Run legacy Python tests
-        run: python3 -m unittest discover -s conf/tests -p 'test_*.py'
 
   frontend-unit:
     runs-on: ubuntu-latest
