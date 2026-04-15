@@ -290,6 +290,8 @@
       if(!allByMonth[mk]) allByMonth[mk]={count:0,size:0};
       allByMonth[mk].count+=v.count; allByMonth[mk].size+=v.size;
     });
+    const allByDayKeys = Object.keys(allByDay);
+    const keys = Object.keys(allByMonth);
 
     function makeCurve(keys, vals, color, gradId, labelFn, titleFn) {
       const maxV=Math.max(...vals,0);
@@ -324,29 +326,29 @@
 
     function buildCurveForPeriod(period) {
       const now=new Date();
-      let useDaily=false, keys=[];
+      let useDaily=false, curveKeys=[];
       if(period==='30d'){
         useDaily=true;
         const cutoff=new Date(now); cutoff.setDate(cutoff.getDate()-30);
         const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0')+'-'+String(cutoff.getDate()).padStart(2,'0');
-        keys=Object.keys(allByDay).filter(k=>k>=ck).sort();
+        curveKeys=Object.keys(allByDay).filter(k=>k>=ck).sort();
       } else {
         let mkeys=Object.keys(allByMonth).sort();
         if(period==='12m'){
           const cutoff=new Date(now); cutoff.setFullYear(cutoff.getFullYear()-1);
           const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0');
-          keys=mkeys.filter(k=>k>=ck);
+          curveKeys=mkeys.filter(k=>k>=ck);
         } else {
-          keys=mkeys;
+          curveKeys=mkeys;
         }
       }
       const byK=useDaily?allByDay:allByMonth;
-      const countVals=keys.map(k=>(byK[k]||{count:0}).count);
-      const sizeVals=keys.map(k=>(byK[k]||{size:0}).size);
+      const countVals=curveKeys.map(k=>(byK[k]||{count:0}).count);
+      const sizeVals=curveKeys.map(k=>(byK[k]||{size:0}).size);
       return '<div class="curve-label">'+getDep('t')('stats.items_added')+'</div>'
-        +makeCurve(keys,countVals,'#3b82f6','gradCount',getDep('fmtSize'),c=>String(c))
+        +makeCurve(curveKeys,countVals,'#3b82f6','gradCount',getDep('fmtSize'),c=>String(c))
         +'<div class="curve-label" style="margin-top:20px">'+getDep('t')('stats.size_added')+'</div>'
-        +makeCurve(keys,sizeVals,'#ef4444','gradSize',getDep('fmtSize'),getDep('fmtSize'));
+        +makeCurve(curveKeys,sizeVals,'#ef4444','gradSize',getDep('fmtSize'),getDep('fmtSize'));
     }
     window._buildCurveForPeriodGlobal = buildCurveForPeriod;
 
@@ -454,10 +456,6 @@
       +'</div>'
       +'<div id="curveCharts" style="margin-top:12px">'+buildCurveForPeriod('12m')+'</div>'
       : '';
-
-    // Find if data has keys
-    const allByDayKeys = Object.keys(allByDay);
-    const keys = Object.keys(allByMonth);
 
     const topChartsHtml = [
       globalHtml,
