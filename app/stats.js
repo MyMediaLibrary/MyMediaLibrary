@@ -535,8 +535,6 @@
   // ── EXPORT API ─────────────────────────────────────────
   window.MMLStats = {
     renderStatsPanel,
-    statSwitchPie,
-    setCurvePeriod,
     init
   };
 
