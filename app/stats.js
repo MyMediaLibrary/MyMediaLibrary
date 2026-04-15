@@ -84,25 +84,24 @@
 
   // ── STATS PANEL ──────────────────────────────────────
   function renderStatsPanel() {
-    // Defensive: ensure data is ready
-    const allItems = getDep('allItems');
-    if (!allItems || !Array.isArray(allItems)) {
+    const state = window.MMLState;
+    if (!state?.isLoaded) {
       const el = document.getElementById('statsContent');
-      if (el) el.innerHTML = '<p style="color:var(--muted);padding:40px">'+getDep('t')('library.loading')+'</p>';
+      if (el) el.innerHTML = '<p style="color:var(--muted);padding:40px">'
+        + getDep('t')(state?.hasError ? 'library.scan_error' : 'library.loading')
+        + '</p>';
       return;
     }
 
     const filterItems = getDep('filterItems');
+    const allItems = getDep('allItems');
     const items = filterItems ? filterItems() : allItems;
     const el = document.getElementById('statsContent');
     if (el) el.innerHTML = buildStats(items);
   }
 
   function buildStats(items) {
-    const allItems = getDep('allItems');
-
-    // Defensive: ensure data is ready
-    if (!allItems || !Array.isArray(allItems) || !items || !Array.isArray(items)) {
+    if (!window.MMLState?.isLoaded || !items || !Array.isArray(items)) {
       return '<p style="color:var(--muted);padding:40px">'+getDep('t')('library.no_results')+'</p>';
     }
 

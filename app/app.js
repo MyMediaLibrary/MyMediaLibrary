@@ -552,9 +552,7 @@ let allItems=[], categories=[], groups=[];
   let currentView='grid', currentTab='library';
   let tSortCol=null, tSortDir=1;
 
-  const PALETTE=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa',
-    '#f97316','#34d399','#60a5fa','#f472b6','#facc15',
-    '#2dd4bf','#c084fc','#fb923c','#86efac','#93c5fd'];
+  const PALETTE = window.MMLCore.PALETTE;
 
   let groupColorMap={}, catColorMap={};
 
@@ -584,6 +582,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   async function loadLibrary() {
+    window.MMLState.isLoading = true;
+    window.MMLState.isLoaded  = false;
+    window.MMLState.hasError  = false;
     await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
@@ -617,6 +618,7 @@ let allItems=[], categories=[], groups=[];
       const data = await r.json();
       libraryExportSource = data;
       allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
+      window.MMLState.items = allItems;
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
       });
@@ -674,11 +676,15 @@ let allItems=[], categories=[], groups=[];
       renderResolutionFilter();
       renderCodecFilter();
       restoreState();
+      window.MMLState.isLoaded  = true;
+      window.MMLState.isLoading = false;
       renderStats(filterItems());
       render();
       updateExportJsonButtonState();
     } catch(e) {
       console.error('loadLibrary error:', e);
+      window.MMLState.isLoading = false;
+      window.MMLState.hasError  = true;
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
@@ -1997,8 +2003,8 @@ let allItems=[], categories=[], groups=[];
 
   // ── UTILS ────────────────────────────────────────────
   function fmtDate(iso){ if(!iso)return'-'; return new Date(iso).toLocaleDateString('fr-FR'); }
-  function fmtSize(b){ if(!b)return'0 B'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;} return b.toFixed(1)+' '+u[i]; }
-  function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\r?\n/g,' '); }
+  const fmtSize = window.MMLCore.fmtSize;
+  const escH    = window.MMLCore.escH;
   function escJ(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r/g,'').replace(/\n/g,' ').replace(/\u2028/g,' ').replace(/\u2029/g,' '); }
   // sanitizeStr: safe for JS string literals inside HTML attributes (onclick, onmouseenter…)
   const sanitizeStr = s => (s||'').replace(/\r?\n/g,' ').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\u2028/g,' ').replace(/\u2029/g,' ');
