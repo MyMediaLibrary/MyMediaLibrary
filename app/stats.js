@@ -489,22 +489,22 @@
     // ── Final layout ─────────────────────────────────────────
     return ''
       // Row 1: Dossiers | Fournisseurs
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+      + '<div class="stats-row">'
           + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size') : '')+'</div>'
           + '<div>'+provPieHtml+'</div>'
         + '</div>'
       // Row 2: Résolution | Codec vidéo
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+      + '<div class="stats-row">'
           + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>k, 'count') : '')+'</div>'
           + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
         + '</div>'
       // Row 3: Codec audio | Langues
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+      + '<div class="stats-row">'
           + '<div>'+(data.audioCodec.entriesSize.length ? switchablePie('audioCodec', getDep('t')('stats.audio_codec_chart_title'), data.audioCodec.entriesSize, data.audioCodec.entriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : '')+'</div>'
           + '<div>'+(data.audioLang.hasData             ? switchablePie('audioLang',  getDep('t')('stats.audio_languages_chart_title'), data.audioLang.entriesSize, data.audioLang.entriesCount, audioLangColorFn, k=>k, 'count') : '')+'</div>'
         + '</div>'
       // Row 4: Qualité | [vide]
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+      + '<div class="stats-row">'
           + '<div>'+renderQualityChart(data.quality)+'</div>'
           + '<div></div>'
         + '</div>'
