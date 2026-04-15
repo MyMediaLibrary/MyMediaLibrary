@@ -1,0 +1,96 @@
+/* ── MYMEDIALIBRARY — STATS PANEL STYLES ────────────────────────────────── */
+
+/* ── Legacy helper classes (stats grid / hbars) ──────────────────────────── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.stat-row{display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:var(--card);border:1px solid var(--border);border-radius:8px}
+.stat-row-label{flex:1;font-size:13px;color:var(--text);font-weight:500}
+.stat-row-val{font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap}
+.stat-row-sub{font-size:11px;color:var(--muted);white-space:nowrap}
+.stat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* Horizontal bar chart */
+.hbar-list{display:flex;flex-direction:column;gap:6px}
+.hbar-item{display:flex;align-items:center;gap:10px}
+.hbar-label{width:160px;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+.hbar-track{flex:1;background:var(--card);border-radius:999px;height:8px;overflow:hidden}
+.hbar-fill{height:100%;border-radius:999px;transition:width .4s ease}
+.hbar-val{font-size:11px;color:var(--muted);white-space:nowrap;width:80px;text-align:right}
+/* Sparkline / monthly chart */
+.chart-wrap{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-x:auto}
+.chart-svg{width:100%;min-width:400px;height:140px;display:block}
+
+/* ── Stats panel layout ───────────────────────────────────────────────────── */
+#statsContent{padding:24px 40px 60px;display:flex;flex-direction:column;gap:40px}
+.stats-row{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;align-items:start}
+.stats-block{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
+.stats-block-title{font-family:'Syne',sans-serif;font-weight:700;font-size:11px;
+  text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:16px;
+  padding-bottom:10px;border-bottom:1px solid var(--border)}
+
+/* ── KPI summary cards ────────────────────────────────────────────────────── */
+.stat-kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.stat-kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.stat-kpi-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.stat-kpi-val{font-family:'Syne',sans-serif;font-weight:700;font-size:19px;color:var(--accent);line-height:1}
+.stat-kpi-sub{font-size:11px;color:var(--muted);margin-top:3px}
+
+/* ── Pie chart ────────────────────────────────────────────────────────────── */
+.pie-wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.pie-legend{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.pie-leg-row{display:flex;align-items:center;gap:7px;font-size:12px;cursor:default}
+.pie-leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.pie-leg-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.pie-leg-val{color:var(--muted);font-size:11px;white-space:nowrap}
+.pie-leg-pct{color:var(--accent);font-size:11px;font-weight:600;min-width:34px;text-align:right}
+
+/* ── Pie unit switch ──────────────────────────────────────────────────────── */
+.pie-switch{display:flex;gap:4px;margin-bottom:14px}
+.pie-switch-btn{font-family:'Syne',sans-serif;font-size:11px;font-weight:700;
+  padding:4px 12px;border-radius:999px;border:1px solid var(--border);
+  background:var(--tag-bg);color:var(--muted);cursor:pointer;transition:all var(--transition)}
+.pie-switch-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ── Provider bars ────────────────────────────────────────────────────────── */
+.prov-bar-row{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.prov-bar-logo{width:20px;height:20px;border-radius:4px;object-fit:cover;flex-shrink:0;background:var(--card)}
+.prov-bar-name{width:130px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
+.prov-bar-track{flex:1;height:6px;background:var(--border);border-radius:999px;overflow:hidden}
+.prov-bar-fill{height:100%;border-radius:999px;transition:width .4s ease}
+.prov-bar-count{font-size:11px;color:var(--muted);width:54px;text-align:right;flex-shrink:0}
+
+/* ── Cross table ──────────────────────────────────────────────────────────── */
+.cross-wrap{overflow-x:auto}
+.cross-table{width:100%;border-collapse:collapse;font-size:12px}
+.cross-table th{padding:7px 11px;text-align:left;font-family:'Syne',sans-serif;font-size:10px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+  background:var(--card);border-bottom:1px solid var(--border);white-space:nowrap}
+.cross-table td{padding:7px 11px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
+.cross-table tr:last-child td{border-bottom:none}
+.cross-table tr:hover td{background:var(--card-h)}
+.cross-logo{width:16px;height:16px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:4px}
+
+/* ── Curve ────────────────────────────────────────────────────────────────── */
+.curve-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}
+.curve-svg{width:100%;height:160px}
+
+/* ── Quality bars ─────────────────────────────────────────────────────────── */
+.quality-avg{font-size:12px;color:var(--muted);margin-top:-8px;margin-bottom:12px}
+.quality-bars{display:flex;flex-direction:column;gap:7px}
+.quality-bar-row{display:grid;grid-template-columns:50px 1fr 28px;align-items:center;gap:8px}
+.quality-bar-label{font-size:11px;color:var(--muted);font-family:'Syne',sans-serif}
+.quality-bar-track{height:6px;background:var(--border);border-radius:999px;overflow:hidden}
+.quality-bar-fill{height:100%;border-radius:999px;transition:width .3s ease}
+.quality-bar-val{font-size:11px;color:var(--text);text-align:right}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  .stats-row{grid-template-columns:1fr!important}
+  #statsContent{padding:12px 10px 40px!important;gap:16px!important}
+  #statsPanel .stats-block{margin-bottom:12px}
+  .pie-wrap{flex-direction:column!important;align-items:center!important;gap:10px!important}
+  .pie-wrap svg{width:120px!important;height:120px!important}
+  .pie-legend{width:100%!important}
+  .pie-leg-label{font-size:11px!important}
+  .stats-block{padding:12px 10px!important}
+  .stats-block-title{font-size:13px!important}
+}
