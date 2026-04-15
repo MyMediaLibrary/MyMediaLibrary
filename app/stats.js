@@ -328,7 +328,7 @@
       const countVals=curveKeys.map(k=>(byK[k]||{count:0}).count);
       const sizeVals=curveKeys.map(k=>(byK[k]||{size:0}).size);
       return '<div class="curve-label">'+getDep('t')('stats.items_added')+'</div>'
-        +makeCurve(curveKeys,countVals,'#3b82f6','gradCount',getDep('fmtSize'),c=>String(c))
+        +makeCurve(curveKeys,countVals,'#3b82f6','gradCount',v=>String(Math.round(v)),c=>String(c))
         +'<div class="curve-label" style="margin-top:20px">'+getDep('t')('stats.size_added')+'</div>'
         +makeCurve(curveKeys,sizeVals,'#ef4444','gradSize',getDep('fmtSize'),getDep('fmtSize'));
     }
@@ -343,6 +343,8 @@
       const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
       const barWidth = Math.max(6, Math.floor(iW/Math.max(n,1))-2);
       const spacing = n>1 ? (iW-barWidth*n)/(n-1) : 0;
+      // Show at most ~12 labels on X axis to prevent overlap
+      const labelStep = Math.max(1, Math.ceil(n/12));
 
       let bars='', labels='';
       let x = PL;
@@ -352,7 +354,9 @@
         const col = colorPalette[idx%colorPalette.length];
 
         bars += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barWidth+'" height="'+barHeight.toFixed(1)+'" fill="'+col+'"><title>'+getDep('escH')(label)+' : '+val+'</title></rect>';
-        labels += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(PT+iH+20)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+getDep('escH')(label)+'</text>';
+        if(idx%labelStep===0 || idx===n-1) {
+          labels += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(PT+iH+20)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+getDep('escH')(label)+'</text>';
+        }
 
         x += barWidth + spacing;
       });
@@ -442,22 +446,31 @@
 
     // ── YEARS OF RELEASE CHART ────────────────────────────────
     const yearChartHtml = yearEntriesCount.length ? (()=>{
-      const yearChart = '<div id="yearControls" style="margin-top:0;margin-bottom:12px;display:flex;gap:4px;justify-content:center">'
-          +'<button class="pie-switch-btn active" data-year-period="years" >'+getDep('t')('stats.years')+'</button>'
-          +'<button class="pie-switch-btn" data-year-period="decades" >'+getDep('t')('stats.decades')+'</button>'
+      return '<div class="stats-block">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
+          +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+getDep('t')('stats.release_years')+'</div>'
+          +'<div id="yearControls" class="pie-switch">'
+            +'<button class="pie-switch-btn active" data-year-period="years">'+getDep('t')('stats.years')+'</button>'
+            +'<button class="pie-switch-btn" data-year-period="decades">'+getDep('t')('stats.decades')+'</button>'
+          +'</div>'
         +'</div>'
-        +'<div id="yearCharts">'+buildYearChart('years')+'</div>';
-      return '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.release_years')+'</div>'+yearChart+'</div>';
+        +'<div id="yearCharts">'+buildYearChart('years')+'</div>'
+        +'</div>';
     })() : '';
 
     // ── Monthly curve ────────────────────────────────────────
     const curveHtml = keys.length >= 2
-      ? '<div id="curveControls" style="margin-bottom:12px;display:flex;gap:4px;justify-content:center">'
-        +'<button class="pie-switch-btn"        data-period="all"  >'+getDep('t')('stats.all')+'</button>'
-        +'<button class="pie-switch-btn active" data-period="12m"  >'+getDep('t')('stats.months_12')+'</button>'
-        +'<button class="pie-switch-btn"        data-period="30d"  >'+getDep('t')('stats.days_30')+'</button>'
-      +'</div>'
-      +'<div id="curveCharts">'+buildCurveForPeriod('12m')+'</div>'
+      ? '<div class="stats-block">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
+          +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+getDep('t')('stats.monthly_evolution')+'</div>'
+          +'<div id="curveControls" class="pie-switch">'
+            +'<button class="pie-switch-btn"        data-period="all"  >'+getDep('t')('stats.all')+'</button>'
+            +'<button class="pie-switch-btn active" data-period="12m"  >'+getDep('t')('stats.months_12')+'</button>'
+            +'<button class="pie-switch-btn"        data-period="30d"  >'+getDep('t')('stats.days_30')+'</button>'
+          +'</div>'
+        +'</div>'
+        +'<div id="curveCharts">'+buildCurveForPeriod('12m')+'</div>'
+        +'</div>'
       : '';
 
     // ── BUILD FINAL LAYOUT (SPEC: exactly 9 blocks) ──────────────────────
@@ -489,7 +502,7 @@
       // Block H: Years (FULL WIDTH)
       + yearChartHtml
       // Block I: Evolution (FULL WIDTH)
-      + '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
+      + curveHtml;
   }
 
   // ── STATS PANEL INTERACTIONS ──────────────────────────
