@@ -630,6 +630,33 @@ let allItems=[], categories=[], groups=[];
       }));
       groups.forEach((g,i)=>{ groupColorMap[g]=PALETTE[i%PALETTE.length]; });
       categories.forEach((c,i)=>{ catColorMap[c]=PALETTE[i%PALETTE.length]; });
+
+      // Inject dependencies into stats module
+      window.MMLStats.init({
+        filterItems,
+        allItems,
+        PALETTE,
+        PROVIDERS_META,
+        providerCatalog,
+        PROVIDER_OTHERS_KEY,
+        getNormalizedVideoCodec,
+        getNormalizedAudioCodec,
+        getNormalizedResolution,
+        getAudioLanguageSimple,
+        getAudioLanguageSimpleDisplay,
+        getAudioCodecDisplay,
+        getFilterDisplayValue,
+        _itemProviderGroups,
+        _providerGroupKey,
+        _providerGroupLabel,
+        _pname,
+        _plogo,
+        t,
+        fmtSize,
+        escH,
+        MMLLogic
+      });
+
       const d=new Date(data.scanned_at);
       const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
       document.getElementById('scanInfo').innerHTML=
