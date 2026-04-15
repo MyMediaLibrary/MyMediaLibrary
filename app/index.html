@@ -311,17 +311,17 @@
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.inventory_enabled">Générer l'inventaire brut</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Génère <code>library_inventory.json</code> en plus de <code>library.json</code> lors des scans.</div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore" onchange="saveSettings()"/><span class="toggle-switch-slider"></span></label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
           </div>
@@ -350,13 +350,11 @@
               <div id="cfgJellyseerrFields">
                 <div class="settings-row" style="margin-bottom:8px">
                   <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
-                  <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"
-                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                  <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"/>
                 </div>
                 <div class="settings-row" style="margin-bottom:8px">
                   <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
-                  <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"
-                    oninput="_settingsJsrTestOk=false;document.getElementById('cfgJsrTestResult').textContent=''"/>
+                  <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"/>
                 </div>
                 <div class="settings-row">
                   <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
@@ -387,7 +385,7 @@
           <div class="settings-group">
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.language">Langue</label>
-              <select id="cfgLanguage" class="settings-input" style="width:auto" onchange="saveSettings()">
+              <select id="cfgLanguage" class="settings-input" style="width:auto">
                 <option value="fr" data-i18n="settings.system.language_option_fr">🇫🇷 Français</option>
                 <option value="en" data-i18n="settings.system.language_option_en">🇬🇧 English</option>
               </select>
@@ -408,7 +406,7 @@
             <div id="cfgCronHint" class="settings-note" style="margin-bottom:12px"></div>
             <div class="settings-row">
               <label class="settings-label" data-i18n="settings.system.log_level">Niveau de log</label>
-              <select id="cfgLogLevel" class="settings-input" style="width:auto" onchange="saveSettings()">
+              <select id="cfgLogLevel" class="settings-input" style="width:auto">
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>

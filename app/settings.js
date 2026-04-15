@@ -1061,6 +1061,22 @@
     setTimeout(_onbPollScan, 1500);
   }
 
+  // ── DOM event bindings (replaces inline handlers removed from index.html) ─
+  // cfgEnablePlot: real-time enablePlot sync while settings panel is open
+  const _epEl = document.getElementById('cfgEnablePlot');
+  if (_epEl) _epEl.addEventListener('change', saveSettings);
+
+  // Jellyseerr URL/key: reset connection test state on any edit
+  function _resetJsrTestState() {
+    _settingsJsrTestOk = false;
+    const res = document.getElementById('cfgJsrTestResult');
+    if (res) res.textContent = '';
+  }
+  ['cfgJellyseerrUrl', 'cfgJellyseerrKey'].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', _resetJsrTestState);
+  });
+
   // ── Public API ────────────────────────────────────────────────────────────
   window.MMLSettings = {
     showOnboarding,
