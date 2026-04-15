@@ -107,7 +107,9 @@
     "episodes": "{n}ep",
     "no_provider": "Non disponible en streaming FR",
     "files": "{n} fichier",
-    "files_pl": "{n} fichiers"
+    "files_pl": "{n} fichiers",
+    "movies": "Films",
+    "series": "Séries"
   },
   "settings": {
     "title": "⚙️ Paramètres",
@@ -248,7 +250,7 @@
     "audio_codec_chart_title": "Codec audio",
     "audio_languages_chart_title": "Langues audio",
     "others": "Autres",
-    "providers": "Providers",
+    "providers": "Fournisseurs",
     "elements": "Éléments",
     "files": "Fichiers",
     "disk": "Disque",
@@ -280,7 +282,21 @@
     "entry": "entrée",
     "entries": "entrées",
     "quality_distribution": "Répartition qualité (score)",
-    "quality_average": "Score moyen : {score}"
+    "quality_average": "Score moyen : {score}",
+    "library_stats": "Statistiques de la bibliothèque",
+    "global_all_items": "Affiche tous les éléments de la bibliothèque.",
+    "global_filtered_items": "Affiche {pct} des éléments ({items}).",
+    "quality_score": "Score de qualité",
+    "providers_by_group": "Fournisseurs par groupe",
+    "providers_by_category": "Fournisseurs par dossier"
+  },
+  "quality_level": {
+    "0": "Très bas",
+    "1": "Bas",
+    "2": "Moyen",
+    "3": "Bon",
+    "4": "Très bon",
+    "5": "Excellent"
   },
   "auth": {
     "protected": "Accès protégé",

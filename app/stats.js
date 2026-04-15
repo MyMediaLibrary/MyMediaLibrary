@@ -70,6 +70,16 @@
         }
       }
     });
+
+    // Delegate year/decade period switches
+    document.addEventListener('click', (e) => {
+      if (e.target.dataset.yearPeriod) {
+        const yearControls = document.getElementById('yearControls');
+        if (yearControls?.contains(e.target)) {
+          setYearPeriod(e.target);
+        }
+      }
+    });
   }
 
   // ── STATS PANEL ──────────────────────────────────────
@@ -293,6 +303,35 @@
     const allByDayKeys = Object.keys(allByDay);
     const keys = Object.keys(allByMonth);
 
+    // ── Years aggregation ──────────────────────────────────
+    const byYear={}, byYearCount={};
+    items.forEach(i=>{
+      if(!i.year) return;
+      const y=String(i.year);
+      byYear[y]=(byYear[y]||0)+(i.size_b||0);
+      byYearCount[y]=(byYearCount[y]||0)+1;
+    });
+    const yearEntriesSize = Object.keys(byYear).sort((a,b)=>Number(a)-Number(b)).map(y=>[y,byYear[y]]);
+    const yearEntriesCount = Object.keys(byYearCount).sort((a,b)=>Number(a)-Number(b)).map(y=>[y,byYearCount[y]]);
+
+    function buildYearChart(period) {
+      if(!yearEntriesSize.length) return '<p style="font-size:12px;color:var(--muted)">'+getDep('t')('stats.not_enough_data')+'</p>';
+
+      let displayEntries = yearEntriesSize;
+      if(period==='decades') {
+        const byDecade={};
+        yearEntriesSize.forEach(([y,v])=>{
+          const decade = Math.floor(Number(y)/10)*10;
+          const decadeKey = decade+'-'+(decade+9);
+          byDecade[decadeKey]=(byDecade[decadeKey]||0)+v;
+        });
+        displayEntries = Object.entries(byDecade).sort((a,b)=>Number(a[0].split('-')[0])-Number(b[0].split('-')[0]));
+      }
+
+      return makeVBar(displayEntries, getDep('PALETTE'), period);
+    }
+    window._buildYearChartGlobal = buildYearChart;
+
     function makeCurve(keys, vals, color, gradId, labelFn, titleFn) {
       const maxV=Math.max(...vals,0);
       if(!maxV||keys.length<2) return '<p style="font-size:12px;color:var(--muted)">'+getDep('t')('stats.not_enough_data')+'</p>';
@@ -351,6 +390,34 @@
         +makeCurve(curveKeys,sizeVals,'#ef4444','gradSize',getDep('fmtSize'),getDep('fmtSize'));
     }
     window._buildCurveForPeriodGlobal = buildCurveForPeriod;
+
+    function makeVBar(entries, colorPalette, period) {
+      if(!entries.length) return '';
+      const maxVal = Math.max(...entries.map(e=>e[1]),0);
+      if(!maxVal) return '';
+
+      const W=800, H=160, PL=40, PR=16, PT=16, PB=40;
+      const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
+      const barWidth = Math.max(8, Math.floor(iW/Math.max(n,1))-2);
+      const spacing = n>1 ? (iW-barWidth*n)/(n-1) : 0;
+
+      let bars='', labels='', values='';
+      let x = PL;
+      entries.forEach(([label,val],idx)=>{
+        const barHeight = val/maxVal*iH;
+        const y = PT+iH-barHeight;
+        const col = colorPalette[idx%colorPalette.length];
+
+        bars += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barWidth+'" height="'+barHeight.toFixed(1)+'" fill="'+col+'" />';
+        values += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(y-4)+'" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">'+getDep('fmtSize')(val)+'</text>';
+        labels += '<text x="'+(x+barWidth/2).toFixed(1)+'" y="'+(PT+iH+20)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+getDep('escH')(label)+'</text>';
+
+        x += barWidth + spacing;
+      });
+
+      return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
+        +bars+values+labels+'</svg>';
+    }
 
     // ── Year/Decade aggregation ───────────────────────────
     const hasGroups = groupEntriesSize.length > 0;
@@ -431,20 +498,42 @@
     // ── QUALITY SCORE ─────────────────────────────────────
     const qualityChartHtml = getDep('allItems').some(i=>i.quality) ? (()=>{
       const byScore={};
+      let totalScore=0;
       items.forEach(i=>{
         if(!i.quality) return;
         const l=i.quality.level||0;
         byScore[l]=(byScore[l]||0)+1;
+        totalScore+=l;
       });
       if(!Object.keys(byScore).length) return '';
-      const scoreColorFn=(l)=>['#78716c','#f87171','#fb923c','#fbbf24','#4ade80','#22c55e'][Math.min(Math.max(l,0),5)];
-      const scoreEntries=Object.entries(byScore).sort((a,b)=>Number(b[0])-Number(a[0]));
+      const scoreColors=['#78716c','#f87171','#fb923c','#fbbf24','#4ade80','#22c55e'];
       const scoreLabels={0:getDep('t')('quality_level.0'),1:getDep('t')('quality_level.1'),2:getDep('t')('quality_level.2'),3:getDep('t')('quality_level.3'),4:getDep('t')('quality_level.4'),5:getDep('t')('quality_level.5')};
-      return switchablePie('score',getDep('t')('stats.quality_score'), scoreEntries, scoreEntries, scoreColorFn, l=>scoreLabels[l]||l, 'count');
+      const maxCount=Math.max(...Object.values(byScore),0);
+      const avgScore=(totalScore/(items.filter(i=>i.quality).length)).toFixed(1);
+      let html='<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.quality_score')+'</div>';
+      for(let l=0;l<=5;l++){
+        const count=byScore[l]||0;
+        const pct=maxCount?Math.round(100*count/maxCount):0;
+        const col=scoreColors[l];
+        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">'+getDep('escH')(scoreLabels[l])+'</div><div style="flex:1;height:6px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+col+'"></div></div><div style="font-size:11px;color:var(--muted);width:30px;text-align:right">'+count+'</div></div>';
+      }
+      html+='<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">'+getDep('t')('stats.quality_average').replace('{score}',avgScore)+'</div></div>';
+      return html;
     })() : '';
 
     // ── AUDIO LANGUAGE CHART ──────────────────────────────
     const audioLangChartHtml = hasLangData ? switchablePie('audioLang',getDep('t')('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count') : '';
+
+    // ── YEARS OF RELEASE CHART ────────────────────────────────
+    const yearChartHtml = yearEntriesSize.length ? (()=>{
+      const yearChart = buildYearChart('years')
+        + '<div id="yearControls" style="margin-top:12px;display:flex;gap:4px;justify-content:center">'
+          +'<button class="pie-switch-btn active" data-year-period="years" >'+getDep('t')('stats.years')+'</button>'
+          +'<button class="pie-switch-btn" data-year-period="decades" >'+getDep('t')('stats.decades')+'</button>'
+        +'</div>'
+        +'<div id="yearCharts" style="margin-top:12px">'+buildYearChart('years')+'</div>';
+      return '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.release_years')+'</div>'+yearChart+'</div>';
+    })() : '';
 
     // ── Monthly curve ────────────────────────────────────────
     const curveHtml = keys.length >= 2
@@ -459,36 +548,49 @@
 
     const topChartsHtml = [
       globalHtml,
-      (hasGroups ? switchablePie('group',getDep('t')('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : ''),
-      '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.categories')+'</div>'+
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">' +
-          '<div style="font-size:11px;color:var(--muted)">'+catEntriesSize.length+' '+getDep('t')('stats.categories')+'</div>' +
-        '</div>' +
-        catEntriesSize.map((cat,idx)=>{
-          function makeHBar(label, count, total, color) {
-            const pct = Math.round(100*count/total);
-            return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)" title="'+getDep('escH')(label)+'">'+getDep('escH')(label)+'</div><div style="flex:1;height:6px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+color+'"></div></div><div style="font-size:11px;color:var(--muted);width:30px;text-align:right">'+pct+'%</div></div>';
-          }
-          return makeHBar(getDep('getFilterDisplayValue')(cat[0]), cat[1], totalBytes, getDep('PALETTE')[idx%getDep('PALETTE').length]);
-        }).join('')+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
+        '<div>',
+          (hasGroups ? switchablePie('group',getDep('t')('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : ''),
+        '</div>',
+        '<div>',
+          yearChartHtml,
+        '</div>',
       '</div>',
-      provPieHtml,
-      (resEntriesSize.length ? switchablePie('res',getDep('t')('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
-      (codecEntriesSize.length ? switchablePie('codec',getDep('t')('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => getDep('getFilterDisplayValue')(k), 'count') : ''),
-      (audioCodecEntriesSize.length ? switchablePie('audioCodec',getDep('t')('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : ''),
-      audioLangChartHtml,
-      qualityChartHtml
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
+        '<div>',
+          provPieHtml,
+        '</div>',
+        '<div>',
+          qualityChartHtml,
+        '</div>',
+      '</div>',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
+        '<div>',
+          (resEntriesSize.length ? switchablePie('res',getDep('t')('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
+        '</div>',
+        '<div>',
+          (codecEntriesSize.length ? switchablePie('codec',getDep('t')('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => getDep('getFilterDisplayValue')(k), 'count') : ''),
+        '</div>',
+      '</div>',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
+        '<div>',
+          (audioCodecEntriesSize.length ? switchablePie('audioCodec',getDep('t')('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : ''),
+        '</div>',
+        '<div>',
+          audioLangChartHtml,
+        '</div>',
+      '</div>'
     ].filter(Boolean).join('');
 
-    // ── Year-decade view (full width) ─────────────────────
-    const yearDecadeHtml = crossGroupRows.length > 0 && crossCatRows.length > 0
+    // ── Provider cross-tables (full width) ──────────────────
+    const providerTablesHtml = crossGroupRows.length > 0 && crossCatRows.length > 0
       ? '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.providers_by_group')+'</div>'+crossTable(crossGroupRows, groupColorFn, false)+'</div>'
       + '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.providers_by_category')+'</div>'+crossTable(crossCatRows, catColorFn, false)+'</div>'
       : '';
 
     return ''
-      +'<div class="stats-row">'+topChartsHtml+'</div>'
-      +yearDecadeHtml
+      +topChartsHtml
+      +providerTablesHtml
       +'<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 
@@ -508,6 +610,15 @@
     controls.querySelectorAll('.pie-switch-btn').forEach(b=>b.classList.toggle('active', b===btn));
     const charts = document.getElementById('curveCharts');
     if (charts) charts.innerHTML = getDep('_buildCurveForPeriodGlobal')(period);
+  }
+
+  function setYearPeriod(btn) {
+    const controls = document.getElementById('yearControls');
+    if (!controls) return;
+    const period = btn.dataset.yearPeriod;
+    controls.querySelectorAll('.pie-switch-btn').forEach(b=>b.classList.toggle('active', b===btn));
+    const charts = document.getElementById('yearCharts');
+    if (charts) charts.innerHTML = getDep('_buildYearChartGlobal')(period);
   }
 
   // ── EXPORT API ─────────────────────────────────────────
