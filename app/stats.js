@@ -441,7 +441,7 @@
     const audioLangChartHtml = hasLangData ? switchablePie('audioLang',getDep('t')('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count') : '';
 
     // ── YEARS OF RELEASE CHART ────────────────────────────────
-    const yearChartHtml = yearEntriesSize.length ? (()=>{
+    const yearChartHtml = yearEntriesCount.length ? (()=>{
       const yearChart = '<div id="yearControls" style="margin-top:0;margin-bottom:12px;display:flex;gap:4px;justify-content:center">'
           +'<button class="pie-switch-btn active" data-year-period="years" >'+getDep('t')('stats.years')+'</button>'
           +'<button class="pie-switch-btn" data-year-period="decades" >'+getDep('t')('stats.decades')+'</button>'
