@@ -154,18 +154,14 @@
     }
 
     // ── Aggregate by group ────────────────────────────────
-    const byGroup={}, byCat={}, byGroupCount={}, byCatCount={};
+    const byGroup={}, byGroupCount={};
     items.forEach(i=>{
       const g=i.group||'Autres';
       byGroup[g]=(byGroup[g]||0)+(i.size_b||0);
       byGroupCount[g]=(byGroupCount[g]||0)+1;
-      byCat[i.category]=(byCat[i.category]||0)+(i.size_b||0);
-      byCatCount[i.category]=(byCatCount[i.category]||0)+1;
     });
     const groupEntriesSize = Object.entries(byGroup).sort((a,b)=>b[1]-a[1]);
     const groupEntriesCount = Object.entries(byGroupCount).sort((a,b)=>b[1]-a[1]);
-    const catEntriesSize = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
-    const catEntriesCount = Object.entries(byCatCount).sort((a,b)=>b[1]-a[1]);
 
     // ── Codec ────────────────────────────────────────────
     const CODEC_COLORS = ['#f59e0b','#3b82f6','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
@@ -240,50 +236,6 @@
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
     const maxPC = provEntries[0]?.[1].count||1;
     const provColors=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa','#f97316','#34d399','#60a5fa','#f472b6'];
-
-    // ── Provider x group cross table ──────────────────────
-    const provNames=provEntries.map(([k])=>k);
-    const provByGroup={};
-    items.forEach(i=>{
-      const g=i.group||'Autres';
-      if(!provByGroup[g]) provByGroup[g]={};
-      getDep('_itemProviderGroups')(i).forEach(n => { provByGroup[g][n]=(provByGroup[g][n]||0)+1; });
-    });
-    const provByCat={};
-    items.forEach(i=>{
-      if(!provByCat[i.category]) provByCat[i.category]={};
-      getDep('_itemProviderGroups')(i).forEach(n => { provByCat[i.category][n]=(provByCat[i.category][n]||0)+1; });
-    });
-
-    function crossTable(rowEntries, rowColorFn, transpose) {
-      if(!provNames.length) return '<p style="font-size:12px;color:var(--muted)">'+getDep('t')('stats.no_provider_data')+'</p>';
-      if (transpose) {
-        const colKeys = rowEntries.map(([k])=>k);
-        const colColorFn = rowColorFn;
-        const headers = colKeys.map(k=>'<th style="color:'+colColorFn(k)+'">'+getDep('escH')(k)+'</th>').join('');
-        const rows = provNames.map((p,idx)=>{
-          const logo=(p !== getDep('PROVIDER_OTHERS_KEY') && (getDep('PROVIDERS_META')[p]?.logo_url||getDep('providerCatalog')[p]))?'<img class="cross-logo" src="'+getDep('escH')(getDep('PROVIDERS_META')[p]?.logo_url||getDep('providerCatalog')[p]||'')+'" alt=""/>':'';
-          const cells=rowEntries.map(([k,pmap])=>{
-            const n=pmap[p]||0;
-            return '<td style="color:'+(n?'var(--text)':'var(--border)')+';">'+(n||'–')+'</td>';
-          }).join('');
-          return '<tr><td style="font-weight:600">'+logo+getDep('escH')(getDep('_providerGroupLabel')(p))+'</td>'+cells+'</tr>';
-        }).join('');
-        return '<div class="cross-wrap"><table class="cross-table"><thead><tr><th></th>'+headers+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-      }
-      const headers = provNames.map(p=>{
-        const logo=(p !== getDep('PROVIDER_OTHERS_KEY') && (getDep('PROVIDERS_META')[p]?.logo_url||getDep('providerCatalog')[p]))?'<img class="cross-logo" src="'+getDep('escH')(getDep('PROVIDERS_META')[p]?.logo_url||getDep('providerCatalog')[p]||'')+'" alt=""/>':'';
-        return '<th>'+logo+getDep('escH')(getDep('_providerGroupLabel')(p))+'</th>';
-      }).join('');
-      const rows = rowEntries.map(([k,pmap])=>{
-        const cells=provNames.map(p=>{
-          const n=pmap[p]||0;
-          return '<td style="color:'+(n?'var(--text)':'var(--border)')+';">'+(n||'–')+'</td>';
-        }).join('');
-        return '<tr><td style="font-weight:600;color:'+rowColorFn(k)+'">'+getDep('escH')(k)+'</td>'+cells+'</tr>';
-      }).join('');
-      return '<div class="cross-wrap"><table class="cross-table"><thead><tr><th></th>'+headers+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-    }
 
     // ── Monthly curve ─────────────────────────────────────
     const allByDay={};
@@ -422,7 +374,6 @@
     // ── Year/Decade aggregation ───────────────────────────
     const hasGroups = groupEntriesSize.length > 0;
     const groupColorFn=(k)=>getDep('PALETTE')[getDep('allItems').findIndex(i=>(i.group||'Autres')===k)%getDep('PALETTE').length];
-    const catColorFn=(k)=>getDep('PALETTE')[getDep('allItems').findIndex(i=>i.category===k)%getDep('PALETTE').length];
 
     function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k, defaultUnit = 'size') {
       const showCountByDefault = defaultUnit === 'count';
@@ -440,14 +391,6 @@
         +'<div id="'+id+'PieCount"'+(showCountByDefault ? '' : ' style="display:none"')+'>'+pieCount+'</div>'
         +'</div>';
     }
-
-    // Group pies
-    const groupPieSize = hasGroups ? makePie(groupEntriesSize, groupColorFn, v=>v, k=>k, getDep('fmtSize')) : '';
-    const groupPieCount = hasGroups ? makePie(groupEntriesCount, groupColorFn, v=>v, k=>k, v=>String(v)) : '';
-
-    // Cat pies
-    const catPieSize = makePie(catEntriesSize, catColorFn, v=>v, k=>k, getDep('fmtSize'));
-    const catPieCount = makePie(catEntriesCount, catColorFn, v=>v, k=>k, v=>String(v));
 
     // Provider pie (including "Aucun") — switchable taille/nombre
     const provColorFn=(k,i)=>provColors[i%provColors.length];
@@ -472,28 +415,6 @@
     const provPieHtml = provEntries.length
       ? switchablePie('prov',getDep('t')('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, getDep('_providerGroupLabel'), 'count')
       : '';
-
-    // Cross tables
-    const crossGroupRows = Object.entries(provByGroup).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
-    const crossCatRows = Object.entries(provByCat).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
-
-    // ── GLOBAL ENCART (always uses allItems, ignores filters) ──────────
-    const globalMovies  = getDep('allItems').filter(i=>i.type==='movie').length;
-    const globalSeries  = getDep('allItems').filter(i=>i.type==='tv').length;
-    const globalBytes   = getDep('allItems').reduce((s,i)=>s+(i.size_b||0),0);
-    const globalFiles   = getDep('allItems').reduce((s,i)=>s+(i.file_count||0),0);
-    const globalEmph = '<span style="font-weight:700;color:var(--accent)">'+Math.round(100*items.length/getDep('allItems').length)+'%</span>';
-    const globalText = getDep('allItems').length===items.length
-      ? getDep('t')('stats.global_all_items')
-      : getDep('t')('stats.global_filtered_items').replace('{items}', items.length + ' / ' + getDep('allItems').length).replace('{pct}', globalEmph);
-    const globalHtml = '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.library_stats')+'</div>'
-      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">'
-        +'<div style="display:flex;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-sm"><rect x="3" y="2" width="18" height="20" rx="2" ry="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg><div>'+globalMovies+' '+getDep('t')('library.movies')+'</div></div>'
-        +'<div style="display:flex;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-sm"><rect x="3" y="2" width="18" height="20" rx="2" ry="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/></svg><div>'+globalSeries+' '+getDep('t')('library.series')+'</div></div>'
-      +'</div>'
-      +'<div style="color:var(--muted);font-size:12px;margin-bottom:16px">'+getDep('fmtSize')(globalBytes)+' — '+globalFiles+' '+getDep('t')('stats.files')+'</div>'
-      +'<div style="color:var(--muted);font-size:12px">'+globalText+'</div>'
-      +'</div>';
 
     // ── QUALITY SCORE ─────────────────────────────────────
     const qualityChartHtml = getDep('allItems').some(i=>i.quality) ? (()=>{
@@ -546,52 +467,36 @@
       +'<div id="curveCharts" style="margin-top:12px">'+buildCurveForPeriod('12m')+'</div>'
       : '';
 
-    const topChartsHtml = [
-      globalHtml,
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
-        '<div>',
-          (hasGroups ? switchablePie('group',getDep('t')('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : ''),
-        '</div>',
-        '<div>',
-          yearChartHtml,
-        '</div>',
-      '</div>',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
-        '<div>',
-          provPieHtml,
-        '</div>',
-        '<div>',
-          qualityChartHtml,
-        '</div>',
-      '</div>',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
-        '<div>',
-          (resEntriesSize.length ? switchablePie('res',getDep('t')('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
-        '</div>',
-        '<div>',
-          (codecEntriesSize.length ? switchablePie('codec',getDep('t')('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => getDep('getFilterDisplayValue')(k), 'count') : ''),
-        '</div>',
-      '</div>',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">',
-        '<div>',
-          (audioCodecEntriesSize.length ? switchablePie('audioCodec',getDep('t')('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : ''),
-        '</div>',
-        '<div>',
-          audioLangChartHtml,
-        '</div>',
-      '</div>'
-    ].filter(Boolean).join('');
-
-    // ── Provider cross-tables (full width) ──────────────────
-    const providerTablesHtml = crossGroupRows.length > 0 && crossCatRows.length > 0
-      ? '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.providers_by_group')+'</div>'+crossTable(crossGroupRows, groupColorFn, false)+'</div>'
-      + '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.providers_by_category')+'</div>'+crossTable(crossCatRows, catColorFn, false)+'</div>'
-      : '';
+    // ── BUILD FINAL LAYOUT (SPEC: exactly 9 blocks) ──────────────────────
+    // Block A-G: 6 pies (1/2 width) + 1 quality bars (1/2 width)
+    // Block H: Years chart (FULL WIDTH)
+    // Block I: Evolution curve (FULL WIDTH)
 
     return ''
-      +topChartsHtml
-      +providerTablesHtml
-      +'<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
+      // Row 1: Dossiers (1/2) | Fournisseurs (1/2)
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+        + '<div>'+(hasGroups ? switchablePie('group',getDep('t')('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : '')+'</div>'
+        + '<div>'+provPieHtml+'</div>'
+      + '</div>'
+      // Row 2: Résolution (1/2) | Codec vidéo (1/2)
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+        + '<div>'+(resEntriesSize.length ? switchablePie('res',getDep('t')('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : '')+'</div>'
+        + '<div>'+(codecEntriesSize.length ? switchablePie('codec',getDep('t')('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
+      + '</div>'
+      // Row 3: Codec audio (1/2) | Langues (1/2)
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+        + '<div>'+(audioCodecEntriesSize.length ? switchablePie('audioCodec',getDep('t')('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : '')+'</div>'
+        + '<div>'+audioLangChartHtml+'</div>'
+      + '</div>'
+      // Row 4: Qualité (1/2) | [empty] (1/2)
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
+        + '<div>'+qualityChartHtml+'</div>'
+        + '<div></div>'
+      + '</div>'
+      // Block H: Years (FULL WIDTH)
+      + yearChartHtml
+      // Block I: Evolution (FULL WIDTH)
+      + '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
   }
 
   // ── STATS PANEL INTERACTIONS ──────────────────────────
