@@ -1,11 +1,11 @@
 /**
- * MyMediaLibrary — Core Module (MMLCore)
+ * MyMediaLibrary — Core Module (MMLCore + MMLConstants + MMLState)
  *
- * Shared helpers and constants used across app.js and stats.js.
- * Exposed as window.MMLCore to make cross-module dependencies explicit.
+ * Shared helpers, constants and state used across app.js and stats.js.
+ * Exposed as window.MML* to make cross-module dependencies explicit.
  *
- * Scope: pure formatters + shared constants only.
- * Do NOT add stateful or UI-specific logic here.
+ * Scope: pure formatters, shared constants, global load state.
+ * Do NOT add stateful UI logic or business logic here.
  */
 
 (function (root) {
@@ -41,6 +41,37 @@
     isLoaded:  false,
     hasError:  false,
     items:     []
+  };
+
+  // ── Shared constants ──────────────────────────────────────────────────────
+  root.MMLConstants = {
+    // Provider sentinel values (shared by app.js and app.logic.js)
+    PROVIDER_OTHERS_KEY:     '__others__',
+    PROVIDER_NONE_KEY:       '__none__',
+    PROVIDER_OTHERS_ALIASES: ['autres', 'others', 'other'],
+
+    CHARTS: {
+      // Color palettes for chart series
+      COLORS: {
+        CODEC:       ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'],
+        AUDIO_CODEC: ['#06b6d4', '#f97316', '#a3e635', '#e879f9', '#fb7185', '#34d399', '#fbbf24'],
+        AUDIO_LANG:  ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#a78bfa', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#2dd4bf'],
+        RESOLUTION:  { '4K': '#a855f7', '1080p': '#22c55e', '720p': '#3b82f6', 'SD': '#78716c' },
+        PROVIDER:    ['#7c6aff', '#ff6a6a', '#4ecdc4', '#f7b731', '#a78bfa', '#f97316', '#34d399', '#60a5fa', '#f472b6'],
+        // Quality score colors: index 0 = level 1 (worst) … index 4 = level 5 (best)
+        QUALITY:     ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e']
+      },
+
+      // Canonical display order for resolution labels
+      RESOLUTION_ORDER: ['4K', '1080p', '720p', 'SD'],
+
+      // Default active state for chart toggles
+      DEFAULTS: {
+        PIE_MODE:        'size',   // 'size' | 'count'
+        TIMELINE_PERIOD: '12m',   // 'all' | '12m' | '30d'
+        YEAR_MODE:       'years'  // 'years' | 'decades'
+      }
+    }
   };
 
 })(typeof self !== 'undefined' ? self : this);

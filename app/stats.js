@@ -159,7 +159,7 @@
     const categoryEntriesCount = Object.entries(byCategoryCount).sort((a,b)=>b[1]-a[1]);
 
     // ── Codec ────────────────────────────────────────────
-    const CODEC_COLORS = ['#f59e0b','#3b82f6','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+    const CODEC_COLORS = window.MMLConstants.CHARTS.COLORS.CODEC;
     const byCodec={}, byCodecCount={};
     items.forEach(i=>{
       const key = getDep('getNormalizedVideoCodec')(i);
@@ -171,7 +171,7 @@
     const codecEntriesCount = Object.entries(byCodecCount).sort((a,b)=>b[1]-a[1]);
 
     // ── Audio Codec ──────────────────────────────────────
-    const AUDIO_CODEC_COLORS = ['#06b6d4','#f97316','#a3e635','#e879f9','#fb7185','#34d399','#fbbf24'];
+    const AUDIO_CODEC_COLORS = window.MMLConstants.CHARTS.COLORS.AUDIO_CODEC;
     const byAudioCodec={}, byAudioCodecCount={};
     items.forEach(i=>{
       const key = getDep('getNormalizedAudioCodec')(i);
@@ -183,7 +183,7 @@
     const audioCodecEntriesCount = Object.entries(byAudioCodecCount).sort((a,b)=>b[1]-a[1]);
 
     // ── Audio Languages ──────────────────────────────────
-    const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
+    const AUDIO_LANG_COLORS = window.MMLConstants.CHARTS.COLORS.AUDIO_LANG;
     const byAudioLangCount={}, byAudioLangSize={};
     items.forEach(i=>{
       const key = getDep('getAudioLanguageSimpleDisplay')(getDep('getAudioLanguageSimple')(i));
@@ -196,8 +196,8 @@
     const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
 
     // ── Resolution ───────────────────────────────────────
-    const RES_ORDER = ['4K','1080p','720p','SD'];
-    const RES_COLORS = {'4K':'#a855f7','1080p':'#22c55e','720p':'#3b82f6','SD':'#78716c'};
+    const RES_ORDER  = window.MMLConstants.CHARTS.RESOLUTION_ORDER;
+    const RES_COLORS = window.MMLConstants.CHARTS.COLORS.RESOLUTION;
     const byRes={}, byResCount={};
     items.forEach(i=>{
       const r=getDep('getNormalizedResolution')(i);
@@ -229,7 +229,7 @@
       if (!byProv[name].logo) byProv[name].logo = getDep('_plogo')(p);
     }));
     const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
-    const provColors=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa','#f97316','#34d399','#60a5fa','#f472b6'];
+    const provColors=window.MMLConstants.CHARTS.COLORS.PROVIDER;
 
     // ── Monthly curve ─────────────────────────────────────
     const allByDay={};
@@ -411,12 +411,13 @@
 
     // ── QUALITY SCORE (5 tranches 0-20/21-40/41-60/61-80/81-100) ──────────
     const qualityChartHtml = getDep('allItems').some(i=>i.quality) ? (()=>{
+      const qc = window.MMLConstants.CHARTS.COLORS.QUALITY;
       const tranches = [
-        { key: 'range_0_20',   min:  0, max:  20, color: '#ef4444', label: getDep('t')('filters.score.range_0_20')   },
-        { key: 'range_20_40',  min: 21, max:  40, color: '#f97316', label: getDep('t')('filters.score.range_20_40')  },
-        { key: 'range_40_60',  min: 41, max:  60, color: '#eab308', label: getDep('t')('filters.score.range_40_60')  },
-        { key: 'range_60_80',  min: 61, max:  80, color: '#84cc16', label: getDep('t')('filters.score.range_60_80')  },
-        { key: 'range_80_100', min: 81, max: 100, color: '#22c55e', label: getDep('t')('filters.score.range_80_100') },
+        { key: 'range_0_20',   min:  0, max:  20, color: qc[0], label: getDep('t')('filters.score.range_0_20')   },
+        { key: 'range_20_40',  min: 21, max:  40, color: qc[1], label: getDep('t')('filters.score.range_20_40')  },
+        { key: 'range_40_60',  min: 41, max:  60, color: qc[2], label: getDep('t')('filters.score.range_40_60')  },
+        { key: 'range_60_80',  min: 61, max:  80, color: qc[3], label: getDep('t')('filters.score.range_60_80')  },
+        { key: 'range_80_100', min: 81, max: 100, color: qc[4], label: getDep('t')('filters.score.range_80_100') },
       ];
       const counts = tranches.map(()=>0);
       let totalScore=0, scoredCount=0;

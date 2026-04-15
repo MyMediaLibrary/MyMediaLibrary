@@ -37,7 +37,7 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
-  const FILTER_NONE_KEY = '__none__';
+  const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
   const FILTER_ORDER = [
     'type',
     'folder',
@@ -314,8 +314,8 @@ let allItems=[], categories=[], groups=[];
   // Active category prefs (null = all active; Set = specific active names)
   let enabledCategories = null;
   let visibleProviders  = null;
-  const PROVIDER_OTHERS_KEY = '__others__';
-  const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  const PROVIDER_OTHERS_KEY     = window.MMLConstants.PROVIDER_OTHERS_KEY;
+  const PROVIDER_OTHERS_ALIASES = new Set(window.MMLConstants.PROVIDER_OTHERS_ALIASES);
   function _catVisible(cat)  { return !enabledCategories || enabledCategories.has(cat); }
   function _isOthersProviderName(prov) {
     if (!prov) return false;
