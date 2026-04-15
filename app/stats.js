@@ -153,15 +153,15 @@
       return '<div class="pie-wrap">'+svg+legend+'</div>';
     }
 
-    // ── Aggregate by group ────────────────────────────────
-    const byGroup={}, byGroupCount={};
+    // ── Aggregate by category (folder) ───────────────────
+    const byCategory={}, byCategoryCount={};
     items.forEach(i=>{
-      const g=i.group||'Autres';
-      byGroup[g]=(byGroup[g]||0)+(i.size_b||0);
-      byGroupCount[g]=(byGroupCount[g]||0)+1;
+      const c=i.category||i.group||'?';
+      byCategory[c]=(byCategory[c]||0)+(i.size_b||0);
+      byCategoryCount[c]=(byCategoryCount[c]||0)+1;
     });
-    const groupEntriesSize = Object.entries(byGroup).sort((a,b)=>b[1]-a[1]);
-    const groupEntriesCount = Object.entries(byGroupCount).sort((a,b)=>b[1]-a[1]);
+    const categoryEntriesSize = Object.entries(byCategory).sort((a,b)=>b[1]-a[1]);
+    const categoryEntriesCount = Object.entries(byCategoryCount).sort((a,b)=>b[1]-a[1]);
 
     // ── Codec ────────────────────────────────────────────
     const CODEC_COLORS = ['#f59e0b','#3b82f6','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
@@ -371,9 +371,9 @@
         +bars+values+labels+'</svg>';
     }
 
-    // ── Year/Decade aggregation ───────────────────────────
-    const hasGroups = groupEntriesSize.length > 0;
-    const groupColorFn=(k)=>getDep('PALETTE')[getDep('allItems').findIndex(i=>(i.group||'Autres')===k)%getDep('PALETTE').length];
+    // ── Category color helper ─────────────────────────────
+    const hasCategories = categoryEntriesSize.length > 0;
+    const categoryColorFn=(k,idx)=>getDep('PALETTE')[idx%getDep('PALETTE').length];
 
     function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k, defaultUnit = 'size') {
       const showCountByDefault = defaultUnit === 'count';
@@ -416,28 +416,33 @@
       ? switchablePie('prov',getDep('t')('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, getDep('_providerGroupLabel'), 'count')
       : '';
 
-    // ── QUALITY SCORE ─────────────────────────────────────
+    // ── QUALITY SCORE (5 tranches 0-20/21-40/41-60/61-80/81-100) ──────────
     const qualityChartHtml = getDep('allItems').some(i=>i.quality) ? (()=>{
-      const byScore={};
-      let totalScore=0;
+      const tranches = [
+        { key: 'range_0_20',   min:  0, max:  20, color: '#78716c', label: getDep('t')('filters.score.range_0_20')   },
+        { key: 'range_20_40',  min: 21, max:  40, color: '#f87171', label: getDep('t')('filters.score.range_20_40')  },
+        { key: 'range_40_60',  min: 41, max:  60, color: '#fb923c', label: getDep('t')('filters.score.range_40_60')  },
+        { key: 'range_60_80',  min: 61, max:  80, color: '#fbbf24', label: getDep('t')('filters.score.range_60_80')  },
+        { key: 'range_80_100', min: 81, max: 100, color: '#22c55e', label: getDep('t')('filters.score.range_80_100') },
+      ];
+      const counts = tranches.map(()=>0);
+      let totalScore=0, scoredCount=0;
       items.forEach(i=>{
         if(!i.quality) return;
-        const l=i.quality.level||0;
-        byScore[l]=(byScore[l]||0)+1;
-        totalScore+=l;
+        const s = typeof i.quality.score==='number' ? i.quality.score : (i.quality.level||0)*20;
+        totalScore+=s; scoredCount++;
+        const idx = tranches.findIndex(tr=>s>=tr.min&&s<=tr.max);
+        if(idx>=0) counts[idx]++;
       });
-      if(!Object.keys(byScore).length) return '';
-      const scoreColors=['#78716c','#f87171','#fb923c','#fbbf24','#4ade80','#22c55e'];
-      const scoreLabels={0:getDep('t')('quality_level.0'),1:getDep('t')('quality_level.1'),2:getDep('t')('quality_level.2'),3:getDep('t')('quality_level.3'),4:getDep('t')('quality_level.4'),5:getDep('t')('quality_level.5')};
-      const maxCount=Math.max(...Object.values(byScore),0);
-      const avgScore=(totalScore/(items.filter(i=>i.quality).length)).toFixed(1);
+      if(!scoredCount) return '';
+      const maxCount=Math.max(...counts,0);
+      const avgScore=(totalScore/scoredCount).toFixed(1);
       let html='<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.quality_score')+'</div>';
-      for(let l=0;l<=5;l++){
-        const count=byScore[l]||0;
+      tranches.forEach((tr,i)=>{
+        const count=counts[i];
         const pct=maxCount?Math.round(100*count/maxCount):0;
-        const col=scoreColors[l];
-        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">'+getDep('escH')(scoreLabels[l])+'</div><div style="flex:1;height:6px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+col+'"></div></div><div style="font-size:11px;color:var(--muted);width:30px;text-align:right">'+count+'</div></div>';
-      }
+        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">'+getDep('escH')(tr.label)+'</div><div style="flex:1;height:6px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+tr.color+'"></div></div><div style="font-size:11px;color:var(--muted);width:30px;text-align:right">'+count+'</div></div>';
+      });
       html+='<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">'+getDep('t')('stats.quality_average').replace('{score}',avgScore)+'</div></div>';
       return html;
     })() : '';
@@ -447,24 +452,22 @@
 
     // ── YEARS OF RELEASE CHART ────────────────────────────────
     const yearChartHtml = yearEntriesSize.length ? (()=>{
-      const yearChart = buildYearChart('years')
-        + '<div id="yearControls" style="margin-top:12px;display:flex;gap:4px;justify-content:center">'
+      const yearChart = '<div id="yearControls" style="margin-top:0;margin-bottom:12px;display:flex;gap:4px;justify-content:center">'
           +'<button class="pie-switch-btn active" data-year-period="years" >'+getDep('t')('stats.years')+'</button>'
           +'<button class="pie-switch-btn" data-year-period="decades" >'+getDep('t')('stats.decades')+'</button>'
         +'</div>'
-        +'<div id="yearCharts" style="margin-top:12px">'+buildYearChart('years')+'</div>';
+        +'<div id="yearCharts">'+buildYearChart('years')+'</div>';
       return '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.release_years')+'</div>'+yearChart+'</div>';
     })() : '';
 
     // ── Monthly curve ────────────────────────────────────────
     const curveHtml = keys.length >= 2
-      ? buildCurveForPeriod('12m')
-      + '<div id="curveControls" style="margin-top:12px;display:flex;gap:4px;justify-content:center">'
+      ? '<div id="curveControls" style="margin-bottom:12px;display:flex;gap:4px;justify-content:center">'
         +'<button class="pie-switch-btn"        data-period="all"  >'+getDep('t')('stats.all')+'</button>'
         +'<button class="pie-switch-btn active" data-period="12m"  >'+getDep('t')('stats.months_12')+'</button>'
         +'<button class="pie-switch-btn"        data-period="30d"  >'+getDep('t')('stats.days_30')+'</button>'
       +'</div>'
-      +'<div id="curveCharts" style="margin-top:12px">'+buildCurveForPeriod('12m')+'</div>'
+      +'<div id="curveCharts">'+buildCurveForPeriod('12m')+'</div>'
       : '';
 
     // ── BUILD FINAL LAYOUT (SPEC: exactly 9 blocks) ──────────────────────
@@ -475,7 +478,7 @@
     return ''
       // Row 1: Dossiers (1/2) | Fournisseurs (1/2)
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%">'
-        + '<div>'+(hasGroups ? switchablePie('group',getDep('t')('stats.groups'), groupEntriesSize, groupEntriesCount, groupColorFn, k => k, 'size') : '')+'</div>'
+        + '<div>'+(hasCategories ? switchablePie('category',getDep('t')('stats.categories'), categoryEntriesSize, categoryEntriesCount, categoryColorFn, k => k, 'size') : '')+'</div>'
         + '<div>'+provPieHtml+'</div>'
       + '</div>'
       // Row 2: Résolution (1/2) | Codec vidéo (1/2)
