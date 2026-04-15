@@ -35,8 +35,8 @@
 
 - **Container**: nginx:alpine + Python 3 + dcron (single image)
 - **Frontend**: HTML/CSS + vanilla JS (no framework)
-- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
-- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Backend**: minimal Python server (`backend/scanner.py`) — REST API routes + static file serving
+- **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, `library.json` writing
 - **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
 
 ### Internationalisation

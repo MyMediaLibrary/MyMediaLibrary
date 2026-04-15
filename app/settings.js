@@ -76,13 +76,6 @@
     panel.style.display = collapsed ? 'none' : 'block';
   }
 
-  function _hasEditableFields() {
-    const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
-                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight',
-                 'cfgInventoryEnabled','cfgEnableScore'];
-    return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
-  }
-
   // ── Settings: folder helpers (private to this module) ────────────────────
   function _setFolderEnabled(folder, enabled) {
     if (!folder) return;
