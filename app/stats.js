@@ -413,10 +413,10 @@
     // ── QUALITY SCORE (5 tranches 0-20/21-40/41-60/61-80/81-100) ──────────
     const qualityChartHtml = getDep('allItems').some(i=>i.quality) ? (()=>{
       const tranches = [
-        { key: 'range_0_20',   min:  0, max:  20, color: '#78716c', label: getDep('t')('filters.score.range_0_20')   },
-        { key: 'range_20_40',  min: 21, max:  40, color: '#f87171', label: getDep('t')('filters.score.range_20_40')  },
-        { key: 'range_40_60',  min: 41, max:  60, color: '#fb923c', label: getDep('t')('filters.score.range_40_60')  },
-        { key: 'range_60_80',  min: 61, max:  80, color: '#fbbf24', label: getDep('t')('filters.score.range_60_80')  },
+        { key: 'range_0_20',   min:  0, max:  20, color: '#ef4444', label: getDep('t')('filters.score.range_0_20')   },
+        { key: 'range_20_40',  min: 21, max:  40, color: '#f97316', label: getDep('t')('filters.score.range_20_40')  },
+        { key: 'range_40_60',  min: 41, max:  60, color: '#eab308', label: getDep('t')('filters.score.range_40_60')  },
+        { key: 'range_60_80',  min: 61, max:  80, color: '#84cc16', label: getDep('t')('filters.score.range_60_80')  },
         { key: 'range_80_100', min: 81, max: 100, color: '#22c55e', label: getDep('t')('filters.score.range_80_100') },
       ];
       const counts = tranches.map(()=>0);
