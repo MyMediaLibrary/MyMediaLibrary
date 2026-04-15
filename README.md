@@ -64,7 +64,7 @@ docker compose pull && docker compose up -d
 ### Scan sécurité (Grype)
 
 ```bash
-docker build -t mymedialibrary:local -f conf/Dockerfile .
+docker build -t mymedialibrary:local -f docker/Dockerfile .
 grype mymedialibrary:local
 ```
 
@@ -132,7 +132,7 @@ docker compose pull && docker compose up -d
 ### Security scan (Grype)
 
 ```bash
-docker build -t mymedialibrary:local -f conf/Dockerfile .
+docker build -t mymedialibrary:local -f docker/Dockerfile .
 grype mymedialibrary:local
 ```
 

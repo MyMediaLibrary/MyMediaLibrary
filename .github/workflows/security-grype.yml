@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build local image
-        run: docker build -t mymedialibrary:grype -f conf/Dockerfile .
+        run: docker build -t mymedialibrary:grype -f docker/Dockerfile .
 
       - name: Scan image with Grype (table)
         uses: anchore/scan-action@v7
