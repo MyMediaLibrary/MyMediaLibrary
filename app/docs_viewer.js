@@ -117,21 +117,41 @@
   updateThemeButtonLabel();
   document.documentElement.lang = lang;
 
-  fetch(docPath, { cache: 'no-store' })
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.text();
-    })
-    .then((md) => {
-      const html = window.DocsMarkdown.parseMarkdown(md);
-      contentEl.innerHTML = html;
-      bindInPageAnchors();
-      contentEl.hidden = false;
-      statusEl.hidden = true;
-      scrollToHash(window.location.hash);
-    })
-    .catch((err) => {
-      statusEl.textContent = `Impossible de charger la documentation (${err.message}).`;
-      statusEl.classList.add('is-error');
-    });
+  function loadDoc() {
+    fetch(docPath, { cache: 'no-store' })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((md) => {
+        const html = window.DocsMarkdown.parseMarkdown(md);
+        contentEl.innerHTML = html;
+        bindInPageAnchors();
+        contentEl.hidden = false;
+        statusEl.hidden = true;
+        scrollToHash(window.location.hash);
+      })
+      .catch((err) => {
+        statusEl.textContent = `Impossible de charger la documentation (${err.message}).`;
+        statusEl.classList.add('is-error');
+      });
+  }
+
+  async function init() {
+    try {
+      const r = await fetch('/api/auth');
+      if (r.ok) {
+        const d = await r.json();
+        if (d.required && sessionStorage.getItem('mediaAuth') !== '1') {
+          window.location.replace('/');
+          return;
+        }
+      }
+    } catch (_) {
+      // Auth API unreachable — proceed (same behaviour as app.js)
+    }
+    loadDoc();
+  }
+
+  init();
 }());
