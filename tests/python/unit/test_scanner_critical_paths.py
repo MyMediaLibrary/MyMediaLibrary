@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "conf"))
+sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
 
@@ -246,6 +246,7 @@ class HdrFallbackSafetyTest(unittest.TestCase):
                 "codec": "H.264",
                 "hdr": True,
                 "hdr_type": "Dolby Vision",
+                "quality": {"video": 30, "audio": 8, "languages": 3, "size": 5, "score": 46, "level": 2},
             }
             cat = {"name": "Films", "type": "movie"}
             item = scanner.scan_media_item(media_dir, root, cat, prev)

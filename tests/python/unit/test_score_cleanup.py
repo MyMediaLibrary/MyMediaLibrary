@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
 
@@ -65,7 +66,7 @@ class ScoreCleanupTest(unittest.TestCase):
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
                  patch.object(scanner, "build_categories_from_config", return_value=categories), \
                  patch.object(scanner, "scan_media_item", side_effect=self._make_scan_item):
-                scanner.run_quick(only_category="Movies", scan_mode="quick")
+                scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertFalse(payload["meta"]["score_enabled"])
@@ -115,7 +116,7 @@ class ScoreCleanupTest(unittest.TestCase):
                  patch.object(scanner, "normalize_folder_enabled_flags", return_value=False), \
                  patch.object(scanner, "build_categories_from_config", return_value=categories), \
                  patch.object(scanner, "scan_media_item", side_effect=self._make_scan_item):
-                scanner.run_quick(only_category="Movies", scan_mode="quick")
+                scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertTrue(payload["meta"]["score_enabled"])

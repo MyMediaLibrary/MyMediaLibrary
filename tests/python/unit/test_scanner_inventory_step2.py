@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "conf"))
+sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
 
@@ -163,7 +163,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking", side_effect=RuntimeError("boom")):
-                            scanner.run_quick(scan_mode="quick")
+                            scanner.run_quick()
 
             with open(output_path, encoding="utf-8") as f:
                 written_library = json.load(f)
@@ -194,7 +194,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(scan_mode="quick")
+                            scanner.run_quick()
                             inventory_write.assert_not_called()
 
     def test_run_quick_runs_inventory_when_flag_enabled(self):
@@ -226,7 +226,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(scan_mode="quick")
+                            scanner.run_quick()
                             inventory_write.assert_called_once()
                             _, kwargs = inventory_write.call_args
                             self.assertEqual(kwargs["forced_missing_folder_refs"], set())
@@ -276,7 +276,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(scan_mode="quick")
+                            scanner.run_quick()
                             _, kwargs = inventory_write.call_args
                             self.assertEqual(kwargs["forced_missing_folder_refs"], {("movie", "Films")})
 
@@ -412,7 +412,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(scan_mode="quick")
+                            scanner.run_quick()
                             inventory_write.assert_called_once()
                             args, kwargs = inventory_write.call_args
                             self.assertEqual(args[0], [])
@@ -450,7 +450,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch.object(scanner, "INVENTORY_OUTPUT_PATH", str(inventory_output_path)):
                             with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                                scanner.run_quick(scan_mode="quick")
+                                scanner.run_quick()
                                 inventory_write.assert_not_called()
 
             self.assertTrue(inventory_output_path.exists())
@@ -488,7 +488,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(only_category="Films", scan_mode="full")
+                            scanner.run_quick(only_category="Films")
                             inventory_write.assert_called_once()
                             _, kwargs = inventory_write.call_args
                             self.assertIn("reconcile_missing", kwargs)
@@ -523,7 +523,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
-                            scanner.run_quick(only_category="", scan_mode="full")
+                            scanner.run_quick(only_category="")
                             inventory_write.assert_called_once()
                             _, kwargs = inventory_write.call_args
                             self.assertIn("reconcile_missing", kwargs)

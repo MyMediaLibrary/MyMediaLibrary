@@ -1,0 +1,261 @@
+name: Security Scan
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Commit SHA to scan (optional, defaults to selected branch HEAD)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  IMAGE_NAME: mymedialibrary:ci-scan
+  TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_sha) || github.sha }}
+
+jobs:
+  security-scan:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db
+
+      - name: Log in to GHCR
+        continue-on-error: true
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reuse image from registry when available
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_REPO="ghcr.io/mymedialibrary/mymedialibrary"
+          CANDIDATE="${IMAGE_REPO}:${TARGET_SHA}"
+
+          if docker pull "$CANDIDATE"; then
+            docker tag "$CANDIDATE" "$IMAGE_NAME"
+            echo "source=reused" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "source=build" >> "$GITHUB_OUTPUT"
+
+      - name: Build fallback image
+        if: steps.image.outputs.source == 'build'
+        run: docker build -t "$IMAGE_NAME" -f docker/Dockerfile .
+
+      - name: Trivy (full report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-full.txt
+
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --no-progress \
+            --format json \
+            -o /workspace/trivy-full.json
+
+      - name: Trivy (actionable report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-actionable.txt
+
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --format json \
+            -o /workspace/trivy-actionable.json
+
+      - name: Grype (full report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" -o table > grype-full.txt || true
+
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" -o json > grype-full.json || true
+
+      - name: Grype (actionable report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" \
+            --only-fixed \
+            -o table > grype-actionable.txt || true
+
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" \
+            --only-fixed \
+            -o json > grype-actionable.json || true
+
+      - name: Trivy FS scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            aquasec/trivy:0.53.0 fs /workspace \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-fs.txt
+
+      - name: Trivy secrets scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            aquasec/trivy:0.53.0 fs /workspace \
+            --scanners secret \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-secrets.txt
+
+      - name: Generate SBOM
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --format cyclonedx \
+            -o /workspace/sbom.json
+
+      - name: Ensure report files exist
+        if: always()
+        run: |
+          [ -f trivy-full.txt ] || : > trivy-full.txt
+          [ -f trivy-actionable.txt ] || : > trivy-actionable.txt
+          [ -f trivy-fs.txt ] || : > trivy-fs.txt
+          [ -f trivy-secrets.txt ] || : > trivy-secrets.txt
+          [ -f grype-full.txt ] || : > grype-full.txt
+          [ -f grype-actionable.txt ] || : > grype-actionable.txt
+          [ -s trivy-full.json ] || echo '{"Results":[]}' > trivy-full.json
+          [ -s trivy-actionable.json ] || echo '{"Results":[]}' > trivy-actionable.json
+          [ -s grype-full.json ] || echo '{"matches":[]}' > grype-full.json
+          [ -s grype-actionable.json ] || echo '{"matches":[]}' > grype-actionable.json
+          [ -s sbom.json ] || echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.json
+          jq -e . trivy-full.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-full.json
+          jq -e . trivy-actionable.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-actionable.json
+          jq -e . grype-full.json >/dev/null 2>&1 || echo '{"matches":[]}' > grype-full.json
+          jq -e . grype-actionable.json >/dev/null 2>&1 || echo '{"matches":[]}' > grype-actionable.json
+
+      - name: Security summary
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "===== SECURITY SUMMARY ====="
+
+          echo ""
+          echo "TRIVY (FULL):"
+          jq -r '
+            [
+              .Results[].Vulnerabilities[]?
+            ] | group_by(.Severity) |
+            map({severity: .[0].Severity, count: length}) |
+            .[] | "- \(.severity): \(.count)"
+          ' trivy-full.json
+
+          echo ""
+          echo "TRIVY (ACTIONABLE):"
+          jq -r '
+            [
+              .Results[].Vulnerabilities[]?
+            ] | group_by(.Severity) |
+            map({severity: .[0].Severity, count: length}) |
+            .[] | "- \(.severity): \(.count)"
+          ' trivy-actionable.json
+
+          echo ""
+          echo "GRYPE (FULL):"
+          jq -r '
+            .matches
+            | group_by(.vulnerability.severity)
+            | map({severity: .[0].vulnerability.severity, count: length})
+            | .[] | "- \(.severity): \(.count)"
+          ' grype-full.json
+
+          echo ""
+          echo "GRYPE (ACTIONABLE):"
+          jq -r '
+            .matches
+            | group_by(.vulnerability.severity)
+            | map({severity: .[0].vulnerability.severity, count: length})
+            | .[] | "- \(.severity): \(.count)"
+          ' grype-actionable.json
+
+      - name: Upload security reports
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            trivy-full.txt
+            trivy-full.json
+            trivy-actionable.txt
+            trivy-actionable.json
+            grype-full.txt
+            grype-full.json
+            grype-actionable.txt
+            grype-actionable.json
+            trivy-fs.txt
+            trivy-secrets.txt
+            sbom.json

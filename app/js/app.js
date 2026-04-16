@@ -37,7 +37,7 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
-  const FILTER_NONE_KEY = '__none__';
+  const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
   const FILTER_ORDER = [
     'type',
     'folder',
@@ -174,7 +174,7 @@ let allItems=[], categories=[], groups=[];
     return canonical || key;
   }
 
-  function getFilterDisplayValue(key, noneTranslationKey = 'filters.none') {
+  function getFilterDisplayValue(key, noneTranslationKey = 'filters.unknown') {
     const normalized = normalizeFilterValue(key);
     if (normalized === FILTER_NONE_KEY) return t(noneTranslationKey);
     return normalized;
@@ -314,8 +314,8 @@ let allItems=[], categories=[], groups=[];
   // Active category prefs (null = all active; Set = specific active names)
   let enabledCategories = null;
   let visibleProviders  = null;
-  const PROVIDER_OTHERS_KEY = '__others__';
-  const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  const PROVIDER_OTHERS_KEY     = window.MMLConstants.PROVIDER_OTHERS_KEY;
+  const PROVIDER_OTHERS_ALIASES = new Set(window.MMLConstants.PROVIDER_OTHERS_ALIASES);
   function _catVisible(cat)  { return !enabledCategories || enabledCategories.has(cat); }
   function _isOthersProviderName(prov) {
     if (!prov) return false;
@@ -402,7 +402,6 @@ let allItems=[], categories=[], groups=[];
     if (payload !== undefined) console.info('[filters]', message, payload);
     else console.info('[filters]', message);
   }
-  let _settingsJsrTestOk = false;
   let appConfig = {};            // loaded from /api/config
   let serverConfig = {};         // from library.json config block
   let appVersionInfo = null;     // loaded from /version.json
@@ -551,11 +550,8 @@ let allItems=[], categories=[], groups=[];
   }
   let currentView='grid', currentTab='library';
   let tSortCol=null, tSortDir=1;
-  let providerColorMap={};
 
-  const PALETTE=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa',
-    '#f97316','#34d399','#60a5fa','#f472b6','#facc15',
-    '#2dd4bf','#c084fc','#fb923c','#86efac','#93c5fd'];
+  const PALETTE = window.MMLCore.PALETTE;
 
   let groupColorMap={}, catColorMap={};
 
@@ -585,6 +581,9 @@ let allItems=[], categories=[], groups=[];
   }
 
   async function loadLibrary() {
+    window.MMLState.isLoading = true;
+    window.MMLState.isLoaded  = false;
+    window.MMLState.hasError  = false;
     await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
@@ -593,10 +592,6 @@ let allItems=[], categories=[], groups=[];
       await loadTranslations(lang);
     }
     applyTranslations();
-    // Refresh scan button label with translated mode name
-    const scanLbl = document.getElementById('scanBtnLabel');
-    if (scanLbl) scanLbl.textContent = _scanModeLabel(_scanMode);
-
     // Backend is the source of truth for onboarding state.
     const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
       ? appConfig.needs_onboarding
@@ -609,7 +604,7 @@ let allItems=[], categories=[], groups=[];
     }
 
     try {
-      const r = await fetch('./library.json?_='+Date.now());
+      const r = await fetch('/library.json?_='+Date.now());
       if (r.status === 404 && explicitNeedsOnboarding === null) {
         // Legacy backend compatibility: if the explicit flag is absent, fallback
         // to first-run behavior when library.json has not been generated yet.
@@ -622,6 +617,7 @@ let allItems=[], categories=[], groups=[];
       const data = await r.json();
       libraryExportSource = data;
       allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
+      window.MMLState.items = allItems;
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
       });
@@ -635,9 +631,33 @@ let allItems=[], categories=[], groups=[];
       }));
       groups.forEach((g,i)=>{ groupColorMap[g]=PALETTE[i%PALETTE.length]; });
       categories.forEach((c,i)=>{ catColorMap[c]=PALETTE[i%PALETTE.length]; });
-      // Build provider color map from unique provider names
-      const pNames=[...new Set(allItems.flatMap(i=>(i.providers||[]).map(_pname)))].filter(Boolean).sort();
-      pNames.forEach((n,i)=>{ providerColorMap[n]=PALETTE[(i+5)%PALETTE.length]; });
+
+      // Inject dependencies into stats module
+      window.MMLStats.init({
+        filterItems,
+        allItems,
+        PALETTE,
+        PROVIDERS_META,
+        providerCatalog,
+        PROVIDER_OTHERS_KEY,
+        getNormalizedVideoCodec,
+        getNormalizedAudioCodec,
+        getNormalizedResolution,
+        getAudioLanguageSimple,
+        getAudioLanguageSimpleDisplay,
+        getAudioCodecDisplay,
+        getFilterDisplayValue,
+        _itemProviderGroups,
+        _providerGroupKey,
+        _providerGroupLabel,
+        _pname,
+        _plogo,
+        t,
+        fmtSize,
+        escH,
+        MMLLogic
+      });
+
       const d=new Date(data.scanned_at);
       const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
       document.getElementById('scanInfo').innerHTML=
@@ -655,11 +675,17 @@ let allItems=[], categories=[], groups=[];
       renderResolutionFilter();
       renderCodecFilter();
       restoreState();
+      window.MMLState.isLoaded  = true;
+      window.MMLState.isLoading = false;
       renderStats(filterItems());
       render();
       updateExportJsonButtonState();
     } catch(e) {
-      console.error('loadLibrary error:', e);
+      const _is401 = String(e).includes('401');
+      if (!_is401) console.error('loadLibrary error:', e);
+      window.MMLState.isLoading = false;
+      if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
+      window.MMLState.hasError = true;
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
@@ -719,6 +745,12 @@ let allItems=[], categories=[], groups=[];
 
 
   // ── CONFIG ───────────────────────────────────────────
+  function _isFolderEnabled(folder) {
+    const enabled = folder?.enabled;
+    if (enabled === undefined || enabled === null) return folder?.visible !== false;
+    return enabled !== false;
+  }
+
   function folderToCategoryName(name) {
     return name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
@@ -788,7 +820,7 @@ let allItems=[], categories=[], groups=[];
       _updateTypeFilterVisibility();
       applyScoreFeatureVisibility();
     } catch(e) {
-      console.warn('loadConfig error:', e);
+      if (!String(e).includes('401')) console.warn('loadConfig error:', e);
     }
   }
 
@@ -1435,7 +1467,7 @@ let allItems=[], categories=[], groups=[];
     ensureScoreFilterLast();
     renderStats(filterItems());
     if (currentTab==='library') render();
-    else if (currentTab==='stats') renderStatsPanel();
+    else if (currentTab==='stats') window.MMLStats.renderStatsPanel();
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
@@ -1692,7 +1724,7 @@ let allItems=[], categories=[], groups=[];
       el.classList.toggle('active', t === tab);
     });
     if (tab==='library') render();
-    else if (tab==='stats') renderStatsPanel();
+    else if (tab==='stats') window.MMLStats.renderStatsPanel();
     saveState();
   }
 
@@ -1821,16 +1853,16 @@ let allItems=[], categories=[], groups=[];
     if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
       infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
     }
-    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'" onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'"':'')+'>'
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
         +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
           +'<div class="tl-meta-row compact">'
-            +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+            +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
             +'<span class="tl-cat">'+escH(item.category)+'</span>'
-            +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+            +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +'</div>'
           +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
@@ -1864,10 +1896,10 @@ let allItems=[], categories=[], groups=[];
       const mobileInfo = '<td class="col-mobile-info">'
         +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+escH(item.title)+'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
-          +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+          +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
           +'<span class="cat-badge">'+escH(item.category)+'</span>'
           +(qualityBadgeHTML(item, 'quality-badge-inline') || '')
-          +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+          +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
         +'</div>'
@@ -1882,11 +1914,11 @@ let allItems=[], categories=[], groups=[];
         +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy"/>':'<div class="ph">🎬</div>')+'</td>':'')
         +mobileInfo
         +'<td class="col-title">'+escH(item.title)+'</td>'
-        +'<td class="col-year">'+(item.year||'-')+'</td>'
+        +'<td class="col-year">'+escH(String(item.year||'-'))+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
         +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
-        +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
+        +'<td>'+(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
         +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
@@ -1978,8 +2010,8 @@ let allItems=[], categories=[], groups=[];
 
   // ── UTILS ────────────────────────────────────────────
   function fmtDate(iso){ if(!iso)return'-'; return new Date(iso).toLocaleDateString('fr-FR'); }
-  function fmtSize(b){ if(!b)return'0 B'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;} return b.toFixed(1)+' '+u[i]; }
-  function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\r?\n/g,' '); }
+  const fmtSize = window.MMLCore.fmtSize;
+  const escH    = window.MMLCore.escH;
   function escJ(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r/g,'').replace(/\n/g,' ').replace(/\u2028/g,' ').replace(/\u2029/g,' '); }
   // sanitizeStr: safe for JS string literals inside HTML attributes (onclick, onmouseenter…)
   const sanitizeStr = s => (s||'').replace(/\r?\n/g,' ').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\u2028/g,' ').replace(/\u2029/g,' ');
@@ -2032,514 +2064,11 @@ let allItems=[], categories=[], groups=[];
 
 
 
-  // ── STATS PANEL ──────────────────────────────────────
-  function renderStatsPanel() {
-    const items = filterItems();
-    document.getElementById('statsContent').innerHTML = buildStats(items);
-  }
+  // ── STATS PANEL (delegated to stats.js) ──────────────
+  // window.MMLStats.renderStatsPanel() is now provided by window.MMLStats
 
-  function buildStats(items) {
-    items = items || allItems;
-    const isFiltered = items.length < allItems.length;
-    if (!items.length) return '<p style="color:var(--muted);padding:40px">'+t('library.no_results')+'</p>';
-
-    const totalBytes = items.reduce((s,i)=>s+(i.size_b||0),0);
-    const totalFiles = items.reduce((s,i)=>s+(i.file_count||0),0);
-
-    // ── Helpers ──────────────────────────────────────────
-    function makePie(entries, colorFn, valFn, labelFn, fmtFn) {
-      const total = entries.reduce((s,[,v])=>s+valFn(v),0);
-      if (!total) return '';
-      const R=70, CX=80, CY=80, SIZE=160;
-      let angle = -Math.PI/2;
-      let slices = '';
-      entries.forEach(([k,v],idx) => {
-        const val = valFn(v);
-        const frac = val/total;
-        const a1 = angle, a2 = angle + frac*2*Math.PI;
-        const x1=CX+R*Math.cos(a1), y1=CY+R*Math.sin(a1);
-        const x2=CX+R*Math.cos(a2), y2=CY+R*Math.sin(a2);
-        const large = frac > 0.5 ? 1 : 0;
-        const col = colorFn(k,idx);
-        if (frac > 0.999) {
-          slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="'+col+'"/>';
-        } else {
-          slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+escH(labelFn(k))+' — '+fmtFn(val)+' ('+Math.round(frac*100)+'%)</title></path>';
-        }
-        angle = a2;
-      });
-      // donut hole
-      slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+(R*0.52)+'" fill="var(--surface)"/>';
-      // center label
-      slices += '<text x="'+CX+'" y="'+(CY-7)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">'+entries.length+'</text>';
-      slices += '<text x="'+CX+'" y="'+(CY+8)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+(entries.length>1?t('stats.entries'):t('stats.entry'))+'</text>';
-
-      const svg = '<svg viewBox="0 0 '+SIZE+' '+SIZE+'" width="'+SIZE+'" height="'+SIZE+'" style="flex-shrink:0">'+slices+'</svg>';
-      const legend = '<div class="pie-legend">'+entries.slice(0,12).map(([k,v],idx)=>{
-        const val=valFn(v), pct=Math.round(val/total*100);
-        return '<div class="pie-leg-row">'
-          +'<div class="pie-leg-dot" style="background:'+colorFn(k,idx)+'"></div>'
-          +'<div class="pie-leg-label" title="'+escH(labelFn(k))+'">'+escH(labelFn(k))+'</div>'
-          +'<div class="pie-leg-val">'+fmtFn(val)+'</div>'
-          +'<div class="pie-leg-pct">'+pct+'%</div>'
-          +'</div>';
-      }).join('')+(entries.length>12?'<div style="font-size:11px;color:var(--muted);padding-top:2px">+' + (entries.length-12) + ' autres</div>':'')+'</div>';
-      return '<div class="pie-wrap">'+svg+legend+'</div>';
-    }
-
-    // ── Aggregate by group ────────────────────────────────
-    const byGroup={}, byCat={}, byGroupCount={}, byCatCount={};
-    items.forEach(i=>{
-      const g=i.group||'Autres';
-      byGroup[g]=(byGroup[g]||0)+(i.size_b||0);
-      byGroupCount[g]=(byGroupCount[g]||0)+1;
-      byCat[i.category]=(byCat[i.category]||0)+(i.size_b||0);
-      byCatCount[i.category]=(byCatCount[i.category]||0)+1;
-    });
-    const groupEntriesSize = Object.entries(byGroup).sort((a,b)=>b[1]-a[1]);
-    const groupEntriesCount = Object.entries(byGroupCount).sort((a,b)=>b[1]-a[1]);
-    const catEntriesSize = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
-    const catEntriesCount = Object.entries(byCatCount).sort((a,b)=>b[1]-a[1]);
-
-    // ── Codec ────────────────────────────────────────────
-    const CODEC_COLORS = ['#f59e0b','#3b82f6','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
-    const byCodec={}, byCodecCount={};
-    items.forEach(i=>{
-      const key = getNormalizedVideoCodec(i);
-      byCodec[key]=(byCodec[key]||0)+(i.size_b||0);
-      byCodecCount[key]=(byCodecCount[key]||0)+1;
-    });
-    const codecColorFn=(k,idx)=>CODEC_COLORS[idx%CODEC_COLORS.length];
-    const codecEntriesSize  = Object.entries(byCodec).sort((a,b)=>b[1]-a[1]);
-    const codecEntriesCount = Object.entries(byCodecCount).sort((a,b)=>b[1]-a[1]);
-
-    // ── Audio Codec ──────────────────────────────────────
-    const AUDIO_CODEC_COLORS = ['#06b6d4','#f97316','#a3e635','#e879f9','#fb7185','#34d399','#fbbf24'];
-    const byAudioCodec={}, byAudioCodecCount={};
-    items.forEach(i=>{
-      const key = getNormalizedAudioCodec(i);
-      byAudioCodec[key]=(byAudioCodec[key]||0)+(i.size_b||0);
-      byAudioCodecCount[key]=(byAudioCodecCount[key]||0)+1;
-    });
-    const audioCodecColorFn=(k,idx)=>AUDIO_CODEC_COLORS[idx%AUDIO_CODEC_COLORS.length];
-    const audioCodecEntriesSize  = Object.entries(byAudioCodec).sort((a,b)=>b[1]-a[1]);
-    const audioCodecEntriesCount = Object.entries(byAudioCodecCount).sort((a,b)=>b[1]-a[1]);
-
-    // ── Audio Languages ──────────────────────────────────
-    const AUDIO_LANG_COLORS = ['#38bdf8','#fb923c','#4ade80','#f472b6','#a78bfa','#fbbf24','#34d399','#60a5fa','#f87171','#2dd4bf'];
-    const byAudioLangCount={}, byAudioLangSize={};
-    items.forEach(i=>{
-      const key = getAudioLanguageSimpleDisplay(getAudioLanguageSimple(i));
-      byAudioLangCount[key]=(byAudioLangCount[key]||0)+1;
-      byAudioLangSize[key]=(byAudioLangSize[key]||0)+(i.size_b||0);
-    });
-    const hasLangData = Object.keys(byAudioLangCount).length > 0;
-    const audioLangEntriesCount = Object.entries(byAudioLangCount).sort((a,b)=>b[1]-a[1]);
-    const audioLangEntriesSize = Object.entries(byAudioLangSize).sort((a,b)=>b[1]-a[1]);
-    const audioLangColorFn=(k,idx)=>AUDIO_LANG_COLORS[idx%AUDIO_LANG_COLORS.length];
-
-    // ── Resolution ───────────────────────────────────────
-    const RES_ORDER = ['4K','1080p','720p','SD'];
-    const RES_COLORS = {'4K':'#a855f7','1080p':'#22c55e','720p':'#3b82f6','SD':'#78716c'};
-    const byRes={}, byResCount={};
-    items.forEach(i=>{
-      const r=getNormalizedResolution(i);
-      byRes[r]=(byRes[r]||0)+(i.size_b||0);
-      byResCount[r]=(byResCount[r]||0)+1;
-    });
-    const resColorFn=(k)=>RES_COLORS[k]||'#888';
-    const resEntriesSize = RES_ORDER.filter(r=>byRes[r]).map(r=>[r,byRes[r]]);
-    const resEntriesCount = RES_ORDER.filter(r=>byResCount[r]).map(r=>[r,byResCount[r]]);
-
-
-    // ── Providers ─────────────────────────────────────────
-    const groupedProviderCount = window.MMLLogic?.groupedProviderCounts
-      ? window.MMLLogic.groupedProviderCounts(items, _providerGroupKey, _pname)
-      : (() => {
-          const fallback = {};
-          items.forEach(i => _itemProviderGroups(i).forEach(name => {
-            fallback[name] = (fallback[name] || 0) + 1;
-          }));
-          return fallback;
-        })();
-    const byProv = {};
-    Object.entries(groupedProviderCount).forEach(([name, count]) => {
-      byProv[name] = { count, logo: '' };
-    });
-    items.forEach(i => (i.providers || []).forEach(p => {
-      const rawName = _pname(p);
-      const name = _providerGroupKey(rawName);
-      if (!name || !byProv[name] || name === PROVIDER_OTHERS_KEY) return;
-      if (!byProv[name].logo) byProv[name].logo = _plogo(p);
-    }));
-    const provEntries=Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
-    const maxPC = provEntries[0]?.[1].count||1;
-    const provColors=['#7c6aff','#ff6a6a','#4ecdc4','#f7b731','#a78bfa','#f97316','#34d399','#60a5fa','#f472b6'];
-
-    // ── Provider x group cross table ──────────────────────
-    const provNames=provEntries.map(([k])=>k);
-    const provByGroup={};
-    items.forEach(i=>{
-      const g=i.group||'Autres';
-      if(!provByGroup[g]) provByGroup[g]={};
-      _itemProviderGroups(i).forEach(n => { provByGroup[g][n]=(provByGroup[g][n]||0)+1; });
-    });
-    const provByCat={};
-    items.forEach(i=>{
-      if(!provByCat[i.category]) provByCat[i.category]={};
-      _itemProviderGroups(i).forEach(n => { provByCat[i.category][n]=(provByCat[i.category][n]||0)+1; });
-    });
-
-    function crossTable(rowEntries, rowColorFn, transpose) {
-      if(!provNames.length) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.no_provider_data')+'</p>';
-      if (transpose) {
-        // providers as rows, groups/cats as columns
-        const colKeys = rowEntries.map(([k])=>k);
-        const colColorFn = rowColorFn;
-        const headers = colKeys.map(k=>'<th style="color:'+colColorFn(k)+'">'+escH(k)+'</th>').join('');
-        const rows = provNames.map((p,idx)=>{
-          const logo=(p !== PROVIDER_OTHERS_KEY && (PROVIDERS_META[p]?.logo_url||providerCatalog[p]))?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
-          const cells=rowEntries.map(([k,pmap])=>{
-            const n=pmap[p]||0;
-            return '<td style="color:'+(n?'var(--text)':'var(--border)')+';">'+(n||'–')+'</td>';
-          }).join('');
-          return '<tr><td style="font-weight:600">'+logo+escH(_providerGroupLabel(p))+'</td>'+cells+'</tr>';
-        }).join('');
-        return '<div class="cross-wrap"><table class="cross-table"><thead><tr><th></th>'+headers+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-      }
-      const headers = provNames.map(p=>{
-        const logo=(p !== PROVIDER_OTHERS_KEY && (PROVIDERS_META[p]?.logo_url||providerCatalog[p]))?'<img class="cross-logo" src="'+escH(PROVIDERS_META[p]?.logo_url||providerCatalog[p]||'')+'" alt=""/>':'';
-        return '<th>'+logo+escH(_providerGroupLabel(p))+'</th>';
-      }).join('');
-      const rows = rowEntries.map(([k,pmap])=>{
-        const cells=provNames.map(p=>{
-          const n=pmap[p]||0;
-          return '<td style="color:'+(n?'var(--text)':'var(--border)')+';">'+(n||'–')+'</td>';
-        }).join('');
-        return '<tr><td style="font-weight:600;color:'+rowColorFn(k)+'">'+escH(k)+'</td>'+cells+'</tr>';
-      }).join('');
-      return '<div class="cross-wrap"><table class="cross-table"><thead><tr><th></th>'+headers+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-    }
-
-    // ── Monthly curve ─────────────────────────────────────
-    // Build daily index
-    const allByDay={};
-    items.forEach(i=>{
-      if(!i.added_at)return;
-      const d=new Date(i.added_at);
-      const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      if(!allByDay[key]) allByDay[key]={count:0,size:0};
-      allByDay[key].count++; allByDay[key].size+=i.size_b||0;
-    });
-    // Build monthly index
-    const allByMonth={};
-    Object.entries(allByDay).forEach(([k,v])=>{
-      const mk=k.slice(0,7);
-      if(!allByMonth[mk]) allByMonth[mk]={count:0,size:0};
-      allByMonth[mk].count+=v.count; allByMonth[mk].size+=v.size;
-    });
-
-    function makeCurve(keys, vals, color, gradId, labelFn, titleFn) {
-      const maxV=Math.max(...vals,0);
-      if(!maxV||keys.length<2) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
-      const W=800,H=140,PL=52,PR=16,PT=16,PB=28;
-      const iW=W-PL-PR, iH=H-PT-PB, n=keys.length;
-      const xs=keys.map((_,i2)=>PL+(n>1?i2/(n-1)*iW:iW/2));
-      const ys=vals.map(v=>PT+iH-v/maxV*iH);
-      const lineD=xs.map((x,i2)=>(i2===0?'M':'L')+x.toFixed(1)+','+ys[i2].toFixed(1)).join(' ');
-      const areaD=lineD+' L'+xs[n-1].toFixed(1)+','+(PT+iH)+' L'+xs[0].toFixed(1)+','+(PT+iH)+' Z';
-      let grid='';
-      for(let s=0;s<=3;s++){
-        const y2=PT+iH-s/3*iH;
-        grid+='<line x1="'+PL+'" y1="'+y2.toFixed(1)+'" x2="'+(W-PR)+'" y2="'+y2.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>';
-        grid+='<text x="'+(PL-4)+'" y="'+(y2+4).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+labelFn(maxV*s/3)+'</text>';
-      }
-      const step=Math.max(1,Math.ceil(n/10));
-      let xlbls='';
-      keys.forEach((k,i2)=>{
-        if(i2%step!==0&&i2!==n-1)return;
-        const parts=k.split('-');
-        const lbl=parts.length===3 ? parts[2]+'/'+parts[1] : parts[1]+'/'+parts[0].slice(2);
-        xlbls+='<text x="'+xs[i2].toFixed(1)+'" y="'+(PT+iH+16)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+lbl+'</text>';
-      });
-      const dots=xs.map((x,i2)=>'<circle cx="'+x.toFixed(1)+'" cy="'+ys[i2].toFixed(1)+'" r="3" fill="'+color+'" stroke="var(--surface)" stroke-width="2"><title>'+keys[i2]+' : '+titleFn(vals[i2])+'</title></circle>').join('');
-      return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'
-        +'<defs><linearGradient id="'+gradId+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+color+'" stop-opacity=".2"/><stop offset="100%" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
-        +grid+'<path d="'+areaD+'" fill="url(#'+gradId+')" />'
-        +'<path d="'+lineD+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round"/>'
-        +dots+xlbls+'</svg>';
-    }
-
-    function buildCurveForPeriod(period) {
-      const now=new Date();
-      let useDaily=false, keys=[];
-      if(period==='30d'){
-        useDaily=true;
-        const cutoff=new Date(now); cutoff.setDate(cutoff.getDate()-30);
-        const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0')+'-'+String(cutoff.getDate()).padStart(2,'0');
-        keys=Object.keys(allByDay).filter(k=>k>=ck).sort();
-      } else {
-        let mkeys=Object.keys(allByMonth).sort();
-        if(period==='12m'){
-          const cutoff=new Date(now); cutoff.setMonth(cutoff.getMonth()-12);
-          const ck=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0');
-          mkeys=mkeys.filter(k=>k>=ck);
-        } else if(period==='year'){
-          const yr=String(now.getFullYear());
-          mkeys=mkeys.filter(k=>k.startsWith(yr));
-        }
-        keys=mkeys;
-      }
-      const idx=useDaily?allByDay:allByMonth;
-      if(keys.length<2) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_period')+'</p>';
-      return '<div class="curve-label">'+t('stats.items_added')+'</div>'
-        +makeCurve(keys,keys.map(k=>(idx[k]||{count:0}).count),'var(--accent)','cg1',v=>Math.round(v),v=>v+' ajout'+(v>1?'s':''))
-        +'<div class="curve-label" style="margin-top:20px">'+t('stats.size_added')+'</div>'
-        +makeCurve(keys,keys.map(k=>(idx[k]||{size:0}).size),'#4ecdc4','cg2',v=>fmtSize(Math.round(v)),v=>fmtSize(v));
-    }
-
-    // Expose for period switch
-    _buildCurveForPeriodGlobal = buildCurveForPeriod;
-
-    // Curve controls HTML
-    const hasDates=Object.keys(allByMonth).length>0;
-    const curveHtml=hasDates ? (
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px" id="curveControls">'
-        +'<div class="pie-switch">'
-          +'<button class="pie-switch-btn"        data-period="all"  onclick="setCurvePeriod(this)">'+t('stats.all')+'</button>'
-          +'<button class="pie-switch-btn active" data-period="12m"  onclick="setCurvePeriod(this)">'+t('stats.months_12')+'</button>'
-          +'<button class="pie-switch-btn"        data-period="30d"  onclick="setCurvePeriod(this)">'+t('stats.days_30')+'</button>'
-        +'</div>'
-      +'</div>'
-      +'<div id="curveCharts">'+buildCurveForPeriod('12m')+'</div>'
-    ) : '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_dated')+'</p>';
-
-    // ── Build HTML ─────────────────────────────────────────
-    const hasGroups=groups.length>0;
-    const hasProviders=provEntries.length>0;
-
-    // Color helpers
-    const groupColorFn=(k,i)=>groupColorMap[k]||PALETTE[i%PALETTE.length];
-    const catColorFn=(k,i)=>catColorMap[k]||PALETTE[i%PALETTE.length];
-
-    function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k => k, defaultUnit = 'size') {
-      const showCountByDefault = defaultUnit === 'count';
-      const pieSize  = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), fmtSize);
-      const pieCount = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v));
-      return '<div class="stats-block">'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
-          +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
-          +'<div class="pie-switch">'
-            +'<button class="pie-switch-btn'+(showCountByDefault ? '' : ' active')+'" id="'+id+'BtnSize"  data-pie="'+id+'" data-unit="size"  onclick="statSwitchPie(this)">'+t('stats.by_size')+'</button>'
-            +'<button class="pie-switch-btn'+(showCountByDefault ? ' active' : '')+'" id="'+id+'BtnCount" data-pie="'+id+'" data-unit="count" onclick="statSwitchPie(this)">'+t('stats.by_count')+'</button>'
-          +'</div>'
-        +'</div>'
-        +'<div id="'+id+'PieSize"'+(showCountByDefault ? ' style="display:none"' : '')+'>'+pieSize+'</div>'
-        +'<div id="'+id+'PieCount"'+(showCountByDefault ? '' : ' style="display:none"')+'>'+pieCount+'</div>'
-        +'</div>';
-    }
-
-
-
-    // Group pies
-    const groupPieSize = hasGroups ? makePie(groupEntriesSize, groupColorFn, v=>v, k=>k, fmtSize) : '';
-    const groupPieCount = hasGroups ? makePie(groupEntriesCount, groupColorFn, v=>v, k=>k, v=>String(v)) : '';
-
-    // Cat pies
-    const catPieSize = makePie(catEntriesSize, catColorFn, v=>v, k=>k, fmtSize);
-    const catPieCount = makePie(catEntriesCount, catColorFn, v=>v, k=>k, v=>String(v));
-
-    // Provider pie (including "Aucun") — switchable taille/nombre
-    const provColorFn=(k,i)=>provColors[i%provColors.length];
-    const noProviderLabel = t('filters.no_provider');
-    const noneCount = items.filter(i=>!(i.providers&&i.providers.length)).length;
-    const noneSize  = items.filter(i=>!(i.providers&&i.providers.length)).reduce((s,i)=>s+(i.size_b||0),0);
-    const provCountEntries=[
-      ...provEntries.map(([k,v])=>[k,v.count]),
-      ...(noneCount>0 ? [[noProviderLabel,noneCount]] : []),
-    ];
-    const byProvSize={};
-    items.forEach(i=>{
-      _itemProviderGroups(i).forEach(name => {
-        byProvSize[name]=(byProvSize[name]||0)+(i.size_b||0);
-      });
-    });
-    const provSizeEntries=[
-      ...provEntries.map(([k])=>[k,byProvSize[k]||0]),
-      ...(noneSize>0 ? [[noProviderLabel,noneSize]] : []),
-    ];
-    const provColorFnWithNone=(k,i)=> k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
-    const provPieHtml = provEntries.length
-      ? switchablePie('prov',t('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, _providerGroupLabel, 'count')
-      : '';
-
-    // Cross tables
-    const crossGroupRows = Object.entries(provByGroup).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
-    const crossCatRows = Object.entries(provByCat).sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
-
-      // ── GLOBAL ENCART (always uses allItems, ignores filters) ──────────
-      const globalMovies  = allItems.filter(i=>i.type==='movie').length;
-      const globalSeries  = allItems.filter(i=>i.type==='tv').length;
-      const globalBytes   = allItems.reduce((s,i)=>s+(i.size_b||0),0);
-
-      // Per-category counts from allItems
-      const globalByCat = {};
-      allItems.forEach(i=>{ globalByCat[i.category]=(globalByCat[i.category]||0)+1; });
-      const catBarEntries = Object.entries(globalByCat).sort((a,b)=>b[1]-a[1]);
-      const catBarMax = catBarEntries[0]?.[1]||1;
-
-      function makeHBar(label, count, total, color) {
-        const pct = Math.round(count/total*100);
-        const w   = Math.round(count/total*100);
-        return '<div style="margin-bottom:8px">'          +'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">'            +'<span style="color:var(--text);font-weight:500">'+escH(label)+'</span>'            +'<span style="color:var(--muted)">'+count+' <span style="font-size:10px">('+pct+'%)</span></span>'          +'</div>'          +'<div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">'            +'<div style="height:100%;width:'+w+'%;background:'+color+';border-radius:3px;transition:width .4s"></div>'          +'</div>'          +'</div>';
-      }
-
-      const catBars = catBarEntries.map(([cat,cnt],idx)=>
-        makeHBar(cat, cnt, allItems.length, PALETTE[idx%PALETTE.length])
-      ).join('');
-
-      const globalEncart = '<div class="stats-block">'
-        + '<div class="stats-block-title">'+t('stats.global_library')+'</div>'
-        + '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px">'
-          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.movies')+'</div><div class="stat-row-val">'+globalMovies+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.series')+'</div><div class="stat-row-val">'+globalSeries+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.total')+'</div><div class="stat-row-val">'+allItems.length+'</div></div>'
-          + '<div class="stat-row"><div class="stat-row-label">'+t('stats.disk')+'</div><div class="stat-row-val">'+fmtSize(globalBytes)+'</div></div>'
-        + '</div>'
-        + catBars
-        + '</div>';
-
-      // Year / decade stats from allItems
-      // Year / decade stats from filtered items
-      const byYear={}, byDecade={};
-      items.forEach(i=>{
-        const y=parseInt(i.year);
-        if(!y||y<1880||y>2100) return;
-        byYear[y]=(byYear[y]||0)+1;
-        const d=Math.floor(y/10)*10;
-        byDecade[d]=(byDecade[d]||0)+1;
-      });
-
-      function makeBarChart(data, labelFn, color) {
-        const entries=Object.entries(data).sort((a,b)=>a[0]-b[0]);
-        if(!entries.length) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
-        const maxV=Math.max(...entries.map(([,v])=>v));
-        const W=800,H=120,PB=24,PT=8,PL=36,PR=8;
-        const iW=W-PL-PR, iH=H-PT-PB, n=entries.length;
-        const bw=Math.max(2,Math.floor(iW/n)-2);
-        const bars=entries.map(([k,v],idx)=>{
-          const bh=Math.round(v/maxV*iH);
-          const x=PL+idx*(iW/n)+(iW/n-bw)/2;
-          const y=PT+iH-bh;
-          const showLbl=n<=30||idx%Math.ceil(n/20)===0||idx===n-1;
-          return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw+'" height="'+bh+'" fill="'+color+'" rx="2" opacity=".85"><title>'+labelFn(k)+' : '+v+'</title></rect>'            +(showLbl?'<text x="'+(x+bw/2).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="8" fill="var(--muted)">'+labelFn(k)+'</text>':'');
-        }).join('');
-        // Y axis labels
-        let yax='';
-        for(let s=0;s<=3;s++){
-          const yv=PT+iH-s/3*iH;
-          yax+='<text x="'+(PL-3)+'" y="'+(yv+3).toFixed(1)+'" text-anchor="end" font-size="8" fill="var(--muted)">'+Math.round(maxV*s/3)+'</text>';
-          yax+='<line x1="'+PL+'" y1="'+yv.toFixed(1)+'" x2="'+(W-PR)+'" y2="'+yv.toFixed(1)+'" stroke="var(--border)" stroke-width="0.5"/>';
-        }
-        return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'+yax+bars+'</svg>';
-      }
-
-      const yearChart   = makeBarChart(byYear,   k=>k,           'var(--accent)');
-      const decadeChart = makeBarChart(byDecade, k=>k+'s',       '#4ecdc4');
-
-
-      const yearDecadeHtml = '<div class="stats-block">'
-        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
-          + '<div class="stats-block-title" style="margin:0;padding:0;border:none">'+t('stats.release_years')+'</div>'
-          + '<div class="pie-switch">'
-            + '<button class="pie-switch-btn active" id="yearBtnYear" onclick="switchYearView(this,\'year\')">'+t('stats.years')+'</button>'
-            + '<button class="pie-switch-btn" id="yearBtnDecade" onclick="switchYearView(this,\'decade\')">'+t('stats.decades')+'</button>'
-          + '</div>'
-        + '</div>'
-        + '<div id="yearViewYear">'+yearChart+'</div>'
-        + '<div id="yearViewDecade" style="display:none">'+decadeChart+'</div>'
-        + '</div>';
-
-      let qualityChartHtml = '';
-      if (isScoreEnabled()) {
-        const qualityLevelRanges = {
-          1: '0–20',
-          2: '21–40',
-          3: '41–60',
-          4: '61–80',
-          5: '81–100'
-        };
-        const qualityCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-        let qualityScoreTotal = 0;
-        let qualityScoreItems = 0;
-        items.forEach((i) => {
-          const score = Number(i?.quality?.score);
-          if (!Number.isFinite(score)) return;
-          const level = getItemQualityLevel(i);
-          if (qualityCounts[level] !== undefined) qualityCounts[level] += 1;
-          qualityScoreTotal += score;
-          qualityScoreItems += 1;
-        });
-        function qualityLevelColor(level) {
-          return ({
-            1: '#ef4444',
-            2: '#f97316',
-            3: '#facc15',
-            4: '#84cc16',
-            5: '#16a34a'
-          })[level] || '#64748b';
-        }
-        function makeQualityLevelBarChart() {
-          if (!qualityScoreItems) return '<p style="font-size:12px;color:var(--muted)">'+t('stats.not_enough_data')+'</p>';
-          const entries = [1, 2, 3, 4, 5].map((lvl) => [lvl, qualityCounts[lvl]]);
-          const maxV = Math.max(...entries.map(([,v]) => v), 1);
-          return '<div class="quality-bars">'
-            + entries.map(([lvl, val]) => {
-              const pct = Math.max(0, Math.min(100, (val / maxV) * 100));
-              return '<div class="quality-bar-row">'
-                + '<div class="quality-bar-label">'+qualityLevelRanges[lvl]+'</div>'
-                + '<div class="quality-bar-track"><div class="quality-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+qualityLevelColor(lvl)+'"></div></div>'
-                + '<div class="quality-bar-val">'+val+'</div>'
-                + '</div>';
-            }).join('')
-            + '</div>';
-        }
-        const qualityAverage = qualityScoreItems ? (qualityScoreTotal / qualityScoreItems).toFixed(1) : null;
-        qualityChartHtml = '<div class="stats-block">'
-          + '<div class="stats-block-title">'+t('stats.quality_distribution')+'</div>'
-          + (qualityAverage ? '<div class="quality-avg">'+t('stats.quality_average',{score: qualityAverage})+'</div>' : '')
-          + makeQualityLevelBarChart()
-          + '</div>';
-      }
-      const audioLangChartHtml = hasLangData
-        ? switchablePie('audioLang',t('stats.audio_languages_chart_title'), audioLangEntriesSize, audioLangEntriesCount, audioLangColorFn, k => k, 'count')
-        : '';
-
-
-
-
-
-    const topChartsHtml = [
-      switchablePie('cat',t('stats.categories'), catEntriesSize, catEntriesCount, catColorFn, k => k, 'size'),
-      provPieHtml,
-      (resEntriesSize.length ? switchablePie('res',t('stats.resolution'), resEntriesSize, resEntriesCount, resColorFn, k => k, 'count') : ''),
-      (codecEntriesSize.length ? switchablePie('codec',t('stats.codec'), codecEntriesSize, codecEntriesCount, codecColorFn, k => k, 'count') : ''),
-      (audioCodecEntriesSize.length ? switchablePie('audioCodec',t('stats.audio_codec_chart_title'), audioCodecEntriesSize, audioCodecEntriesCount, audioCodecColorFn, getAudioCodecDisplay, 'count') : ''),
-      audioLangChartHtml,
-      qualityChartHtml
-    ].filter(Boolean).join('');
-
-    return ''
-      // 1. Dossier / Provider / Résolution / Codecs / Langue audio / Score
-      +'<div class="stats-row">'+topChartsHtml+'</div>'
-      // 2. Répartition par année (pleine largeur)
-      +yearDecadeHtml
-      // 3. Évolution (pleine largeur)
-      +'<div class="stats-block"><div class="stats-block-title">'+t('stats.monthly_evolution')+'</div>'+curveHtml+'</div>';
-  }
-
-  // ── ACCENT COLOR ─────────────────────────────────────
   const _DEFAULT_ACCENT = '#7c6aff';
+
   function _hexToRgba(hex, a) {
     const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
     return `rgba(${r},${g},${b},${a})`;
@@ -2581,202 +2110,6 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  // ── STATS MODAL ──────────────────────────────────────
-  function openStats() {
-    document.getElementById('statsModal').classList.add('open');
-    renderStatsModal();
-  }
-  function closeStats() {
-    document.getElementById('statsModal').classList.remove('open');
-  }
-  function closeStatsIfBackdrop(e) {
-    if (e.target === document.getElementById('statsModal')) closeStats();
-  }
-  document.addEventListener('keydown', e => { if(e.key==='Escape') closeStats(); });
-
-  function renderStatsModal() {
-    const el = document.getElementById('statsModalContent');
-    el.innerHTML = buildStatsHTML();
-  }
-
-  function buildStatsHTML() {
-    let html = '';
-
-    // ── Section 1: Répartition par groupe ──
-    const byGroup = {};
-    allItems.forEach(i => {
-      const g = i.group || 'Autres';
-      if (!byGroup[g]) byGroup[g] = {count:0, size:0};
-      byGroup[g].count++; byGroup[g].size += i.size_b||0;
-    });
-    const groupEntries = Object.entries(byGroup).sort((a,b)=>b[1].size-a[1].size);
-    const maxGSize = groupEntries[0]?.[1].size || 1;
-    html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.by_group')+'</div>';
-    html += '<div class="hbar-list">';
-    groupEntries.forEach(([g,d],i) => {
-      const col = groupColorMap[g] || PALETTE[i%PALETTE.length];
-      const pct = (d.size/maxGSize*100).toFixed(1);
-      html += '<div class="hbar-item">'
-        +'<div class="hbar-label" title="'+escH(g)+'">'+escH(g)+'</div>'
-        +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
-        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</span></div>'
-        +'</div>';
-    });
-    html += '</div></div>';
-
-    // ── Section 2: Répartition par catégorie ──
-    const byCat = {};
-    allItems.forEach(i => {
-      if (!byCat[i.category]) byCat[i.category] = {count:0, size:0, group: i.group||'Autres'};
-      byCat[i.category].count++; byCat[i.category].size += i.size_b||0;
-    });
-    const catEntries = Object.entries(byCat).sort((a,b)=>b[1].size-a[1].size);
-    const maxCSize = catEntries[0]?.[1].size || 1;
-    html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.by_category')+'</div>';
-    html += '<div class="hbar-list">';
-    catEntries.forEach(([c,d],i) => {
-      const col = catColorMap[c] || PALETTE[i%PALETTE.length];
-      const pct = (d.size/maxCSize*100).toFixed(1);
-      html += '<div class="hbar-item">'
-        +'<div class="hbar-label" title="'+escH(c)+'">'+escH(c)+'</div>'
-        +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
-        +'<div class="hbar-val">'+fmtSize(d.size)+'<br><span style="font-size:10px;color:var(--muted)">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</span></div>'
-        +'</div>';
-    });
-    html += '</div></div>';
-
-    // ── Section 3: Providers globaux (visibles seulement) ──
-    const byProv = {};
-    allItems.forEach(i => (i.providers||[]).forEach(p => {
-      const name=_pname(p); if (!name || !_provVisible(name)) return;
-      if (!byProv[name]) byProv[name] = {count:0, logo:_plogo(p)};
-      byProv[name].count++;
-      if (!byProv[name].logo) byProv[name].logo = _plogo(p);
-    }));
-    const provEntries = Object.entries(byProv).sort((a,b)=>b[1].count-a[1].count);
-    if (provEntries.length) {
-      const maxPC = provEntries[0][1].count || 1;
-      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.streaming_availability')+'</div>';
-      html += '<div class="hbar-list">';
-      provEntries.forEach(([name,d]) => {
-        const pct = (d.count/maxPC*100).toFixed(1);
-        const logo = d.logo ? '<img src="'+escH(d.logo)+'" style="width:16px;height:16px;border-radius:3px;vertical-align:middle;margin-right:5px" alt=""/>' : '';
-        html += '<div class="hbar-item">'
-          +'<div class="hbar-label">'+logo+escH(name)+'</div>'
-          +'<div class="hbar-track"><div class="hbar-fill" style="width:'+pct+'%;background:var(--accent)"></div></div>'
-          +'<div class="hbar-val">'+(d.count>1?t('stats.items_count_pl',{n:d.count}):t('stats.items_count',{n:d.count}))+'</div>'
-          +'</div>';
-      });
-      html += '</div></div>';
-
-      // ── Section 4: Providers par groupe ──
-      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.streaming_by_group')+'</div>';
-      html += '<div class="stats-grid">';
-      groupEntries.forEach(([g]) => {
-        const gItems = allItems.filter(i=>(i.group||'Autres')===g);
-        const gProv = {};
-        const gProvMap = {};
-        gItems.forEach(i=>(i.providers||[]).forEach(p=>{
-          const n=_pname(p); if(!n||!_provVisible(n)) return;
-          if(!gProvMap[n]) gProvMap[n]={count:0, logo:_plogo(p)};
-          gProvMap[n].count++;
-          if(!gProvMap[n].logo) gProvMap[n].logo=_plogo(p);
-        }));
-        const gProvEntries = Object.entries(gProvMap).sort((a,b)=>b[1].count-a[1].count);
-        if (!gProvEntries.length) return;
-        const col = groupColorMap[g] || '#888';
-        html += '<div class="stat-row" style="flex-direction:column;align-items:flex-start;gap:6px">'
-          +'<div style="display:flex;align-items:center;gap:6px"><div class="stat-dot" style="background:'+col+'"></div>'
-          +'<span style="font-family:Syne,sans-serif;font-weight:700;font-size:13px">'+escH(g)+'</span></div>'
-          +'<div style="width:100%;display:flex;flex-direction:column;gap:3px">';
-        gProvEntries.forEach(([pname, d]) => {
-          const cnt = d.count;
-          const logo = d.logo ? '<img src="'+escH(d.logo)+'" style="width:14px;height:14px;border-radius:2px;vertical-align:middle;margin-right:4px" alt=""/>' : '';
-          html += '<div style="display:flex;justify-content:space-between;font-size:12px">'
-            +'<span style="color:var(--muted)">'+logo+escH(pname)+'</span>'
-            +'<span style="color:var(--text);font-weight:500">'+cnt+'</span>'
-            +'</div>';
-        });
-        html += '</div></div>';
-      });
-      html += '</div></div>';
-    }
-
-    // ── Section 5: Évolution mensuelle ──
-    const byMonth = {};
-    allItems.forEach(i => {
-      if (!i.added_at) return;
-      const d = new Date(i.added_at);
-      const key = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-      byMonth[key] = (byMonth[key]||0)+1;
-    });
-    const monthEntries = Object.entries(byMonth).sort((a,b)=>a[0]<b[0]?-1:1);
-    if (monthEntries.length > 1) {
-      const W=860, H=140, PL=50, PR=20, PT=15, PB=35;
-      const iW=W-PL-PR, iH=H-PT-PB;
-      const counts=monthEntries.map(e=>e[1]);
-      const maxC=Math.max(...counts)||1;
-      const minC=0;
-      const n=monthEntries.length;
-      const xStep=iW/(n-1);
-
-      const pts=monthEntries.map((_,i)=>{
-        const x=PL+i*xStep;
-        const y=PT+iH-(counts[i]-minC)/(maxC-minC)*iH;
-        return [x,y];
-      });
-
-      // Build SVG
-      const pathD='M'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' L');
-      // Area fill
-      const areaD=pathD+' L'+pts[pts.length-1][0].toFixed(1)+','+(PT+iH)+' L'+PL+','+(PT+iH)+' Z';
-
-      // X axis labels (every 2nd month if many)
-      const step = n>12 ? Math.ceil(n/8) : 1;
-      const MOIS=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-      let xLabels='', yLabels='', vLines='';
-      monthEntries.forEach(([key],i)=>{
-        if (i%step===0 || i===n-1) {
-          const x=PL+i*xStep;
-          const [yr,mo]=key.split('-');
-          const label=MOIS[parseInt(mo)-1]+(n>14?' '+yr.slice(2):'');
-          xLabels+='<text x="'+x.toFixed(0)+'" y="'+(H-6)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+label+'</text>';
-          vLines+='<line x1="'+x.toFixed(0)+'" y1="'+PT+'" x2="'+x.toFixed(0)+'" y2="'+(PT+iH)+'" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>';
-        }
-      });
-      // Y labels
-      for (let t=0; t<=4; t++) {
-        const v=Math.round(maxC*t/4);
-        const y=PT+iH-iH*t/4;
-        yLabels+='<text x="'+(PL-6)+'" y="'+(y+4).toFixed(0)+'" text-anchor="end" font-size="10" fill="var(--muted)">'+v+'</text>';
-        vLines+='<line x1="'+PL+'" y1="'+y.toFixed(0)+'" x2="'+(PL+iW)+'" y2="'+y.toFixed(0)+'" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>';
-      }
-      // Dots
-      const dots=pts.map(([x,y],i)=>'<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"><title>'+monthEntries[i][0]+': '+counts[i]+' ajouts</title></circle>').join('');
-
-      const svgContent='<defs><linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">'
-        +'<stop offset="0%" stop-color="var(--accent)" stop-opacity=".25"/>'
-        +'<stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>'
-        +'</linearGradient></defs>'
-        +vLines
-        +'<path d="'+areaD+'" fill="url(#lineGrad)"/>'
-        +'<path d="'+pathD+'" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
-        +dots+xLabels+yLabels;
-
-      const totalAdded=counts.reduce((s,v)=>s+v,0);
-      const avgPerMonth=(totalAdded/n).toFixed(1);
-      html += '<div class="modal-section"><div class="modal-section-title">'+t('stats.monthly_evolution')+'</div>';
-      html += '<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">'
-        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.total_indexed')+'</div><div class="stat-row-val">'+totalAdded+'</div></div>'
-        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.avg_per_month')+'</div><div class="stat-row-val">'+avgPerMonth+'</div></div>'
-        +'<div class="stat-row"><div class="stat-row-label">'+t('stats.period')+'</div><div class="stat-row-val" style="font-size:12px">'+monthEntries[0][0]+' → '+monthEntries[n-1][0]+'</div></div>'
-        +'</div>';
-      html += '<div class="chart-wrap"><svg class="chart-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+svgContent+'</svg></div>';
-      html += '</div>';
-    }
-
-    return html;
-  }
 
   function switchYearView(btn, view) {
     const yr = document.getElementById('yearViewYear');
@@ -2789,102 +2122,35 @@ let allItems=[], categories=[], groups=[];
     if (bd) bd.classList.toggle('active', view==='decade');
   }
 
-  function statSwitchPie(el) {
-    const id = el.dataset.pie, unit = el.dataset.unit;
-    document.getElementById(id+'PieSize').style.display  = unit==='size'  ? '' : 'none';
-    document.getElementById(id+'PieCount').style.display = unit==='count' ? '' : 'none';
-    document.getElementById(id+'BtnSize').classList.toggle('active',  unit==='size');
-    document.getElementById(id+'BtnCount').classList.toggle('active', unit==='count');
-  }
-
   // ── SCAN ──────────────────────────────────────────────
-  let _scanMode = 'quick';
   let _pollTimer = null;
   let _logOffset = 0;
   let _isScanning = false;
 
-  const SCAN_MODE_LABELS = {
-    quick:   () => t('scan.mode_quick'),
-    full:    () => t('scan.mode_full'),
-  };
-
-  function _scanModeLabel(mode) {
-    const fn = SCAN_MODE_LABELS[mode];
-    return fn ? fn() : t('scan.start');
-  }
-
-  function selectScanMode(mode) {
-    _scanMode = mode;
-    document.getElementById('scanBtnLabel').textContent = _scanModeLabel(mode);
-    document.getElementById('scanDropdown').classList.remove('open');
-  }
-
   function setScanControlsState(isScanning) {
     const wasScanning = _isScanning;
     _isScanning = !!isScanning;
-    ['scanMainBtn', 'scanArrowBtn', 'mobileSettingsScanBtn', 'mobileScanQuickBtn', 'mobileScanFullBtn']
+    ['scanMainBtn', 'mobileSettingsScanBtn']
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = _isScanning;
       });
     if (!wasScanning && _isScanning) {
-      document.getElementById('scanDropdown')?.classList.remove('open');
       closeMobileScanSheet();
     }
   }
 
-  function toggleScanDropdown(e) {
-    e.stopPropagation();
-    const dd = document.getElementById('scanDropdown');
-    const wrap = document.getElementById('scanBtnWrap');
-    document.querySelectorAll('.scan-dropdown').forEach(d => { if(d!==dd) d.classList.remove('open'); });
-    if (!dd.classList.contains('open')) {
-      const viewportPad = 8;
-      const dropdownGap = 6;
-      const r = wrap.getBoundingClientRect();
-
-      dd.style.visibility = 'hidden';
-      dd.style.display = 'block';
-      dd.style.top = '0px';
-      dd.style.bottom = 'auto';
-      const dropdownHeight = dd.offsetHeight;
-      dd.style.display = '';
-      dd.style.visibility = '';
-
-      const spaceBelow = window.innerHeight - r.bottom - dropdownGap - viewportPad;
-      const spaceAbove = r.top - dropdownGap - viewportPad;
-      const openDown = spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove;
-
-      if (openDown) {
-        dd.style.top = Math.max(viewportPad, r.bottom + dropdownGap) + 'px';
-        dd.style.bottom = 'auto';
-      } else {
-        dd.style.bottom = Math.max(viewportPad, window.innerHeight - r.top + dropdownGap) + 'px';
-        dd.style.top = 'auto';
-      }
-
-      dd.style.left = r.left + 'px';
-      dd.style.minWidth = r.width + 'px';
-      dd.style.maxHeight = Math.max(120, window.innerHeight - (viewportPad * 2)) + 'px';
-    }
-    dd.classList.toggle('open');
-  }
-  document.addEventListener('click', () => {
-    document.getElementById('scanDropdown')?.classList.remove('open');
-  });
-
-  function triggerScan(mode = _scanMode) {
+  function triggerScan() {
     if (_isScanning) return;
-    selectScanMode(mode);
     closeMobileScanSheet();
     setScanControlsState(true);
     _logOffset = 0;
-    openScanLog(_scanMode);
+    openScanLog();
 
     fetch('/api/scan/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: _scanMode}),
+      body: JSON.stringify({mode: 'full'}),
     })
     .then(r => r.json())
     .then(data => {
@@ -2944,10 +2210,10 @@ let allItems=[], categories=[], groups=[];
       .catch(() => { setScanControlsState(false); });
   }
 
-  function openScanLog(mode) {
+  function openScanLog() {
     const panel = document.getElementById('scanLogPanel');
     panel.classList.remove('viewer');
-    document.getElementById('scanLogTitle').textContent = 'Scan — ' + _scanModeLabel(mode);
+    document.getElementById('scanLogTitle').textContent = 'Scan';
     document.getElementById('scanLogBody').innerHTML = '';
     setScanStatus('running');
     panel.classList.add('open');
@@ -2999,12 +2265,11 @@ let allItems=[], categories=[], groups=[];
     const dot = document.getElementById('scanStatusDot');
     dot.className = 'scan-status-dot ' + (status || '');
     const title = document.getElementById('scanLogTitle');
-    const mode = _scanModeLabel(_scanMode);
     const suffix = status === 'running' ? t('scan.status_running')
                  : status === 'done'    ? t('scan.status_done')
                  : status === 'error'   ? t('scan.status_error')
                  : '';
-    title.textContent = 'Scan — ' + mode + suffix;
+    title.textContent = 'Scan' + suffix;
   }
 
   function syncScanState() {
@@ -3019,15 +2284,6 @@ let allItems=[], categories=[], groups=[];
   }
 
   // ── CURVE PERIOD SWITCH ──────────────────────────────
-  let _buildCurveForPeriodGlobal = ()=>'';
-  function setCurvePeriod(btn) {
-    const controls = document.getElementById('curveControls');
-    if (!controls) return;
-    const period = btn.dataset.period;
-    controls.querySelectorAll('.pie-switch-btn').forEach(b=>b.classList.toggle('active', b===btn));
-    const charts = document.getElementById('curveCharts');
-    if (charts) charts.innerHTML = _buildCurveForPeriodGlobal(period);
-  }
 
   // ── MOBILE NAV ───────────────────────────────────────
   let currentMobileTab = 'library';
@@ -3088,7 +2344,7 @@ let allItems=[], categories=[], groups=[];
     const lc2 = document.getElementById('libraryControls');
     if (lc2) lc2.style.display = tab==='library' ? '' : 'none';
     if (tab === 'library') render();
-    else if (tab === 'stats') renderStatsPanel();
+    else if (tab === 'stats') window.MMLStats.renderStatsPanel();
   }
 
   function syncMobileFilters() {
@@ -3120,587 +2376,8 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  // ── SETTINGS ─────────────────────────────────────────
-    // serverConfig is populated from library.json in loadLibrary()
+  // ── SETTINGS — delegated to settings.js ──────────────
 
-  function _field(id) { return document.getElementById(id); }
-  function _ro(id, val) {
-    const el = _field(id);
-    if (!el) return;
-    if (el.type === 'checkbox') { el.checked = val; el.disabled = true; }
-    else if (el.tagName === 'SELECT') { el.value = val; el.disabled = true; }
-    else { el.value = val; el.readOnly = true; }
-  }
-  function _rw(id, val) {
-    const el = _field(id);
-    if (!el) return;
-    if (el.type === 'checkbox') { el.checked = val; el.disabled = false; }
-    else if (el.tagName === 'SELECT') { el.value = val; el.disabled = false; }
-    else { el.value = val; el.readOnly = false; }
-  }
-
-  function loadSettings() {
-    if (!_field('cfgLibraryPath')) return;
-    const sc = serverConfig;
-
-    // Accent color — from appConfig (persisted in config.json)
-    const accentEl = _field('cfgAccentColor');
-    if (accentEl) {
-      accentEl.value = appConfig.ui?.accent_color || _DEFAULT_ACCENT;
-    }
-
-    // enablePlot — from appConfig
-    const epEl = _field('cfgEnablePlot');
-    if (epEl) { epEl.checked = enablePlot; epEl.disabled = false; }
-
-    // Library path — readonly, from serverConfig (set in library.json config block)
-    _ro('cfgLibraryPath', sc.library_path || '');
-
-    // Enable flags — editable, from appConfig
-    _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);
-    _rw('cfgEnableSeries',  appConfig.enable_series  ?? true);
-
-    // Scan cron / log level / language — from appConfig.system (editable, stored in config.json)
-    const sys = appConfig.system || {};
-    _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
-    _rw('cfgLogLevel',  sys.log_level  || 'INFO');
-    _rw('cfgLanguage',  sys.language   || 'fr');
-    _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
-    _rw('cfgEnableScore', isScoreEnabled());
-    updateCronHint();
-
-    // Jellyseerr — editable from appConfig
-    _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
-    _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
-    _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
-    const jsrKeyInput = _field('cfgJellyseerrKey');
-    if (jsrKeyInput) {
-      const hasStoredKey = appConfig.jellyseerr?.apikey === '***';
-      jsrKeyInput.placeholder = hasStoredKey ? t('settings.jellyseerr.apikey_saved') : '••••••••••••';
-    }
-    toggleJsrFields();
-
-    renderFoldersUI();
-    renderProviderToggles();
-  }
-
-  function toggleJsrFields() {
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
-    const jellyFields = document.getElementById('cfgJellyseerrFields');
-    const jellyBlock = document.getElementById('cfgJellyseerrBlock');
-    const providersBlock = document.getElementById('cfgProvidersBlock');
-    ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
-    });
-    if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
-    if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
-    if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
-    if (enabled) {
-      _setSettingsCollapsed('settingsJellyseerrBody', true);
-      _setSettingsCollapsed('settingsProvidersBody', true);
-    }
-    if (!enabled) {
-      _settingsJsrTestOk = false;
-      const res = document.getElementById('cfgJsrTestResult');
-      if (res) res.textContent = '';
-    }
-  }
-
-  function _setSettingsCollapsed(targetId, collapsed) {
-    const panel = targetId ? document.getElementById(targetId) : null;
-    if (!panel) return;
-    const btn = document.querySelector(`.settings-collapsible[data-target="${targetId}"]`);
-    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    panel.classList.toggle('is-collapsed', collapsed);
-    panel.style.display = collapsed ? 'none' : 'block';
-  }
-
-  function toggleSettingsCollapse(btn) {
-    const targetId = btn?.dataset?.target;
-    if (!btn || !targetId) return;
-    const expanded = btn.getAttribute('aria-expanded') !== 'false';
-    _setSettingsCollapsed(targetId, expanded);
-  }
-
-  function _isFolderEnabled(folder) {
-    const enabled = folder?.enabled;
-    if (enabled === undefined || enabled === null) return folder?.visible !== false;
-    return enabled !== false;
-  }
-
-  function _setFolderEnabled(folder, enabled) {
-    if (!folder) return;
-    folder.enabled = !!enabled;
-  }
-
-
-  function _hasEditableFields() {
-    const ids = ['cfgScanCron','cfgJellyseerrUrl','cfgJellyseerrKey','cfgLogLevel','cfgLanguage',
-                 'cfgEnableMovies','cfgEnableSeries','cfgEnableJellyseerr','cfgEnablePlot','cfgAccentColor','cfgCardHeight',
-                 'cfgInventoryEnabled','cfgEnableScore'];
-    return ids.some(id => { const e = _field(id); return e && !e.readOnly && !e.disabled; });
-  }
-
-  function saveSettings() {
-    // Sync enablePlot immediately (no server roundtrip for preview)
-    const epEl = _field('cfgEnablePlot');
-    if (epEl && !epEl.disabled) enablePlot = epEl.checked;
-  }
-
-  async function saveSettingsAndClose() {
-    saveSettings();
-    const get = id => {
-      const e = _field(id);
-      if (!e || e.readOnly || e.disabled) return null;
-      return e.type === 'checkbox' ? e.checked : e.value;
-    };
-
-    // Build partial config from editable fields
-    const partial = {};
-
-    const ep = get('cfgEnablePlot');
-    if (ep !== null) { partial.ui = partial.ui||{}; partial.ui.synopsis_on_hover = ep; }
-
-    const accentEl = _field('cfgAccentColor');
-    if (accentEl && !accentEl.readOnly) {
-      partial.ui = partial.ui||{};
-      partial.ui.accent_color = accentEl.value;
-    }
-
-    const em = get('cfgEnableMovies');
-    if (em !== null) partial.enable_movies = em;
-
-    const es = get('cfgEnableSeries');
-    if (es !== null) partial.enable_series = es;
-
-    const jEnabled = get('cfgEnableJellyseerr');
-    const jUrl     = get('cfgJellyseerrUrl');
-    const jKeyRaw  = get('cfgJellyseerrKey');
-    const jKey     = (typeof jKeyRaw === 'string') ? jKeyRaw.trim() : '';
-    const hasNewJellyseerrKey = !!jKey && jKey !== '***';
-    if (jEnabled !== null || jUrl !== null || hasNewJellyseerrKey) {
-      partial.jellyseerr = partial.jellyseerr || {};
-      if (jEnabled !== null)           partial.jellyseerr.enabled = jEnabled;
-      if (jUrl     !== null)           partial.jellyseerr.url     = jUrl;
-      if (hasNewJellyseerrKey)         partial.jellyseerr.apikey  = jKey;
-    }
-
-    // Gather folder type/activation — always include current state
-    const folderUpdates = gatherFolderEdits();
-    if (folderUpdates) partial.folders = folderUpdates;
-
-    // Gather provider visibility
-    const provVis = gatherProviderVisibility();
-    if (provVis !== undefined) partial.providers_visible = provVis;
-
-    // Scan cron / log level / language → system block
-    const cron = get('cfgScanCron');
-    const logLevel = get('cfgLogLevel');
-    const lang = get('cfgLanguage');
-    const inventoryEnabled = get('cfgInventoryEnabled');
-    const enableScoreCfg = get('cfgEnableScore');
-    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
-      partial.system = partial.system || {};
-      if (cron !== null)     partial.system.scan_cron = cron;
-      if (logLevel !== null) partial.system.log_level = logLevel;
-      if (lang !== null)     partial.system.language  = lang;
-      if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
-      if (enableScoreCfg !== null) partial.system.enable_score = enableScoreCfg;
-    }
-
-    try {
-      await saveConfig(partial);
-      window.location.reload();
-    } catch(e) {
-      alert(t('settings.save_error', {msg: e.message}));
-    }
-  }
-
-  // ── SETTINGS — FOLDERS ───────────────────────────────
-  function onFolderTypeChange(sel) {
-    const idx = parseInt(sel.dataset.folderIdx);
-    const val = sel.value === 'null' ? null : sel.value;
-    if (appConfig.folders[idx]) {
-      appConfig.folders[idx].type = val;
-      if (val && val !== 'ignore') _setFolderEnabled(appConfig.folders[idx], true);
-    }
-    renderFoldersUI();
-  }
-
-  function renderFoldersUI() {
-    const container = document.getElementById('cfgFoldersContainer');
-    if (!container) return;
-    const folders = appConfig.folders || [];
-    if (!folders.length) {
-      container.innerHTML = '<div class="settings-note">' + t('settings.library.no_folders') + '</div>';
-      return;
-    }
-    const unknownCount = folders.filter(f => !f.missing && (f.type === null || f.type === undefined)).length;
-    let html = '';
-    if (unknownCount > 0) {
-      html += '<div class="settings-note" style="border-left:3px solid #f7b731;padding-left:10px;margin-bottom:10px">'
-        + '⚠ ' + t('settings.library.folder_unconfigured', {n: unknownCount, s: unknownCount>1?'s':''}) + '</div>';
-    }
-    html += '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-      + '<thead><tr>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_name')+'</th>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_type')+'</th>'
-        + '<th style="text-align:left;padding:4px 8px;color:var(--muted);font-weight:500">'+t('settings.library.folder_col_enabled')+'</th>'
-      + '</tr></thead><tbody>';
-    folders.forEach((f, idx) => {
-      const isMissing = !!f.missing;
-      const typeOpts = [
-        ['movie', t('settings.library.folder_types.movie')],
-        ['tv', t('settings.library.folder_types.tv')],
-        ['null', t('settings.library.folder_types.ignore')],
-      ].map(([v, lbl]) =>
-        '<option value="'+v+'"'+(String(f.type)===v?' selected':'')+'>'+lbl+'</option>'
-      ).join('');
-      html += '<tr style="border-top:1px solid var(--border)'+(isMissing?';opacity:0.5':'')+'">'
-        + '<td style="padding:6px 8px;font-family:monospace;font-size:12px">'+escH(f.name)
-          + (isMissing ? '<span style="display:inline;margin-left:6px;font-size:10px;color:#f97316;font-style:italic">'+t('settings.library.missing')+'</span>' : '')
-          + '</td>'
-        + '<td style="padding:6px 8px">'
-          + (isMissing
-            ? '<span style="color:var(--muted);font-size:12px">'+(f.type==='movie'?t('settings.library.folder_types.movie'):f.type==='tv'?t('settings.library.folder_types.tv'):'—')+'</span>'
-            : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type" onchange="onFolderTypeChange(this)">'
-              + typeOpts + '</select>')
-          + '</td>'
-        + '<td style="padding:6px 8px">'
-          + (!f.type || f.type === 'null' || isMissing
-            ? '<span style="color:var(--muted);font-size:12px">—</span>'
-            : '<label class="toggle-switch">'
-              + '<input type="checkbox" data-folder-idx="'+idx+'" data-folder-key="enabled"'
-              + (_isFolderEnabled(f) ? ' checked' : '')
-              + '/><span class="toggle-switch-slider"></span></label>')
-          + '</td>'
-        + '</tr>';
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
-  }
-
-  function gatherFolderEdits() {
-    const folders = JSON.parse(JSON.stringify(appConfig.folders || []));
-    if (!folders.length) return null;
-    // Always read current DOM state — appConfig.folders may have been mutated by
-    // onFolderTypeChange() so we can't rely on a "changed" diff; always return full state.
-    document.querySelectorAll('[data-folder-idx][data-folder-key]').forEach(el => {
-      const idx = parseInt(el.dataset.folderIdx);
-      const key = el.dataset.folderKey;
-      if (!folders[idx]) return;
-      if (el.type === 'checkbox') {
-        if (key === 'enabled') _setFolderEnabled(folders[idx], el.checked);
-        else folders[idx][key] = el.checked;
-      }
-      else { folders[idx][key] = el.value === 'null' ? null : el.value; }
-    });
-    return folders.map(folder => {
-      const normalized = {...folder};
-      normalized.enabled = _isFolderEnabled(normalized);
-      delete normalized.visible;
-      return normalized;
-    });
-  }
-
-  // ── SETTINGS — PROVIDER TOGGLES ──────────────────────
-  function renderProviderToggles() {
-    const container = document.getElementById('cfgProviderToggles');
-    if (!container) return;
-    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
-      .filter(p => !_isOthersProviderName(p))
-      .sort();
-    const hasHidden = _hasHiddenProviders();
-    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>'; return; }
-    let html = '';
-    provs.forEach(prov => {
-      const checked = _provVisible(prov);
-      html += '<div class="settings-row" style="margin-bottom:6px">'
-        + '<label class="settings-label">'+escH(prov)+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" class="prov-visibility-toggle" data-prov="'+escH(prov)+'"'
-        + (checked?' checked':'') + '/><span class="toggle-switch-slider"></span></label>'
-        + '</div>';
-    });
-    if (hasHidden) {
-      html += '<div class="settings-row" style="margin-bottom:6px;opacity:.85">'
-        + '<label class="settings-label">'+escH(t('stats.others'))+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" checked disabled title="'+escH(t('stats.others'))+'"/>'
-        + '<span class="toggle-switch-slider"></span></label>'
-        + '</div>';
-    }
-    container.innerHTML = html;
-  }
-
-  function gatherProviderVisibility() {
-    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
-      .filter(p => !_isOthersProviderName(p))
-      .sort();
-    const checked = [];
-    document.querySelectorAll('.prov-visibility-toggle').forEach(el => {
-      if (el.checked) checked.push(el.dataset.prov);
-    });
-    // [] = all visible (matches config.json schema); non-empty = whitelist
-    if (checked.length === all.length) return [];
-    // Special case: no explicit provider selected => keep explicit providers hidden,
-    // aggregate them under Others instead of falling back to "all visible".
-    if (all.length > 0 && checked.length === 0) return [PROVIDER_OTHERS_KEY];
-    return checked;
-  }
-
-  function _cronHint(cron) {
-    if (!cron || typeof cron !== 'string') return '';
-    const parts = cron.trim().split(/\s+/);
-    if (parts.length !== 5) return t('settings.system.cron_hint_invalid');
-    const [min, hour, dom, month, dow] = parts;
-    const days = [
-      t('settings.system.cron_days.sun'),
-      t('settings.system.cron_days.mon'),
-      t('settings.system.cron_days.tue'),
-      t('settings.system.cron_days.wed'),
-      t('settings.system.cron_days.thu'),
-      t('settings.system.cron_days.fri'),
-      t('settings.system.cron_days.sat')
-    ];
-    const months = [
-      t('settings.system.cron_months.jan'),
-      t('settings.system.cron_months.feb'),
-      t('settings.system.cron_months.mar'),
-      t('settings.system.cron_months.apr'),
-      t('settings.system.cron_months.may'),
-      t('settings.system.cron_months.jun'),
-      t('settings.system.cron_months.jul'),
-      t('settings.system.cron_months.aug'),
-      t('settings.system.cron_months.sep'),
-      t('settings.system.cron_months.oct'),
-      t('settings.system.cron_months.nov'),
-      t('settings.system.cron_months.dec')
-    ];
-    const isAll = v => v === '*';
-    const isNum = v => /^\d+$/.test(v);
-    // Simple common patterns
-    if (isAll(dom) && isAll(month) && isAll(dow)) {
-      if (isAll(min) && isAll(hour)) return t('settings.system.cron_hint_every_minute');
-      if (isNum(min) && isNum(hour)) return t('settings.system.cron_hint_daily_at', { hour: hour.padStart(2, '0'), minute: min.padStart(2, '0') });
-      if (isAll(min) && isNum(hour)) return t('settings.system.cron_hint_hourly_at_hour', { hour });
-      if (isNum(min) && isAll(hour)) return t('settings.system.cron_hint_every_hour_at_minute', { minute: min.padStart(2, '0') });
-    }
-    if (isNum(min) && isNum(hour) && isAll(dom) && isAll(month) && isNum(dow)) {
-      return t('settings.system.cron_hint_weekly_day_at', {
-        day: days[parseInt(dow, 10)] || t('settings.system.cron_unknown_day'),
-        hour: hour.padStart(2, '0'),
-        minute: min.padStart(2, '0')
-      });
-    }
-    if (isNum(min) && isNum(hour) && isNum(dom) && isAll(month) && isAll(dow)) {
-      return t('settings.system.cron_hint_monthly_day_at', {
-        day: dom,
-        hour: hour.padStart(2, '0'),
-        minute: min.padStart(2, '0')
-      });
-    }
-    if (isNum(min) && isNum(hour) && isNum(dom) && isNum(month) && isAll(dow)) {
-      return t('settings.system.cron_hint_yearly_date_at', {
-        day: dom,
-        month: months[parseInt(month, 10) - 1] || month,
-        hour: hour.padStart(2, '0'),
-        minute: min.padStart(2, '0')
-      });
-    }
-    if (min === '0' && hour === '*/2' && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_two_hours');
-    const step = hour.match(/^\*\/(\d+)$/);
-    if (step && isAll(dom) && isAll(month) && isAll(dow)) return t('settings.system.cron_hint_every_n_hours', { n: step[1] });
-    return ''; // Unknown pattern — no hint
-  }
-
-  function updateCronHint() {
-    const el = _field('cfgScanCron');
-    const hint = document.getElementById('cfgCronHint');
-    if (!hint) return;
-    hint.textContent = el ? _cronHint(el.value) : '';
-  }
-
-  function _hasMultipleTypes() {
-    const folders = appConfig.folders || [];
-    const hasMovies = folders.some(f => !f.missing && f.type === 'movie');
-    const hasTv = folders.some(f => !f.missing && f.type === 'tv');
-    return hasMovies && hasTv && (appConfig.enable_movies ?? true) && (appConfig.enable_series ?? true);
-  }
-
-  function _updateTypeFilterVisibility() {
-    const show = _hasMultipleTypes();
-    ['typeSection', 'mobileTypeSection'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = show ? '' : 'none';
-    });
-  }
-
-  async function _runJellyseerrConnectionTest(btn, res, onSuccess) {
-    if (!res) return false;
-    res.textContent = '…';
-    res.style.color = 'var(--muted)';
-    if (btn) btn.disabled = true;
-    try {
-      const r = await fetch('/api/jellyseerr/test');
-      const d = await r.json();
-      if (d.ok) {
-        res.textContent = '✓ ' + t('onboarding.jsr_ok');
-        res.style.color = '#34d399';
-        if (typeof onSuccess === 'function') onSuccess();
-        return true;
-      }
-      res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail'));
-      res.style.color = '#f97316';
-      return false;
-    } catch (e) {
-      res.textContent = '✗ ' + t('onboarding.jsr_fail');
-      res.style.color = '#f97316';
-      return false;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-
-  async function testJellyseerr() {
-    const btn = document.getElementById('cfgJsrTestBtn');
-    const res = document.getElementById('cfgJsrTestResult');
-    if (!res) return;
-
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked ?? false;
-    const url = (document.getElementById('cfgJellyseerrUrl')?.value || '').trim();
-    const key = (document.getElementById('cfgJellyseerrKey')?.value || '').trim();
-
-    try {
-      await saveConfig({
-        jellyseerr: {
-          enabled,
-          url,
-          ...(key ? { apikey: key } : {}),
-        },
-      });
-      _settingsJsrTestOk = await _runJellyseerrConnectionTest(btn, res);
-    } catch (e) {
-      _settingsJsrTestOk = false;
-      res.textContent = '✗ ' + (e?.message || t('onboarding.jsr_fail'));
-      res.style.color = '#f97316';
-    }
-  }
-
-  function switchStab(btn, tabId) {
-    if (isMobile()) return;
-    document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
-    document.getElementById(tabId).style.display = 'block';
-  }
-
-  let _settingsLayoutMode = null;
-
-  function applySettingsMobileLayout(options = {}) {
-    const { resetMobile = false, resetDesktop = false } = options;
-    const onMobile = isMobile();
-    const mode = onMobile ? 'mobile' : 'desktop';
-    const modeChanged = _settingsLayoutMode !== mode;
-    _settingsLayoutMode = mode;
-    const tabs = document.querySelector('.settings-tabs');
-    const saveBtn = document.getElementById('settingsSaveBtn');
-    if (tabs) tabs.style.display = onMobile ? 'none' : '';
-    if (saveBtn) saveBtn.style.display = 'block';
-
-    const panels = document.querySelectorAll('.stab-panel[data-mobile-panel]');
-    const currentlyVisibleDesktopPanel = [...panels].find(panel => panel.style.display !== 'none')?.id || 'stab-library';
-    const currentlyExpandedMobilePanel = [...panels].find(panel =>
-      panel.querySelector('.settings-mobile-section-btn')?.getAttribute('aria-expanded') === 'true'
-    )?.id || null;
-
-    panels.forEach(panel => {
-      const headerBtn = panel.querySelector('.settings-mobile-section-btn');
-      const body = panel.querySelector('.settings-mobile-section-body');
-      if (!headerBtn || !body) return;
-
-      if (onMobile) {
-        panel.style.display = 'block';
-        if (resetMobile) {
-          headerBtn.setAttribute('aria-expanded', 'false');
-          body.classList.add('is-collapsed');
-        } else if (modeChanged) {
-          const shouldExpand = panel.id === currentlyVisibleDesktopPanel;
-          headerBtn.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
-          body.classList.toggle('is-collapsed', !shouldExpand);
-        }
-      } else {
-        let targetPanel = 'stab-library';
-        if (!resetDesktop) {
-          targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
-        }
-        const isActive = panel.id === targetPanel;
-        panel.style.display = isActive ? 'block' : 'none';
-        headerBtn.setAttribute('aria-expanded', 'true');
-        body.classList.remove('is-collapsed');
-      }
-    });
-
-    const stabButtons = document.querySelectorAll('.stab');
-    if (!onMobile && stabButtons.length) {
-      let targetPanel = 'stab-library';
-      if (!resetDesktop) {
-        targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
-      }
-      stabButtons.forEach(btn => {
-        const onclick = btn.getAttribute('onclick') || '';
-        btn.classList.toggle('active', onclick.includes(`'${targetPanel}'`));
-      });
-    }
-  }
-
-  function toggleMobileSettingsSection(btn) {
-    if (!btn || !isMobile()) return;
-    const panel = btn.closest('.stab-panel');
-    const body = panel?.querySelector('.settings-mobile-section-body');
-    if (!body) return;
-    const willOpen = btn.getAttribute('aria-expanded') === 'false';
-    document.querySelectorAll('.stab-panel[data-mobile-panel]').forEach(p => {
-      const pBtn = p.querySelector('.settings-mobile-section-btn');
-      const pBody = p.querySelector('.settings-mobile-section-body');
-      if (!pBtn || !pBody) return;
-      const isCurrent = p === panel;
-      pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
-      pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
-    });
-  }
-
-  function openMobileScanFromSettings() {
-    closeSettings();
-    openMobileScanSheet();
-  }
-
-  function openSettings() {
-    closeMobileScanSheet();
-    _settingsJsrTestOk = false;
-    loadSettings();
-    loadVersion();
-    renderProviderToggles();
-    document.getElementById('settingsOverlay').style.display = 'flex';
-    const btn = document.getElementById('settingsSaveBtn');
-    if (btn) {
-      btn.style.display = 'block'; // always show — config.json is always writable
-      btn.disabled = false;
-    }
-    applySettingsMobileLayout({ resetMobile: true, resetDesktop: true });
-  }
-
-  function closeSettings() {
-    document.getElementById('settingsOverlay').style.display = 'none';
-  }
-
-  function closeSettingsIfBackdrop(e) {
-    if (e.target === document.getElementById('settingsOverlay')) closeSettings();
-  }
-
-  window.addEventListener('resize', () => {
-    const overlay = document.getElementById('settingsOverlay');
-    if (overlay && overlay.style.display !== 'none') applySettingsMobileLayout();
-  });
 
   // ── LAYOUT TOGGLE ────────────────────────────────────
   
@@ -3708,18 +2385,8 @@ let allItems=[], categories=[], groups=[];
   
 
 
-  function syncThemeIcons() {
-    const isDark = document.documentElement.classList.contains('dark');
-    const sunMoon = isDark
-      ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
-      : '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
-    ['themeIcon','themeIconMobile'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = sunMoon;
-    });
-  }
 
-  
+
 
   // ── PLOT TOOLTIP ─────────────────────────────────────
   let _tt = null;
@@ -3886,9 +2553,17 @@ let allItems=[], categories=[], groups=[];
       if (!r.ok) { initApp(); return; }
       const d = await r.json();
       if (!d.required) { initApp(); return; }
-      if (sessionStorage.getItem('mediaAuth') === '1') { initApp(); return; }
-      const ov = document.getElementById('authOverlay');
-      if (ov) { ov.style.display = 'flex'; setTimeout(()=>document.getElementById('authInput')?.focus(), 50); }
+      // Load translations for the auth screen before the overlay is shown.
+      // Language comes from /api/auth (config.json system.language), fallback to English.
+      // This ensures button labels and error messages are never shown as raw i18n keys.
+      if (!Object.keys(TRANSLATIONS).length) {
+        await loadTranslations(d.language || 'en');
+        applyTranslations();
+      }
+      if (d.authenticated) { initApp(); return; }
+      var ov = document.getElementById('authOverlay');
+      if (ov) { ov.style.display = 'flex'; }
+      setTimeout(() => document.getElementById('authInput')?.focus(), 50);
     } catch(e) {
       initApp();
     }
@@ -3906,13 +2581,18 @@ let allItems=[], categories=[], groups=[];
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({password: input.value}),
       });
+      if (r.status === 429) {
+        if (err) { err.textContent = t('auth.rate_limited'); err.style.display = 'block'; }
+        btn.disabled = false; btn.textContent = t('auth.enter');
+        return;
+      }
       const d = await r.json();
       if (d.ok) {
-        sessionStorage.setItem('mediaAuth', '1');
+        sessionStorage.setItem('mediaAuth', '1'); // UI hint only — session is in the HttpOnly cookie
         document.getElementById('authOverlay').style.display = 'none';
         initApp();
       } else {
-        if (err) { err.style.display = 'block'; }
+        if (err) { err.textContent = t('auth.wrong'); err.style.display = 'block'; }
         input.value = ''; input.focus();
         btn.disabled = false; btn.textContent = t('auth.enter');
       }
@@ -3921,462 +2601,25 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
-  // ── ONBOARDING ───────────────────────────────────────
-  let _onbStep = 0;
-  let _onbJsr = { enabled: false, url: '', key: '' };
-  let _onbLogSeen = 0;
-  let _langTimer = null;
-  let _onbLang = 'fr';
-  let _onbTheme = 'dark';
-
-  const _ONB_TEXTS = {
-    fr: {
-      title: 'Bienvenue dans MyMediaLibrary',
-      desc: 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil. Repérez les fichiers encombrants, les codecs ou résolutions à remplacer, les contenus déjà disponibles sur vos plateformes de streaming, et suivez l\'évolution de votre collection.',
-      start: 'Commencer →',
-    },
-    en: {
-      title: 'Welcome to MyMediaLibrary',
-      desc: 'Visualize and explore your movie and TV library at a glance. Spot large files, outdated codecs or resolutions, content already available on your streaming platforms, and track your collection\'s growth with detailed statistics.',
-      start: 'Get started →',
-    },
-  };
-
-  function _onbDocLang() {
-    const fallbackLang = CURRENT_LANG === 'en' ? 'en' : 'fr';
-    return _onbLang === 'en' ? 'en' : (_onbLang === 'fr' ? 'fr' : fallbackLang);
-  }
-
-  function _onbDocHref() {
-    return '/docs.html?lang=' + _onbDocLang();
-  }
-
-  function _updateOnbDocLink() {
-    const link = document.getElementById('onbDocLink');
-    if (!link) return;
-    link.href = _onbDocHref();
-  }
-
-  function _updateOnbLangDisplay(displayLang) {
-    const txt = _ONB_TEXTS[displayLang] || _ONB_TEXTS.fr;
-    const el = (id) => document.getElementById(id);
-    if (el('onbWelcomeTitle')) el('onbWelcomeTitle').textContent = txt.title;
-    if (el('onbWelcomeDesc'))  el('onbWelcomeDesc').textContent  = txt.desc;
-    if (el('onbWelcomeStart')) el('onbWelcomeStart').textContent = txt.start;
-    _updateOnbDocLink();
-    ['onbLangFr','onbLangEn'].forEach(id => {
-      const btn = el(id);
-      if (!btn) return;
-      const isDisplayed = (id === 'onbLangFr' && displayLang === 'fr') || (id === 'onbLangEn' && displayLang === 'en');
-      const isSelected  = _onbLang !== null && ((id === 'onbLangFr' && _onbLang === 'fr') || (id === 'onbLangEn' && _onbLang === 'en'));
-      if (isSelected) {
-        // Manual selection: filled background
-        btn.style.background  = 'var(--accent)';
-        btn.style.borderColor = 'var(--accent)';
-        btn.style.color       = '#fff';
-        btn.style.boxShadow   = '';
-        btn.style.transform   = '';
-      } else if (isDisplayed) {
-        // Auto-highlight: border only, transparent background
-        btn.style.background  = 'transparent';
-        btn.style.borderColor = 'var(--accent)';
-        btn.style.color       = 'var(--text)';
-        btn.style.boxShadow   = '0 0 0 3px rgba(124,106,255,.15)';
-        btn.style.transform   = 'scale(1.04)';
-      } else {
-        // Default
-        btn.style.background  = 'var(--surface)';
-        btn.style.borderColor = 'var(--border)';
-        btn.style.color       = 'var(--muted)';
-        btn.style.boxShadow   = '';
-        btn.style.transform   = '';
-      }
+  function _initPlotDelegation() {
+    const lib = document.getElementById('library');
+    if (!lib || lib._plotDelegated) return;
+    lib._plotDelegated = true;
+    lib.addEventListener('mouseover', function (e) {
+      const card = e.target.closest?.('.tl-card');
+      if (!card || !card.dataset.plot) return;
+      if (e.relatedTarget?.closest?.('.tl-card') !== card) showPlot(card, card.dataset.plot);
     });
-  }
-
-  function _startLangToggle() {
-    // Visual-only: highlight current language; if none selected yet use CURRENT_LANG
-    _updateOnbLangDisplay(_onbLang || CURRENT_LANG);
-    clearInterval(_langTimer);
-    let showing = CURRENT_LANG;
-    _langTimer = setInterval(() => {
-      // Only auto-toggle display while no manual selection made
-      if (_onbLang !== null) { clearInterval(_langTimer); _langTimer = null; return; }
-      showing = showing === 'fr' ? 'en' : 'fr';
-      _updateOnbLangDisplay(showing);
-    }, 3000);
-  }
-
-  async function selectOnbLang(lang) {
-    clearInterval(_langTimer);
-    _langTimer = null;
-    _onbLang = lang;
-    _updateOnbLangDisplay(lang);
-    // Enable Commencer button now that a language was manually selected
-    const btn = document.getElementById('onbCommencerBtn');
-    if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
-    if (lang !== CURRENT_LANG) {
-      await loadTranslations(lang);
-      applyTranslations();
-      // Re-update display after translations loaded (button text may have changed)
-      _updateOnbLangDisplay(lang);
-      const startSpan = document.getElementById('onbWelcomeStart');
-      if (startSpan) startSpan.textContent = (_ONB_TEXTS[lang] || _ONB_TEXTS.fr).start;
-    }
-  }
-
-  function toggleOnboardingTheme() {
-    _onbTheme = _onbTheme === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', _onbTheme);
-  }
-
-  function showOnboarding() {
-    _onbStep = 0;
-    _onbLang = null;
-    _onbTheme = appConfig.ui?.theme || 'dark';
-    _onbJsr = {
-      enabled: appConfig.jellyseerr?.enabled ?? false,
-      url:     appConfig.jellyseerr?.url     || '',
-      key:     '',
-    };
-    _onbLogSeen = 0;
-    // Prefetch both i18n files so lang switching is instant (browser caches them)
-    ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
-    const ov = document.getElementById('onboardingOverlay');
-    if (ov) { ov.style.display = 'flex'; _onbRender(); }
-  }
-
-  function _onbRender() {
-    // Step indicator: hidden on step 0, 3 bars for steps 1-3
-    const stepsEl = document.getElementById('onbSteps');
-    if (stepsEl) {
-      if (_onbStep === 0) {
-        stepsEl.innerHTML = '';
-      } else {
-        stepsEl.innerHTML = [1,2,3].map(n =>
-          '<div style="width:40px;height:4px;border-radius:2px;background:'+(n===_onbStep?'var(--accent)':'var(--border)')+'"></div>'
-        ).join('');
-      }
-    }
-
-    const panel = document.getElementById('onbPanel');
-    if (!panel) return;
-    if      (_onbStep === 0) { panel.innerHTML = _onbStep0HTML(); _startLangToggle(); }
-    else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
-    else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
-    else                     panel.innerHTML = _onbStep3HTML();
-
-    // Nav buttons
-    const prev = document.getElementById('onbPrevBtn');
-    const next = document.getElementById('onbNextBtn');
-    const skip = document.getElementById('onbSkipBtn');
-    // Step 0: hide all nav buttons (step has its own Commencer button)
-    if (_onbStep === 0) {
-      if (prev) prev.style.display = 'none';
-      if (next) next.style.display = 'none';
-      if (skip) skip.style.display = 'none';
-      return;
-    }
-    if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
-    if (next) {
-      next.style.display = '';
-      if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
-      else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
-      // Step 1: disable next until at least 1 folder has movie/tv type
-      // Step 2: disable next until Jellyseerr test passes
-      if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
-      else if (_onbStep === 2) { next.disabled = true; }
-      else next.disabled = false;
-    }
-    if (skip) {
-      skip.textContent = t('nav.skip');
-      skip.style.display = _onbStep === 2 ? '' : 'none';
-      if (_onbStep === 2) _updateOnbSkipStyle(skip);
-    }
-  }
-
-  function _onbStep0HTML() {
-    const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
-    const quickLinkBase = 'display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;text-decoration:none;line-height:1.2;min-height:34px';
-    return '<div style="text-align:center;padding:20px 0 10px">'
-      + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
-      // Language selector
-      + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
-        + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
-        + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
-      + '</div>'
-      // Auto-toggling content
-      + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
-      + '<div id="onbWelcomeDesc" style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
-      + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
-      + '</div>'
-      + '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:420px;margin:0 auto 22px">'
-        + '<a href="https://github.com/MyMediaLibrary/MyMediaLibrary" target="_blank" rel="noopener" style="'+quickLinkBase+'">'
-          + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-.95-2.69-.95-.36-.91-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.81.06 1.24.84 1.24.84.72 1.23 1.89.87 2.35.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.96 0-.88.32-1.6.84-2.16-.08-.2-.36-1.02.08-2.12 0 0 .69-.22 2.26.82A7.73 7.73 0 0 1 8 4.08c.68 0 1.37.09 2.01.27 1.57-1.04 2.26-.82 2.26-.82.44 1.1.16 1.92.08 2.12.52.56.84 1.28.84 2.16 0 3.08-1.88 3.75-3.67 3.95.29.25.54.73.54 1.47v2.18c0 .22.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
-          + '<span>GitHub</span>'
-        + '</a>'
-        + '<a id="onbDocLink" href="'+_onbDocHref()+'" target="_blank" rel="noopener" style="'+quickLinkBase+'">'
-          + '<span>📘 Documentation</span>'
-        + '</a>'
-      + '</div>'
-      + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
-        + '<span id="onbWelcomeStart">Commencer →</span>'
-      + '</button>'
-      + '</div>';
-  }
-
-  function _onbStep1HTML() {
-    const folders = appConfig.folders || [];
-    let html = '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_folders_title')+'</div>'
-      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_folders_desc')+'</div>'
-      + '</div>';
-    if (!folders.length) {
-      return html + '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px 0">'+t('onboarding.no_folders')+'</div>';
-    }
-    const unconfigured = folders.filter(f => !f.missing && !(f._onbType || f.type)).length;
-    if (unconfigured > 0) {
-      html += '<div style="font-size:12px;color:#f7b731;margin-bottom:10px">'
-        + '⚠ ' + t('onboarding.unconfigured', {n: unconfigured, s: unconfigured>1?'s':''}) + '</div>';
-    }
-    html += '<div style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;padding-right:2px">';
-    folders.forEach((f, idx) => {
-      const isMissing = !!f.missing;
-      const cur = f._onbType !== undefined ? f._onbType : (f.type || '');
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);'+(isMissing?'opacity:.45':'')+'">'
-        + '<span style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escH(f.name)+'">'+escH(f.name)+'</span>'
-        + (isMissing
-          ? '<span style="font-size:11px;color:#f97316">'+t('onboarding.folder_missing')+'</span>'
-          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" onchange="_onbFolderChange('+idx+',this.value);this.classList.toggle(\'has-value\',!!this.value)">'
-            + '<option value="">'+t('onboarding.folder_choose')+'</option>'
-            + '<option value="movie"'+(cur==='movie'?' selected':'')+'>'+t('onboarding.folder_movie')+'</option>'
-            + '<option value="tv"'+(cur==='tv'?' selected':'')+'>'+t('onboarding.folder_tv')+'</option>'
-            + '<option value="ignore"'+(cur==='ignore'?' selected':'')+'>'+t('onboarding.folder_ignore')+'</option>'
-            + '</select>')
-        + '</div>';
+    lib.addEventListener('mouseout', function (e) {
+      const card = e.target.closest?.('.tl-card');
+      if (card && e.relatedTarget?.closest?.('.tl-card') !== card) hidePlot();
     });
-    html += '</div>';
-    return html;
-  }
-
-  function _onbValidateStep1() {
-    const next = document.getElementById('onbNextBtn');
-    if (!next) return;
-    const hasMedia = (appConfig.folders || []).some(f =>
-      !f.missing && ['movie', 'tv'].includes(f._onbType !== undefined ? f._onbType : (f.type || ''))
-    );
-    next.disabled = !hasMedia;
-  }
-
-  function _onbFolderChange(idx, val) {
-    if (appConfig.folders[idx]) {
-      appConfig.folders[idx]._onbType = val;
-    }
-    _onbValidateStep1();
-  }
-
-  function _captureOnbJsr() {
-    const enabled = document.getElementById('onbJsrEnabled')?.checked ?? _onbJsr.enabled;
-    const url     = document.getElementById('onbJsrUrl')?.value ?? _onbJsr.url;
-    const key     = document.getElementById('onbJsrKey')?.value ?? _onbJsr.key;
-    _onbJsr = { enabled, url, key };
-  }
-
-  function _updateOnbSkipStyle(btn) {
-    if (!btn) return;
-    const enabled = document.getElementById('onbJsrEnabled')?.checked ?? _onbJsr.enabled;
-    if (enabled) {
-      // Jellyseerr on → Skip grayed (but clickable)
-      btn.style.background  = 'transparent';
-      btn.style.borderColor = 'var(--border)';
-      btn.style.color       = 'var(--muted)';
-    } else {
-      // Jellyseerr off → Skip highlighted (violet)
-      btn.style.background  = 'var(--accent)';
-      btn.style.borderColor = 'var(--accent)';
-      btn.style.color       = '#fff';
-    }
-  }
-
-  function _onbJsrToggle() {
-    const enabled = document.getElementById('onbJsrEnabled')?.checked;
-    ['onbJsrUrl', 'onbJsrKey', 'onbJsrTestBtn'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
-    });
-    // Update skip button style + reset next button (test no longer valid)
-    _updateOnbSkipStyle(document.getElementById('onbSkipBtn'));
-    const next = document.getElementById('onbNextBtn');
-    if (next) next.disabled = true;
-    // Clear previous test result
-    const res = document.getElementById('onbJsrTestResult');
-    if (res) { res.textContent = ''; }
-  }
-
-  function _onbStep2HTML() {
-    const dis = _onbJsr.enabled ? '' : ' disabled';
-    const disOp = _onbJsr.enabled ? '' : ';opacity:.45';
-    return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_jsr_title')+'</div>'
-      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_jsr_desc')+'</div>'
-      + '</div>'
-      + '<div style="display:flex;flex-direction:column;gap:14px">'
-      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
-      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
-        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
-      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
-        + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
-      + '<div class="settings-row">'
-        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
-        + '<span id="onbJsrTestResult" style="font-size:12px;margin-left:10px;color:var(--muted)"></span>'
-      + '</div>'
-      + '</div>';
-  }
-
-  function _onbStep3HTML() {
-    const folders = appConfig.folders || [];
-    const nMovies  = folders.filter(f => !f.missing && (f._onbType||f.type)==='movie').length;
-    const nTv      = folders.filter(f => !f.missing && (f._onbType||f.type)==='tv').length;
-    const nIgnored = folders.filter(f => !f.missing && ((f._onbType||f.type)==='ignore' || !(f._onbType||f.type))).length;
-    const rows = [];
-    if (nMovies)  rows.push('<b>'+nMovies+'</b> '+t(nMovies>1?'onboarding.summary_movies_pl':'onboarding.summary_movies',{n:nMovies}).replace(nMovies+' ',''));
-    if (nTv)      rows.push('<b>'+nTv+'</b> '+t(nTv>1?'onboarding.summary_tv_pl':'onboarding.summary_tv',{n:nTv}).replace(nTv+' ',''));
-    if (nIgnored) rows.push('<b>'+nIgnored+'</b> '+t(nIgnored>1?'onboarding.summary_ignored_pl':'onboarding.summary_ignored',{n:nIgnored}).replace(nIgnored+' ',''));
-    return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_scan_title')+'</div>'
-      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_scan_desc')+'</div>'
-      + '</div>'
-      + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
-      + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
-      + '<div>🔍 Jellyseerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
-      + '</div>';
-  }
-
-  async function onbTestJsr() {
-    const btn = document.getElementById('onbJsrTestBtn');
-    const res = document.getElementById('onbJsrTestResult');
-    if (!res) return;
-    _captureOnbJsr();
-    const onbKey = (_onbJsr.key || '').trim();
-    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
-    await _runJellyseerrConnectionTest(btn, res, () => {
-      const next = document.getElementById('onbNextBtn');
-      if (next) next.disabled = false;
-    });
-  }
-
-  function onbNext() {
-    if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
-    if (_onbStep === 2) _captureOnbJsr();
-    if (_onbStep < 3) { _onbStep++; _onbRender(); }
-  }
-
-  function onbPrev() {
-    if (_onbStep >= 1) { _onbStep--; _onbRender(); }
-  }
-
-  function onbSkip() {
-    // Only shown on step 2 — Skip means disable Jellyseerr
-    if (_onbStep === 2) {
-      _captureOnbJsr();
-      _onbJsr.enabled = false;
-      _onbStep = 3; _onbRender();
-    }
-  }
-
-  async function onbLaunchScan() {
-    const btn = document.getElementById('onbNextBtn');
-    if (btn) { btn.disabled = true; btn.textContent = t('onboarding.saving'); }
-
-    // Build folder list: apply _onbType overrides, set enabled accordingly
-    const folders = (appConfig.folders || []).map(f => {
-      const t = f._onbType !== undefined ? (f._onbType || null) : (f.type || null);
-      const type = (t === 'ignore') ? null : t;
-      const enabled = !!type;
-      const clean = Object.fromEntries(Object.entries(f).filter(([k]) => k !== '_onbType'));
-      return {...clean, type, enabled};
-    });
-
-    const partial = {
-      folders,
-      enable_movies: folders.some(f => f.type === 'movie'),
-      enable_series: folders.some(f => f.type === 'tv'),
-      jellyseerr: (() => {
-        const onbKey = (_onbJsr.key || '').trim();
-        return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
-      })(),
-      system: { language: _onbLang },
-      ui: { theme: _onbTheme },
-    };
-
-    try {
-      await saveConfig(partial);
-    } catch(e) {
-      alert(t('settings.save_error', {msg: e.message}));
-      if (btn) { btn.disabled = false; btn.textContent = t('nav.launch_scan'); }
-      return;
-    }
-
-    const mode = (_onbJsr.enabled && _onbJsr.url) ? 'full' : 'quick';
-    try {
-      await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})});
-    } catch(e) {}
-
-    // Switch to live scan log view
-    const panel = document.getElementById('onbPanel');
-    if (panel) panel.innerHTML = '<div style="padding:8px 0">'
-      + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
-        + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
-        + '<span style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
-      + '</div>'
-      + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
-      + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
-        + '<button onclick="document.getElementById(\'onboardingOverlay\').style.display=\'none\';loadLibrary();" '
-          + 'style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'+t('onboarding.open_library')+'</button>'
-      + '</div>'
-      + '</div>';
-    const stepsEl = document.getElementById('onbSteps');
-    if (stepsEl) stepsEl.innerHTML = '';
-    ['onbSkipBtn','onbPrevBtn','onbNextBtn'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    _onbLogSeen = 0;
-    _onbPollScan();
-  }
-
-  async function _onbPollScan() {
-    try {
-      const r = await fetch('/api/scan/status');
-      const d = await r.json();
-      const logBox = document.getElementById('onbLogBox');
-      if (logBox) {
-        const lines = (d.log || []).slice(_onbLogSeen);
-        if (lines.length) {
-          _onbLogSeen += lines.length;
-          lines.forEach(line => {
-            const div = document.createElement('div');
-            div.textContent = line;
-            logBox.appendChild(div);
-          });
-          logBox.scrollTop = logBox.scrollHeight;
-        }
-      }
-      if (d.status === 'done' || d.status === 'error') {
-        const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
-        if (spinnerRow) spinnerRow.style.display = 'none';
-        const doneBtn = document.getElementById('onbDoneBtn');
-        if (doneBtn) doneBtn.style.display = '';
-        return;
-      }
-    } catch(e) {}
-    setTimeout(_onbPollScan, 1500);
   }
 
   function initApp() {
     loadLibrary();
     syncScanState();
+    _initPlotDelegation();
   }
 
   checkAuth();

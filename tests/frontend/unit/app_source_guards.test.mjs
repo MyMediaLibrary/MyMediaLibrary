@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const appSource = fs.readFileSync(path.resolve('app/app.js'), 'utf8');
-const appCss = fs.readFileSync(path.resolve('app/app.css'), 'utf8');
+const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.js'), 'utf8');
+const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
+const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
+const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
@@ -115,7 +120,7 @@ test('loadLibrary resolves score feature from config first, then library metadat
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
-  const block = functionBlock(appSource, 'loadSettings', 'toggleJsrFields');
+  const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
@@ -137,10 +142,10 @@ test('tile metadata ellipsis pill can shrink in compact rows', () => {
 });
 
 test('audio language simplified stats keep all categories without auto-grouping into others', () => {
-  const statsPanelBlock = functionBlock(appSource, 'renderStatsPanel', 'renderStatsModal');
-  assert.match(statsPanelBlock, /const hasLangData = Object\.keys\(byAudioLangCount\)\.length > 0;/, 'audio language chart should be based on all simplified categories');
-  assert.match(statsPanelBlock, /const audioLangEntriesCount = Object\.entries\(byAudioLangCount\)\.sort\(\(a,b\)=>b\[1\]-a\[1\]\);/, 'audio language counts should be passed through without threshold grouping');
-  assert.match(statsPanelBlock, /const audioLangEntriesSize = Object\.entries\(byAudioLangSize\)\.sort\(\(a,b\)=>b\[1\]-a\[1\]\);/, 'audio language sizes should be passed through without threshold grouping');
+  const statsPanelBlock = functionBlock(statsSource, 'buildStatsData', 'makePie');
+  assert.match(statsPanelBlock, /hasData:\s*Object\.keys\(byAudioLangCount\)\.length > 0/, 'audio language chart should be based on all simplified categories');
+  assert.match(statsPanelBlock, /entriesCount:\s*Object\.entries\(byAudioLangCount\)\.sort\(/, 'audio language counts should be passed through without threshold grouping');
+  assert.match(statsPanelBlock, /entriesSize:\s*Object\.entries\(byAudioLangSize\)\.sort\(/, 'audio language sizes should be passed through without threshold grouping');
   assert.doesNotMatch(statsPanelBlock, /audioLangThreshold/, 'audio language chart should not apply a 1% threshold');
   assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
 });

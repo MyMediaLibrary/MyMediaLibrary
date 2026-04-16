@@ -107,12 +107,15 @@
     "episodes": "{n}ep",
     "no_provider": "Not available on FR streaming",
     "files": "{n} file",
-    "files_pl": "{n} files"
+    "files_pl": "{n} files",
+    "movies": "Movies",
+    "series": "TV Series"
   },
   "settings": {
     "title": "⚙️ Settings",
     "save": "Save",
     "close": "Close",
+    "logout": "Logout",
     "saved": "✓ Saved",
     "save_error": "Error saving: {msg}",
     "providers_visibility": "Providers visibility",
@@ -162,7 +165,6 @@
       "language": "Language",
       "language_option_fr": "🇫🇷 French",
       "language_option_en": "🇬🇧 English",
-      "language_option_es": "🇪🇸 Spanish",
       "accent": "Accent color",
       "accent_reset": "Reset",
       "version": "Version",
@@ -281,13 +283,28 @@
     "entry": "entry",
     "entries": "entries",
     "quality_distribution": "Quality distribution (score)",
-    "quality_average": "Average score: {score}"
+    "quality_average": "Average score: {score}",
+    "library_stats": "Library statistics",
+    "global_all_items": "Shows all items in the library.",
+    "global_filtered_items": "Shows {pct} of items ({items}).",
+    "quality_score": "Quality score",
+    "providers_by_group": "Providers by group",
+    "providers_by_category": "Providers by folder"
+  },
+  "quality_level": {
+    "0": "Very low",
+    "1": "Low",
+    "2": "Medium",
+    "3": "Good",
+    "4": "Very good",
+    "5": "Excellent"
   },
   "auth": {
     "protected": "Protected access",
     "password": "Password",
     "enter": "Sign in",
-    "wrong": "Incorrect password"
+    "wrong": "Incorrect password",
+    "rate_limited": "Too many attempts. Please try again in a minute."
   },
   "common": {
     "close": "Close",

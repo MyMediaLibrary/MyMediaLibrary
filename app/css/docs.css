@@ -31,7 +31,7 @@ html { scroll-behavior: smooth; }
 
 .docs-header h1 {
   margin: 0;
-  font-family: 'Syne', sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 1.55rem;
 }
 
@@ -56,7 +56,7 @@ html { scroll-behavior: smooth; }
   color: var(--muted);
   padding: 6px 10px;
   min-width: 42px;
-  font: 600 .8rem/1 'Inter', sans-serif;
+  font: 600 .8rem/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   letter-spacing: .04em;
   cursor: pointer;
   transition: color .15s ease, background-color .15s ease;
@@ -149,7 +149,7 @@ html { scroll-behavior: smooth; }
 .docs-content h4,
 .docs-content h5,
 .docs-content h6 {
-  font-family: 'Syne', sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 1.5em 0 .55em;
   line-height: 1.25;
   scroll-margin-top: 14px;

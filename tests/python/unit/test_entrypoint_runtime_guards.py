@@ -2,8 +2,8 @@ import pathlib
 import unittest
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-ENTRYPOINT = ROOT / "conf" / "entrypoint.sh"
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 
 
 class EntrypointRuntimeGuardsTest(unittest.TestCase):

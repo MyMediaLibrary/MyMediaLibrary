@@ -117,21 +117,32 @@
   updateThemeButtonLabel();
   document.documentElement.lang = lang;
 
-  fetch(docPath, { cache: 'no-store' })
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.text();
-    })
-    .then((md) => {
-      const html = window.DocsMarkdown.parseMarkdown(md);
-      contentEl.innerHTML = html;
-      bindInPageAnchors();
-      contentEl.hidden = false;
-      statusEl.hidden = true;
-      scrollToHash(window.location.hash);
-    })
-    .catch((err) => {
-      statusEl.textContent = `Impossible de charger la documentation (${err.message}).`;
-      statusEl.classList.add('is-error');
-    });
+  function loadDoc() {
+    fetch(docPath, { cache: 'no-store' })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((md) => {
+        const html = window.DocsMarkdown.parseMarkdown(md);
+        contentEl.innerHTML = html;
+        bindInPageAnchors();
+        contentEl.hidden = false;
+        statusEl.hidden = true;
+        scrollToHash(window.location.hash);
+      })
+      .catch((err) => {
+        statusEl.textContent = `Impossible de charger la documentation (${err.message}).`;
+        statusEl.classList.add('is-error');
+      });
+  }
+
+  function init() {
+    // Auth is enforced server-side by nginx auth_request on /docs.html.
+    // The mml_session cookie is shared across tabs, so a valid session opened
+    // in another tab grants access here automatically — no JS check needed.
+    loadDoc();
+  }
+
+  init();
 }());

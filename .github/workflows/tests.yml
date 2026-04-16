@@ -15,8 +15,6 @@ jobs:
           python-version: '3.11'
       - name: Run Python unit/integration tests
         run: python3 -m unittest discover -s tests/python -p 'test_*.py'
-      - name: Run legacy Python tests
-        run: python3 -m unittest discover -s conf/tests -p 'test_*.py'
 
   frontend-unit:
     runs-on: ubuntu-latest
@@ -27,8 +25,10 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install
+        working-directory: tests/frontend
       - name: Run frontend unit tests
         run: npm run test:frontend:unit
+        working-directory: tests/frontend
 
   frontend-e2e:
     runs-on: ubuntu-latest
@@ -40,7 +40,10 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install
+        working-directory: tests/frontend
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+        working-directory: tests/frontend
       - name: Run critical E2E tests
         run: npm run test:frontend:e2e
+        working-directory: tests/frontend

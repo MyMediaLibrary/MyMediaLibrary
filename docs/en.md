@@ -7,12 +7,14 @@
 3. [Installation](#3-installation)
 4. [Library structure](#4-library-structure)
 5. [Onboarding](#5-onboarding)
-6. [Web interface](#6-web-interface)
-7. [Filters](#7-filters)
-8. [Streaming providers](#8-streaming-providers)
-9. [Quality Scoring](#9-quality-scoring)
-10. [Statistics](#10-statistics)
-11. [Settings](#11-settings)
+6. [Scanner](#6-scanner)
+7. [Data models](#7-data-models)
+8. [Web interface](#8-web-interface)
+9. [Filters](#9-filters)
+10. [Streaming providers](#10-streaming-providers)
+11. [Quality Scoring](#11-quality-scoring)
+12. [Statistics](#12-statistics)
+13. [Settings](#13-settings)
 
 ---
 
@@ -33,8 +35,8 @@
 
 - **Container**: nginx:alpine + Python 3 + dcron (single image)
 - **Frontend**: HTML/CSS + vanilla JS (no framework)
-- **Backend**: minimal Python server (`scanner/server.py`) — REST API routes + static file serving
-- **Scanner**: Python (`scanner/scan.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Backend**: minimal Python server (`backend/scanner.py`) — REST API routes + static file serving
+- **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, `library.json` writing
 - **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
 
 ### Internationalisation
@@ -161,7 +163,147 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 ---
 
-## 6. Web interface
+## 6. Scanner
+
+The scanner is the core component of MyMediaLibrary. It reads the filesystem, parses `.nfo` files, and produces the JSON files consumed by the web interface.
+
+### Overview
+
+The scanner (`scanner.py`) analyses the content of `LIBRARY_PATH` and generates:
+
+| File | Purpose |
+|---|---|
+| `/data/library.json` | Main index — loaded by the web interface |
+| `/data/library_inventory.json` | Media presence/absence tracking (optional, enable in Settings > System) |
+
+The detailed format of these files is described in the [Data models](#7-data-models) chapter.
+
+### Scan modes
+
+#### Quick scan
+
+- Walks the filesystem and parses `.nfo` files
+- Writes `library.json` incrementally, folder by folder
+- Preserves enriched data from the previous scan (streaming providers, quality score)
+- Does **not** call Jellyseerr, does **not** recompute scores, does **not** update the inventory
+
+#### Full scan (default)
+
+Runs 4 phases in sequence:
+
+1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
+2. **Jellyseerr** — fetch FR streaming providers for each title
+3. **Scoring** — compute quality score (if enabled in settings)
+4. **Inventory** — update `library_inventory.json` (if enabled in settings)
+
+> Each phase reads from the output of the previous phase on disk. Phases are fully independent.
+
+### Scan triggers
+
+| Origin | Mode | How |
+|---|---|---|
+| Container startup | Quick | Automatic via `entrypoint.sh` |
+| Onboarding wizard | Quick | "Launch scan" button at the end of onboarding |
+| "Scan" button in the UI | Full | Via the Scanner page |
+| Cron | Full | Automatic schedule (Settings > System) |
+| Folder configuration change | Quick | Automatic after saving in Settings > Library |
+
+### Anti-concurrency lock
+
+Only one scan can run at a time. The scanner uses an inter-process file lock (`/data/.scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent simultaneous writes that would corrupt `library.json`.
+
+If a scan is already running:
+- A UI-triggered scan receives an error response (HTTP 409)
+- A scheduled scan (cron or startup) is silently skipped with a log message
+
+### Logs
+
+Logs are available in `data/scanner.log` (host path) and viewable in Settings > System.
+
+| Level | Content |
+|---|---|
+| `INFO` | Phase progression, per-folder progress, durations, detected statistics (video/audio codecs, languages, resolutions) |
+| `DEBUG` | Technical details: Jellyseerr results per item, NFO parsing, not-found items, inventory details |
+
+### Data preservation (quick scan)
+
+During a quick scan, enriched data accumulated by previous full scans is carried forward without being recomputed:
+
+| Field | Source | Behavior |
+|---|---|---|
+| `providers` | Phase 2 (Jellyseerr) | Copied from the existing `library.json` |
+| `providers_fetched` | Phase 2 | Copied from the existing `library.json` |
+| `quality` | Phase 3 (scoring) | Copied from the existing `library.json` |
+
+The existing `library.json` is loaded **once** at the start of the scan and used as an immutable reference for all lookups. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
+
+---
+
+## 7. Data models
+
+### `library.json`
+
+Main file consumed by the web interface. Top-level structure:
+
+```json
+{
+  "scanned_at": "2025-04-14T20:00:00.000000",
+  "library_path": "/mnt/media/library",
+  "total_items": 3289,
+  "items": [ ... ],
+  "meta": { "score_enabled": true }
+}
+```
+
+Example item:
+
+```json
+{
+  "id": "movie:Movies:The.Dark.Knight.2008",
+  "path": "Movies/The.Dark.Knight.2008",
+  "title": "The Dark Knight",
+  "year": "2008",
+  "category": "Movies",
+  "type": "movie",
+  "size": "14.0 GB",
+  "resolution": "1080p",
+  "codec": "HEVC",
+  "audio_codec": "TRUEHD",
+  "audio_languages": ["fra", "eng"],
+  "providers": ["Netflix", "Canal+"],
+  "quality": { "score": 87, "level": 5 }
+}
+```
+
+The `id` field is the stable key for each item. Format: `{type}:{category}:{folder_name}`. It is identical in `library.json` and `library_inventory.json` for the same media item, enabling cross-file matching.
+
+### `library_inventory.json`
+
+Optional file (enable in Settings > System) that preserves the presence history of each media item and its video files across successive scans.
+
+Main fields per item:
+
+| Field | Description |
+|---|---|
+| `id` | Shared identifier with `library.json` |
+| `status` | `"present"` or `"missing"` |
+| `first_seen_at` | Date first detected on filesystem (never updated afterwards) |
+| `last_seen_at` | Last date the item was found on the filesystem |
+| `last_checked_at` | Date of the last scan that evaluated this item (updated even when missing) |
+| `video_files` | List of video files with their own presence history |
+
+**Present / missing logic:**
+
+```
+present → last_seen_at = now, last_checked_at = now
+missing → last_seen_at unchanged, last_checked_at = now
+```
+
+An item becomes `"missing"` when its folder is no longer detected during a full scan covering all folders. History is preserved and the item is not deleted.
+
+---
+
+## 8. Web interface
 
 ### Views
 
@@ -190,7 +332,7 @@ Each card displays:
 
 ---
 
-## 7. Filters
+## 9. Filters
 
 Main library filters now use a unified dropdown architecture (same behavior on desktop/mobile) for:
 - **Folders**
@@ -223,7 +365,7 @@ Shared capabilities:
 
 ---
 
-## 8. Streaming providers
+## 10. Streaming providers
 
 Streaming enrichment is optional and relies on **Jellyseerr**.
 
@@ -241,7 +383,7 @@ Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility
 
 ---
 
-## 9. Quality Scoring
+## 11. Quality Scoring
 
 Quality scoring is an **optional** feature controlled by `system.enable_score` (default: `false`).
 When enabled, media items receive a global **quality score out of 100**. The score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
@@ -428,7 +570,7 @@ Statistics include score distribution views to provide a global quality analysis
 
 ---
 
-## 10. Statistics
+## 12. Statistics
 
 The Statistics tab displays:
 
@@ -446,7 +588,7 @@ All charts are filtered by the active library filters.
 
 ---
 
-## 11. Settings
+## 13. Settings
 
 Accessible via the ⚙️ icon at the bottom of the sidebar.
 

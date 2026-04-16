@@ -4,18 +4,26 @@ Media Library Scanner
 Scans LIBRARY_PATH and generates a library.json file.
 
 Modes:
-  --quick              Filesystem scan only (reads .nfo, resolution, local poster).
-  --enrich             Filesystem scan + fetch streaming providers via Jellyseerr (default).
-  --full               Filesystem scan + force re-fetch ALL providers from Jellyseerr.
-  --reset              Delete library.json and exit.
-  (default)            Same as --enrich.
+  --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
+  --full     All 4 phases: filesystem scan, Jellyseerr (force re-fetch), scoring, inventory.
+  --reset    Delete library.json and exit.
+  (default)  Same as --full.
+
+Phases:
+  1. Filesystem + NFO scan — builds library.json, writes after each folder.
+  2. Jellyseerr enrichment — fetches streaming providers, writes after each folder.
+  3. Scoring              — computes quality scores, writes after each folder.
+  4. Inventory            — updates library_inventory.json, writes after each folder + final pass.
 
 Filters (combinable with any mode):
-  --category <n>       Restrict scan to a single category name.
+  --category <n>   Restrict scan to a single category name.
 """
 
 import argparse
+import contextlib
 import copy
+import fcntl
+import hmac
 import http.server
 import json
 import logging
@@ -23,48 +31,57 @@ from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import urllib.parse
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from inventory_helpers import (
+    from backend.inventory_helpers import (
         apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
         mark_disabled_inventory_items_missing,
         merge_inventory_documents,
         reconcile_inventory_missing_states,
     )
-except Exception as e:
-    def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
-        return current_doc
+except Exception:
+    try:
+        from inventory_helpers import (
+            apply_forced_missing_by_categories,
+            cleanup_inventory_transient_fields,
+            mark_disabled_inventory_items_missing,
+            merge_inventory_documents,
+            reconcile_inventory_missing_states,
+        )
+    except Exception as e:
+        def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
+            return current_doc
 
-    def reconcile_inventory_missing_states(document: dict) -> dict:
-        return document
+        def reconcile_inventory_missing_states(document: dict) -> dict:
+            return document
 
-    def cleanup_inventory_transient_fields(document: dict) -> dict:
-        return document
+        def cleanup_inventory_transient_fields(document: dict) -> dict:
+            return document
 
-    def mark_disabled_inventory_items_missing(
-        document: dict,
-        disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
-    ) -> dict:
-        return document
+        def mark_disabled_inventory_items_missing(
+            document: dict,
+            disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
+        ) -> dict:
+            return document
 
-    def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
-        return document
+        def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
+            return document
 
-    logging.getLogger("scanner").warning(
-        "[SCAN] inventory_helpers import failed (%s). Inventory helpers disabled; continuing non-blocking.",
-        e,
-    )
+        logging.getLogger("scanner").warning(
+            "[SCAN] inventory_helpers import failed (%s). Inventory helpers disabled; continuing non-blocking.",
+            e,
+        )
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -75,6 +92,7 @@ OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
+SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -101,7 +119,7 @@ except Exception:
 log = logging.getLogger("scanner")
 
 try:
-    from conf.scoring import compute_quality
+    from backend.scoring import compute_quality
 except Exception:
     try:
         from scoring import compute_quality
@@ -124,6 +142,22 @@ except Exception:
                 "penalties": [{"code": "scoring_unavailable", "value": 0}],
             }
 
+try:
+    from backend.nfo import (
+        classify_resolution, normalize_codec, normalize_audio_codec,
+        parse_audio_languages, simplify_audio_languages,
+        parse_movie_nfo, parse_tvshow_nfo, count_seasons_episodes,
+        find_episode_nfo, find_movie_nfo, poster_rel_path,
+        _nfo_stats, _parse_lang_raw, _parse_concatenated_lang_codes,
+    )
+except ImportError:
+    from nfo import (
+        classify_resolution, normalize_codec, normalize_audio_codec,
+        parse_audio_languages, simplify_audio_languages,
+        parse_movie_nfo, parse_tvshow_nfo, count_seasons_episodes,
+        find_episode_nfo, find_movie_nfo, poster_rel_path,
+        _nfo_stats, _parse_lang_raw, _parse_concatenated_lang_codes,
+    )
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
 _log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
@@ -133,649 +167,6 @@ try:
     logging.getLogger().addHandler(_fh)
 except Exception:
     pass  # log file not writable in some environments
-
-
-# ---------------------------------------------------------------------------
-# Resolution helpers
-# ---------------------------------------------------------------------------
-
-def classify_resolution(width: int, height: int) -> str:
-    if width <= 0 or height <= 0:
-        return "SD"
-    long_edge = max(width, height)
-    short_edge = min(width, height)
-    # 4K:
-    # - Keep UHD content (>=2160 on one axis),
-    # - Keep scope/cropped 4K encodes (~3840x1600) via long-edge tolerance,
-    # - Avoid promoting near-square ~2K sources (e.g. 2100x2100, 2560x2100).
-    if short_edge >= 2160 or (long_edge >= 3800 and short_edge >= 1500):
-        return "4K"
-    # 1080p: require a near-FHD long edge and enough vertical pixels for cropped scope encodes.
-    # This avoids promoting 5:4 sources such as 1280x1024 to 1080p.
-    if long_edge >= 1880 and short_edge >= 800:
-        return "1080p"
-    # 720p:
-    # - Require a near-1280 long edge,
-    # - Accept cropped encodes with lower short edge,
-    # - Avoid promoting small near-square sources (e.g. 700x700).
-    if long_edge >= 1240 and short_edge >= 520:
-        return "720p"
-    return "SD"
-
-
-# ---------------------------------------------------------------------------
-# NFO parsing
-# ---------------------------------------------------------------------------
-
-CODEC_CANONICAL = {
-    "hevc": "H.265", "h265": "H.265", "x265": "H.265",
-    "h264": "H.264", "x264": "H.264", "avc":  "H.264",
-    "av1":  "AV1",
-    "mpeg2video": "MPEG-2", "mpeg2": "MPEG-2",
-    "mpeg4": "MPEG-4",
-    "vp9":  "VP9",
-    "vc1":  "VC-1",
-}
-
-def normalize_codec(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
-
-
-def _load_audiocodec_mapping() -> dict:
-    """Load audiocodec_mapping.json from image path or dev-local fallback."""
-    paths = [
-        "/usr/share/nginx/html/audiocodec_mapping.json",
-        os.path.join(os.path.dirname(__file__), "../app/audiocodec_mapping.json"),
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            try:
-                with open(p, encoding="utf-8") as f:
-                    data = json.load(f)
-                log.debug(f"[audiocodec] Mapping loaded from {p} ({len(data.get('priority', []))} entries)")
-                return data
-            except Exception as e:
-                log.warning(f"[audiocodec] Failed to load {p}: {e}")
-    log.warning("[audiocodec] audiocodec_mapping.json not found — all codecs will be UNKNOWN")
-    return {"priority": [], "mapping": {}, "fallback": {"normalized": "UNKNOWN", "display": "Unknown"}}
-
-
-AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
-
-# ---------------------------------------------------------------------------
-# Audio language normalisation
-# ---------------------------------------------------------------------------
-
-ISO_639_1_TO_2: dict[str, str] = {
-    'fr': 'fra', 'en': 'eng', 'de': 'deu', 'es': 'spa',
-    'it': 'ita', 'ja': 'jpn', 'zh': 'zho', 'ko': 'kor',
-    'pt': 'por', 'ru': 'rus', 'ar': 'ara', 'nl': 'nld',
-    'pl': 'pol', 'sv': 'swe', 'da': 'dan', 'fi': 'fin',
-    'nb': 'nob', 'tr': 'tur', 'cs': 'ces', 'hu': 'hun',
-}
-
-# Deprecated/bibliographic ISO 639-2 aliases → canonical terminiologic code
-_ISO_639_2_ALIASES: dict[str, str] = {
-    'fre': 'fra', 'ger': 'deu', 'chi': 'zho', 'cze': 'ces', 'dut': 'nld', 'rum': 'ron',
-}
-
-_KNOWN_ISO_639_2: frozenset[str] = frozenset({
-    'fra', 'eng', 'deu', 'spa', 'ita', 'jpn', 'zho', 'kor', 'por', 'rus',
-    'ara', 'nld', 'pol', 'swe', 'dan', 'fin', 'nor', 'nob', 'gsw', 'tur', 'ces', 'hun',
-    'ron', 'bul', 'hrv', 'srp', 'ukr', 'heb', 'cat', 'lat', 'hin', 'ben',
-    'vie', 'ind', 'may', 'tha', 'ell', 'slk', 'slv', 'est', 'lav', 'lit',
-    'isl', 'mkd', 'aze', 'geo', 'arm',
-})
-
-LANGUAGE_NAME_ALIASES: dict[str, str] = {
-    'french': 'fra', 'francais': 'fra', 'français': 'fra',
-    'english': 'eng',
-    'japanese': 'jpn',
-    'german': 'deu',
-    'spanish': 'spa',
-    'italian': 'ita',
-}
-
-RELEASE_LANGUAGE_ALIASES: dict[str, str] = {
-    'vf': 'fra', 'vff': 'fra', 'truefrench': 'fra',
-    'jp': 'jpn',
-}
-
-SPECIAL_LANGUAGE_MARKERS: frozenset[str] = frozenset({'vo', 'multi'})
-
-LANGUAGE_ALIASES_TO_CANONICAL: dict[str, str] = {
-    **{k: v for k, v in ISO_639_1_TO_2.items()},
-    **{k: v for k, v in _ISO_639_2_ALIASES.items()},
-    **{k: _ISO_639_2_ALIASES.get(k, k) for k in _KNOWN_ISO_639_2},
-    **LANGUAGE_NAME_ALIASES,
-    **RELEASE_LANGUAGE_ALIASES,
-}
-
-_SEGMENTABLE_ALIASES: tuple[str, ...] = tuple(
-    sorted((k for k in LANGUAGE_ALIASES_TO_CANONICAL.keys() if len(k) >= 3), key=len, reverse=True)
-)
-_SEGMENTABLE_LENGTHS: tuple[int, ...] = tuple(sorted({len(k) for k in _SEGMENTABLE_ALIASES}, reverse=True))
-_ALIASES_BY_LENGTH: dict[int, dict[str, str]] = {}
-for _alias in _SEGMENTABLE_ALIASES:
-    _ALIASES_BY_LENGTH.setdefault(len(_alias), {})[_alias] = LANGUAGE_ALIASES_TO_CANONICAL[_alias]
-_SEGMENTABLE_TWO_LETTER_ALIASES: dict[str, str] = {
-    k: v for k, v in LANGUAGE_ALIASES_TO_CANONICAL.items() if len(k) == 2
-}
-
-
-def _normalize_lang_code(raw: str) -> str | None:
-    """Normalize one language token to ISO 639-2 (3-letter code)."""
-    code = raw.lower().strip()
-    if code == 'und':
-        # ISO 639-2 "und" = undetermined/unknown language
-        return 'und'
-    return LANGUAGE_ALIASES_TO_CANONICAL.get(code)
-
-
-def _parse_concatenated_lang_codes(raw: str) -> tuple[list[str], list[str]]:
-    """Iteratively parse separator-less values and keep recognized chunks.
-
-    Returns:
-      (recognized_iso_codes, unknown_chunks)
-    """
-    token = re.sub(r"\s+", "", (raw or "").lower())
-    if not token:
-        return ([], [])
-
-    recognized: list[str] = []
-    unknown_chunks: list[str] = []
-    unknown_buf: list[str] = []
-
-    idx = 0
-    n = len(token)
-    while idx < n:
-        match_norm = None
-        match_len = 0
-        for alias_len in _SEGMENTABLE_LENGTHS:
-            end = idx + alias_len
-            if end > n:
-                continue
-            candidate = token[idx:end]
-            norm = _ALIASES_BY_LENGTH[alias_len].get(candidate)
-            if norm:
-                match_norm = norm
-                match_len = alias_len
-                break
-
-        # 2-letter chunks are accepted only when we are on a clean boundary
-        # (no unknown chars accumulated). This keeps support for sequences like
-        # "freru" while avoiding noisy matches inside random garbage.
-        if match_norm is None and not unknown_buf and idx + 2 <= n:
-            candidate2 = token[idx:idx + 2]
-            norm2 = _SEGMENTABLE_TWO_LETTER_ALIASES.get(candidate2)
-            if norm2:
-                match_norm = norm2
-                match_len = 2
-
-        if match_norm is None:
-            unknown_buf.append(token[idx])
-            idx += 1
-            continue
-
-        if unknown_buf:
-            unknown_chunks.append(''.join(unknown_buf))
-            unknown_buf = []
-
-        recognized.append(match_norm)
-        idx += match_len
-
-    if unknown_buf:
-        unknown_chunks.append(''.join(unknown_buf))
-
-    return recognized, unknown_chunks
-
-
-def _parse_lang_token(token: str, item_title: str = '') -> list[str]:
-    """Parse one language token (single alias or concatenated aliases)."""
-    single = re.sub(r"\s+", "", token.lower().strip())
-    if not single:
-        return []
-
-    if single in SPECIAL_LANGUAGE_MARKERS:
-        log.info(f"[SCAN] Audio language marker detected (no direct ISO code): {single!r} in item {item_title!r}")
-        return []
-
-    norm = _normalize_lang_code(single)
-    if norm:
-        return [norm]
-
-    parsed, unknown_chunks = _parse_concatenated_lang_codes(single)
-    if parsed:
-        if unknown_chunks:
-            rec_preview = parsed[:8]
-            ignored_preview = unknown_chunks[:5]
-            suffix = ""
-            if len(parsed) > len(rec_preview) or len(unknown_chunks) > len(ignored_preview):
-                suffix = f" (truncated: recognized={len(parsed)}, ignored={len(unknown_chunks)})"
-            log.info(
-                f"[SCAN] Partially parsed audio language value: {single!r} in item {item_title!r} "
-                f"-> recognized={rec_preview}, ignored={ignored_preview}{suffix}"
-            )
-        return parsed
-
-    log.warning(f"[SCAN] Unrecognized audio language value: {single!r} in item {item_title!r} — skipped")
-    return []
-
-
-def _parse_lang_raw(raw: str | None, item_title: str = '') -> list[str]:
-    """Parse a raw language string (possibly concatenated, e.g. 'freeng') into ISO 639-2 codes."""
-    if raw is None:
-        return []
-    raw = raw.strip().lower()
-    if not raw:
-        return []
-
-    # Step 1 — split on explicit separators
-    parts = [p.strip() for p in re.split(r'[\s,/|;_+\-]+', raw) if p.strip()]
-    if len(parts) > 1:
-        result = []
-        for p in parts:
-            result.extend(_parse_lang_token(p, item_title))
-        return result
-
-    return _parse_lang_token(parts[0] if parts else raw, item_title)
-
-
-
-def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
-    """Collect all audio language codes from an NFO root element. Returns sorted ISO 639-2 list."""
-    langs: list[str] = []
-
-    # Primary: <fileinfo><streamdetails><audio>*<language>
-    for audio_el in root.findall(".//fileinfo/streamdetails/audio"):
-        raw = _xml_text(audio_el, "language")
-        if raw:
-            langs.extend(_parse_lang_raw(raw, item_title))
-
-    # Fallback: <audio>*<language> at root level
-    for audio_el in root.findall("audio"):
-        raw = _xml_text(audio_el, "language")
-        if raw:
-            langs.extend(_parse_lang_raw(raw, item_title))
-
-    # Last resort: <languages> at root
-    raw_langs = _xml_text(root, "languages")
-    if raw_langs:
-        langs.extend(_parse_lang_raw(raw_langs, item_title))
-
-    # Deduplicate (preserve order), sort, exclude 'und'
-    seen: set[str] = set()
-    result = []
-    for l in langs:
-        if l not in seen and l != 'und':
-            seen.add(l)
-            result.append(l)
-    return sorted(result)
-
-
-def simplify_audio_languages(codes: list[str] | None) -> str:
-    """Map detailed audio language codes to VF / VO / MULTI / UNKNOWN.
-
-    Rules:
-      - no language detected -> UNKNOWN
-      - only French -> VF
-      - French + at least 1 other language -> MULTI
-      - without French (but with at least one language) -> VO
-    """
-    if not isinstance(codes, list):
-        return 'UNKNOWN'
-
-    normalized: set[str] = set()
-    for code in codes:
-        if not isinstance(code, str):
-            continue
-        norm = _normalize_lang_code(code)
-        if norm and norm != 'und':
-            normalized.add(norm)
-
-    if not normalized:
-        return 'UNKNOWN'
-    if normalized == {'fra'}:
-        return 'VF'
-    if 'fra' in normalized and len(normalized) > 1:
-        return 'MULTI'
-    return 'VO'
-
-
-# Pre-compute normalized keys for fast lookup: strip dashes/spaces/uppercase
-_AC_NORM = re.compile(r"[-\s]")
-def _ac_key(s: str) -> str:
-    return _AC_NORM.sub("", s.upper())
-
-_AC_LOOKUP: list[tuple[str, dict]] = [
-    (_ac_key(k), AUDIOCODEC_MAPPING["mapping"][k])
-    for k in AUDIOCODEC_MAPPING.get("priority", [])
-    if k in AUDIOCODEC_MAPPING.get("mapping", {})
-]
-
-
-def normalize_audio_codec(raw: str | None) -> dict:
-    """
-    Normalize an audio codec string to three levels:
-      'raw'        — original value as-is (for debug)
-      'normalized' — canonical constant used for filters/stats (e.g. 'ATMOS', 'EAC3')
-      'display'    — human-readable label used in the UI (e.g. 'Dolby Atmos')
-
-    Matching follows the priority order in audiocodec_mapping.json.
-    Tolerance: case-insensitive, dashes and spaces ignored (EAC-3 == EAC3).
-    """
-    fb = AUDIOCODEC_MAPPING.get("fallback", {"normalized": "UNKNOWN", "display": "Unknown"})
-    if not raw or not raw.strip():
-        return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
-
-    value_key = _ac_key(raw.strip())
-    for entry_key, entry in _AC_LOOKUP:
-        if value_key == entry_key:
-            return {"raw": raw, "normalized": entry["normalized"], "display": entry["display"]}
-
-    return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
-
-
-# NFO parse stats — reset at each run_quick() call, reported as grouped summary
-_nfo_stats: dict = {"ok": 0, "failed": 0}
-
-
-def _parse_nfo_xml(nfo_path: Path) -> ET.Element | None:
-    """
-    Parse a NFO file tolerantly:
-    1. Try standard ElementTree.parse().
-    2. On "junk after document element", read raw bytes, find the root close tag,
-       truncate there, and retry — handles NFO files with extra content after </root>.
-    3. Log non-._* failures as DEBUG (summary reported at end of scan).
-    """
-    try:
-        root = ET.parse(nfo_path).getroot()
-        _nfo_stats["ok"] += 1
-        return root
-    except ET.ParseError as e:
-        err = str(e)
-        # Strategy: read raw content and truncate at first root closing tag
-        try:
-            raw = nfo_path.read_bytes()
-            text = raw.decode("utf-8", errors="replace")
-            # Find root tag name from opening tag
-            m = re.match(r"\s*<(\w+)", text)
-            if m:
-                root_tag = m.group(1)
-                close = f"</{root_tag}>"
-                idx = text.find(close)
-                if idx != -1:
-                    truncated = text[:idx + len(close)]
-                    root = ET.fromstring(truncated)
-                    log.debug(f"NFO truncated-parse OK ({nfo_path.name}): {err}")
-                    _nfo_stats["ok"] += 1
-                    return root
-        except Exception:
-            pass
-        if not nfo_path.name.startswith("._"):
-            _nfo_stats["failed"] += 1
-            log.debug(f"NFO parse failed ({nfo_path}): {err}")
-        return None
-    except Exception as e:
-        if not nfo_path.name.startswith("._"):
-            _nfo_stats["failed"] += 1
-            log.debug(f"NFO read error ({nfo_path}): {e}")
-        return None
-
-
-def _xml_text(root: ET.Element, *tags) -> str | None:
-    """Return the text of the first matching tag, trying each in order."""
-    for tag in tags:
-        el = root.find(tag)
-        if el is not None and el.text and el.text.strip():
-            return el.text.strip()
-    return None
-
-
-def parse_movie_nfo(nfo_path: Path) -> dict:
-    """Parse a Kodi/Jellyfin movie .nfo file. Returns a dict of metadata."""
-    result = {}
-    root = _parse_nfo_xml(nfo_path)
-    if root is None:
-        return result
-
-    result["title"]   = _xml_text(root, "title")
-    result["year"]    = _xml_text(root, "year")
-    result["plot"]    = _xml_text(root, "plot")
-    result["runtime"] = _xml_text(root, "runtime")
-
-    # tmdb_id — prefer <uniqueid type="tmdb">, fallback to <id>
-    for uid in root.findall("uniqueid"):
-        if uid.get("type") == "tmdb" and uid.text:
-            result["tmdb_id"] = uid.text.strip()
-            break
-    if "tmdb_id" not in result:
-        result["tmdb_id"] = _xml_text(root, "id")
-
-    # Poster URL from <thumb aspect="poster">
-    for thumb in root.findall("thumb"):
-        if thumb.get("aspect") == "poster" and thumb.text:
-            result["poster_url"] = thumb.text.strip()
-            break
-
-    # Resolution + codec + HDR from <fileinfo><streamdetails><video>
-    video = root.find(".//fileinfo/streamdetails/video")
-    if video is not None:
-        try:
-            w = int(_xml_text(video, "width")  or 0)
-            h = int(_xml_text(video, "height") or 0)
-            if w and h:
-                result["width"]      = w
-                result["height"]     = h
-                result["resolution"] = classify_resolution(w, h)
-            raw_codec = _xml_text(video, "codec")
-            if raw_codec:
-                result["codec"] = normalize_codec(raw_codec)
-            hdr = _xml_text(video, "hdrtype")
-            result["hdr"] = bool(hdr and hdr.strip())
-            result["hdr_type"] = hdr
-            rt = _xml_text(video, "duration") or _xml_text(root, "runtime")
-            if rt:
-                try:
-                    result["runtime_min"] = int(float(rt))
-                except (ValueError, TypeError):
-                    pass
-        except (ValueError, TypeError):
-            pass
-
-    # Audio codec from <fileinfo><streamdetails><audio><codec>
-    # fallback to <audio_codec> / <audiocodec> at root level
-    audio = root.find(".//fileinfo/streamdetails/audio")
-    raw_audio = (_xml_text(audio, "codec") if audio is not None else None) \
-                or _xml_text(root, "audio_codec", "audiocodec")
-    if raw_audio:
-        ac = normalize_audio_codec(raw_audio)
-        result["audio_codec_raw"]     = ac["raw"]
-        result["audio_codec"]         = ac["normalized"]
-        result["audio_codec_display"] = ac["display"]
-
-    result["audio_languages"] = parse_audio_languages(root, result.get("title") or "")
-    result["audio_languages_simple"] = simplify_audio_languages(result["audio_languages"])
-
-    return result
-
-
-def parse_tvshow_nfo(nfo_path: Path) -> dict:
-    """Parse a tvshow.nfo file (series-level metadata)."""
-    result = {}
-    root = _parse_nfo_xml(nfo_path)
-    if root is None:
-        return result
-
-    result["title"] = _xml_text(root, "title")
-    result["year"]  = _xml_text(root, "year")
-    result["plot"]  = _xml_text(root, "plot")
-
-    for uid in root.findall("uniqueid"):
-        if uid.get("type") == "tmdb" and uid.text:
-            result["tmdb_id"] = uid.text.strip()
-            break
-    if "tmdb_id" not in result:
-        result["tmdb_id"] = _xml_text(root, "id")
-
-    for thumb in root.findall("thumb"):
-        if thumb.get("aspect") == "poster" and thumb.text:
-            result["poster_url"] = thumb.text.strip()
-            break
-
-    return result
-
-
-def count_seasons_episodes(series_dir: Path) -> tuple[int, int]:
-    """
-    Count episodes and deduce season count for a series.
-
-    Supports:
-    - Sub-folder layout : Serie/Season 1/S01E01.nfo
-    - Flat layout       : Serie/S01E01.nfo
-    - Mixed             : some seasons in sub-folders, others flat
-    """
-    SKIP = {"tvshow.nfo", "season.nfo"}
-    _season_re = re.compile(r"[Ss](\d{1,2})[Ee]\d", re.IGNORECASE)
-
-    episode_nfos: list[Path] = []
-    try:
-        for entry in series_dir.rglob("*.nfo"):
-            if (entry.is_file() and entry.name.lower() not in SKIP
-                    and not entry.name.startswith("._")):
-                episode_nfos.append(entry)
-    except Exception:
-        pass
-
-    episode_count = len(episode_nfos)
-
-    # If no .nfo files, fall back to counting video files
-    if episode_count == 0:
-        _VIDEO_EXT = {'.mkv', '.mp4', '.avi', '.m2ts', '.ts', '.mov', '.wmv', '.flv', '.m4v'}
-        video_files: list[Path] = []
-        try:
-            for entry in series_dir.rglob('*'):
-                if entry.is_file() and entry.suffix.lower() in _VIDEO_EXT:
-                    video_files.append(entry)
-        except Exception:
-            pass
-        episode_count = len(video_files)
-        if episode_count == 0:
-            # Last resort: count season sub-folders and their children
-            try:
-                sub_dirs = [d for d in series_dir.iterdir() if d.is_dir() and not d.name.startswith(('.', '@'))]
-                if sub_dirs:
-                    return len(sub_dirs), sum(
-                        len([f for f in d.iterdir() if f.is_file()]) for d in sub_dirs
-                    )
-            except Exception:
-                pass
-            return 0, 0
-        # Deduce seasons from video filenames
-        season_numbers_v: set[int] = set()
-        for vf in video_files:
-            m = _season_re.search(vf.stem)
-            if m:
-                season_numbers_v.add(int(m.group(1)))
-        return (len(season_numbers_v) if season_numbers_v else 1), episode_count
-
-    # Deduce seasons from SxxExx patterns in .nfo filenames
-    season_numbers: set[int] = set()
-    for nfo in episode_nfos:
-        m = _season_re.search(nfo.stem)
-        if m:
-            season_numbers.add(int(m.group(1)))
-
-    season_count = len(season_numbers) if season_numbers else 1
-    return season_count, episode_count
-
-
-def find_episode_nfo(series_dir: Path) -> dict:
-    """
-    Find the first episode .nfo anywhere in the series tree and extract
-    video metadata (resolution, codec, HDR, runtime).
-
-    Supports flat layout (no season sub-folders), sub-folder layout, and mixed.
-    Stops at the first .nfo that contains valid video stream details.
-    """
-    SKIP = {"tvshow.nfo", "season.nfo"}
-
-    # Collect all candidate episode .nfo files recursively, sorted for
-    # reproducibility (season 1 / episode 1 comes first alphabetically).
-    try:
-        candidates = sorted(
-            f for f in series_dir.rglob("*.nfo")
-            if f.is_file() and f.name.lower() not in SKIP
-            and not f.name.startswith("._")
-        )
-    except Exception:
-        return {}
-
-    for nfo_file in candidates:
-        root = _parse_nfo_xml(nfo_file)
-        if root is None:
-            continue
-        try:
-            video = root.find(".//fileinfo/streamdetails/video")
-            if video is not None:
-                w = int(_xml_text(video, "width")  or 0)
-                h = int(_xml_text(video, "height") or 0)
-                if w and h:
-                    raw_codec = _xml_text(video, "codec")
-                    hdr_raw   = _xml_text(video, "hdrtype")
-                    ep_rt     = _xml_text(video, "duration")
-                    runtime_min = None
-                    if ep_rt:
-                        try: runtime_min = int(float(ep_rt))
-                        except (ValueError, TypeError): pass
-                    audio_el = root.find(".//fileinfo/streamdetails/audio")
-                    raw_audio = (_xml_text(audio_el, "codec") if audio_el is not None else None) \
-                                or _xml_text(root, "audio_codec", "audiocodec")
-                    ac = normalize_audio_codec(raw_audio)
-                    langs = parse_audio_languages(root)
-                    return {
-                        "width":              w,
-                        "height":             h,
-                        "resolution":         classify_resolution(w, h),
-                        "codec":              normalize_codec(raw_codec),
-                        "hdr":                bool(hdr_raw and hdr_raw.strip()),
-                        "hdr_type":           hdr_raw,
-                        "runtime_min":        runtime_min,
-                        "audio_codec_raw":    ac["raw"],
-                        "audio_codec":        ac["normalized"],
-                        "audio_codec_display": ac["display"],
-                        "audio_languages":    langs,
-                        "audio_languages_simple": simplify_audio_languages(langs),
-                    }
-        except Exception as e:
-            log.debug(f"Episode NFO extract error ({nfo_file}): {e}")
-            continue
-
-    return {}
-
-
-def find_movie_nfo(movie_dir: Path) -> Path | None:
-    """Find the .nfo file for a movie directory (any .nfo that isn't season/tvshow)."""
-    SKIP = {"tvshow.nfo", "season.nfo"}
-    for f in sorted(movie_dir.iterdir()):
-        if (f.is_file() and f.suffix.lower() == ".nfo"
-                and f.name.lower() not in SKIP
-                and not f.name.startswith("._")):  # skip macOS AppleDouble metadata
-            return f
-    return None
-
-
-def poster_rel_path(media_dir: Path, root: Path) -> str | None:
-    """Return the URL-encoded relative path to poster image if it exists, else None."""
-    for ext in ("poster.jpg", "poster.png", "poster.jpeg"):
-        poster = media_dir / ext
-        if poster.exists():
-            rel = str(media_dir.relative_to(root) / ext)
-            encoded = "/".join(urllib.parse.quote(part, safe="") for part in rel.replace("\\", "/").split("/"))
-            return encoded
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +192,10 @@ def _save_secrets(data: dict) -> None:
     try:
         with open(SECRETS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        os.chmod(SECRETS_PATH, 0o600)
+        try:
+            os.chmod(SECRETS_PATH, 0o600)
+        except OSError as e:
+            log.error(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
     except Exception as e:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
 
@@ -889,7 +283,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors='replace')[:300]
         if e.code in (404, 500) and "Unable to retrieve" in body:
-            log.info(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
+            log.debug(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
             return _JSR_NOT_FOUND
         log.warning(f"Jellyseerr HTTP {e.code} for {path}: {body}")
         return _JSR_ERROR
@@ -1273,6 +667,7 @@ def _make_inventory_video_file(name: str, now_utc: str) -> dict:
         "status": "present",
         "first_seen_at": now_utc,
         "last_seen_at": now_utc,
+        "last_checked_at": now_utc,
     }
 
 
@@ -1287,6 +682,7 @@ def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -
         "status": "present",
         "first_seen_at": now_utc,
         "last_seen_at": now_utc,
+        "last_checked_at": now_utc,  # always after last_seen_at, before video_files
         "video_files": [_make_inventory_video_file(vf, now_utc) for vf in _list_video_files(media_dir)],
     }
     if media_type == "tv":
@@ -1303,6 +699,7 @@ def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -
                     "status": "present",
                     "first_seen_at": now_utc,
                     "last_seen_at": now_utc,
+                    "last_checked_at": now_utc,  # always after last_seen_at, before video_files
                     "video_files": [_make_inventory_video_file(vf, now_utc) for vf in sub_video_files],
                 })
         except Exception:
@@ -1334,7 +731,7 @@ def write_inventory_json_non_blocking(
     forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
     forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
-    log.info("[SCAN] Inventory write started")
+    log.debug("[SCAN] Inventory write started")
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
         existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
@@ -1370,7 +767,7 @@ def write_inventory_json_non_blocking(
             )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.info(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
+        log.debug(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
         log.warning(f"[SCAN] Inventory write failed: {e}")
 
@@ -1411,7 +808,7 @@ def write_json(data: dict, output_path: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    log.info(f"Written: {output_path}")
+    log.debug(f"Written: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -1542,6 +939,28 @@ def deep_merge(base: dict, update: dict) -> dict:
 # QUICK SCAN
 # ---------------------------------------------------------------------------
 
+def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: bool, output_path: str) -> None:
+    """Write current library state to JSON (used for incremental per-folder writes)."""
+    all_categories = sorted({i["category"] for i in items})
+    data = {
+        "scanned_at":          datetime.now().isoformat(),
+        "library_path":        LIBRARY_PATH,
+        "total_items":         len(items),
+        "categories":          all_categories,
+        "items":               items,
+        "providers_meta":      prev_data.get("providers_meta") or {},
+        "providers_raw_meta":  prev_data.get("providers_raw_meta") or {},
+        "providers_raw":       prev_data.get("providers_raw") or [],
+        "config": {
+            "library_path": LIBRARY_PATH,
+        },
+        "meta": {
+            "score_enabled": score_enabled,
+        },
+    }
+    write_json(data, output_path)
+
+
 def _normalize_providers(providers) -> list[str]:
     """Normalize providers to a list of canonical name strings (new format).
     Handles both legacy {name, logo} objects and already-normalized strings."""
@@ -1566,11 +985,15 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
+    `id` is computed using the same helper as library_inventory.json so both
+    files share identical stable IDs.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
     mtime     = media_dir.stat().st_mtime
     is_tv     = cat["type"] == "tv"
+    media_type = "tv" if is_tv else "movie"
+    lib_id     = _inventory_item_id(media_type, cat["name"], raw_name)
 
     # --- NFO metadata ---
     nfo_meta = {}
@@ -1612,6 +1035,8 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
+        # id must be first — identical to library_inventory.json for cross-file matching
+        "id":                lib_id,
         "path":              item_path,
         "title":             title,
         "raw":               raw_name,
@@ -1641,21 +1066,22 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
+        # Enriched fields preserved from previous library.json — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
     }
     if enable_score:
-        item["quality"] = compute_quality(item)
+        item["quality"] = prev.get("quality")  # preserved during quick scan; overwritten by phase 3
     return item
 
 
 
-def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None:
+def run_quick(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] Starting filesystem+NFO scan{scope}")
+    log.info(f"[SCAN] ── Phase 1 : filesystem + NFO{scope} ──────────────")
 
     root = Path(LIBRARY_PATH)
     if not root.exists():
@@ -1674,48 +1100,69 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
         save_config(cfg)
         cfg = load_config()
     score_enabled = _is_score_enabled(cfg)
-    inventory_enabled = _is_inventory_enabled(cfg)
-    force_missing_folder_refs = {
-        ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
-        for folder in cfg.get("folders", [])
-        if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
-    }
 
     categories = build_categories_from_config(cfg)
+
+    # Log folders that are skipped (no type configured)
+    for folder in cfg.get("folders", []):
+        fname = folder.get("name")
+        if not fname or folder.get("missing"):
+            continue
+        ftype = folder.get("type")
+        if not ftype or ftype == "ignore":
+            log.debug(f"[SCAN] Skipping folder [{fname}] — no type configured")
+
     if not categories:
-        is_first_scan = not Path(OUTPUT_PATH).exists()
-        if is_first_scan:
-            log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+        all_typed_folders = [f for f in cfg.get("folders", []) if f.get("type") in {"movie", "tv"}]
+        if not all_typed_folders:
+            # No folders with a recognised type configured at all
+            if not Path(OUTPUT_PATH).exists():
+                log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+            else:
+                log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
         else:
-            log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
-        if inventory_enabled:
-            try:
-                write_inventory_json_non_blocking(
-                    [],
-                    scan_mode,
-                    reconcile_missing=(scan_mode == "full" and not only_category),
-                    forced_missing_folder_refs=force_missing_folder_refs,
-                )
-            except Exception as e:
-                log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
+            # Folders exist but all are disabled — update inventory to mark them missing
+            log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
+            if _is_inventory_enabled(cfg):
+                disabled_refs = {
+                    ("tv" if f.get("type") == "tv" else "movie", f["name"].replace("_", " ").replace("-", " ").title())
+                    for f in all_typed_folders
+                    if not is_folder_enabled(f)
+                }
+                if disabled_refs:
+                    try:
+                        write_inventory_json_non_blocking(
+                            [],
+                            scan_mode="quick",
+                            reconcile_missing=not bool(only_category),
+                            forced_missing_folder_refs=disabled_refs,
+                        )
+                    except Exception as e:
+                        log.warning(f"[SCAN] Inventory sidecar failed: {e}")
         return
 
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
+    # Preserve providers_meta / enriched_at from previous run
+    prev_data: dict = {}
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as _f:
+            prev_data = json.load(_f)
+    except Exception:
+        pass
+
     items = []
-    inventory_entries: list[dict] = []
-    item_id = 0
     scanned_paths = set()
-    cat_counts = {}
 
-    for cat in categories:
-        if only_category and cat["name"] != only_category:
-            continue
+    active_cats = [c for c in categories if not only_category or c["name"] == only_category]
+    n_cats = len(active_cats)
 
+    for cat_idx, cat in enumerate(active_cats, 1):
+        log.info(f"[SCAN] Processing folder [{cat['folder']}] ({cat_idx}/{n_cats}) — type={cat['type']}")
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Category folder not found: {cat_dir}")
+            log.warning(f"[SCAN] Folder not found on filesystem: {cat_dir}")
             continue
 
         cat_items_before = len(items)
@@ -1724,106 +1171,111 @@ def run_quick(only_category: str | None = None, scan_mode: str = "full") -> None
                 continue
 
             item_path = str(media_dir.relative_to(root))
+            # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
+            # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
             item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
-            item["id"] = item_id
             items.append(item)
-            if inventory_enabled:
-                inventory_entries.append({
-                    "media_dir": media_dir,
-                    "cat": cat,
-                    "title": item.get("title") or media_dir.name,
-                })
             scanned_paths.add(item_path)
-            item_id += 1
 
         count = len(items) - cat_items_before
-        cat_counts[cat["name"]] = count
-        log.info(f'[SCAN] Category "{cat["name"]}": {count} items found')
+        # Incremental write after each folder
+        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
+        log.info(f'[SCAN] Folder [{cat["folder"]}] done — {count} item(s) found')
 
-    # When filtering, preserve items from other categories
+    # When filtering by category, preserve items from other categories
     if only_category:
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
         log.info(f"  Preserving {len(preserved)} items from other categories")
         for i in preserved:
             if not score_enabled:
                 _strip_score_fields(i)
-            i["id"] = item_id
-            item_id += 1
+            # Ensure preserved items use the string id format (may be an old integer id)
+            i_media_type = "tv" if i.get("type") == "tv" else "movie"
+            i_folder = Path(i.get("path", "")).name
+            i["id"] = _inventory_item_id(i_media_type, i.get("category", ""), i_folder)
         items = items + preserved
 
     if not score_enabled:
         for item in items:
             _strip_score_fields(item)
 
-    all_categories = sorted({i["category"] for i in items})
+    # Only_category: final write is required to include preserved items from other categories.
+    # Normal full scan: the last per-folder incremental write already captured all items — skip.
+    if only_category:
+        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
-    # Preserve providers_meta from previous run (enrich writes it; quick must not lose it)
-    prev_data: dict = {}
     try:
-        with open(OUTPUT_PATH, encoding="utf-8") as _f:
-            prev_data = json.load(_f)
-    except Exception:
-        pass
-
-    data = {
-        "scanned_at":          datetime.now().isoformat(),
-        "library_path":        LIBRARY_PATH,
-        "total_items":         len(items),
-        "categories":          all_categories,
-        "items":               items,
-        "providers_meta":      prev_data.get("providers_meta") or {},
-        "providers_raw_meta":  prev_data.get("providers_raw_meta") or {},
-        "providers_raw":       prev_data.get("providers_raw") or [],
-        "config": {
-            "library_path": LIBRARY_PATH,
-        },
-        "meta": {
-            "score_enabled": score_enabled,
-        },
-    }
-    output_path = Path(OUTPUT_PATH)
-    write_json(data, OUTPUT_PATH)
-    if inventory_enabled:
-        try:
-            write_inventory_json_non_blocking(
-                inventory_entries,
-                scan_mode,
-                reconcile_missing=(scan_mode == "full" and not only_category),
-                forced_missing_folder_refs=force_missing_folder_refs,
-            )
-        except Exception as e:
-            log.warning(f"[SCAN] Inventory sidecar failure ignored: {e}")
-    else:
-        log.info("[SCAN] Inventory sidecar disabled by system.inventory_enabled=false")
-    try:
-        size_mb = output_path.stat().st_size / (1024*1024)
+        size_mb = Path(OUTPUT_PATH).stat().st_size / (1024*1024)
         size_str = f"{size_mb:.1f} MB"
     except Exception:
         size_str = "?"
     elapsed = time.monotonic() - _t0
-    log.info(f"[SCAN] Filesystem scan done — {len(items)} items total")
-    log.info(f"[SCAN] Writing library.json — {len(items)} items ({size_str})")
     if _nfo_stats["failed"] > 0:
         log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
     else:
         log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
+
+    # Audio codec stats
     audio_dist: dict = {}
     for item in items:
         ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
-    parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio codecs: {' / '.join(parts) if parts else 'none'}")
+    audio_parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Audio codecs detected: {len(audio_dist)}")
+    log.debug(f"[SCAN] Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
+
+    # Audio language stats
     lang_dist: dict = {}
     for item in items:
-        for l in (item.get("audio_languages") or []):
-            lang_dist[l] = lang_dist.get(l, 0) + 1
-    if lang_dist:
-        lparts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
-        log.info(f"[SCAN] Audio languages: {' / '.join(lparts)}")
-    log.info(f"[SCAN] Filesystem scan completed in {elapsed:.1f}s")
+        for lang in (item.get("audio_languages") or []):
+            lang_dist[lang] = lang_dist.get(lang, 0) + 1
+    lang_parts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Audio languages detected: {len(lang_dist)}")
+    if lang_parts:
+        log.debug(f"[SCAN] Audio languages detail: {' / '.join(lang_parts)}")
 
+    # Video codec stats
+    video_dist: dict = {}
+    for item in items:
+        vc = item.get("codec") or "unknown"
+        video_dist[vc] = video_dist.get(vc, 0) + 1
+    video_parts = [f"{k}×{v}" for k, v in sorted(video_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Video codecs detected: {len(video_dist)}")
+    log.debug(f"[SCAN] Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
+
+    # Resolution stats
+    res_dist: dict = {}
+    for item in items:
+        r = item.get("resolution") or "unknown"
+        res_dist[r] = res_dist.get(r, 0) + 1
+    res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
+    log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
+    log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+
+    log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
+
+    # Inventory sidecar — non-blocking
+    if _is_inventory_enabled(cfg):
+        inventory_entries = [
+            {"media_dir": root / item["path"], "cat": {"name": item["category"], "type": item["type"]}, "title": item["title"]}
+            for item in items
+        ]
+        disabled_refs = {
+            ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
+            for folder in cfg.get("folders", [])
+            if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
+        }
+        try:
+            write_inventory_json_non_blocking(
+                inventory_entries,
+                scan_mode="quick",
+                reconcile_missing=not bool(only_category),
+                forced_missing_folder_refs=disabled_refs,
+            )
+        except Exception as e:
+            log.warning(f"[SCAN] Inventory sidecar failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1834,7 +1286,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] Starting Jellyseerr enrichment ({label}){scope}")
+    log.info(f"[SCAN] ── Phase 2 : Jellyseerr enrichment ({label}){scope} ──")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
@@ -1876,9 +1328,17 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     enriched = 0
 
+    # Build category display-name → raw folder name lookup for consistent log labels
+    try:
+        _enrich_cfg = load_config()
+        _enrich_cats = build_categories_from_config(_enrich_cfg)
+        _cat_folder_by_name = {c["name"]: c["folder"] for c in _enrich_cats}
+    except Exception:
+        _cat_folder_by_name = {}
+
     # Load provider map (file-based normalization, reloaded each scan)
     provider_map = load_provider_map()
-    log.info(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
+    log.debug(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
 
     # providers_meta maps normalized name → {logo, logo_url} — stored at top level
     # Seed from existing data (migration: items may still have {name, logo} objects)
@@ -1906,8 +1366,11 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     failed_ids      = []
     not_found_count = 0
     not_found_ids   = []
-    for cat_name, cat_items in sorted(by_cat.items()):
-        log.info(f"  Enriching: {cat_name} ({len(cat_items)} items)")
+    sorted_by_cat = sorted(by_cat.items())
+    n_enrich_cats = len(sorted_by_cat)
+    for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
+        cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
+        log.info(f"[SCAN] Enriching folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -1945,7 +1408,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         data["providers_raw"]      = sorted(providers_raw_meta.keys())
         data["enriched_at"]        = datetime.now().isoformat()
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN]   {cat_name} — {enriched} enriched so far")
+        log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
@@ -1959,7 +1422,201 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     parts = [f"{enriched} OK"]
     if not_found_count: parts.append(f"{not_found_count} not found in Jellyseerr")
     if failed_count:    parts.append(f"{failed_count} errors")
-    log.info(f"[SCAN] Enrichment completed in {elapsed:.1f}s — {' / '.join(parts)}")
+    log.info(f"[SCAN] Phase 2 completed in {elapsed:.1f}s — {' / '.join(parts)}")
+
+
+# ---------------------------------------------------------------------------
+# SCORING PHASE
+# ---------------------------------------------------------------------------
+
+def run_scoring(only_category: str | None = None) -> None:
+    _t0 = time.monotonic()
+    cfg = load_config()
+    if not _is_score_enabled(cfg):
+        log.info("[SCAN] Scoring disabled (system.enable_score=false) — skipping phase 3")
+        return
+
+    log.info("[SCAN] ── Phase 3 : scoring ──────────────────────────────")
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        return
+
+    items = data.get("items", [])
+    by_cat: dict = defaultdict(list)
+    for item in items:
+        cat_name = item.get("category")
+        if not cat_name:
+            continue
+        if only_category and cat_name != only_category:
+            continue
+        by_cat[cat_name].append(item)
+
+    if not by_cat:
+        log.info("[SCAN] No items to score.")
+        return
+
+    # Build category display-name → raw folder name lookup for consistent log labels
+    cat_folder_by_name = {c["name"]: c["folder"] for c in build_categories_from_config(cfg)}
+
+    scored_total = 0
+    sorted_score_cats = sorted(by_cat.items())
+    n_score_cats = len(sorted_score_cats)
+    for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
+        cat_folder = cat_folder_by_name.get(cat_name, cat_name)
+        log.info(f"[SCAN] Scoring folder [{cat_folder}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
+        for item in cat_items:
+            item["quality"] = compute_quality(item)
+            scored_total += 1
+        write_json(data, OUTPUT_PATH)
+        log.info(f"[SCAN] Folder [{cat_folder}] scored")
+
+    elapsed = time.monotonic() - _t0
+    log.info(f"[SCAN] Phase 3 completed — {scored_total} item(s) scored in {elapsed:.1f}s")
+
+
+# ---------------------------------------------------------------------------
+# INVENTORY PHASE
+# ---------------------------------------------------------------------------
+
+def _stamp_last_checked_at(doc: dict, now_utc: str) -> None:
+    """Set last_checked_at = now_utc on all items, subfolders, and video_files in-place."""
+    for item in doc.get("items", []):
+        item["last_checked_at"] = now_utc
+        for vf in item.get("video_files", []):
+            vf["last_checked_at"] = now_utc
+        for sf in item.get("subfolders", []):
+            sf["last_checked_at"] = now_utc
+            for vf in sf.get("video_files", []):
+                vf["last_checked_at"] = now_utc
+
+
+def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> None:
+    _t0 = time.monotonic()
+    cfg = load_config()
+    if not _is_inventory_enabled(cfg):
+        log.info("[SCAN] Inventory disabled (system.inventory_enabled=false) — skipping phase 4")
+        return
+
+    log.info("[SCAN] ── Phase 4 : inventory ─────────────────────────────")
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as f:
+            lib_data = json.load(f)
+    except Exception as e:
+        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        return
+
+    root = Path(LIBRARY_PATH)
+    now_dt = datetime.now(timezone.utc)
+    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    # Snapshot existing inventory for merge (fixed reference throughout)
+    existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
+
+    # Disabled folder refs → mark their items missing
+    force_missing_folder_refs = {
+        ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
+        for folder in cfg.get("folders", [])
+        if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
+    }
+
+    categories = build_categories_from_config(cfg)
+
+    # Path → library item lookup for title resolution
+    items_by_path: dict[str, dict] = {
+        item["path"]: item for item in lib_data.get("items", []) if item.get("path")
+    }
+
+    all_new_items: list[dict] = []
+
+    active_inv_cats = [c for c in categories if not only_category or c["name"] == only_category]
+    n_inv_cats = len(active_inv_cats)
+
+    for cat_idx, cat in enumerate(active_inv_cats, 1):
+        cat_dir = root / cat["folder"]
+        if not cat_dir.exists():
+            log.warning(f"[SCAN] Inventory: folder not found: {cat_dir}")
+            continue
+
+        log.info(f"[SCAN] Inventory: processing folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) — type={cat['type']}")
+        cat_inv_items: list[dict] = []
+        for media_dir in sorted(cat_dir.iterdir()):
+            if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
+                continue
+            item_path = str(media_dir.relative_to(root))
+            lib_item = items_by_path.get(item_path, {})
+            title = lib_item.get("title") or media_dir.name
+
+            inv_item = build_inventory_item(media_dir, cat, title, now_utc)
+            cat_inv_items.append(inv_item)
+
+        all_new_items.extend(cat_inv_items)
+
+        # Incremental write: merge scanned-so-far against snapshot
+        partial_doc = {
+            "version": 1,
+            "generated_at": now_utc,
+            "scan_mode": scan_mode,
+            "missing_reconciliation": False,
+            "items": list(all_new_items),
+        }
+        if existing_inventory is not None:
+            merged = merge_inventory_documents(existing_inventory, partial_doc)
+        else:
+            merged = partial_doc
+        merged = cleanup_inventory_transient_fields(merged)
+        write_json(merged, INVENTORY_OUTPUT_PATH)
+        log.info(f"[SCAN] Inventory: folder [{cat['folder']}] done — {len(cat_inv_items)} item(s)")
+
+    # Final pass: full merge + optional missing reconciliation
+    final_doc = {
+        "version": 1,
+        "generated_at": now_utc,
+        "scan_mode": scan_mode,
+        "missing_reconciliation": False,
+        "items": list(all_new_items),
+    }
+    if existing_inventory is not None:
+        final_merged = merge_inventory_documents(existing_inventory, final_doc)
+    else:
+        final_merged = final_doc
+
+    if force_missing_folder_refs:
+        final_merged = mark_disabled_inventory_items_missing(final_merged, force_missing_folder_refs)
+
+    should_reconcile = scan_mode == "full" and not only_category
+    if should_reconcile:
+        try:
+            final_merged = reconcile_inventory_missing_states(final_merged)
+            final_merged["missing_reconciliation"] = True
+        except Exception as e:
+            final_merged["missing_reconciliation"] = False
+            log.warning(f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing.")
+    else:
+        final_merged["missing_reconciliation"] = False
+
+    # Stamp last_checked_at = now for all items regardless of status
+    _stamp_last_checked_at(final_merged, now_utc)
+    final_merged = cleanup_inventory_transient_fields(final_merged)
+    write_json(final_merged, INVENTORY_OUTPUT_PATH)
+
+    # Missing summary
+    missing_items = [i for i in final_merged.get("items", []) if i.get("status") == "missing"]
+    if missing_items:
+        names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
+        suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
+        log.info(f"[SCAN] Inventory: {len(missing_items)} missing item(s)")
+        log.debug(f"[SCAN] Inventory missing: {', '.join(names)}{suffix}")
+    else:
+        log.info("[SCAN] Inventory: no missing items")
+
+    elapsed = time.monotonic() - _t0
+    log.info(
+        f"[SCAN] Phase 4 completed in {elapsed:.1f}s — "
+        f"{len(all_new_items)} present, {len(missing_items)} missing"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2013,10 +1670,71 @@ def _clean_title(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Inter-process scan lock (fcntl — works across startup, cron, and API scans)
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _scan_lock(mode: str):
+    """Acquire an exclusive inter-process lock for the duration of a scan.
+
+    Uses fcntl.flock on SCAN_LOCK_PATH so any process (startup, cron, API
+    subprocess) sees the same lock state.  Raises BlockingIOError immediately
+    if another scan is already running.
+    """
+    lock_path = Path(SCAN_LOCK_PATH)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.close()
+        raise
+    try:
+        fd.write(f"{os.getpid()} {mode}\n")
+        fd.flush()
+        log.info(f"[SCAN] Scan lock acquired — mode={mode}")
+        yield
+    finally:
+        try:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fd.close()
+        log.info("[SCAN] Scan lock released")
+
+
+def _is_scan_locked() -> bool:
+    """Non-blocking probe: return True if the scan lock is currently held by any process."""
+    lock_path = Path(SCAN_LOCK_PATH)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "w") as fd:
+            try:
+                fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                return False
+            except BlockingIOError:
+                return True
+    except Exception:
+        return False  # Fail open — never block a scan due to a lock-check error
+
+
+# ---------------------------------------------------------------------------
 # HTTP server (--serve mode)
 # ---------------------------------------------------------------------------
 
-_srv_lock  = threading.Lock()
+_srv_lock      = threading.Lock()
+_valid_sessions: set = set()  # in-memory session tokens (cleared on restart)
+
+# Routes that don't require authentication
+_PUBLIC_GET  = {"/api/auth", "/health"}
+_PUBLIC_POST = {"/api/auth", "/api/logout"}
+
+# Rate limiting for /api/auth (brute force protection)
+_auth_attempts: dict = {}   # ip → [timestamps]
+_AUTH_MAX_ATTEMPTS = 10
+_AUTH_WINDOW       = 60     # seconds
+
 _srv_state = {
     "status":     "idle",
     "mode":       None,
@@ -2026,15 +1744,14 @@ _srv_state = {
 }
 _srv_proc = None
 
-VALID_MODES = {"quick", "enrich", "full", "default"}
+VALID_MODES = {"quick", "full", "default"}
 
 
 def _scanner_cmd(mode: str) -> list[str]:
     base = [sys.executable, __file__]
-    if mode == "quick":  return base + ["--quick"]
-    if mode == "enrich": return base + ["--enrich"]
-    if mode == "full":   return base + ["--full"]
-    return base
+    if mode == "quick": return base + ["--quick"]
+    if mode == "full":  return base + ["--full"]
+    return base + ["--full"]  # default → full
 
 
 def _run_scan_bg(mode: str):
@@ -2082,23 +1799,55 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _json(self, code, data):
+    def _json(self, code, data, *, set_cookie=None):
         body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
+    def _check_auth(self) -> bool:
+        """Return True if request carries a valid mml_session cookie."""
+        pw = os.environ.get("APP_PASSWORD", "")
+        if not pw:
+            return True
+        token = self._session_token()
+        if token and token in _valid_sessions:
+            return True
+        return False
+
+    def _session_token(self) -> str | None:
+        cookie_header = self.headers.get("Cookie", "")
+        for part in cookie_header.split(";"):
+            name, _, val = part.strip().partition("=")
+            if name == "mml_session" and val:
+                return val
+        return None
+
+    def _is_rate_limited(self) -> bool:
+        """Return True if the client IP has exceeded the auth attempt rate limit."""
+        ip  = self.client_address[0]
+        now = time.time()
+        ts  = _auth_attempts.get(ip, [])
+        ts  = [t for t in ts if now - t < _AUTH_WINDOW]
+        ts.append(now)
+        _auth_attempts[ip] = ts
+        return len(ts) > _AUTH_MAX_ATTEMPTS
+
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path not in _PUBLIC_GET and not self._check_auth():
+            self._json(401, {"error": "unauthorized"})
+            return
         if path == "/api/scan/status":
             with _srv_lock:
                 self._json(200, dict(_srv_state))
@@ -2113,12 +1862,22 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/auth/validate":
+            # Used by nginx auth_request to gate static files.
+            # Auth guard above already returns 401 if token invalid;
+            # reaching here means the request is authenticated.
+            self._json(200, {})
         elif path == "/api/auth":
             pw = os.environ.get("APP_PASSWORD", "")
-            self._json(200, {"required": bool(pw)})
+            lang = load_config().get("system", {}).get("language") or "en"
+            required = bool(pw)
+            self._json(200, {
+                "required": required,
+                "language": lang,
+                "authenticated": (not required) or self._check_auth(),
+            })
         elif path in ("/api/scan/test-jsr", "/api/jellyseerr/test"):
             # Test Jellyseerr connectivity
             jsr = _jsr_cfg()
@@ -2182,14 +1941,37 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b"{}"
         if path == "/api/auth":
+            if self._is_rate_limited():
+                self._json(429, {"error": "too many attempts"})
+                return
             try:
                 payload = json.loads(body)
             except Exception:
                 payload = {}
-            pw = os.environ.get("APP_PASSWORD", "")
+            pw      = os.environ.get("APP_PASSWORD", "")
             entered = payload.get("password", "")
-            ok = bool(pw) and entered == pw
-            self._json(200, {"ok": ok})
+            ok = (
+                bool(pw)
+                and isinstance(entered, str)
+                and hmac.compare_digest(pw, entered)
+            )
+            if ok:
+                token = secrets.token_hex(32)
+                _valid_sessions.add(token)
+                cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
+                self._json(200, {"ok": True}, set_cookie=cookie)
+            else:
+                self._json(200, {"ok": False})
+            return
+        if path == "/api/logout":
+            token = self._session_token()
+            if token:
+                _valid_sessions.discard(token)
+            expired = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            self._json(200, {"ok": True}, set_cookie=expired)
+            return
+        if path not in _PUBLIC_POST and not self._check_auth():
+            self._json(401, {"error": "unauthorized"})
             return
         if path not in ("/api/scan/start", "/api/config", "/api/jellyseerr/test", "/api/providers-map"):
             self._json(404, {"error": "not found"})
@@ -2206,6 +1988,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             with _srv_lock:
                 if _srv_state["status"] == "running":
                     self._json(409, {"error": "scan already running"}); return
+            if _is_scan_locked():
+                log.info("[SCAN] Scan already running — refusing new scan request")
+                self._json(409, {"error": "scan already running"}); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
@@ -2250,6 +2035,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
                 _set_global_log_level(new_level)
+
+            # Trigger a quick scan when folder configuration changed (type or enabled state)
+            folders_changed = "folders" in payload
+            if folders_changed and not _is_scan_locked():
+                log.info("[config] Folder configuration changed — triggering quick scan")
+                threading.Thread(target=_run_scan_bg, args=("quick",), daemon=True).start()
+            elif folders_changed:
+                log.info("[config] Folder configuration changed — scan already running, skipping auto quick scan")
+
             self._json(200, {"ok": True})
 
         elif path == "/api/providers-map":
@@ -2288,18 +2082,19 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--quick",  action="store_true",
-        help="Filesystem + NFO scan only, no provider enrichment")
-    mode_group.add_argument("--enrich", action="store_true",
-        help="Filesystem + NFO scan + fetch missing providers (default)")
-    mode_group.add_argument("--full",   action="store_true",
-        help="Filesystem + NFO scan + force re-fetch ALL providers")
-    mode_group.add_argument("--serve",  action="store_true",
+    mode_group.add_argument("--quick", action="store_true",
+        help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
+    mode_group.add_argument("--full",  action="store_true",
+        help="All 4 phases: filesystem scan + Jellyseerr + scoring + inventory (default)")
+    mode_group.add_argument("--serve", action="store_true",
         help="Start HTTP API server on 127.0.0.1:8095")
-    mode_group.add_argument("--reset",  action="store_true",
+    mode_group.add_argument("--reset", action="store_true",
         help="Delete library.json and exit")
     parser.add_argument("--category", default=None, metavar="NAME",
         help="Restrict scan to a single category name")
+    parser.add_argument("--origin", default="manual",
+        choices=["manual", "startup", "cron"],
+        help="Scan origin for logging (manual/startup/cron)")
     args = parser.parse_args()
 
     if args.serve:
@@ -2310,32 +2105,42 @@ def main():
         run_reset()
         return
 
-    _t_main = time.monotonic()
-
     if args.quick:
+        lock_mode = "quick"
         mode_label = "--quick"
-    elif args.full:
+    else:
+        lock_mode = "full"
         mode_label = "--full"
-    else:
-        mode_label = "--enrich (default)"
-    log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Starting scan {mode_label}")
-    log.info(f"[SCAN] ═══════════════════════════════════")
 
-    if args.quick:
-        run_quick(only_category=args.category, scan_mode="quick")
-    elif args.full:
-        run_quick(only_category=args.category, scan_mode="full")
-        run_enrich(force=True, only_category=args.category)
-    else:
-        # --enrich or default
-        run_quick(only_category=args.category, scan_mode="full")
-        run_enrich(force=False, only_category=args.category)
+    try:
+        with _scan_lock(lock_mode):
+            _t_main = time.monotonic()
+            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] Starting scan {mode_label}")
+            log.info(f"[SCAN] ═══════════════════════════════════")
 
-    elapsed = time.monotonic() - _t_main
-    log.info(f"[SCAN] ═══════════════════════════════════")
-    log.info(f"[SCAN] Full scan completed in {elapsed:.1f}s")
-    log.info(f"[SCAN] ═══════════════════════════════════")
+            if args.quick:
+                run_quick(only_category=args.category)
+            else:
+                # --full or default
+                run_quick(only_category=args.category)
+                run_enrich(force=True, only_category=args.category)
+                run_scoring(only_category=args.category)
+                run_inventory(scan_mode="full", only_category=args.category)
+
+            elapsed = time.monotonic() - _t_main
+            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
+            log.info(f"[SCAN] ═══════════════════════════════════")
+
+    except BlockingIOError:
+        if args.origin == "startup":
+            log.warning("[SCAN] Startup scan skipped — another scan is already running")
+        elif args.origin == "cron":
+            log.warning("[SCAN] Cron scan skipped — another scan is already running")
+        else:
+            log.warning("[SCAN] Scan already running — refusing new scan request")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
