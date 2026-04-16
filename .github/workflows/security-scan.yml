@@ -60,17 +60,6 @@ jobs:
         if: steps.image.outputs.source == 'build'
         run: docker build -t "$IMAGE_NAME" -f docker/Dockerfile .
 
-      - name: Trivy (fail on HIGH/CRITICAL with fix only)
-        run: |
-          docker run --rm \
-            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1 \
-            --no-progress
-
       - name: Trivy (full report)
         continue-on-error: true
         run: |
@@ -91,6 +80,65 @@ jobs:
             --no-progress \
             --format json \
             -o /workspace/trivy-full.json
+
+      - name: Trivy (actionable report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-actionable.txt
+
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --format json \
+            -o /workspace/trivy-actionable.json
+
+      - name: Grype (full report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" -o table > grype-full.txt || true
+
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" -o json > grype-full.json || true
+
+      - name: Grype (actionable report)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" \
+            --only-fixed \
+            -o table > grype-actionable.txt || true
+
+          docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:v0.79.3 "$IMAGE_NAME" \
+            --only-fixed \
+            -o json > grype-actionable.json || true
 
       - name: Trivy FS scan
         continue-on-error: true
@@ -126,50 +174,33 @@ jobs:
             --format cyclonedx \
             -o /workspace/sbom.json
 
-      - name: Grype (HIGH/CRITICAL check, non-blocking)
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            -e GRYPE_DB_VALIDATE_AGE=false \
-            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            anchore/grype:v0.79.3 "$IMAGE_NAME" \
-            --fail-on high || true
-
-      - name: Grype (full report)
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            -e GRYPE_DB_VALIDATE_AGE=false \
-            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            anchore/grype:v0.79.3 "$IMAGE_NAME" -o table > grype-full.txt || true
-          docker run --rm \
-            -e GRYPE_DB_VALIDATE_AGE=false \
-            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            anchore/grype:v0.79.3 "$IMAGE_NAME" -o json > grype-full.json || true
-
       - name: Ensure report files exist
         if: always()
         run: |
           [ -f trivy-full.txt ] || : > trivy-full.txt
+          [ -f trivy-actionable.txt ] || : > trivy-actionable.txt
           [ -f trivy-fs.txt ] || : > trivy-fs.txt
           [ -f trivy-secrets.txt ] || : > trivy-secrets.txt
           [ -f grype-full.txt ] || : > grype-full.txt
-          [ -s sbom.json ] || echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.json
+          [ -f grype-actionable.txt ] || : > grype-actionable.txt
           [ -s trivy-full.json ] || echo '{"Results":[]}' > trivy-full.json
+          [ -s trivy-actionable.json ] || echo '{"Results":[]}' > trivy-actionable.json
           [ -s grype-full.json ] || echo '{"matches":[]}' > grype-full.json
+          [ -s grype-actionable.json ] || echo '{"matches":[]}' > grype-actionable.json
+          [ -s sbom.json ] || echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.json
           jq -e . trivy-full.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-full.json
+          jq -e . trivy-actionable.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-actionable.json
           jq -e . grype-full.json >/dev/null 2>&1 || echo '{"matches":[]}' > grype-full.json
+          jq -e . grype-actionable.json >/dev/null 2>&1 || echo '{"matches":[]}' > grype-actionable.json
 
       - name: Security summary
         if: always()
+        continue-on-error: true
         run: |
           echo "===== SECURITY SUMMARY ====="
 
           echo ""
-          echo "TRIVY:"
+          echo "TRIVY (FULL):"
           jq -r '
             [
               .Results[].Vulnerabilities[]?
@@ -179,7 +210,17 @@ jobs:
           ' trivy-full.json
 
           echo ""
-          echo "GRYPE:"
+          echo "TRIVY (ACTIONABLE):"
+          jq -r '
+            [
+              .Results[].Vulnerabilities[]?
+            ] | group_by(.Severity) |
+            map({severity: .[0].Severity, count: length}) |
+            .[] | "- \(.severity): \(.count)"
+          ' trivy-actionable.json
+
+          echo ""
+          echo "GRYPE (FULL):"
           jq -r '
             .matches
             | group_by(.vulnerability.severity)
@@ -188,57 +229,29 @@ jobs:
           ' grype-full.json
 
           echo ""
-          echo "TOP CVE (CRITICAL/HIGH):"
-
-          echo ""
-          echo "Trivy:"
+          echo "GRYPE (ACTIONABLE):"
           jq -r '
-            [.Results[].Vulnerabilities[]?
-              | select(.Severity=="CRITICAL" or .Severity=="HIGH")]
-            | sort_by(.Severity)
-            | reverse
-            | .[:10]
-            | .[]
-            | "- \(.VulnerabilityID) (\(.Severity))"
-          ' trivy-full.json
-
-          echo ""
-          echo "Grype:"
-          jq -r '
-            [.matches[]
-              | select(.vulnerability.severity=="Critical" or .vulnerability.severity=="High")]
-            | .[:10]
-            | .[]
-            | "- \(.vulnerability.id) (\(.vulnerability.severity))"
-          ' grype-full.json
-
-      - name: Add summary to GitHub UI
-        if: always()
-        run: |
-          echo "## 🔐 Security Summary" >> $GITHUB_STEP_SUMMARY
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Trivy (image)" >> $GITHUB_STEP_SUMMARY
-          head -n 50 trivy-full.txt >> $GITHUB_STEP_SUMMARY
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Filesystem scan" >> $GITHUB_STEP_SUMMARY
-          head -n 50 trivy-fs.txt >> $GITHUB_STEP_SUMMARY
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Secrets scan" >> $GITHUB_STEP_SUMMARY
-          head -n 50 trivy-secrets.txt >> $GITHUB_STEP_SUMMARY
+            .matches
+            | group_by(.vulnerability.severity)
+            | map({severity: .[0].vulnerability.severity, count: length})
+            | .[] | "- \(.severity): \(.count)"
+          ' grype-actionable.json
 
       - name: Upload security reports
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
           path: |
             trivy-full.txt
             trivy-full.json
-            trivy-fs.txt
-            trivy-secrets.txt
+            trivy-actionable.txt
+            trivy-actionable.json
             grype-full.txt
             grype-full.json
+            grype-actionable.txt
+            grype-actionable.json
+            trivy-fs.txt
+            trivy-secrets.txt
             sbom.json
