@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 
 const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.js'), 'utf8');
 const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
-const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/settings.js'), 'utf8');
-const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/stats.js'), 'utf8');
+const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
+const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);

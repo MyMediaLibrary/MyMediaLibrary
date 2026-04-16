@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { parseMarkdown } = require('../../../app/docs_markdown.js');
+const { parseMarkdown } = require('../../../app/js/docs_markdown.js');
 
 test('parses common markdown blocks and inline styles', () => {
   const input = [

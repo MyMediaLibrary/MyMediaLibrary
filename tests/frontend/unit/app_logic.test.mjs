@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const logic = require('../../../app/app.logic.js');
+const logic = require('../../../app/js/app.logic.js');
 const items = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../fixtures/library_items.json'), 'utf8'));
 
 function baseState() {
