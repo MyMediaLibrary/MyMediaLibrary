@@ -1,9 +1,10 @@
 name: Security Scan
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,14 +12,18 @@ permissions:
 
 env:
   IMAGE_NAME: mymedialibrary:ci-scan
+  TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   security-scan:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TARGET_SHA }}
 
       - name: Cache Trivy DB
         uses: actions/cache@v4
@@ -40,19 +45,13 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE_REPO="ghcr.io/mymedialibrary/mymedialibrary"
-          CANDIDATES=(
-            "${IMAGE_REPO}:${GITHUB_SHA}"
-            "${IMAGE_REPO}:${GITHUB_REF_NAME}"
-            "${IMAGE_REPO}:latest"
-          )
+          CANDIDATE="${IMAGE_REPO}:${TARGET_SHA}"
 
-          for candidate in "${CANDIDATES[@]}"; do
-            if docker pull "$candidate"; then
-              docker tag "$candidate" "$IMAGE_NAME"
-              echo "source=reused" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
+          if docker pull "$CANDIDATE"; then
+            docker tag "$CANDIDATE" "$IMAGE_NAME"
+            echo "source=reused" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           echo "source=build" >> "$GITHUB_OUTPUT"
 
