@@ -1728,7 +1728,7 @@ _valid_sessions: set = set()  # in-memory session tokens (cleared on restart)
 
 # Routes that don't require authentication
 _PUBLIC_GET  = {"/api/auth", "/health"}
-_PUBLIC_POST = {"/api/auth"}
+_PUBLIC_POST = {"/api/auth", "/api/logout"}
 
 # Rate limiting for /api/auth (brute force protection)
 _auth_attempts: dict = {}   # ip → [timestamps]
@@ -1814,12 +1814,18 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         pw = os.environ.get("APP_PASSWORD", "")
         if not pw:
             return True
+        token = self._session_token()
+        if token and token in _valid_sessions:
+            return True
+        return False
+
+    def _session_token(self) -> str | None:
         cookie_header = self.headers.get("Cookie", "")
         for part in cookie_header.split(";"):
             name, _, val = part.strip().partition("=")
-            if name == "mml_session" and val in _valid_sessions:
-                return True
-        return False
+            if name == "mml_session" and val:
+                return val
+        return None
 
     def _is_rate_limited(self) -> bool:
         """Return True if the client IP has exceeded the auth attempt rate limit."""
@@ -1951,6 +1957,13 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(200, {"ok": True}, set_cookie=cookie)
             else:
                 self._json(200, {"ok": False})
+            return
+        if path == "/api/logout":
+            token = self._session_token()
+            if token:
+                _valid_sessions.discard(token)
+            expired = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            self._json(200, {"ok": True}, set_cookie=expired)
             return
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})

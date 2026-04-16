@@ -199,7 +199,9 @@
     .toggle-switch input:checked + .toggle-switch-slider{background:var(--accent)}
     .toggle-switch input:checked + .toggle-switch-slider:before{transform:translateX(16px)}
     .settings-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;
-      justify-content:flex-end;gap:8px}
+      justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+    .settings-footer-left,.settings-footer-right{display:flex;align-items:center;gap:8px}
+    .settings-footer-right{margin-left:auto}
     .settings-collapsible{width:100%;display:flex;align-items:center;justify-content:space-between;
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;
       cursor:pointer;color:var(--text);font-family:var(--font-display);font-size:13px;font-weight:700}
@@ -542,6 +544,8 @@
       .settings-input{font-size:12px;padding:6px 8px}
       .settings-collapsible{padding:9px 11px}
       .settings-footer{padding:10px 12px}
+      .settings-footer-left{flex:1 1 auto}
+      .settings-footer-right{margin-left:auto;flex:0 0 auto}
       .settings-modal{height:90dvh;min-height:0;resize:none}
       .settings-subgroup{margin-left:8px;padding-left:8px}
       .settings-library-folders-group{margin-top:10px}
@@ -607,4 +611,3 @@
     /* Settings tabs */
     .stab{background:none;border:none;padding:10px 14px;font-size:12px;font-weight:600;font-family:var(--font-display);cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .2s}
     .stab.active{color:var(--accent);border-bottom-color:var(--accent)}
-

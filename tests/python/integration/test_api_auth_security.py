@@ -88,3 +88,24 @@ class TestApiAuthSecurity(unittest.TestCase):
         status, body, _ = self._request("/api/auth", method="POST", payload={"password": "wrong"})
         self.assertEqual(status, 429)
         self.assertIn("too many attempts", body)
+
+    def test_logout_invalidates_session_and_expires_cookie(self):
+        status, body, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        self.assertEqual(status, 200)
+        self.assertIn('"ok": true', body.lower())
+
+        set_cookie = headers.get("Set-Cookie") or ""
+        cookie_pair = set_cookie.split(";", 1)[0]
+        self.assertTrue(cookie_pair.startswith("mml_session="))
+
+        status, _, _ = self._request("/api/auth/validate", headers={"Cookie": cookie_pair})
+        self.assertEqual(status, 200)
+
+        status, _, headers = self._request("/api/logout", method="POST", headers={"Cookie": cookie_pair})
+        self.assertEqual(status, 200)
+        expired_cookie = headers.get("Set-Cookie") or ""
+        self.assertIn("mml_session=", expired_cookie)
+        self.assertIn("Max-Age=0", expired_cookie)
+
+        status, _, _ = self._request("/api/auth/validate", headers={"Cookie": cookie_pair})
+        self.assertEqual(status, 401)

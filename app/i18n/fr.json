@@ -115,6 +115,7 @@
     "title": "⚙️ Paramètres",
     "save": "Enregistrer",
     "close": "Fermer",
+    "logout": "Déconnexion",
     "saved": "✓ Sauvegardé",
     "save_error": "Erreur lors de la sauvegarde : {msg}",
     "providers_visibility": "Visibilité des fournisseurs",

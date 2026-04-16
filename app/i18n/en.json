@@ -115,6 +115,7 @@
     "title": "⚙️ Settings",
     "save": "Save",
     "close": "Close",
+    "logout": "Logout",
     "saved": "✓ Saved",
     "save_error": "Error saving: {msg}",
     "providers_visibility": "Providers visibility",

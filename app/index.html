@@ -436,9 +436,14 @@
           ⚙️ Les valeurs en lecture seule sont configurées via <code>compose.yaml</code>.
         </div>
       </div>
-      <div class="settings-footer" style="display:flex;justify-content:flex-end;gap:8px">
-        <button onclick="closeSettings()" class="scan-btn" style="padding:6px 16px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.close">Fermer</button>
-        <button id="settingsSaveBtn" onclick="saveSettingsAndClose()" class="scan-btn" style="padding:6px 16px;display:none" data-i18n="settings.save">Enregistrer</button>
+      <div class="settings-footer">
+        <div class="settings-footer-left">
+          <button id="settingsLogoutBtn" onclick="logoutFromSettings()" class="scan-btn" style="padding:6px 16px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.logout">Déconnexion</button>
+        </div>
+        <div class="settings-footer-right">
+          <button onclick="closeSettings()" class="scan-btn" style="padding:6px 16px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.close">Fermer</button>
+          <button id="settingsSaveBtn" onclick="saveSettingsAndClose()" class="scan-btn" style="padding:6px 16px;display:none" data-i18n="settings.save">Enregistrer</button>
+        </div>
       </div>
     </div>
   </div>

@@ -612,6 +612,25 @@
     document.getElementById('settingsOverlay').style.display = 'none';
   }
 
+  async function logoutFromSettings() {
+    const btn = document.getElementById('settingsLogoutBtn');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!r.ok) throw new Error('logout failed');
+      sessionStorage.removeItem('mediaAuth');
+      closeSettings();
+      window.location.reload();
+    } catch (e) {
+      btn.disabled = false;
+      console.warn('logout failed:', e);
+    }
+  }
+
   function closeSettingsIfBackdrop(e) {
     if (e.target === document.getElementById('settingsOverlay')) closeSettings();
   }
@@ -1075,6 +1094,7 @@
     showOnboarding,
     openSettings,
     closeSettings,
+    logoutFromSettings,
     loadSettings,
     updateTypeFilterVisibility: _updateTypeFilterVisibility,
   };
@@ -1083,6 +1103,7 @@
   window.openSettings              = openSettings;
   window.closeSettings             = closeSettings;
   window.closeSettingsIfBackdrop   = closeSettingsIfBackdrop;
+  window.logoutFromSettings        = logoutFromSettings;
   window.saveSettingsAndClose      = saveSettingsAndClose;
   window.toggleSettingsCollapse    = toggleSettingsCollapse;
   window.toggleMobileSettingsSection = toggleMobileSettingsSection;
