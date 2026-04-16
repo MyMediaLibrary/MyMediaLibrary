@@ -1851,16 +1851,16 @@ let allItems=[], categories=[], groups=[];
     if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
       infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
     }
-    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'" onmouseenter="showPlot(this,\''+sanitizeStr(plotText)+'\')" onmouseleave="hidePlot()"':'')+'>'  
+    return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'"':'')+'>'
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
       +'<div class="tl-body">'
         +'<div class="tl-title" title="'+escH(item.title)+'">'+escH(item.title)+'</div>'
         +'<div class="tl-meta">'
           +'<div class="tl-meta-row compact">'
-            +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+            +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
             +'<span class="tl-cat">'+escH(item.category)+'</span>'
-            +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+            +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +'</div>'
           +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
@@ -1894,10 +1894,10 @@ let allItems=[], categories=[], groups=[];
       const mobileInfo = '<td class="col-mobile-info">'
         +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+escH(item.title)+'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
-          +(item.year?'<span class="tl-cat">'+item.year+'</span>':'')
+          +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
           +'<span class="cat-badge">'+escH(item.category)+'</span>'
           +(qualityBadgeHTML(item, 'quality-badge-inline') || '')
-          +(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'')
+          +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
         +'</div>'
@@ -1912,11 +1912,11 @@ let allItems=[], categories=[], groups=[];
         +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy"/>':'<div class="ph">🎬</div>')+'</td>':'')
         +mobileInfo
         +'<td class="col-title">'+escH(item.title)+'</td>'
-        +'<td class="col-year">'+(item.year||'-')+'</td>'
+        +'<td class="col-year">'+escH(String(item.year||'-'))+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
         +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
-        +'<td>'+(item.resolution?'<span class="res-badge res-'+item.resolution+'">'+item.resolution+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
+        +'<td>'+(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
         +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
         +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
@@ -2551,7 +2551,7 @@ let allItems=[], categories=[], groups=[];
       if (!r.ok) { initApp(); return; }
       const d = await r.json();
       if (!d.required) { initApp(); return; }
-      if (sessionStorage.getItem('mediaAuth') === '1') { initApp(); return; }
+      if (sessionStorage.getItem('mediaAuth') === '1' && sessionStorage.getItem('mediaToken')) { initApp(); return; }
       const ov = document.getElementById('authOverlay');
       if (ov) { ov.style.display = 'flex'; setTimeout(()=>document.getElementById('authInput')?.focus(), 50); }
     } catch(e) {
@@ -2574,6 +2574,7 @@ let allItems=[], categories=[], groups=[];
       const d = await r.json();
       if (d.ok) {
         sessionStorage.setItem('mediaAuth', '1');
+        if (d.token) sessionStorage.setItem('mediaToken', d.token);
         document.getElementById('authOverlay').style.display = 'none';
         initApp();
       } else {
@@ -2586,9 +2587,25 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
+  function _initPlotDelegation() {
+    const lib = document.getElementById('library');
+    if (!lib || lib._plotDelegated) return;
+    lib._plotDelegated = true;
+    lib.addEventListener('mouseover', function (e) {
+      const card = e.target.closest?.('.tl-card');
+      if (!card || !card.dataset.plot) return;
+      if (e.relatedTarget?.closest?.('.tl-card') !== card) showPlot(card, card.dataset.plot);
+    });
+    lib.addEventListener('mouseout', function (e) {
+      const card = e.target.closest?.('.tl-card');
+      if (card && e.relatedTarget?.closest?.('.tl-card') !== card) hidePlot();
+    });
+  }
+
   function initApp() {
     loadLibrary();
     syncScanState();
+    _initPlotDelegation();
   }
 
   checkAuth();

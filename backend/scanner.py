@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import copy
 import fcntl
+import hmac
 import http.server
 import json
 import logging
@@ -30,6 +31,7 @@ from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -190,7 +192,10 @@ def _save_secrets(data: dict) -> None:
     try:
         with open(SECRETS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        os.chmod(SECRETS_PATH, 0o600)
+        try:
+            os.chmod(SECRETS_PATH, 0o600)
+        except OSError as e:
+            log.error(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
     except Exception as e:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
 
@@ -1718,7 +1723,18 @@ def _is_scan_locked() -> bool:
 # HTTP server (--serve mode)
 # ---------------------------------------------------------------------------
 
-_srv_lock  = threading.Lock()
+_srv_lock      = threading.Lock()
+_valid_sessions: set = set()  # in-memory session tokens (cleared on restart)
+
+# Routes that don't require authentication
+_PUBLIC_GET  = {"/api/auth", "/health"}
+_PUBLIC_POST = {"/api/auth"}
+
+# Rate limiting for /api/auth (brute force protection)
+_auth_attempts: dict = {}   # ip → [timestamps]
+_AUTH_MAX_ATTEMPTS = 10
+_AUTH_WINDOW       = 60     # seconds
+
 _srv_state = {
     "status":     "idle",
     "mode":       None,
@@ -1788,18 +1804,38 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
+    def _check_auth(self) -> bool:
+        """Return True if request is authenticated (or no password is configured)."""
+        pw = os.environ.get("APP_PASSWORD", "")
+        if not pw:
+            return True
+        token = self.headers.get("X-Auth-Token", "")
+        return bool(token) and token in _valid_sessions
+
+    def _is_rate_limited(self) -> bool:
+        """Return True if the client IP has exceeded the auth attempt rate limit."""
+        ip  = self.client_address[0]
+        now = time.time()
+        ts  = _auth_attempts.get(ip, [])
+        ts  = [t for t in ts if now - t < _AUTH_WINDOW]
+        ts.append(now)
+        _auth_attempts[ip] = ts
+        return len(ts) > _AUTH_MAX_ATTEMPTS
+
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token")
         self.end_headers()
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path not in _PUBLIC_GET and not self._check_auth():
+            self._json(401, {"error": "unauthorized"})
+            return
         if path == "/api/scan/status":
             with _srv_lock:
                 self._json(200, dict(_srv_state))
@@ -1814,7 +1850,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/auth":
@@ -1883,14 +1918,29 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b"{}"
         if path == "/api/auth":
+            if self._is_rate_limited():
+                self._json(429, {"error": "too many attempts"})
+                return
             try:
                 payload = json.loads(body)
             except Exception:
                 payload = {}
-            pw = os.environ.get("APP_PASSWORD", "")
+            pw      = os.environ.get("APP_PASSWORD", "")
             entered = payload.get("password", "")
-            ok = bool(pw) and entered == pw
-            self._json(200, {"ok": ok})
+            ok = (
+                bool(pw)
+                and isinstance(entered, str)
+                and hmac.compare_digest(pw, entered)
+            )
+            if ok:
+                token = secrets.token_hex(32)
+                _valid_sessions.add(token)
+                self._json(200, {"ok": True, "token": token})
+            else:
+                self._json(200, {"ok": False})
+            return
+        if path not in _PUBLIC_POST and not self._check_auth():
+            self._json(401, {"error": "unauthorized"})
             return
         if path not in ("/api/scan/start", "/api/config", "/api/jellyseerr/test", "/api/providers-map"):
             self._json(404, {"error": "not found"})
