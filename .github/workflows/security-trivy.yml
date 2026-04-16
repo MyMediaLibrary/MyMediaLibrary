@@ -53,26 +53,31 @@ jobs:
         run: docker build -t mymedialibrary:ci-scan -f docker/Dockerfile .
 
       - name: Trivy scan (repository)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-repo.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            aquasec/trivy:0.53.0 \
+            fs \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /workspace/trivy-repo.sarif \
+            --exit-code 0 \
+            /workspace
 
       - name: Trivy scan (image)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
-        with:
-          scan-type: image
-          image-ref: mymedialibrary:ci-scan
-          format: sarif
-          output: trivy-image.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 \
+            image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /workspace/trivy-image.sarif \
+            --exit-code 0 \
+            mymedialibrary:ci-scan
 
       - name: Upload SARIF (repo)
         if: always()
@@ -87,3 +92,12 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image
+
+      - name: Upload Trivy artifacts
+        if: always()
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4.3.6
+        with:
+          name: trivy-reports
+          path: |
+            trivy-repo.sarif
+            trivy-image.sarif

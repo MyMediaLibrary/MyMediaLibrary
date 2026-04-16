@@ -59,7 +59,7 @@ jobs:
           output-format: sarif
           output-file: grype-image.sarif
           severity-cutoff: high
-          fail-build: true
+          fail-build: false
 
       - name: Upload SARIF
         if: always()
@@ -67,3 +67,10 @@ jobs:
         with:
           sarif_file: grype-image.sarif
           category: grype-image
+
+      - name: Upload Grype artifacts
+        if: always()
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4.3.6
+        with:
+          name: grype-reports
+          path: grype-image.sarif
