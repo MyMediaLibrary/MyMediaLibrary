@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>MyMediaLibrary</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c6aff'/><polygon points='12,9 12,23 24,16' fill='white'/><rect x='6' y='9' width='4' height='14' rx='1.5' fill='white'/></svg>"/>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/app.css">
   <link rel="stylesheet" href="stats.css">
 </head>
@@ -25,14 +22,14 @@
     animation:modalIn .25s ease">
     <div style="text-align:center">
       <div style="font-size:32px;margin-bottom:8px">📼</div>
-      <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:20px;letter-spacing:-.3px">MyMediaLibrary</div>
+      <div style="font-family:var(--font-display);font-weight:800;font-size:20px;letter-spacing:-.3px">MyMediaLibrary</div>
       <div style="font-size:12px;color:var(--muted);margin-top:4px" data-i18n="auth.protected">Accès protégé</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       <input type="password" id="authInput" data-i18n-placeholder="auth.password" placeholder="Mot de passe" autocomplete="current-password"
         style="background:var(--bg);border:1px solid var(--border);border-radius:10px;
         padding:10px 14px;color:var(--text);font-size:14px;outline:none;width:100%;
-        font-family:'Inter',sans-serif;transition:border-color .15s"
+        font-family:var(--font-body);transition:border-color .15s"
         onkeydown="if(event.key==='Enter')submitAuth()"
         oninput="document.getElementById('authError').style.display='none'"
         onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"/>
@@ -42,7 +39,7 @@
     </div>
     <button onclick="submitAuth()" id="authBtn"
       style="background:var(--accent);border:none;border-radius:10px;color:#fff;
-      font-family:'Syne',sans-serif;font-size:13px;font-weight:700;padding:10px;
+      font-family:var(--font-display);font-size:13px;font-weight:700;padding:10px;
       cursor:pointer;transition:filter .15s"
       onmouseover="this.style.filter='brightness(1.15)'"
       onmouseout="this.style.filter=''"
@@ -90,7 +87,7 @@
   <!-- BRAND + TOGGLE -->
   <div class="sidebar-brand sidebar-section" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
     <div style="min-width:0;flex:1">
-      <div class="brand-logo" style="font-size:16px;font-weight:800;font-family:'Syne',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📼 MyMediaLibrary</div>
+      <div class="brand-logo" style="font-size:16px;font-weight:800;font-family:var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📼 MyMediaLibrary</div>
       <div class="brand-sub" id="brandSub" style="display:none"></div>
     </div>
   </div>

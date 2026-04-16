@@ -776,7 +776,7 @@
   }
 
   function _onbStep0HTML() {
-    const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:\'Syne\',sans-serif;transition:all .15s';
+    const btnBase = 'padding:7px 18px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;font-family:var(--font-display);transition:all .15s';
     const quickLinkBase = 'display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;text-decoration:none;line-height:1.2;min-height:34px';
     return '<div style="text-align:center;padding:20px 0 10px">'
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
@@ -786,7 +786,7 @@
         + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
       + '</div>'
       // Auto-toggling content
-      + '<div id="onbWelcomeTitle" style="font-family:\'Syne\',sans-serif;font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
+      + '<div id="onbWelcomeTitle" style="font-family:var(--font-display);font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
       + '<div id="onbWelcomeDesc" style="font-size:13px;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.7;text-align:left">'
       + 'Visualisez et explorez votre bibliothèque de films et séries en un coup d\'œil.'
       + '</div>'
@@ -808,7 +808,7 @@
   function _onbStep1HTML() {
     const folders = appConfig.folders || [];
     let html = '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_folders_title')+'</div>'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_folders_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_folders_desc')+'</div>'
       + '</div>';
     if (!folders.length) {
@@ -897,7 +897,7 @@
     const dis = _onbJsr.enabled ? '' : ' disabled';
     const disOp = _onbJsr.enabled ? '' : ';opacity:.45';
     return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_jsr_title')+'</div>'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_jsr_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_jsr_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
@@ -924,7 +924,7 @@
     if (nTv)      rows.push('<b>'+nTv+'</b> '+t(nTv>1?'onboarding.summary_tv_pl':'onboarding.summary_tv',{n:nTv}).replace(nTv+' ',''));
     if (nIgnored) rows.push('<b>'+nIgnored+'</b> '+t(nIgnored>1?'onboarding.summary_ignored_pl':'onboarding.summary_ignored',{n:nIgnored}).replace(nIgnored+' ',''));
     return '<div style="margin-bottom:16px">'
-      + '<div style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_scan_title')+'</div>'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_scan_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_scan_desc')+'</div>'
       + '</div>'
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
@@ -1008,7 +1008,7 @@
     if (panel) panel.innerHTML = '<div style="padding:8px 0">'
       + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
         + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
-        + '<span style="font-family:\'Syne\',sans-serif;font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
+        + '<span style="font-family:var(--font-display);font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
       + '</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'

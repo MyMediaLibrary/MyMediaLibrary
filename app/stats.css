@@ -5,7 +5,7 @@
 .stat-row{display:flex;align-items:center;gap:10px;padding:8px 12px;
   background:var(--card);border:1px solid var(--border);border-radius:8px}
 .stat-row-label{flex:1;font-size:13px;color:var(--text);font-weight:500}
-.stat-row-val{font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap}
+.stat-row-val{font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap}
 .stat-row-sub{font-size:11px;color:var(--muted);white-space:nowrap}
 .stat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 /* Horizontal bar chart */
@@ -23,7 +23,7 @@
 #statsContent{padding:24px 40px 60px;display:flex;flex-direction:column;gap:40px}
 .stats-row{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;align-items:start}
 .stats-block{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
-.stats-block-title{font-family:'Syne',sans-serif;font-weight:700;font-size:11px;
+.stats-block-title{font-family:var(--font-display);font-weight:700;font-size:11px;
   text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:16px;
   padding-bottom:10px;border-bottom:1px solid var(--border)}
 
@@ -31,7 +31,7 @@
 .stat-kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .stat-kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
 .stat-kpi-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
-.stat-kpi-val{font-family:'Syne',sans-serif;font-weight:700;font-size:19px;color:var(--accent);line-height:1}
+.stat-kpi-val{font-family:var(--font-display);font-weight:700;font-size:19px;color:var(--accent);line-height:1}
 .stat-kpi-sub{font-size:11px;color:var(--muted);margin-top:3px}
 
 /* ── Pie chart ────────────────────────────────────────────────────────────── */
@@ -45,7 +45,7 @@
 
 /* ── Pie unit switch ──────────────────────────────────────────────────────── */
 .pie-switch{display:flex;gap:4px;margin-bottom:14px}
-.pie-switch-btn{font-family:'Syne',sans-serif;font-size:11px;font-weight:700;
+.pie-switch-btn{font-family:var(--font-display);font-size:11px;font-weight:700;
   padding:4px 12px;border-radius:999px;border:1px solid var(--border);
   background:var(--tag-bg);color:var(--muted);cursor:pointer;transition:all var(--transition)}
 .pie-switch-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -61,7 +61,7 @@
 /* ── Cross table ──────────────────────────────────────────────────────────── */
 .cross-wrap{overflow-x:auto}
 .cross-table{width:100%;border-collapse:collapse;font-size:12px}
-.cross-table th{padding:7px 11px;text-align:left;font-family:'Syne',sans-serif;font-size:10px;
+.cross-table th{padding:7px 11px;text-align:left;font-family:var(--font-display);font-size:10px;
   font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
   background:var(--card);border-bottom:1px solid var(--border);white-space:nowrap}
 .cross-table td{padding:7px 11px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
@@ -77,7 +77,7 @@
 .quality-avg{font-size:12px;color:var(--muted);margin-top:-8px;margin-bottom:12px}
 .quality-bars{display:flex;flex-direction:column;gap:7px}
 .quality-bar-row{display:grid;grid-template-columns:50px 1fr 28px;align-items:center;gap:8px}
-.quality-bar-label{font-size:11px;color:var(--muted);font-family:'Syne',sans-serif}
+.quality-bar-label{font-size:11px;color:var(--muted);font-family:var(--font-display)}
 .quality-bar-track{height:6px;background:var(--border);border-radius:999px;overflow:hidden}
 .quality-bar-fill{height:100%;border-radius:999px;transition:width .3s ease}
 .quality-bar-val{font-size:11px;color:var(--text);text-align:right}
