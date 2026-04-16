@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const appSource = fs.readFileSync(path.resolve('app/app.js'), 'utf8');
-const appCss = fs.readFileSync(path.resolve('app/app.css'), 'utf8');
-const settingsSource = fs.readFileSync(path.resolve('app/settings.js'), 'utf8');
-const statsSource = fs.readFileSync(path.resolve('app/stats.js'), 'utf8');
+const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.js'), 'utf8');
+const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
+const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/settings.js'), 'utf8');
+const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/stats.js'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);

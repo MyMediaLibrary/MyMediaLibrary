@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const cssSource = fs.readFileSync(path.resolve('app/app.css'), 'utf8');
+const cssSource = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
 
 function cssBlock(source, selector, nextSelector) {
   const start = source.indexOf(selector);
