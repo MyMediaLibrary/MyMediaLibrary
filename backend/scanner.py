@@ -1799,21 +1799,27 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _json(self, code, data):
+    def _json(self, code, data, *, set_cookie=None):
         body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
     def _check_auth(self) -> bool:
-        """Return True if request is authenticated (or no password is configured)."""
+        """Return True if request carries a valid mml_session cookie."""
         pw = os.environ.get("APP_PASSWORD", "")
         if not pw:
             return True
-        token = self.headers.get("X-Auth-Token", "")
-        return bool(token) and token in _valid_sessions
+        cookie_header = self.headers.get("Cookie", "")
+        for part in cookie_header.split(";"):
+            name, _, val = part.strip().partition("=")
+            if name == "mml_session" and val in _valid_sessions:
+                return True
+        return False
 
     def _is_rate_limited(self) -> bool:
         """Return True if the client IP has exceeded the auth attempt rate limit."""
@@ -1828,7 +1834,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "GET, POST")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
@@ -1941,7 +1947,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if ok:
                 token = secrets.token_hex(32)
                 _valid_sessions.add(token)
-                self._json(200, {"ok": True, "token": token})
+                cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
+                self._json(200, {"ok": True}, set_cookie=cookie)
             else:
                 self._json(200, {"ok": False})
             return

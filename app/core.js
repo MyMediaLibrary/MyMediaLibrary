@@ -76,26 +76,18 @@
 
 })(typeof self !== 'undefined' ? self : this);
 
-// ── Auth token injection ──────────────────────────────────────────────────────
-// Attach X-Auth-Token to all same-origin fetch calls when a session token is
-// stored. Covers both /api/ endpoints and static protected resources
-// (/library.json) gated by nginx auth_request.
-// On 401, clear stale auth state and show the login overlay.
+// ── Session 401 guard ─────────────────────────────────────────────────────────
+// Auth is cookie-based (mml_session HttpOnly). No token injection needed —
+// the browser sends the cookie automatically on every same-origin request.
+// On 401, clear the UI auth hint and show the login overlay so the user can
+// re-authenticate without a page reload.
 (function () {
   var _orig = window.fetch;
   window.fetch = function (url, opts) {
-    opts = opts ? Object.assign({}, opts) : {};
-    if (typeof url === 'string' && url.startsWith('/')) {
-      var token = sessionStorage.getItem('mediaToken');
-      if (token) {
-        opts.headers = Object.assign({'X-Auth-Token': token}, opts.headers || {});
-      }
-    }
     return _orig.call(window, url, opts).then(function (resp) {
       if (resp.status === 401 && typeof url === 'string' && url.startsWith('/')
           && url !== '/api/auth') {
         sessionStorage.removeItem('mediaAuth');
-        sessionStorage.removeItem('mediaToken');
         var ov = document.getElementById('authOverlay');
         if (ov) { ov.style.display = 'flex'; }
       }

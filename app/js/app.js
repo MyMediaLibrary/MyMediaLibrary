@@ -2558,15 +2558,13 @@ let allItems=[], categories=[], groups=[];
         await loadTranslations(d.language || 'en');
         applyTranslations();
       }
-      if (sessionStorage.getItem('mediaAuth') === '1' && sessionStorage.getItem('mediaToken')) {
-        // Validate the stored token server-side before trusting it.
-        // On 401, the fetch interceptor clears session state and shows the overlay.
-        const vr = await fetch('/api/auth/validate');
-        if (vr.status !== 401) { initApp(); return; }
-        return; // stale token — interceptor already handled UI
-      }
-      const ov = document.getElementById('authOverlay');
-      if (ov) { ov.style.display = 'flex'; setTimeout(()=>document.getElementById('authInput')?.focus(), 50); }
+      // Validate the session cookie silently. On 401 the interceptor shows the
+      // overlay; here we just decide whether to start the app or wait for login.
+      const vr = await fetch('/api/auth/validate');
+      if (vr.ok) { initApp(); return; }
+      // No valid session — interceptor already showed the overlay on the 401;
+      // set focus for usability.
+      setTimeout(() => document.getElementById('authInput')?.focus(), 50);
     } catch(e) {
       initApp();
     }
@@ -2591,8 +2589,7 @@ let allItems=[], categories=[], groups=[];
       }
       const d = await r.json();
       if (d.ok) {
-        sessionStorage.setItem('mediaAuth', '1');
-        if (d.token) sessionStorage.setItem('mediaToken', d.token);
+        sessionStorage.setItem('mediaAuth', '1'); // UI hint only — session is in the HttpOnly cookie
         document.getElementById('authOverlay').style.display = 'none';
         initApp();
       } else {
