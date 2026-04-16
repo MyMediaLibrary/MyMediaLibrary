@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const appSource = fs.readFileSync(path.resolve(process.cwd(), 'app/js/app.js'), 'utf8');
-const appCss = fs.readFileSync(path.resolve(process.cwd(), 'app/css/app.css'), 'utf8');
-const settingsSource = fs.readFileSync(path.resolve(process.cwd(), 'app/settings.js'), 'utf8');
-const statsSource = fs.readFileSync(path.resolve(process.cwd(), 'app/stats.js'), 'utf8');
+const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.js'), 'utf8');
+const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
+const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/settings.js'), 'utf8');
+const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/stats.js'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
