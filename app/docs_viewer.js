@@ -137,19 +137,10 @@
       });
   }
 
-  async function init() {
-    try {
-      const r = await fetch('/api/auth');
-      if (r.ok) {
-        const d = await r.json();
-        if (d.required && sessionStorage.getItem('mediaAuth') !== '1') {
-          window.location.replace('/');
-          return;
-        }
-      }
-    } catch (_) {
-      // Auth API unreachable — proceed (same behaviour as app.js)
-    }
+  function init() {
+    // Auth is enforced server-side by nginx auth_request on /docs.html.
+    // The mml_session cookie is shared across tabs, so a valid session opened
+    // in another tab grants access here automatically — no JS check needed.
     loadDoc();
   }
 
