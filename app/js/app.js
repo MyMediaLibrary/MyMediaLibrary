@@ -2551,6 +2551,13 @@ let allItems=[], categories=[], groups=[];
       if (!r.ok) { initApp(); return; }
       const d = await r.json();
       if (!d.required) { initApp(); return; }
+      // Load translations for the auth screen before the overlay is shown.
+      // Language comes from /api/auth (config.json system.language), fallback to English.
+      // This ensures button labels and error messages are never shown as raw i18n keys.
+      if (!Object.keys(TRANSLATIONS).length) {
+        await loadTranslations(d.language || 'en');
+        applyTranslations();
+      }
       if (sessionStorage.getItem('mediaAuth') === '1' && sessionStorage.getItem('mediaToken')) {
         // Validate the stored token server-side before trusting it.
         // On 401, the fetch interceptor clears session state and shows the overlay.
