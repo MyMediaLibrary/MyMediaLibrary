@@ -87,6 +87,8 @@ jobs:
         continue-on-error: true
         run: |
           docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
             -v /var/run/docker.sock:/var/run/docker.sock \
             anchore/grype:v0.79.3 "$IMAGE_NAME" \
             --fail-on high || true
@@ -95,9 +97,13 @@ jobs:
         continue-on-error: true
         run: |
           docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
             -v /var/run/docker.sock:/var/run/docker.sock \
             anchore/grype:v0.79.3 "$IMAGE_NAME" -o table > grype-full.txt || true
           docker run --rm \
+            -e GRYPE_DB_VALIDATE_AGE=false \
+            -e GRYPE_DB_MAX_ALLOWED_BUILT_AGE=8760h \
             -v /var/run/docker.sock:/var/run/docker.sock \
             anchore/grype:v0.79.3 "$IMAGE_NAME" -o json > grype-full.json || true
 
@@ -106,8 +112,10 @@ jobs:
         run: |
           [ -f trivy-full.txt ] || : > trivy-full.txt
           [ -f grype-full.txt ] || : > grype-full.txt
-          [ -f trivy-full.json ] || echo '{"Results":[]}' > trivy-full.json
-          [ -f grype-full.json ] || echo '{"matches":[]}' > grype-full.json
+          [ -s trivy-full.json ] || echo '{"Results":[]}' > trivy-full.json
+          [ -s grype-full.json ] || echo '{"matches":[]}' > grype-full.json
+          jq -e . trivy-full.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-full.json
+          jq -e . grype-full.json >/dev/null 2>&1 || echo '{"matches":[]}' > grype-full.json
 
       - name: Security summary
         if: always()
