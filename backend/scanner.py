@@ -1852,6 +1852,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/auth/validate":
+            # Used by nginx auth_request to gate static files.
+            # Auth guard above already returns 401 if token invalid;
+            # reaching here means the request is authenticated.
+            self._json(200, {})
         elif path == "/api/auth":
             pw = os.environ.get("APP_PASSWORD", "")
             self._json(200, {"required": bool(pw)})

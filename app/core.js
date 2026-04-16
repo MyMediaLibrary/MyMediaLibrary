@@ -77,21 +77,22 @@
 })(typeof self !== 'undefined' ? self : this);
 
 // ── Auth token injection ──────────────────────────────────────────────────────
-// Automatically attach X-Auth-Token to all /api/ fetch calls when a session
-// token is stored. This avoids touching each individual fetch call-site.
+// Attach X-Auth-Token to all same-origin fetch calls when a session token is
+// stored. Covers both /api/ endpoints and static protected resources
+// (/library.json) gated by nginx auth_request.
 // On 401, clear stale auth state and show the login overlay.
 (function () {
   var _orig = window.fetch;
   window.fetch = function (url, opts) {
     opts = opts ? Object.assign({}, opts) : {};
-    if (typeof url === 'string' && url.startsWith('/api/')) {
+    if (typeof url === 'string' && url.startsWith('/')) {
       var token = sessionStorage.getItem('mediaToken');
       if (token) {
         opts.headers = Object.assign({'X-Auth-Token': token}, opts.headers || {});
       }
     }
     return _orig.call(window, url, opts).then(function (resp) {
-      if (resp.status === 401 && typeof url === 'string' && url.startsWith('/api/')
+      if (resp.status === 401 && typeof url === 'string' && url.startsWith('/')
           && url !== '/api/auth') {
         sessionStorage.removeItem('mediaAuth');
         sessionStorage.removeItem('mediaToken');
