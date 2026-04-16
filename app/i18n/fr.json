@@ -302,7 +302,8 @@
     "protected": "Accès protégé",
     "password": "Mot de passe",
     "enter": "Entrer",
-    "wrong": "Mot de passe incorrect"
+    "wrong": "Mot de passe incorrect",
+    "rate_limited": "Trop de tentatives. Réessayez dans une minute."
   },
   "common": {
     "close": "Fermer",

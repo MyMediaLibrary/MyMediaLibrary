@@ -681,7 +681,7 @@ let allItems=[], categories=[], groups=[];
       render();
       updateExportJsonButtonState();
     } catch(e) {
-      console.error('loadLibrary error:', e);
+      if (!String(e).includes('401')) console.error('loadLibrary error:', e);
       window.MMLState.isLoading = false;
       window.MMLState.hasError  = true;
       libraryExportSource = null;
@@ -818,7 +818,7 @@ let allItems=[], categories=[], groups=[];
       _updateTypeFilterVisibility();
       applyScoreFeatureVisibility();
     } catch(e) {
-      console.warn('loadConfig error:', e);
+      if (!String(e).includes('401')) console.warn('loadConfig error:', e);
     }
   }
 
@@ -2551,7 +2551,13 @@ let allItems=[], categories=[], groups=[];
       if (!r.ok) { initApp(); return; }
       const d = await r.json();
       if (!d.required) { initApp(); return; }
-      if (sessionStorage.getItem('mediaAuth') === '1' && sessionStorage.getItem('mediaToken')) { initApp(); return; }
+      if (sessionStorage.getItem('mediaAuth') === '1' && sessionStorage.getItem('mediaToken')) {
+        // Validate the stored token server-side before trusting it.
+        // On 401, the fetch interceptor clears session state and shows the overlay.
+        const vr = await fetch('/api/auth/validate');
+        if (vr.status !== 401) { initApp(); return; }
+        return; // stale token — interceptor already handled UI
+      }
       const ov = document.getElementById('authOverlay');
       if (ov) { ov.style.display = 'flex'; setTimeout(()=>document.getElementById('authInput')?.focus(), 50); }
     } catch(e) {
@@ -2571,6 +2577,11 @@ let allItems=[], categories=[], groups=[];
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({password: input.value}),
       });
+      if (r.status === 429) {
+        if (err) { err.textContent = t('auth.rate_limited'); err.style.display = 'block'; }
+        btn.disabled = false; btn.textContent = t('auth.enter');
+        return;
+      }
       const d = await r.json();
       if (d.ok) {
         sessionStorage.setItem('mediaAuth', '1');
@@ -2578,7 +2589,7 @@ let allItems=[], categories=[], groups=[];
         document.getElementById('authOverlay').style.display = 'none';
         initApp();
       } else {
-        if (err) { err.style.display = 'block'; }
+        if (err) { err.textContent = t('auth.wrong'); err.style.display = 'block'; }
         input.value = ''; input.focus();
         btn.disabled = false; btn.textContent = t('auth.enter');
       }

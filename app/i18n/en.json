@@ -302,7 +302,8 @@
     "protected": "Protected access",
     "password": "Password",
     "enter": "Sign in",
-    "wrong": "Incorrect password"
+    "wrong": "Incorrect password",
+    "rate_limited": "Too many attempts. Please try again in a minute."
   },
   "common": {
     "close": "Close",
