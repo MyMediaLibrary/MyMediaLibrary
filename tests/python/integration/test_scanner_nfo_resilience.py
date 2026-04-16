@@ -8,6 +8,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
+from nfo import _parse_nfo_xml  # noqa: E402
 
 
 class NfoResilienceIntegrationTest(unittest.TestCase):
@@ -16,7 +17,7 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             path = pathlib.Path(td) / "movie.nfo"
             path.write_text((FIXTURES / "nfo_malformed.nfo").read_text(encoding="utf-8"), encoding="utf-8")
 
-            root = scanner._parse_nfo_xml(path)
+            root = _parse_nfo_xml(path)
             self.assertIsNotNone(root)
             result = scanner.parse_movie_nfo(path)
 

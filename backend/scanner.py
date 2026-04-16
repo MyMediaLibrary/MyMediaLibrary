@@ -1064,8 +1064,9 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         # Enriched fields preserved from previous library.json — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers", [])),
         "providers_fetched": prev.get("providers_fetched", False),
-        "quality":           prev.get("quality"),  # preserved during quick scan; overwritten by phase 3
     }
+    if enable_score:
+        item["quality"] = prev.get("quality")  # preserved during quick scan; overwritten by phase 3
     return item
 
 
@@ -1107,11 +1108,32 @@ def run_quick(only_category: str | None = None) -> None:
             log.debug(f"[SCAN] Skipping folder [{fname}] — no type configured")
 
     if not categories:
-        is_first_scan = not Path(OUTPUT_PATH).exists()
-        if is_first_scan:
-            log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+        all_typed_folders = [f for f in cfg.get("folders", []) if f.get("type") in {"movie", "tv"}]
+        if not all_typed_folders:
+            # No folders with a recognised type configured at all
+            if not Path(OUTPUT_PATH).exists():
+                log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+            else:
+                log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
         else:
-            log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
+            # Folders exist but all are disabled — update inventory to mark them missing
+            log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
+            if _is_inventory_enabled(cfg):
+                disabled_refs = {
+                    ("tv" if f.get("type") == "tv" else "movie", f["name"].replace("_", " ").replace("-", " ").title())
+                    for f in all_typed_folders
+                    if not is_folder_enabled(f)
+                }
+                if disabled_refs:
+                    try:
+                        write_inventory_json_non_blocking(
+                            [],
+                            scan_mode="quick",
+                            reconcile_missing=not bool(only_category),
+                            forced_missing_folder_refs=disabled_refs,
+                        )
+                    except Exception as e:
+                        log.warning(f"[SCAN] Inventory sidecar failed: {e}")
         return
 
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
@@ -1229,6 +1251,26 @@ def run_quick(only_category: str | None = None) -> None:
 
     log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
 
+    # Inventory sidecar — non-blocking
+    if _is_inventory_enabled(cfg):
+        inventory_entries = [
+            {"media_dir": root / item["path"], "cat": {"name": item["category"], "type": item["type"]}, "title": item["title"]}
+            for item in items
+        ]
+        disabled_refs = {
+            ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
+            for folder in cfg.get("folders", [])
+            if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
+        }
+        try:
+            write_inventory_json_non_blocking(
+                inventory_entries,
+                scan_mode="quick",
+                reconcile_missing=not bool(only_category),
+                forced_missing_folder_refs=disabled_refs,
+            )
+        except Exception as e:
+            log.warning(f"[SCAN] Inventory sidecar failed: {e}")
 
 
 # ---------------------------------------------------------------------------
