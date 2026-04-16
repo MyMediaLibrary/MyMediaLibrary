@@ -223,6 +223,9 @@ test('folder active toggle persists using enabled without visible persistence', 
   });
 
   await page.goto('/index.html');
+  // Wait for the library to render — this ensures loadConfig() has completed
+  // and appConfig.folders is populated before openSettings() calls renderFoldersUI().
+  await expect(page.locator('#library')).toContainText('Film VF');
   await page.evaluate(() => openSettings());
 
   const folderToggle = page.locator('input[data-folder-key="enabled"]').first();
