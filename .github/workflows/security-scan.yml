@@ -20,6 +20,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db
+
       - name: Log in to GHCR
         continue-on-error: true
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
@@ -54,20 +60,22 @@ jobs:
         if: steps.image.outputs.source == 'build'
         run: docker build -t "$IMAGE_NAME" -f docker/Dockerfile .
 
-      - name: Trivy (HIGH/CRITICAL check, non-blocking)
-        continue-on-error: true
+      - name: Trivy (fail on HIGH/CRITICAL with fix only)
         run: |
           docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
             --severity HIGH,CRITICAL \
-            --exit-code 0 \
+            --ignore-unfixed \
+            --exit-code 1 \
             --no-progress
 
       - name: Trivy (full report)
         continue-on-error: true
         run: |
           docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
             -v "$PWD:/workspace" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
@@ -76,12 +84,47 @@ jobs:
             -o /workspace/trivy-full.txt
 
           docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
             -v "$PWD:/workspace" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
             --no-progress \
             --format json \
             -o /workspace/trivy-full.json
+
+      - name: Trivy FS scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            aquasec/trivy:0.53.0 fs /workspace \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-fs.txt
+
+      - name: Trivy secrets scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            aquasec/trivy:0.53.0 fs /workspace \
+            --scanners secret \
+            --no-progress \
+            --format table \
+            -o /workspace/trivy-secrets.txt
+
+      - name: Generate SBOM
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "$PWD:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.53.0 image "$IMAGE_NAME" \
+            --format cyclonedx \
+            -o /workspace/sbom.json
 
       - name: Grype (HIGH/CRITICAL check, non-blocking)
         continue-on-error: true
@@ -111,7 +154,10 @@ jobs:
         if: always()
         run: |
           [ -f trivy-full.txt ] || : > trivy-full.txt
+          [ -f trivy-fs.txt ] || : > trivy-fs.txt
+          [ -f trivy-secrets.txt ] || : > trivy-secrets.txt
           [ -f grype-full.txt ] || : > grype-full.txt
+          [ -s sbom.json ] || echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.json
           [ -s trivy-full.json ] || echo '{"Results":[]}' > trivy-full.json
           [ -s grype-full.json ] || echo '{"matches":[]}' > grype-full.json
           jq -e . trivy-full.json >/dev/null 2>&1 || echo '{"Results":[]}' > trivy-full.json
@@ -166,6 +212,23 @@ jobs:
             | "- \(.vulnerability.id) (\(.vulnerability.severity))"
           ' grype-full.json
 
+      - name: Add summary to GitHub UI
+        if: always()
+        run: |
+          echo "## 🔐 Security Summary" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy (image)" >> $GITHUB_STEP_SUMMARY
+          head -n 50 trivy-full.txt >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Filesystem scan" >> $GITHUB_STEP_SUMMARY
+          head -n 50 trivy-fs.txt >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Secrets scan" >> $GITHUB_STEP_SUMMARY
+          head -n 50 trivy-secrets.txt >> $GITHUB_STEP_SUMMARY
+
       - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -174,5 +237,8 @@ jobs:
           path: |
             trivy-full.txt
             trivy-full.json
+            trivy-fs.txt
+            trivy-secrets.txt
             grype-full.txt
             grype-full.json
+            sbom.json
