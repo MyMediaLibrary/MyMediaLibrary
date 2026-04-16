@@ -5,6 +5,11 @@ on:
     workflows: ["Build and Push Docker Image"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Commit SHA to scan (optional, defaults to selected branch HEAD)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -12,7 +17,7 @@ permissions:
 
 env:
   IMAGE_NAME: mymedialibrary:ci-scan
-  TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+  TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_sha) || github.sha }}
 
 jobs:
   security-scan:
