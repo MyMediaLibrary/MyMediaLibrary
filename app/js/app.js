@@ -681,9 +681,11 @@ let allItems=[], categories=[], groups=[];
       render();
       updateExportJsonButtonState();
     } catch(e) {
-      if (!String(e).includes('401')) console.error('loadLibrary error:', e);
+      const _is401 = String(e).includes('401');
+      if (!_is401) console.error('loadLibrary error:', e);
       window.MMLState.isLoading = false;
-      window.MMLState.hasError  = true;
+      if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
+      window.MMLState.hasError = true;
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
