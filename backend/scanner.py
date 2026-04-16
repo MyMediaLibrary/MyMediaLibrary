@@ -1872,7 +1872,12 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/auth":
             pw = os.environ.get("APP_PASSWORD", "")
             lang = load_config().get("system", {}).get("language") or "en"
-            self._json(200, {"required": bool(pw), "language": lang})
+            required = bool(pw)
+            self._json(200, {
+                "required": required,
+                "language": lang,
+                "authenticated": (not required) or self._check_auth(),
+            })
         elif path in ("/api/scan/test-jsr", "/api/jellyseerr/test"):
             # Test Jellyseerr connectivity
             jsr = _jsr_cfg()

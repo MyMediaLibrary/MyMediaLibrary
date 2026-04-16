@@ -2560,12 +2560,9 @@ let allItems=[], categories=[], groups=[];
         await loadTranslations(d.language || 'en');
         applyTranslations();
       }
-      // Validate the session cookie silently. On 401 the interceptor shows the
-      // overlay; here we just decide whether to start the app or wait for login.
-      const vr = await fetch('/api/auth/validate');
-      if (vr.ok) { initApp(); return; }
-      // No valid session — interceptor already showed the overlay on the 401;
-      // set focus for usability.
+      if (d.authenticated) { initApp(); return; }
+      var ov = document.getElementById('authOverlay');
+      if (ov) { ov.style.display = 'flex'; }
       setTimeout(() => document.getElementById('authInput')?.focus(), 50);
     } catch(e) {
       initApp();

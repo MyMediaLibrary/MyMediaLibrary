@@ -80,6 +80,23 @@ class TestApiAuthSecurity(unittest.TestCase):
         status, _, _ = self._request("/api/auth/validate")
         self.assertEqual(status, 401)
 
+    def test_auth_endpoint_reports_authentication_state_without_401(self):
+        status, body, _ = self._request("/api/auth")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["required"])
+        self.assertFalse(payload["authenticated"])
+
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        self.assertEqual(status, 200)
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+        self.assertTrue(cookie_pair.startswith("mml_session="))
+
+        status, body, _ = self._request("/api/auth", headers={"Cookie": cookie_pair})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["authenticated"])
+
     def test_auth_rate_limit_returns_429(self):
         for _ in range(scanner._AUTH_MAX_ATTEMPTS):
             status, _, _ = self._request("/api/auth", method="POST", payload={"password": "wrong"})
