@@ -1,4 +1,4 @@
-FROM nginx:alpine3.24
+FROM nginx:alpine3.23
 
 # Keep runtime packages minimal:
 # - python3: scanner + API
