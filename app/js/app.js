@@ -604,7 +604,7 @@ let allItems=[], categories=[], groups=[];
     }
 
     try {
-      const r = await fetch('./library.json?_='+Date.now());
+      const r = await fetch('/library.json?_='+Date.now());
       if (r.status === 404 && explicitNeedsOnboarding === null) {
         // Legacy backend compatibility: if the explicit flag is absent, fallback
         // to first-run behavior when library.json has not been generated yet.
