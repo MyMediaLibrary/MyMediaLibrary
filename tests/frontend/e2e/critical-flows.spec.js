@@ -50,6 +50,26 @@ async function mockCoreRoutes(page, { onboarding = false } = {}) {
   await page.route('**/version.json**', async (route) => {
     await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
   });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({
+      json: {
+        'Netflix': 'Netflix',
+        'Prime Video': 'Prime Video',
+        'Disney+': 'Disney+',
+        'Other': null,
+      },
+    });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({
+      json: {
+        'Netflix': 'netflix.webp',
+        'Prime Video': 'primevideo.webp',
+        'Disney+': 'disneyplus.webp',
+        'Autres': 'other_play.webp',
+      },
+    });
+  });
 }
 
 async function openConfiguredLibrary(page) {
