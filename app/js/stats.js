@@ -27,6 +27,7 @@
     getAudioLanguageSimpleDisplay: null,
     getAudioCodecDisplay: null,
     getFilterDisplayValue: null,
+    getEnabledProvidersForItem: null,
     _itemProviderGroups: null,
     _providerGroupKey: null,
     _providerGroupLabel: null,
@@ -162,7 +163,7 @@
     Object.entries(groupedProviderCount).forEach(([name, count]) => {
       byProv[name] = { count, logo: '' };
     });
-    items.forEach(i => getFlatProviders(i).forEach(p => {
+    items.forEach(i => getScopedProviders(i).forEach(p => {
       const rawName = getDep('_pname')(p);
       const name    = getDep('_providerGroupKey')(rawName);
       if (!name || !byProv[name] || name === getDep('PROVIDER_OTHERS_KEY')) return;
@@ -179,8 +180,8 @@
     const providers = {
       entries:   Object.entries(byProv).sort((a,b) => b[1].count - a[1].count),
       bySize:    byProvSize,
-      noneCount: items.filter(i => !getFlatProviders(i).length).length,
-      noneSize:  items.filter(i => !getFlatProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
+      noneCount: items.filter(i => !getScopedProviders(i).length).length,
+      noneSize:  items.filter(i => !getScopedProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
     };
 
     // ── Timeline (daily + monthly buckets) ───────────────────
@@ -250,7 +251,9 @@
     return { category, codec, audioCodec, audioLang, resolution, providers, timeline, years, quality };
   }
 
-  function getFlatProviders(item) {
+  function getScopedProviders(item) {
+    const enabled = getDep('getEnabledProvidersForItem');
+    if (typeof enabled === 'function') return enabled(item);
     const fromDep = getDep('getItemProviders');
     if (typeof fromDep === 'function') return fromDep(item, 'flatrate');
     const providers = item?.providers;

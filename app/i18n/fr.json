@@ -157,7 +157,19 @@
       "apikey_saved": "Clé API déjà enregistrée",
       "test": "Tester la connexion",
       "providers_visible": "Visibilité des fournisseurs",
+      "provider_types": {
+        "title": "Types de disponibilité",
+        "help": "Choisissez les types de disponibilité à prendre en compte dans l'application",
+        "labels": {
+          "flatrate": "Abonnement",
+          "free": "Gratuit",
+          "ads": "Avec pub",
+          "buy": "Achat",
+          "rent": "Location"
+        }
+      },
       "no_provider_available": "Aucun fournisseur disponible.",
+      "no_provider_type_selected": "Aucun type de disponibilité actif. Activez au moins un type.",
       "visible": "Visible",
       "hidden": "Masqué"
     },

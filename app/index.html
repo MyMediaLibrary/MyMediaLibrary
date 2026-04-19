@@ -360,6 +360,18 @@
               </div>
             </div>
           </div>
+          <div class="settings-group settings-subgroup" id="cfgProviderTypesBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProviderTypesBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.jellyseerr.provider_types.title">Types de disponibilité</span>
+              <span class="settings-collapsible-icon">▾</span>
+            </button>
+            <div class="settings-collapsible-body is-collapsed" id="settingsProviderTypesBody">
+              <div class="settings-note" style="margin-bottom:10px" data-i18n="settings.jellyseerr.provider_types.help">
+                Choisissez les types de disponibilité à prendre en compte dans l'application
+              </div>
+              <div id="cfgProviderTypeToggles"></div>
+            </div>
+          </div>
           <div class="settings-group settings-subgroup" id="cfgProvidersBlock">
             <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsProvidersBody" aria-expanded="false">
               <span class="settings-collapsible-title" data-i18n="settings.providers_visibility">Visibilité des fournisseurs</span>

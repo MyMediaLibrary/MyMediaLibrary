@@ -151,6 +151,21 @@ test('audio language simplified stats keep all categories without auto-grouping 
   assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
 });
 
+test('provider type visibility is defaulted and persisted from settings', () => {
+  const normalizeBlock = functionBlock(appSource, '_normalizeProviderTypesSelection', 'getEnabledProviderTypes');
+  assert.match(normalizeBlock, /if \(!Array\.isArray\(raw\)\) return new Set\(PROVIDER_TYPES\);/, 'provider types should default to all when config is missing');
+
+  const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveSettingsBlock, /partial\.providers_visible_types = provTypes;/, 'settings save should persist selected provider types');
+  assert.match(saveSettingsBlock, /partial\.providers_visible = provVis;/, 'settings save should persist selected providers whitelist');
+});
+
+test('stats providers rely on enabled provider types, not flatrate-only fallback', () => {
+  const buildStatsBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+  assert.match(buildStatsBlock, /getScopedProviders\(i\)/, 'stats should aggregate providers from selected provider types');
+  assert.doesNotMatch(buildStatsBlock, /getFlatProviders\(i\)/, 'stats should not force flatrate-only provider extraction');
+});
+
 test('filter order is centralized and explicit for desktop and mobile', () => {
   assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'streaming',\s*'resolution',\s*'video_codec',\s*'audio_codec',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
   const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');

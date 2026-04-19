@@ -49,6 +49,7 @@
     PROVIDER_OTHERS_KEY:     '__others__',
     PROVIDER_NONE_KEY:       '__none__',
     PROVIDER_OTHERS_ALIASES: ['autres', 'others', 'other'],
+    PROVIDER_TYPES:          ['flatrate', 'free', 'ads', 'buy', 'rent'],
 
     CHARTS: {
       // Color palettes for chart series

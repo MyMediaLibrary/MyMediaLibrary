@@ -41,6 +41,7 @@ let allItems=[], categories=[], groups=[];
     return Array.isArray(value) ? value : [];
   }
   const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
+  const PROVIDER_TYPES = window.MMLConstants.PROVIDER_TYPES || ['flatrate', 'free', 'ads', 'buy', 'rent'];
   const FILTER_ORDER = [
     'type',
     'folder',
@@ -328,7 +329,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getProviderNames(item) {
-    return getItemProviders(item, 'flatrate').map(_pname).filter(Boolean);
+    return getEnabledProviderNames(item);
   }
 
   function getItemProviders(item, providerType = 'flatrate') {
@@ -341,6 +342,42 @@ let allItems=[], categories=[], groups=[];
       return providers;
     }
     return [];
+  }
+
+  function _normalizeProviderTypesSelection(raw) {
+    if (!Array.isArray(raw)) return new Set(PROVIDER_TYPES);
+    return new Set(raw.map((v) => String(v || '').trim()).filter((v) => PROVIDER_TYPES.includes(v)));
+  }
+
+  function getEnabledProviderTypes() {
+    return _normalizeProviderTypesSelection(appConfig.providers_visible_types);
+  }
+
+  function getEnabledProvidersForItem(item) {
+    const selectedTypes = getEnabledProviderTypes();
+    const seenRaw = new Set();
+    const providers = [];
+    selectedTypes.forEach((ptype) => {
+      getItemProviders(item, ptype).forEach((entry) => {
+        const raw = _providerRawName(entry);
+        if (!raw || seenRaw.has(raw)) return;
+        seenRaw.add(raw);
+        providers.push(entry);
+      });
+    });
+    return providers;
+  }
+
+  function getEnabledProviderNames(item) {
+    const seen = new Set();
+    const names = [];
+    getEnabledProvidersForItem(item).forEach((entry) => {
+      const name = _pname(entry);
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      names.push(name);
+    });
+    return names;
   }
 
   // Helpers: canonicalize provider entries from library items.
@@ -375,7 +412,7 @@ let allItems=[], categories=[], groups=[];
   }
   function _itemProviderGroups(item) {
     const grouped = new Set();
-    getItemProviders(item, 'flatrate').forEach(p => {
+    getEnabledProvidersForItem(item).forEach(p => {
       const n = _pname(p);
       const key = _providerGroupKey(n);
       if (key) grouped.add(key);
@@ -393,13 +430,13 @@ let allItems=[], categories=[], groups=[];
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
-    return items.some(i => getItemProviders(i, 'flatrate').some(p => {
+    return items.some(i => getEnabledProvidersForItem(i).some(p => {
       const name = _pname(p);
       return name && !_provVisible(name);
     }));
   }
   // Returns only the providers of an item that are currently visible
-  function _itemVisProviders(item){ return getItemProviders(item, 'flatrate').filter(p=>_provVisible(_pname(p))); }
+  function _itemVisProviders(item){ return getEnabledProvidersForItem(item).filter(p=>_provVisible(_pname(p))); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
@@ -653,6 +690,10 @@ let allItems=[], categories=[], groups=[];
       allItems = safeArray(data.items);
       categories = safeArray(data.categories);
       groups = safeArray(data.groups);
+      if (visibleProviders === null) {
+        const bootVisible = [...new Set(allItems.flatMap((item) => getEnabledProviderNames(item)).filter(Boolean))].sort();
+        visibleProviders = new Set(bootVisible);
+      }
       window.MMLState.items = allItems;
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
@@ -674,6 +715,7 @@ let allItems=[], categories=[], groups=[];
         getAudioCodecDisplay,
         getFilterDisplayValue,
         getItemProviders,
+        getEnabledProvidersForItem,
         _itemProviderGroups,
         _providerGroupKey,
         _providerGroupLabel,
@@ -824,9 +866,9 @@ let allItems=[], categories=[], groups=[];
       enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
 
-      // Provider visibility: [] = all visible; non-empty array = whitelist
+      // Provider visibility: explicit whitelist from config
       const pv = appConfig.providers_visible;
-      visibleProviders = Array.isArray(pv) && pv.length > 0 ? new Set(pv) : null;
+      visibleProviders = Array.isArray(pv) ? new Set(pv) : null;
 
       // Active categories: derived from folders with enabled=false
       const folders = appConfig.folders || [];
@@ -1260,7 +1302,7 @@ let allItems=[], categories=[], groups=[];
   function renderProviderFilter() {
     const base = baseItems('provider');
     const counts = {};
-    const noneCount = base.filter(i => getItemProviders(i, 'flatrate').length === 0).length;
+    const noneCount = base.filter(i => getEnabledProvidersForItem(i).length === 0).length;
     if (noneCount > 0) counts[FILTER_NONE_KEY] = noneCount;
     base.forEach(i => {
       _itemProviderGroups(i).forEach(name => {
@@ -1605,14 +1647,14 @@ let allItems=[], categories=[], groups=[];
     if (enableJellyseerr && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const hasNone = getItemProviders(i, 'flatrate').length === 0;
+          const hasNone = getEnabledProvidersForItem(i).length === 0;
           if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && getItemProviders(i, 'flatrate').length === 0) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && getEnabledProvidersForItem(i).length === 0) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
@@ -1675,14 +1717,14 @@ let allItems=[], categories=[], groups=[];
     if (except!=='provider' && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const hasNone = getItemProviders(i, 'flatrate').length === 0;
+          const hasNone = getEnabledProvidersForItem(i).length === 0;
           if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && getItemProviders(i, 'flatrate').length === 0) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && getEnabledProvidersForItem(i).length === 0) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
@@ -1845,7 +1887,7 @@ let allItems=[], categories=[], groups=[];
   function providersBlock(item) {
     if (!enableJellyseerr) return '';
     const visP = _itemVisProviders(item);
-    const hasProv = getItemProviders(item, 'flatrate').length > 0;
+    const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!visP.length) {
       if (!hasProv) {
         if (item.providers_fetched !== true) return '';
@@ -1899,7 +1941,7 @@ let allItems=[], categories=[], groups=[];
 
   function tblProvidersHTML(item) {
     if (!enableJellyseerr) return '-';
-    const hasProv = getItemProviders(item, 'flatrate').length > 0;
+    const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
       return '<span title="'+t('library.no_provider')+'" style="font-size:14px">🚫</span>';
@@ -1914,7 +1956,7 @@ let allItems=[], categories=[], groups=[];
   }
   function tableHTML(items) {
     const hg=items.some(i=>i.group);
-    const hp=items.some(i=>i.poster||getItemProviders(i, 'flatrate').length);
+    const hp=items.some(i=>i.poster||getEnabledProvidersForItem(i).length);
     const rows=items.map(item=>{
       // Mobile info cell: title + meta badges
       const mobileInfo = '<td class="col-mobile-info">'
@@ -2004,7 +2046,7 @@ let allItems=[], categories=[], groups=[];
       csvC(i.size),i.size_b||0,
       i.type==='tv'?((i.season_count||'')+' S / '+(i.episode_count||'')+' Ep'):(i.file_count!==undefined?i.file_count:''),
       i.added_at?fmtDate(i.added_at):'',
-      csvC(getItemProviders(i, 'flatrate').join(', '))
+      csvC(getEnabledProviderNames(i).join(', '))
     ].filter(v=>v!==null));
     const csv=[headers.join(';'),...rows.map(r=>r.join(';'))].join('\n');
     const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
