@@ -463,10 +463,11 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
       _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
-    if not tmdb_id:
+    media_id = tmdb_id
+    if not media_id:
         return []
     media = "tv" if is_tv else "movie"
-    resp = _jsr_get(f"/{media}/{tmdb_id}", jsr)
+    resp = _jsr_get(f"/{media}/{media_id}", jsr)
 
     if resp is _JSR_NOT_CONFIGURED:
         return []
@@ -481,7 +482,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     if not _fetch_providers_sampled:
         _fetch_providers_sampled = True
         top_keys = list(data.keys())
-        log.debug(f"[providers] Jellyseerr response keys for {media}/{tmdb_id}: {top_keys}")
+        log.debug(f"[providers] Jellyseerr response keys for {media}/{media_id}: {top_keys}")
         wp_raw = data.get("watchProviders")
         log.debug(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
 
@@ -499,7 +500,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
 
     if not any(providers_by_type_raw.values()) and watch_providers:
         region_keys = [region for region, _ in regions] if regions else []
-        log.debug(f"[providers] {media}/{tmdb_id}: no providers extracted (regions: {region_keys or 'none'})")
+        log.debug(f"[providers] {media}/{media_id}: no providers extracted (regions: {region_keys or 'none'})")
 
     result: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
     seen_by_group: dict[str, set[str]] = {group: set() for group in _PROVIDER_TYPES}
@@ -514,7 +515,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
             if raw_name in seen_by_group[group]:
                 continue
             seen_by_group[group].add(raw_name)
-            log.debug(f"[providers_raw] {media}/{tmdb_id} [{group}]: {raw_name!r}")
+            log.debug(f"[providers_raw] {media}/{media_id} [{group}]: {raw_name!r}")
             # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
             if raw_logo and raw_logo.startswith("http"):
@@ -524,7 +525,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
                 logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
                 logo      = raw_logo
             else:
-                log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{tmdb_id}, raw={p}")
+                log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{media_id}, raw={p}")
                 logo_url = logo = None
             result[group].append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
     return result

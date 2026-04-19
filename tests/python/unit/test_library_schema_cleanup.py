@@ -432,6 +432,81 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertEqual(item["providers"]["flatrate"], ["Netflix"])
             self.assertTrue(item["providers_fetched"])
 
+    def test_enrich_movie_nominal_uses_tmdb_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Movies"],
+                        "items": [
+                            {
+                                "title": "Rebel Moon - Partie 1",
+                                "year": "2023",
+                                "type": "movie",
+                                "category": "Movies",
+                                "tmdb_id": "934632",
+                                "providers": [],
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", return_value=providers_netflix) as fetch_mock:
+                scanner.run_enrich(force=True)
+
+            fetch_mock.assert_called_once_with("934632", False, jsr_cfg)
+
+    def test_enrich_tv_nominal_uses_tvdb_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Tv"],
+                        "items": [
+                            {
+                                "title": "Andor",
+                                "year": "2022",
+                                "type": "tv",
+                                "category": "Tv",
+                                "tmdb_id": "83867",
+                                "tvdb_id": "361753",
+                                "providers": [],
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            providers_disney = {"flatrate": [{"raw_name": "Disney+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", return_value=providers_disney) as fetch_mock:
+                scanner.run_enrich(force=True)
+
+            fetch_mock.assert_called_once_with("361753", True, jsr_cfg)
+
     def test_enrich_tv_fallbacks_to_tmdb_when_tvdb_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
