@@ -244,7 +244,6 @@ def compute_quality(item: dict) -> dict:
 
     return {
         "score": final_score,
-        "level": get_quality_level(final_score),
         "base_score": base_score,
         "penalty_total": penalty_total,
         "video": video_score,

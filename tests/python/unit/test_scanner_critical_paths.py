@@ -151,6 +151,8 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             cat = {"name": "Films", "type": "movie"}
             item = scanner.scan_media_item(media_dir, root, cat, {}, enable_score=False)
             self.assertNotIn("quality", item)
+            self.assertNotIn("runtime", item)
+            self.assertNotIn("audio_codec_display", item)
 
 
 class FolderEnabledCompatibilityTest(unittest.TestCase):

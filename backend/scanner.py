@@ -132,7 +132,6 @@ except Exception:
         def compute_quality(item: dict) -> dict:
             return {
                 "score": 0,
-                "level": 1,
                 "base_score": 0,
                 "penalty_total": 0,
                 "video": 0,
@@ -941,22 +940,14 @@ def deep_merge(base: dict, update: dict) -> dict:
 
 def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: bool, output_path: str) -> None:
     """Write current library state to JSON (used for incremental per-folder writes)."""
-    all_categories = sorted({i["category"] for i in items})
+    clean_items = [_sanitize_item_for_library_json(item) for item in items]
+    all_categories = sorted({i["category"] for i in clean_items})
     data = {
         "scanned_at":          datetime.now().isoformat(),
         "library_path":        LIBRARY_PATH,
-        "total_items":         len(items),
+        "total_items":         len(clean_items),
         "categories":          all_categories,
-        "items":               items,
-        "providers_meta":      prev_data.get("providers_meta") or {},
-        "providers_raw_meta":  prev_data.get("providers_raw_meta") or {},
-        "providers_raw":       prev_data.get("providers_raw") or [],
-        "config": {
-            "library_path": LIBRARY_PATH,
-        },
-        "meta": {
-            "score_enabled": score_enabled,
-        },
+        "items":               clean_items,
     }
     write_json(data, output_path)
 
@@ -980,6 +971,35 @@ def _strip_score_fields(item: dict) -> dict:
     # Legacy compatibility: some older datasets stored top-level score payloads
     item.pop("score", None)
     return item
+
+
+def _sanitize_item_for_library_json(item: dict) -> dict:
+    """Normalize one library item to the v0.3.1 schema."""
+    if not isinstance(item, dict):
+        return item
+    clean = dict(item)
+    clean.pop("runtime", None)
+    clean.pop("audio_codec_display", None)
+    quality = clean.get("quality")
+    if isinstance(quality, dict):
+        q = dict(quality)
+        q.pop("level", None)
+        clean["quality"] = q
+    return clean
+
+
+def _sanitize_library_document(data: dict) -> dict:
+    """Remove legacy root metadata and sanitize item payloads in-place."""
+    if not isinstance(data, dict):
+        return data
+    data.pop("config", None)
+    data.pop("meta", None)
+    data.pop("providers_meta", None)
+    data.pop("providers_raw", None)
+    data.pop("providers_raw_meta", None)
+    data.pop("enriched_at", None)
+    data["items"] = [_sanitize_item_for_library_json(item) for item in (data.get("items") or [])]
+    return data
 
 def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
@@ -1054,14 +1074,12 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "width":             nfo_meta.get("width")      or prev.get("width"),
         "height":            nfo_meta.get("height")     or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
-        "runtime":           nfo_meta.get("runtime")    or prev.get("runtime"),
         "runtime_min":       nfo_meta.get("runtime_min") or prev.get("runtime_min"),
         "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
         "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
         "codec":              nfo_meta.get("codec")              or prev.get("codec"),
         "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
         "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
-        "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
@@ -1071,7 +1089,11 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "providers_fetched": prev.get("providers_fetched", False),
     }
     if enable_score:
-        item["quality"] = prev.get("quality")  # preserved during quick scan; overwritten by phase 3
+        preserved_quality = prev.get("quality")
+        if isinstance(preserved_quality, dict):
+            q = dict(preserved_quality)
+            q.pop("level", None)
+            item["quality"] = q  # preserved during quick scan; overwritten by phase 3
     return item
 
 
@@ -1144,7 +1166,7 @@ def run_quick(only_category: str | None = None) -> None:
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
-    # Preserve providers_meta / enriched_at from previous run
+    # Preserve previous file content for backward-compatible partial scans
     prev_data: dict = {}
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as _f:
@@ -1340,18 +1362,6 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     provider_map = load_provider_map()
     log.debug(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
 
-    # providers_meta maps normalized name → {logo, logo_url} — stored at top level
-    # Seed from existing data (migration: items may still have {name, logo} objects)
-    providers_meta: dict = data.get("providers_meta") or {}
-    for item in items:
-        for p in (item.get("providers") or []):
-            if isinstance(p, dict) and p.get("name") and p["name"] not in providers_meta:
-                logo_url = p.get("logo")  # old format stored full URL in "logo"
-                providers_meta[p["name"]] = {"logo": None, "logo_url": logo_url}
-
-    # providers_raw_meta maps raw name → {logo, logo_url} — accumulated across scans
-    providers_raw_meta: dict = data.get("providers_raw_meta") or {}
-
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
@@ -1387,26 +1397,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     failed_count += 1
                     failed_ids.append(item.get("tmdb_id", "?"))
                     continue
-                for p in providers:
-                    raw  = p["raw_name"]
-                    name = p["name"]
-                    logo_entry = {"logo": p.get("logo"), "logo_url": p.get("logo_url")}
-                    # Accumulate raw providers (first logo seen wins)
-                    if raw not in providers_raw_meta or (not providers_raw_meta[raw].get("logo_url") and p.get("logo_url")):
-                        providers_raw_meta[raw] = logo_entry
-                    # Update normalized providers_meta (first seen wins)
-                    if name not in providers_meta or (not providers_meta[name].get("logo_url") and p.get("logo_url")):
-                        providers_meta[name] = logo_entry
-                # Store only normalized names in item (logos centralized in providers_meta)
-                item["providers"]         = [p["name"] for p in providers]
+                # Store raw provider names from Jellyseerr.
+                item["providers"]         = [p["raw_name"] for p in providers]
                 item["providers_fetched"] = True
                 enriched += 1
                 log.debug(f"  {item['title']} — {len(providers)} provider(s)")
 
-        data["providers_meta"]     = providers_meta
-        data["providers_raw_meta"] = providers_raw_meta
-        data["providers_raw"]      = sorted(providers_raw_meta.keys())
-        data["enriched_at"]        = datetime.now().isoformat()
+        _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
 
@@ -1470,6 +1467,7 @@ def run_scoring(only_category: str | None = None) -> None:
         for item in cat_items:
             item["quality"] = compute_quality(item)
             scored_total += 1
+        _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN] Folder [{cat_folder}] scored")
 
