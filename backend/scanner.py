@@ -338,6 +338,54 @@ _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 
+def _extract_watch_provider_regions(watch_providers) -> list[tuple[str, dict]]:
+    """
+    Normalize Jellyseerr/TMDB watch providers payload to a list of region payloads.
+
+    Supported shapes:
+      - {"FR": {...}, "US": {...}}
+      - {"results": {"FR": {...}, "US": {...}}} (TMDB style)
+      - [{"iso_3166_1": "FR", ...}, {"iso_3166_1": "US", ...}]
+      - {"flatrate": [...], ...} (single region-like object)
+    """
+    regions: list[tuple[str, dict]] = []
+
+    if isinstance(watch_providers, list):
+        for entry in watch_providers:
+            if not isinstance(entry, dict):
+                continue
+            region = str(entry.get("iso_3166_1") or "").strip().upper() or "UNKNOWN"
+            regions.append((region, entry))
+        return regions
+
+    if not isinstance(watch_providers, dict):
+        return regions
+
+    # TMDB-compatible wrapper.
+    nested_results = watch_providers.get("results")
+    if isinstance(nested_results, dict):
+        for region, payload in nested_results.items():
+            if isinstance(payload, dict):
+                regions.append((str(region).strip().upper() or "UNKNOWN", payload))
+        return regions
+
+    # Region map: {"FR": {...}, "US": {...}}
+    has_region_map = any(
+        isinstance(v, dict) and len(str(k)) in (2, 3)
+        for k, v in watch_providers.items()
+    )
+    if has_region_map:
+        for region, payload in watch_providers.items():
+            if isinstance(payload, dict):
+                regions.append((str(region).strip().upper() or "UNKNOWN", payload))
+        return regions
+
+    # Last resort: treat payload as a single region-like object.
+    if any(k in watch_providers for k in _PROVIDER_TYPES):
+        regions.append(("UNKNOWN", watch_providers))
+
+    return regions
+
 def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     """
     Fetch FR streaming providers from Jellyseerr.
@@ -369,27 +417,35 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
         wp_raw = data.get("watchProviders")
         log.debug(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
 
-    watch_providers = data.get("watchProviders") or []
-    # Jellyseerr can return either a list [{iso_3166_1, flatrate}] or a dict {"FR": {...}}
-    if isinstance(watch_providers, dict):
-        fr = watch_providers.get("FR") or watch_providers.get("fr") or {}
-    else:
-        fr = next((p for p in watch_providers if p.get("iso_3166_1") == "FR"), {})
+    watch_providers = data.get("watchProviders")
+    if watch_providers is None:
+        watch_providers = data.get("watch_providers")
+    regions = _extract_watch_provider_regions(watch_providers or {})
 
-    providers_by_type_raw: dict[str, list[dict]] = {}
-    for group in _PROVIDER_TYPES:
-        values = fr.get(group)
-        providers_by_type_raw[group] = values if isinstance(values, list) else []
+    providers_by_type_raw: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
+    for _, region_payload in regions:
+        for group in _PROVIDER_TYPES:
+            values = region_payload.get(group)
+            if isinstance(values, list):
+                providers_by_type_raw[group].extend(values)
 
     if not any(providers_by_type_raw.values()) and watch_providers:
-        log.debug(f"[providers] {media}/{tmdb_id}: no FR providers list (fr keys: {list(fr.keys()) if fr else 'no FR entry'})")
+        region_keys = [region for region, _ in regions] if regions else []
+        log.debug(f"[providers] {media}/{tmdb_id}: no providers extracted (regions: {region_keys or 'none'})")
 
     result: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
+    seen_by_group: dict[str, set[str]] = {group: set() for group in _PROVIDER_TYPES}
     for group in _PROVIDER_TYPES:
         for p in providers_by_type_raw[group]:
-            raw_name = p.get("name") or p.get("provider_name") or ""
+            if not isinstance(p, dict):
+                continue
+            raw_name = p.get("name") or p.get("provider_name") or p.get("providerName") or ""
             if not raw_name:
                 continue
+            raw_name = str(raw_name)
+            if raw_name in seen_by_group[group]:
+                continue
+            seen_by_group[group].add(raw_name)
             log.debug(f"[providers_raw] {media}/{tmdb_id} [{group}]: {raw_name!r}")
             # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")

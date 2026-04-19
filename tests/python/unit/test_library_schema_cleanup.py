@@ -47,6 +47,29 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             providers = scanner.fetch_providers(tmdb_id="123", is_tv=False, jsr={"enabled": True})
         self.assertEqual([p["raw_name"] for p in providers["flatrate"]], ["Amazon Prime Video", "Prime Video"])
 
+    def test_fetch_providers_tv_supports_results_structure_and_multiple_regions(self):
+        response = {
+            "watchProviders": {
+                "results": {
+                    "FR": {
+                        "flatrate": [{"provider_name": "Disney+"}],
+                        "buy": [{"provider_name": "Canal VOD"}],
+                    },
+                    "US": {
+                        "flatrate": [{"provider_name": "Hulu"}, {"provider_name": "Disney+"}],
+                        "ads": [{"provider_name": "Tubi"}],
+                    },
+                }
+            }
+        }
+        with patch.object(scanner, "_jsr_get", return_value=response):
+            providers = scanner.fetch_providers(tmdb_id="999", is_tv=True, jsr={"enabled": True})
+        self.assertEqual([p["raw_name"] for p in providers["flatrate"]], ["Disney+", "Hulu"])
+        self.assertEqual([p["raw_name"] for p in providers["buy"]], ["Canal VOD"])
+        self.assertEqual([p["raw_name"] for p in providers["ads"]], ["Tubi"])
+        self.assertEqual(providers["free"], [])
+        self.assertEqual(providers["rent"], [])
+
     def test_enrich_stores_raw_provider_names_and_drops_legacy_root_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
@@ -164,6 +187,93 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertEqual(item["providers"]["flatrate"], ["HBO Max. Amazon Channel", "Netflix"])
             self.assertNotIn("Autres", item["providers"]["flatrate"])
             self.assertIsNone(item["providers"]["free"])
+
+    def test_enrich_tv_item_without_providers_still_marks_fetch_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Series"],
+                        "items": [
+                            {
+                                "title": "Paradise",
+                                "type": "tv",
+                                "category": "Series",
+                                "tmdb_id": "7777",
+                                "providers": [],
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(
+                     scanner,
+                     "fetch_providers",
+                     return_value={group: [] for group in scanner._PROVIDER_TYPES},
+                 ):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            item = payload["items"][0]
+            self.assertTrue(item["providers_fetched"])
+            self.assertEqual(
+                item["providers"],
+                {
+                    "flatrate": None,
+                    "free": None,
+                    "ads": None,
+                    "buy": None,
+                    "rent": None,
+                },
+            )
+
+    def test_enrich_tv_item_on_fetch_error_keeps_providers_fetched_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Series"],
+                        "items": [
+                            {
+                                "title": "Paradise",
+                                "type": "tv",
+                                "category": "Series",
+                                "tmdb_id": "7777",
+                                "providers": {"flatrate": ["Legacy"], "free": None, "ads": None, "buy": None, "rent": None},
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", return_value=scanner._FETCH_ERROR):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            item = payload["items"][0]
+            self.assertFalse(item["providers_fetched"])
+            self.assertEqual(item["providers"]["flatrate"], ["Legacy"])
 
     def test_sanitize_item_converts_unknown_sentinels_to_null(self):
         item = {
