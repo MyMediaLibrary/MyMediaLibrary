@@ -704,25 +704,66 @@ let allItems=[], categories=[], groups=[];
     const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
       ? appConfig.needs_onboarding
       : null;
-    if (explicitNeedsOnboarding === true) {
+    const hasUsableFolders = Array.isArray(appConfig?.folders) && appConfig.folders.some((folder) => {
+      if (!folder || typeof folder !== 'object') return false;
+      const type = String(folder.type || '').trim().toLowerCase();
+      if (!['movie', 'tv'].includes(type)) return false;
+      const enabled = folder.enabled !== undefined ? folder.enabled : (folder.visible !== undefined ? folder.visible : true);
+      return enabled !== false && !folder.missing;
+    });
+    const finishWithOnboarding = () => {
+      window.MMLState.isLoading = false;
+      window.MMLState.isLoaded = false;
+      window.MMLState.hasError = false;
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
+    };
+    const finishWithEmptyLibrary = () => {
+      allItems = [];
+      categories = [];
+      groups = [];
+      window.MMLState.items = allItems;
+      window.MMLState.isLoading = false;
+      window.MMLState.isLoaded = true;
+      window.MMLState.hasError = false;
+      libraryExportSource = null;
+      document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
+      document.getElementById('scanInfo').textContent=t('library.run_scan');
+      renderStorageBar();
+      renderProviderFilter();
+      renderResolutionFilter();
+      renderCodecFilter();
+      renderStats(filterItems());
+      switchTab(currentTab);
+      updateExportJsonButtonState();
+    };
+    if (explicitNeedsOnboarding === true) {
+      finishWithOnboarding();
       return;
     }
 
     try {
-      const r = await fetch('/library.json?_='+Date.now());
-      if (r.status === 404 && explicitNeedsOnboarding === null) {
-        // Legacy backend compatibility: if the explicit flag is absent, fallback
-        // to first-run behavior when library.json has not been generated yet.
-        libraryExportSource = null;
-        updateExportJsonButtonState();
-        showOnboarding();
+      const libraryUrl = '/library.json?_=' + Date.now();
+      const r = await fetch(libraryUrl);
+      if (r.status === 404) {
+        // Missing library.json is expected before the first scan.
+        // If onboarding is still required (explicitly or legacy missing flag + no usable folders),
+        // keep onboarding flow. Otherwise show an empty-library state with scan prompt.
+        if (explicitNeedsOnboarding === true || (explicitNeedsOnboarding === null && !hasUsableFolders)) {
+          finishWithOnboarding();
+        } else {
+          finishWithEmptyLibrary();
+        }
         return;
       }
-      if (!r.ok) throw new Error('HTTP '+r.status);
-      const data = await r.json();
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
+      let data = null;
+      try {
+        data = await r.json();
+      } catch (_) {
+        throw new Error('Invalid JSON in /library.json');
+      }
       libraryExportSource = data;
       allItems = safeArray(data.items);
       categories = safeArray(data.categories);

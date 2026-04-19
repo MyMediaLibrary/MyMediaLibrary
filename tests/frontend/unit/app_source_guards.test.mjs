@@ -126,6 +126,14 @@ test('loadLibrary restores active tab only after data is loaded', () => {
   assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
 });
 
+test('loadLibrary treats missing library.json as a first-run/empty-library state (no hard error)', () => {
+  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(block, /if \(r\.status === 404\) \{/, 'loadLibrary should branch explicitly on library.json 404');
+  assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
+  assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
+  assert.doesNotMatch(block, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'loadLibrary should not throw a generic HTTP error for expected missing library.json');
+});
+
 test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');

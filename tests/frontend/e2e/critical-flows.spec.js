@@ -32,7 +32,7 @@ function libraryPayload() {
   };
 }
 
-async function mockCoreRoutes(page, { onboarding = false } = {}) {
+async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false } = {}) {
   await page.route('**/api/config', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: onboarding ? onboardingPayload() : configuredPayload() });
@@ -41,7 +41,7 @@ async function mockCoreRoutes(page, { onboarding = false } = {}) {
     await route.fulfill({ json: { ok: true } });
   });
   await page.route('**/library.json**', async (route) => {
-    if (onboarding) {
+    if (onboarding || missingLibrary) {
       await route.fulfill({ status: 404, body: 'not-found' });
       return;
     }
@@ -85,6 +85,14 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
   await expect(page.locator('#onboardingOverlay')).not.toContainText('library_inventory.json');
   await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
+});
+
+test('configured app with missing library.json shows empty-library state without onboarding', async ({ page }) => {
+  await mockCoreRoutes(page, { onboarding: false, missingLibrary: true });
+  await page.goto('/index.html');
+
+  await expect(page.locator('#onboardingOverlay')).toBeHidden();
+  await expect(page.locator('#library')).toContainText('Veuillez lancer un scan');
 });
 
 test('global search keyboard interactions and filtering', async ({ page }) => {
