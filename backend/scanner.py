@@ -336,18 +336,17 @@ _fetch_providers_sampled = False  # log raw response once per run
 # Sentinel returned when Jellyseerr call fails (vs [] = success with no FR providers)
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
+_PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 
-def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, provider_map: dict | None = None):
+def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     """
     Fetch FR streaming providers from Jellyseerr.
     Returns:
-      list[dict]   — success (may be empty if no FR providers)
-                     each dict: {raw_name, name (normalized), logo, logo_url}
+      dict[str, list[dict]] — success (may contain empty lists per provider type)
+                              each dict entry: {raw_name, logo, logo_url}
       _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
-    if provider_map is None:
-        provider_map = {}
     if not tmdb_id:
         return []
     media = "tv" if is_tv else "movie"
@@ -377,33 +376,33 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, pr
     else:
         fr = next((p for p in watch_providers if p.get("iso_3166_1") == "FR"), {})
 
-    flatrate = fr.get("flatrate") or []
-    if not flatrate and watch_providers:
-        log.debug(f"[providers] {media}/{tmdb_id}: no FR flatrate (fr keys: {list(fr.keys()) if fr else 'no FR entry'})")
+    providers_by_type_raw: dict[str, list[dict]] = {}
+    for group in _PROVIDER_TYPES:
+        values = fr.get(group)
+        providers_by_type_raw[group] = values if isinstance(values, list) else []
 
-    seen_canonical, result = set(), []
-    for p in flatrate:
-        raw_name = p.get("name") or p.get("provider_name") or ""
-        if not raw_name:
-            continue
-        log.debug(f"[providers_raw] {media}/{tmdb_id}: {raw_name!r}")
-        canonical = normalize_provider(raw_name, provider_map)
-        if canonical in seen_canonical:
-            continue
-        seen_canonical.add(canonical)
-        log.debug(f"[providers] {media}/{tmdb_id}: {raw_name!r} → {canonical!r}")
-        # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
-        raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
-        if raw_logo and raw_logo.startswith("http"):
-            logo_url  = raw_logo
-            logo      = None  # relative path unknown
-        elif raw_logo:
-            logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
-            logo      = raw_logo
-        else:
-            log.warning(f"[providers] No logo field for {canonical!r} in {media}/{tmdb_id}, raw={p}")
-            logo_url = logo = None
-        result.append({"raw_name": raw_name, "name": canonical, "logo": logo, "logo_url": logo_url})
+    if not any(providers_by_type_raw.values()) and watch_providers:
+        log.debug(f"[providers] {media}/{tmdb_id}: no FR providers list (fr keys: {list(fr.keys()) if fr else 'no FR entry'})")
+
+    result: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
+    for group in _PROVIDER_TYPES:
+        for p in providers_by_type_raw[group]:
+            raw_name = p.get("name") or p.get("provider_name") or ""
+            if not raw_name:
+                continue
+            log.debug(f"[providers_raw] {media}/{tmdb_id} [{group}]: {raw_name!r}")
+            # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
+            raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
+            if raw_logo and raw_logo.startswith("http"):
+                logo_url  = raw_logo
+                logo      = None  # relative path unknown
+            elif raw_logo:
+                logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
+                logo      = raw_logo
+            else:
+                log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{tmdb_id}, raw={p}")
+                logo_url = logo = None
+            result[group].append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
     return result
 
 
@@ -952,8 +951,8 @@ def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: b
     write_json(data, output_path)
 
 
-def _normalize_providers(providers) -> list[str]:
-    """Normalize provider entries to cleaned raw-name strings."""
+def _normalize_provider_entries(providers) -> list[str]:
+    """Normalize one provider list to cleaned raw-name strings."""
     result = []
     seen = set()
     for p in (providers or []):
@@ -968,6 +967,21 @@ def _normalize_providers(providers) -> list[str]:
             seen.add(cleaned)
             result.append(cleaned)
     return result
+
+
+def _normalize_providers(providers) -> dict[str, list[str] | None]:
+    """Normalize providers payload to typed groups: flatrate/free/ads/buy/rent."""
+    normalized = {group: None for group in _PROVIDER_TYPES}
+    if isinstance(providers, list):
+        flatrate = _normalize_provider_entries(providers)
+        normalized["flatrate"] = flatrate if flatrate else None
+        return normalized
+    if not isinstance(providers, dict):
+        return normalized
+    for group in _PROVIDER_TYPES:
+        cleaned = _normalize_provider_entries(providers.get(group, []))
+        normalized[group] = cleaned if cleaned else None
+    return normalized
 
 def _strip_score_fields(item: dict) -> dict:
     """Remove score-related fields from one item (in place) for score-disabled runs."""
@@ -989,7 +1003,8 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
         if _is_unknown_sentinel(clean.get(field)):
             clean[field] = None
-    clean["providers"] = _normalize_providers(clean.get("providers", []))
+    clean["providers"] = _normalize_providers(clean.get("providers"))
+    clean.pop("providers_by_type", None)
     quality = clean.get("quality")
     if isinstance(quality, dict):
         q = dict(quality)
@@ -1114,7 +1129,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous library.json — overwritten by full scan phases
-        "providers":         _normalize_providers(prev.get("providers", [])),
+        "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
     if enable_score:
@@ -1391,14 +1406,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     except Exception:
         _cat_folder_by_name = {}
 
-    # Load provider map (file-based normalization, reloaded each scan)
-    provider_map = load_provider_map()
-    log.debug(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
-
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
-            providers = fetch_providers(item["tmdb_id"], is_tv, jsr, provider_map)
+            providers = fetch_providers(item["tmdb_id"], is_tv, jsr)
         except Exception as e:
             log.warning(f"[enrich] Unexpected exception tmdb_id={item.get('tmdb_id')} {item.get('title')!r}: {e}")
             providers = _FETCH_ERROR
@@ -1420,7 +1431,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 item, providers = future.result()
                 if providers is _JSR_NOT_FOUND:
                     # Item not in Jellyseerr — mark as fetched (no FR providers)
-                    item["providers"]         = []
+                    item["providers"]         = {group: None for group in _PROVIDER_TYPES}
                     item["providers_fetched"] = True
                     not_found_count += 1
                     not_found_ids.append(item.get("tmdb_id", "?"))
@@ -1431,10 +1442,16 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     failed_ids.append(item.get("tmdb_id", "?"))
                     continue
                 # Store cleaned raw provider names from Jellyseerr.
-                item["providers"]         = _normalize_providers([p["raw_name"] for p in providers])
+                item["providers"] = _normalize_providers(
+                    {
+                        group: [p["raw_name"] for p in providers.get(group, [])]
+                        for group in _PROVIDER_TYPES
+                    }
+                )
                 item["providers_fetched"] = True
                 enriched += 1
-                log.debug(f"  {item['title']} — {len(providers)} provider(s)")
+                total_providers = sum(len(providers.get(group, [])) for group in _PROVIDER_TYPES)
+                log.debug(f"  {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)

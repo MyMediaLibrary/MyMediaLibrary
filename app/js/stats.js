@@ -154,7 +154,7 @@
     Object.entries(groupedProviderCount).forEach(([name, count]) => {
       byProv[name] = { count, logo: '' };
     });
-    items.forEach(i => (i.providers || []).forEach(p => {
+    items.forEach(i => getFlatProviders(i).forEach(p => {
       const rawName = getDep('_pname')(p);
       const name    = getDep('_providerGroupKey')(rawName);
       if (!name || !byProv[name] || name === getDep('PROVIDER_OTHERS_KEY')) return;
@@ -171,8 +171,8 @@
     const providers = {
       entries:   Object.entries(byProv).sort((a,b) => b[1].count - a[1].count),
       bySize:    byProvSize,
-      noneCount: items.filter(i => !(i.providers && i.providers.length)).length,
-      noneSize:  items.filter(i => !(i.providers && i.providers.length)).reduce((s,i) => s+(i.size_b||0), 0),
+      noneCount: items.filter(i => !getFlatProviders(i).length).length,
+      noneSize:  items.filter(i => !getFlatProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
     };
 
     // ── Timeline (daily + monthly buckets) ───────────────────
@@ -240,6 +240,16 @@
     };
 
     return { category, codec, audioCodec, audioLang, resolution, providers, timeline, years, quality };
+  }
+
+  function getFlatProviders(item) {
+    const fromDep = getDep('getItemProviders');
+    if (typeof fromDep === 'function') return fromDep(item, 'flatrate');
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Array.isArray(providers.flatrate) ? providers.flatrate : [];
+    }
+    return Array.isArray(providers) ? providers : [];
   }
 
   // ══════════════════════════════════════════════════════════

@@ -53,7 +53,7 @@
   }
 
   function getItemSearchFields(item) {
-    const providers = (item.providers || []).join(' ');
+    const providers = getFlatrateProviders(item).join(' ');
     const audioSimple = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages || []);
     const audioCodecDisplay = item.audio_codec || item.audio_codec_display || item.audio_codec_raw || '';
     const audioSimpleAliases = audioSimple === 'VF'
@@ -76,6 +76,15 @@
       audioSimpleAliases,
       providers
     ];
+  }
+
+  function getFlatrateProviders(item) {
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Array.isArray(providers.flatrate) ? providers.flatrate : [];
+    }
+    if (Array.isArray(providers)) return providers;
+    return [];
   }
 
   function applySearch(items, query) {
@@ -164,7 +173,7 @@
       out,
       state.activeProviders,
       state.providerExclude,
-      (i) => i.providers || [],
+      (i) => getFlatrateProviders(i),
       { matchNoneWhenSelected: true, withNoneExclusion: true }
     );
     const scoreMin = Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0;
@@ -206,7 +215,7 @@
     }
     scoped.forEach((item) => {
       if (field === 'provider') {
-        const providers = item.providers || [];
+        const providers = getFlatrateProviders(item);
         if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
         providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
       } else if (field === 'resolution') {
@@ -307,7 +316,7 @@
     const groupFor = providerGroupForName || ((name) => name);
     (items || []).forEach((item) => {
       const grouped = new Set();
-      (item.providers || []).forEach((entry) => {
+      getFlatrateProviders(item).forEach((entry) => {
         const key = groupFor(readName(entry));
         if (key) grouped.add(key);
       });

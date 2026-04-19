@@ -325,7 +325,19 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getProviderNames(item) {
-    return (item?.providers || []).map(_pname).filter(Boolean);
+    return getItemProviders(item, 'flatrate').map(_pname).filter(Boolean);
+  }
+
+  function getItemProviders(item, providerType = 'flatrate') {
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      const values = providers[providerType];
+      return Array.isArray(values) ? values : [];
+    }
+    if (providerType === 'flatrate' && Array.isArray(providers)) {
+      return providers;
+    }
+    return [];
   }
 
   // Helpers: canonicalize provider entries from library items.
@@ -360,7 +372,7 @@ let allItems=[], categories=[], groups=[];
   }
   function _itemProviderGroups(item) {
     const grouped = new Set();
-    (item.providers || []).forEach(p => {
+    getItemProviders(item, 'flatrate').forEach(p => {
       const n = _pname(p);
       const key = _providerGroupKey(n);
       if (key) grouped.add(key);
@@ -378,13 +390,13 @@ let allItems=[], categories=[], groups=[];
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
-    return items.some(i => (i.providers || []).some(p => {
+    return items.some(i => getItemProviders(i, 'flatrate').some(p => {
       const name = _pname(p);
       return name && !_provVisible(name);
     }));
   }
   // Returns only the providers of an item that are currently visible
-  function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
+  function _itemVisProviders(item){ return getItemProviders(item, 'flatrate').filter(p=>_provVisible(_pname(p))); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
@@ -656,6 +668,7 @@ let allItems=[], categories=[], groups=[];
         getAudioLanguageSimpleDisplay,
         getAudioCodecDisplay,
         getFilterDisplayValue,
+        getItemProviders,
         _itemProviderGroups,
         _providerGroupKey,
         _providerGroupLabel,
@@ -1242,7 +1255,7 @@ let allItems=[], categories=[], groups=[];
   function renderProviderFilter() {
     const base = baseItems('provider');
     const counts = {};
-    const noneCount = base.filter(i => !i.providers || !i.providers.length).length;
+    const noneCount = base.filter(i => getItemProviders(i, 'flatrate').length === 0).length;
     if (noneCount > 0) counts[FILTER_NONE_KEY] = noneCount;
     base.forEach(i => {
       _itemProviderGroups(i).forEach(name => {
@@ -1587,14 +1600,14 @@ let allItems=[], categories=[], groups=[];
     if (enableJellyseerr && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const hasNone = !i.providers || !i.providers.length;
+          const hasNone = getItemProviders(i, 'flatrate').length === 0;
           if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && getItemProviders(i, 'flatrate').length === 0) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
@@ -1657,14 +1670,14 @@ let allItems=[], categories=[], groups=[];
     if (except!=='provider' && activeProviders.size > 0) {
       if (providerExclude) {
         items=items.filter(i=>{
-          const hasNone = !i.providers || !i.providers.length;
+          const hasNone = getItemProviders(i, 'flatrate').length === 0;
           if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
           const groupedProv = _itemProviderGroups(i);
           return ![...groupedProv].some(p=>activeProviders.has(p));
         });
       } else {
         items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
+          if (activeProviders.has(FILTER_NONE_KEY) && getItemProviders(i, 'flatrate').length === 0) return true;
           const groupedProv = _itemProviderGroups(i);
           return [...groupedProv].some(p=>activeProviders.has(p));
         });
@@ -1827,7 +1840,7 @@ let allItems=[], categories=[], groups=[];
   function providersBlock(item) {
     if (!enableJellyseerr) return '';
     const visP = _itemVisProviders(item);
-    const hasProv = item.providers && item.providers.length > 0;
+    const hasProv = getItemProviders(item, 'flatrate').length > 0;
     if (!visP.length) {
       if (!hasProv) {
         if (item.providers_fetched !== true) return '';
@@ -1881,7 +1894,7 @@ let allItems=[], categories=[], groups=[];
 
   function tblProvidersHTML(item) {
     if (!enableJellyseerr) return '-';
-    const hasProv = item.providers && item.providers.length > 0;
+    const hasProv = getItemProviders(item, 'flatrate').length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
       return '<span title="'+t('library.no_provider')+'" style="font-size:14px">🚫</span>';
@@ -1896,7 +1909,7 @@ let allItems=[], categories=[], groups=[];
   }
   function tableHTML(items) {
     const hg=items.some(i=>i.group);
-    const hp=items.some(i=>i.poster||(i.providers&&i.providers.length));
+    const hp=items.some(i=>i.poster||getItemProviders(i, 'flatrate').length);
     const rows=items.map(item=>{
       // Mobile info cell: title + meta badges
       const mobileInfo = '<td class="col-mobile-info">'
@@ -1986,7 +1999,7 @@ let allItems=[], categories=[], groups=[];
       csvC(i.size),i.size_b||0,
       i.type==='tv'?((i.season_count||'')+' S / '+(i.episode_count||'')+' Ep'):(i.file_count!==undefined?i.file_count:''),
       i.added_at?fmtDate(i.added_at):'',
-      csvC((i.providers||[]).join(', '))
+      csvC(getItemProviders(i, 'flatrate').join(', '))
     ].filter(v=>v!==null));
     const csv=[headers.join(';'),...rows.map(r=>r.join(';'))].join('\n');
     const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});

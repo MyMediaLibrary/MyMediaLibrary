@@ -309,7 +309,7 @@
   function renderProviderToggles() {
     const container = document.getElementById('cfgProviderToggles');
     if (!container) return;
-    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+    const provs = [...new Set(allItems.flatMap(i=>_getItemProvidersForSettings(i).map(p=>p.name||p).filter(Boolean)))]
       .filter(p => !_isOthersProviderName(p))
       .sort();
     const hasHidden = _hasHiddenProviders();
@@ -334,7 +334,7 @@
   }
 
   function gatherProviderVisibility() {
-    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
+    const all = [...new Set(allItems.flatMap(i=>_getItemProvidersForSettings(i).map(p=>p.name||p).filter(Boolean)))]
       .filter(p => !_isOthersProviderName(p))
       .sort();
     const checked = [];
@@ -347,6 +347,15 @@
     // aggregate them under Others instead of falling back to "all visible".
     if (all.length > 0 && checked.length === 0) return [PROVIDER_OTHERS_KEY];
     return checked;
+  }
+
+  function _getItemProvidersForSettings(item) {
+    if (typeof window.getItemProviders === 'function') return window.getItemProviders(item, 'flatrate');
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Array.isArray(providers.flatrate) ? providers.flatrate : [];
+    }
+    return Array.isArray(providers) ? providers : [];
   }
 
   // ── Settings: Jellyseerr ──────────────────────────────────────────────────
