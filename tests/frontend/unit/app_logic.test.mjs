@@ -52,7 +52,8 @@ test('filters include/exclude and reset state behavior', () => {
 
   state.providerExclude = true;
   filtered = logic.filterItems(items, state);
-  assert.equal(filtered.some((i) => (i.providers || []).includes('Netflix')), false);
+  assert.equal(filtered.some((i) => i.title === 'Film VF'), false);
+  assert.equal(filtered.some((i) => i.title === 'Film Multi'), true);
 
   state.providerExclude = false;
   filtered = logic.filterItems(items, state);
@@ -239,7 +240,7 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.resolutionExclude = false;
 
   state.providerExclude = true;
-  assert.equal(logic.applyFilters(sample, state).length, 0);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), []);
   state.providerExclude = false;
   state.activeProviders = new Set(['__none__']);
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), [], 'other active filters still apply');

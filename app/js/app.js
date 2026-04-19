@@ -349,7 +349,13 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getEnabledProvidersForItem(item) {
-    return getDisplayedProviders(item);
+    const providers = getDisplayedProviders(item);
+    if (!(providerExclude && activeProviders.size > 0)) return providers;
+    if (providers.length === 0) return [];
+    return providers.filter((entry) => {
+      const key = _providerGroupKey(_pname(entry));
+      return key && !activeProviders.has(key);
+    });
   }
 
   function getEnabledProviderNames(item) {
@@ -420,6 +426,28 @@ let allItems=[], categories=[], groups=[];
       if (key) grouped.add(key);
     });
     return grouped;
+  }
+  function _getProviderGroupsBeforeFilter(item) {
+    const grouped = new Set();
+    getDisplayedProviders(item).forEach((p) => {
+      const n = _pname(p);
+      const key = _providerGroupKey(n);
+      if (key) grouped.add(key);
+    });
+    return grouped;
+  }
+  function _matchesProviderFilters(item) {
+    if (activeProviders.size === 0) return true;
+    const groupedProv = [..._getProviderGroupsBeforeFilter(item)];
+    const hasNoProvider = groupedProv.length === 0;
+    if (!providerExclude) {
+      if (activeProviders.has(FILTER_NONE_KEY) && hasNoProvider) return true;
+      return groupedProv.some((p) => activeProviders.has(p));
+    }
+    if (activeProviders.has(FILTER_NONE_KEY) && hasNoProvider) return false;
+    if (hasNoProvider) return true;
+    const remaining = groupedProv.filter((p) => !activeProviders.has(p));
+    return remaining.length > 0;
   }
   function _canonicalProviderFilterKey(raw) {
     if (typeof raw !== 'string') return null;
@@ -1654,20 +1682,7 @@ let allItems=[], categories=[], groups=[];
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
     if (enableJellyseerr && activeProviders.size > 0) {
-      if (providerExclude) {
-        items=items.filter(i=>{
-          const hasNone = getEnabledProvidersForItem(i).length === 0;
-          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
-          const groupedProv = _itemProviderGroups(i);
-          return ![...groupedProv].some(p=>activeProviders.has(p));
-        });
-      } else {
-        items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && getEnabledProvidersForItem(i).length === 0) return true;
-          const groupedProv = _itemProviderGroups(i);
-          return [...groupedProv].some(p=>activeProviders.has(p));
-        });
-      }
+      items = items.filter(_matchesProviderFilters);
     }
     if (activeResolutions.size > 0) {
       if (resolutionExclude) {
@@ -1724,20 +1739,7 @@ let allItems=[], categories=[], groups=[];
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
     if (except!=='provider' && activeProviders.size > 0) {
-      if (providerExclude) {
-        items=items.filter(i=>{
-          const hasNone = getEnabledProvidersForItem(i).length === 0;
-          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
-          const groupedProv = _itemProviderGroups(i);
-          return ![...groupedProv].some(p=>activeProviders.has(p));
-        });
-      } else {
-        items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && getEnabledProvidersForItem(i).length === 0) return true;
-          const groupedProv = _itemProviderGroups(i);
-          return [...groupedProv].some(p=>activeProviders.has(p));
-        });
-      }
+      items = items.filter(_matchesProviderFilters);
     }
     if (except!=='resolution' && activeResolutions.size > 0) {
       if (resolutionExclude) {

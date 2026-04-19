@@ -182,6 +182,7 @@
       bySize:    byProvSize,
       noneCount: items.filter(i => !getScopedProviders(i).length).length,
       noneSize:  items.filter(i => !getScopedProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
+      referenceCount: items.length,
     };
 
     // ── Timeline (daily + monthly buckets) ───────────────────
@@ -269,9 +270,16 @@
   //  RENDER PRIMITIVES — pure SVG/HTML generators
   // ══════════════════════════════════════════════════════════
 
-  function makePie(entries, colorFn, valFn, labelFn, fmtFn) {
+  function makePie(entries, colorFn, valFn, labelFn, fmtFn, options = {}) {
     const total = entries.reduce((s,[,v]) => s+valFn(v), 0);
     if (!total) return '';
+    const percentBase = Number.isFinite(Number(options.percentBase)) && Number(options.percentBase) > 0
+      ? Number(options.percentBase)
+      : total;
+    const formatPercent = (value) => `${((value / percentBase) * 100).toFixed(1)}%`;
+    const formatValue = typeof options.valueFormatter === 'function'
+      ? options.valueFormatter
+      : (value) => fmtFn(value);
     const R=70, CX=80, CY=80, SIZE=160;
     let angle = -Math.PI/2, slices = '';
     entries.forEach(([k,v], idx) => {
@@ -285,7 +293,7 @@
       if (frac > 0.999) {
         slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="'+col+'"/>';
       } else {
-        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+getDep('escH')(labelFn(k))+' — '+fmtFn(val)+' ('+Math.round(frac*100)+'%)</title></path>';
+        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+getDep('escH')(labelFn(k))+' — '+formatValue(val)+' ('+formatPercent(val)+')</title></path>';
       }
       angle = a2;
     });
@@ -294,12 +302,12 @@
     slices += '<text x="'+CX+'" y="'+(CY+8)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+(entries.length>1?getDep('t')('stats.entries'):getDep('t')('stats.entry'))+'</text>';
     const svg    = '<svg viewBox="0 0 '+SIZE+' '+SIZE+'" width="'+SIZE+'" height="'+SIZE+'" style="flex-shrink:0">'+slices+'</svg>';
     const legend = '<div class="pie-legend">'+entries.slice(0,12).map(([k,v],idx) => {
-      const val=valFn(v), pct=Math.round(val/total*100);
+      const val=valFn(v);
       return '<div class="pie-leg-row">'
         +'<div class="pie-leg-dot" style="background:'+colorFn(k,idx)+'"></div>'
         +'<div class="pie-leg-label" title="'+getDep('escH')(labelFn(k))+'">'+getDep('escH')(labelFn(k))+'</div>'
-        +'<div class="pie-leg-val">'+fmtFn(val)+'</div>'
-        +'<div class="pie-leg-pct">'+pct+'%</div>'
+        +'<div class="pie-leg-val">'+formatValue(val)+'</div>'
+        +'<div class="pie-leg-pct">'+formatPercent(val)+'</div>'
         +'</div>';
     }).join('')+(entries.length>12?'<div style="font-size:11px;color:var(--muted);padding-top:2px">+' + (entries.length-12) + ' '+getDep('t')('stats.others')+'</div>':'')+'</div>';
     return '<div class="pie-wrap">'+svg+legend+'</div>';
@@ -359,10 +367,10 @@
     return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'+bars+labels+'</svg>';
   }
 
-  function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size') {
+  function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size', options = {}) {
     const showCount = defaultUnit === 'count';
     const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'));
-    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v));
+    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v), options.count || {});
     return '<div class="stats-block">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
         +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
@@ -466,7 +474,7 @@
     const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
 
     // ── Provider entries with size ───────────────────────────
-    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize } = data.providers;
+    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize, referenceCount: provReferenceCount } = data.providers;
     const provCountEntries = [
       ...provEntries.map(([k,v]) => [k, v.count]),
       ...(noneCount > 0 ? [[noProviderLabel, noneCount]] : []),
@@ -478,7 +486,24 @@
 
     // ── Block HTML ───────────────────────────────────────────
     const provPieHtml = provCountEntries.length
-      ? switchablePie('prov', getDep('t')('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, getDep('_providerGroupLabel'), 'count')
+      ? switchablePie(
+          'prov',
+          getDep('t')('stats.providers'),
+          provSizeEntries,
+          provCountEntries,
+          provColorFnWithNone,
+          getDep('_providerGroupLabel'),
+          'count',
+          {
+            count: {
+              percentBase: Number(provReferenceCount || 0),
+              valueFormatter: (value) => `${value} ${getDep('t')('stats.media_count')}`,
+            },
+          }
+        )
+      : '';
+    const providersNoteHtml = provCountEntries.length
+      ? '<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+getDep('t')('stats.providers_overlap_note')+'</div>'
       : '';
 
     const yearChartHtml = data.years.entriesCount.length
@@ -513,7 +538,7 @@
       // Row 1: Dossiers | Fournisseurs
       + '<div class="stats-row">'
           + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size') : '')+'</div>'
-          + '<div>'+provPieHtml+'</div>'
+          + '<div>'+provPieHtml+providersNoteHtml+'</div>'
         + '</div>'
       // Row 2: Résolution | Codec vidéo
       + '<div class="stats-row">'

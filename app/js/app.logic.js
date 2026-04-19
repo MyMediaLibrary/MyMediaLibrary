@@ -171,13 +171,26 @@
       state.audioLanguageExclude,
       (i) => (i.audio_languages_simple === 'UNKNOWN' ? PROVIDER_NONE_KEY : (i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)))
     );
-    out = applySelectionFilter(
-      out,
-      state.activeProviders,
-      state.providerExclude,
-      (i) => getItemProviders(i),
-      { matchNoneWhenSelected: true, withNoneExclusion: true }
-    );
+    if (state.activeProviders && state.activeProviders.size > 0) {
+      if (state.providerExclude) {
+        out = out.filter((i) => {
+          const providers = [...new Set(getItemProviders(i))];
+          const hasNone = providers.length === 0;
+          if (state.activeProviders.has(PROVIDER_NONE_KEY) && hasNone) return false;
+          if (hasNone) return true;
+          const remaining = providers.filter((name) => !state.activeProviders.has(name));
+          return remaining.length > 0;
+        });
+      } else {
+        out = applySelectionFilter(
+          out,
+          state.activeProviders,
+          false,
+          (i) => getItemProviders(i),
+          { matchNoneWhenSelected: true, withNoneExclusion: true }
+        );
+      }
+    }
     const scoreMin = Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0;
     const scoreMax = Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100;
     const includeNoScore = state.includeNoScore !== undefined ? !!state.includeNoScore : true;

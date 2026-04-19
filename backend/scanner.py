@@ -370,6 +370,7 @@ _fetch_providers_sampled = False  # log raw response once per run
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
+_PROVIDER_ENRICH_GROUP = "flatrate"
 
 def _normalize_lookup_title(value: str | None) -> str:
     if not isinstance(value, str):
@@ -524,12 +525,11 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
         watch_providers = data.get("watch_providers")
     regions = _extract_watch_provider_regions(watch_providers or {})
 
-    providers_by_type_raw: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
+    providers_by_type_raw: dict[str, list[dict]] = {_PROVIDER_ENRICH_GROUP: []}
     for _, region_payload in regions:
-        for group in _PROVIDER_TYPES:
-            values = region_payload.get(group)
-            if isinstance(values, list):
-                providers_by_type_raw[group].extend(values)
+        values = region_payload.get(_PROVIDER_ENRICH_GROUP)
+        if isinstance(values, list):
+            providers_by_type_raw[_PROVIDER_ENRICH_GROUP].extend(values)
 
     if not any(providers_by_type_raw.values()) and watch_providers:
         region_keys = [region for region, _ in regions] if regions else []
@@ -537,7 +537,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
 
     result: list[dict] = []
     seen_raw_names: set[str] = set()
-    for group in _PROVIDER_TYPES:
+    for group in (_PROVIDER_ENRICH_GROUP,):
         for p in providers_by_type_raw[group]:
             if not isinstance(p, dict):
                 continue

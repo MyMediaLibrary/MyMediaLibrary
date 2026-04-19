@@ -12,7 +12,7 @@ import scanner  # noqa: E402
 
 
 class LibrarySchemaCleanupTest(unittest.TestCase):
-    def test_fetch_providers_collects_all_fr_provider_groups(self):
+    def test_fetch_providers_keeps_only_flatrate_group(self):
         response = {
             "watchProviders": {
                 "FR": {
@@ -26,7 +26,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
             providers = scanner.fetch_providers(tmdb_id="123", is_tv=False, jsr={"enabled": True})
-        self.assertEqual([p["raw_name"] for p in providers], ["Netflix", "Arte", "Pluto TV", "Canal VOD", "Orange VOD"])
+        self.assertEqual([p["raw_name"] for p in providers], ["Netflix"])
 
     def test_fetch_providers_keeps_distinct_raw_names_even_if_map_would_merge_them(self):
         response = {
@@ -60,7 +60,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
             providers = scanner.fetch_providers(tmdb_id="999", is_tv=True, jsr={"enabled": True})
-        self.assertEqual([p["raw_name"] for p in providers], ["Disney+", "Hulu", "Tubi", "Canal VOD"])
+        self.assertEqual([p["raw_name"] for p in providers], ["Disney+", "Hulu"])
 
     def test_resolve_ids_from_search_prefers_tv_title_and_year(self):
         response = {

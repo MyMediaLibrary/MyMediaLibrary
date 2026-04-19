@@ -252,6 +252,8 @@
     "audio_languages_chart_title": "Langues audio",
     "others": "Autres",
     "providers": "Fournisseurs",
+    "media_count": "médias",
+    "providers_overlap_note": "Un média peut être disponible sur plusieurs providers.",
     "elements": "Éléments",
     "files": "Fichiers",
     "disk": "Disque",
