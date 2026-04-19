@@ -37,6 +37,9 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+  function safeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
   const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
   const FILTER_ORDER = [
     'type',
@@ -647,7 +650,9 @@ let allItems=[], categories=[], groups=[];
       if (!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       libraryExportSource = data;
-      allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
+      allItems = safeArray(data.items);
+      categories = safeArray(data.categories);
+      groups = safeArray(data.groups);
       window.MMLState.items = allItems;
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
@@ -2205,7 +2210,7 @@ let allItems=[], categories=[], groups=[];
       .then(r => r.json())
       .then(data => {
         // Append new log lines
-        const lines = data.log || [];
+        const lines = safeArray(data.log);
         const newLines = lines.slice(_logOffset);
         _logOffset = lines.length;
         newLines.forEach(l => {
