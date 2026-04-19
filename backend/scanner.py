@@ -338,6 +338,73 @@ _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 
+def _normalize_lookup_title(value: str | None) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _resolve_tmdb_id_from_search(title: str | None, year: str | int | None, is_tv: bool, jsr: dict | None = None):
+    """
+    Resolve TMDB id via Jellyseerr search when direct /tv/{id} fetch fails.
+    Returns:
+      str | int   — resolved tmdb id
+      None        — nothing matched
+      _FETCH_ERROR — Jellyseerr request failure
+    """
+    if not isinstance(title, str) or not title.strip():
+        return None
+    query = urllib.parse.quote(title.strip())
+    resp = _jsr_get(f"/search?query={query}", jsr)
+    if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND):
+        return None
+    if resp is _JSR_ERROR:
+        return _FETCH_ERROR
+
+    results = resp.get("results") if isinstance(resp, dict) else None
+    if not isinstance(results, list):
+        return None
+
+    target_media = "tv" if is_tv else "movie"
+    expected_year = str(year).strip() if year is not None and str(year).strip() else None
+    wanted_title = _normalize_lookup_title(title)
+
+    scored: list[tuple[int, str | int]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("mediaType") or item.get("media_type") or "").strip().lower()
+        if media_type and media_type != target_media:
+            continue
+        tmdb_id = item.get("id") or item.get("tmdbId") or item.get("tmdb_id")
+        if tmdb_id in (None, ""):
+            continue
+        candidate_title = (
+            item.get("title")
+            or item.get("name")
+            or item.get("originalTitle")
+            or item.get("originalName")
+            or ""
+        )
+        candidate_norm = _normalize_lookup_title(candidate_title)
+        candidate_date = item.get("releaseDate") or item.get("firstAirDate") or ""
+        candidate_year = str(candidate_date)[:4] if isinstance(candidate_date, str) and len(candidate_date) >= 4 else None
+
+        score = 0
+        if candidate_norm == wanted_title:
+            score += 4
+        elif wanted_title and candidate_norm and (wanted_title in candidate_norm or candidate_norm in wanted_title):
+            score += 2
+        if expected_year and candidate_year == expected_year:
+            score += 2
+        if score > 0:
+            scored.append((score, tmdb_id))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda entry: entry[0], reverse=True)
+    return scored[0][1]
+
 def _extract_watch_provider_regions(watch_providers) -> list[tuple[str, dict]]:
     """
     Normalize Jellyseerr/TMDB watch providers payload to a list of region payloads.
@@ -1474,6 +1541,16 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         is_tv = item.get("type") == "tv"
         try:
             providers = fetch_providers(item["tmdb_id"], is_tv, jsr)
+            if providers is _JSR_NOT_FOUND and is_tv:
+                resolved_id = _resolve_tmdb_id_from_search(item.get("title"), item.get("year"), is_tv=True, jsr=jsr)
+                if resolved_id is _FETCH_ERROR:
+                    providers = _FETCH_ERROR
+                elif resolved_id not in (None, "", item.get("tmdb_id")):
+                    log.info(
+                        f"[enrich-tv] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_id}"
+                    )
+                    item["tmdb_id"] = str(resolved_id)
+                    providers = fetch_providers(item["tmdb_id"], True, jsr)
         except Exception as e:
             log.warning(f"[enrich] Unexpected exception tmdb_id={item.get('tmdb_id')} {item.get('title')!r}: {e}")
             providers = _FETCH_ERROR

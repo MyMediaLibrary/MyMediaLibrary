@@ -70,6 +70,18 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertEqual(providers["free"], [])
         self.assertEqual(providers["rent"], [])
 
+    def test_resolve_tmdb_id_from_search_prefers_tv_title_and_year(self):
+        response = {
+            "results": [
+                {"mediaType": "movie", "id": 1, "title": "Paradise", "releaseDate": "2025-01-01"},
+                {"mediaType": "tv", "id": 99, "name": "Paradise", "firstAirDate": "2024-01-01"},
+                {"mediaType": "tv", "id": 321, "name": "Paradise", "firstAirDate": "2025-01-26"},
+            ]
+        }
+        with patch.object(scanner, "_jsr_get", return_value=response):
+            resolved = scanner._resolve_tmdb_id_from_search("Paradise", 2025, is_tv=True, jsr={"enabled": True})
+        self.assertEqual(resolved, 321)
+
     def test_enrich_stores_raw_provider_names_and_drops_legacy_root_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
@@ -274,6 +286,86 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             item = payload["items"][0]
             self.assertFalse(item["providers_fetched"])
             self.assertEqual(item["providers"]["flatrate"], ["Legacy"])
+
+    def test_enrich_tv_retries_with_search_resolved_tmdb_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 3,
+                        "categories": ["Series"],
+                        "items": [
+                            {
+                                "title": "Paradise",
+                                "year": "2025",
+                                "type": "tv",
+                                "category": "Series",
+                                "tmdb_id": "bad-id-1",
+                                "providers": [],
+                                "providers_fetched": False,
+                            },
+                            {
+                                "title": "Andor",
+                                "year": "2022",
+                                "type": "tv",
+                                "category": "Series",
+                                "tmdb_id": "bad-id-2",
+                                "providers": [],
+                                "providers_fetched": False,
+                            },
+                            {
+                                "title": "La Casa de Papel",
+                                "year": "2017",
+                                "type": "tv",
+                                "category": "Series",
+                                "tmdb_id": "bad-id-3",
+                                "providers": [],
+                                "providers_fetched": False,
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            providers_disney = {"flatrate": [{"raw_name": "Disney+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_hulu = {"flatrate": [{"raw_name": "Hulu", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(
+                     scanner,
+                     "fetch_providers",
+                     side_effect=[
+                         scanner._JSR_NOT_FOUND, providers_disney,
+                         scanner._JSR_NOT_FOUND, providers_hulu,
+                         scanner._JSR_NOT_FOUND, providers_netflix,
+                     ],
+                 ), \
+                 patch.object(
+                     scanner,
+                     "_resolve_tmdb_id_from_search",
+                     side_effect=["9991", "9992", "9993"],
+                 ):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            by_title = {item["title"]: item for item in payload["items"]}
+            self.assertEqual(by_title["Paradise"]["tmdb_id"], "9991")
+            self.assertEqual(by_title["Andor"]["tmdb_id"], "9992")
+            self.assertEqual(by_title["La Casa de Papel"]["tmdb_id"], "9993")
+            self.assertEqual(by_title["Paradise"]["providers"]["flatrate"], ["Disney+"])
+            self.assertEqual(by_title["Andor"]["providers"]["flatrate"], ["Hulu"])
+            self.assertEqual(by_title["La Casa de Papel"]["providers"]["flatrate"], ["Netflix"])
+            self.assertTrue(by_title["Paradise"]["providers_fetched"])
+            self.assertTrue(by_title["Andor"]["providers_fetched"])
+            self.assertTrue(by_title["La Casa de Papel"]["providers_fetched"])
 
     def test_sanitize_item_converts_unknown_sentinels_to_null(self):
         item = {
