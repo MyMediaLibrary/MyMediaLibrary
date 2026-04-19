@@ -76,6 +76,7 @@
 
   function buildStatsData(items) {
     const C = window.MMLConstants.CHARTS;
+    const NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
 
     // ── Category (folder) ────────────────────────────────────
     const byCategory = {}, byCategoryCount = {};
@@ -133,10 +134,17 @@
       byRes[r]      = (byRes[r]      || 0) + (i.size_b || 0);
       byResCount[r] = (byResCount[r] || 0) + 1;
     });
-    const RES_ORDER = C.RESOLUTION_ORDER;
+    const RES_ORDER = [...C.RESOLUTION_ORDER, NONE_KEY];
+    const resRemaining = Object.keys(byRes).filter((r) => !RES_ORDER.includes(r));
     const resolution = {
-      entriesSize:  RES_ORDER.filter(r => byRes[r]).map(r => [r, byRes[r]]),
-      entriesCount: RES_ORDER.filter(r => byResCount[r]).map(r => [r, byResCount[r]]),
+      entriesSize:  [
+        ...RES_ORDER.filter(r => byRes[r]).map(r => [r, byRes[r]]),
+        ...resRemaining.filter(r => byRes[r]).map(r => [r, byRes[r]])
+      ],
+      entriesCount: [
+        ...RES_ORDER.filter(r => byResCount[r]).map(r => [r, byResCount[r]]),
+        ...resRemaining.filter(r => byResCount[r]).map(r => [r, byResCount[r]])
+      ],
     };
 
     // ── Providers ────────────────────────────────────────────
@@ -447,7 +455,7 @@
     const codecColorFn       = (k,idx) => C.COLORS.CODEC[idx%C.COLORS.CODEC.length];
     const audioCodecColorFn  = (k,idx) => C.COLORS.AUDIO_CODEC[idx%C.COLORS.AUDIO_CODEC.length];
     const audioLangColorFn   = (k,idx) => C.COLORS.AUDIO_LANG[idx%C.COLORS.AUDIO_LANG.length];
-    const resColorFn         = (k)     => C.COLORS.RESOLUTION[k] || '#888';
+    const resColorFn         = (k)     => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : (C.COLORS.RESOLUTION[k] || '#888');
     const provColors         = C.COLORS.PROVIDER;
     const noProviderLabel    = getDep('t')('filters.no_provider');
     const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
@@ -464,7 +472,7 @@
     ];
 
     // ── Block HTML ───────────────────────────────────────────
-    const provPieHtml = provEntries.length
+    const provPieHtml = provCountEntries.length
       ? switchablePie('prov', getDep('t')('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, getDep('_providerGroupLabel'), 'count')
       : '';
 
@@ -504,7 +512,7 @@
         + '</div>'
       // Row 2: Résolution | Codec vidéo
       + '<div class="stats-row">'
-          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>k, 'count') : '')+'</div>'
+          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
           + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
         + '</div>'
       // Row 3: Codec audio | Langues
