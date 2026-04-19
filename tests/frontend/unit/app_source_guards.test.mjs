@@ -185,6 +185,19 @@ test('stats providers rely on flat provider lists', () => {
   assert.doesNotMatch(buildStatsBlock, /providers\.flatrate/, 'stats should not rely on flatrate-only provider extraction');
 });
 
+test('providers catalog loads runtime mapping API and logo catalog', () => {
+  const block = functionBlock(appSource, 'loadProvidersCatalog');
+  assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
+  assert.match(block, /fetch\('\/providers_logo\.json\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from dedicated logo catalog');
+  assert.doesNotMatch(block, /\/providers\.json/, 'legacy providers.json bundle should no longer drive mapping');
+});
+
+test('provider resolution maps null-or-missing entries to Autres with logo fallback', () => {
+  const block = functionBlock(appSource, 'resolveProvider', 'getProviderNames');
+  assert.match(block, /const normalizedName =[\s\S]*\? mappedValue\.trim\(\)[\s\S]*: 'Autres';/, 'unmapped providers should resolve to Autres');
+  assert.match(block, /PROVIDERS_LOGOS\[normalizedName\] \|\| PROVIDERS_LOGOS\['Autres'\]/, 'provider logo should fallback to Autres logo');
+});
+
 test('filter order is centralized and explicit for desktop and mobile', () => {
   assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'streaming',\s*'resolution',\s*'video_codec',\s*'audio_codec',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
   const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');

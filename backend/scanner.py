@@ -32,6 +32,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -93,6 +94,9 @@ INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_i
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
+PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
+PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
+PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -291,44 +295,73 @@ def _jsr_get(path: str, jsr: dict | None = None):
         return _JSR_ERROR
 
 
-PROVIDERS_JSON_PATH = "/usr/share/nginx/html/providers.json"
+def _ensure_runtime_provider_mapping() -> None:
+    """Bootstrap /data providers mapping once: copy bundled file only if runtime file is absent."""
+    runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
+    if runtime_path.exists():
+        return
+    try:
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path = Path(PROVIDERS_MAPPING_SOURCE_PATH)
+        if source_path.exists():
+            shutil.copyfile(source_path, runtime_path)
+        else:
+            runtime_path.write_text("{}", encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
 
 
-def load_provider_map() -> dict:
-    if os.path.exists(PROVIDERS_JSON_PATH):
-        with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("mapping", {}) if isinstance(data, dict) else {}
-    log.warning("[providers] providers.json not found, no normalization applied")
+def _load_runtime_provider_mapping() -> dict:
+    _ensure_runtime_provider_mapping()
+    try:
+        with open(PROVIDERS_MAPPING_RUNTIME_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return payload
+    except Exception as e:
+        log.warning(f"[providers] Could not read runtime mapping file: {e}")
     return {}
 
 
-def clean_provider_name(name: str) -> str:
-    """Defensive cleaning before provider map lookup."""
-    s = name.strip()
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'\s*Amazon Channel$', '', s, flags=re.IGNORECASE).strip()
-    s = re.sub(r'\s*Apple TV Channel$', '', s, flags=re.IGNORECASE).strip()
-    return s
+def _save_runtime_provider_mapping(mapping: dict) -> None:
+    try:
+        path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning(f"[providers] Could not write runtime mapping file: {e}")
 
 
-def normalize_provider(name: str, provider_map: dict) -> str:
-    """Return normalized name from map, or raw name if not found."""
-    # Exact match
-    if name in provider_map:
-        return provider_map[name]
-    # Defensive cleaning fallback (double spaces, trailing suffixes)
-    cleaned = clean_provider_name(name)
-    if cleaned != name:
-        if cleaned in provider_map:
-            return provider_map[cleaned]
-        # Case-insensitive fallback
-        cleaned_l = cleaned.lower()
-        for k, v in provider_map.items():
-            if k.lower() == cleaned_l:
-                return v
-    log.warning(f"[providers] Unmapped provider: {name!r}")
-    return name
+def _extract_raw_providers_from_item(item: dict) -> list[str]:
+    providers = item.get("providers")
+    if isinstance(providers, list):
+        return _normalize_provider_entries(providers)
+    if isinstance(providers, dict):
+        merged = []
+        for values in providers.values():
+            if isinstance(values, list):
+                merged.extend(values)
+        return _normalize_provider_entries(merged)
+    return []
+
+
+def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
+    """Add missing raw providers to runtime mapping with null values; never overwrite existing keys."""
+    mapping = _load_runtime_provider_mapping()
+    if not isinstance(mapping, dict):
+        mapping = {}
+    added = 0
+    for item in (items or []):
+        if not isinstance(item, dict):
+            continue
+        for raw_name in _extract_raw_providers_from_item(item):
+            if raw_name not in mapping:
+                mapping[raw_name] = None
+                added += 1
+    if added:
+        _save_runtime_provider_mapping(mapping)
+    return added
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -715,6 +748,8 @@ def migrate_env_to_config() -> None:
     if changed:
         save_config(cfg)
         log.info("[MIGRATION] Env vars migrated to config.json")
+    # Bootstrap runtime providers mapping once (non-destructive).
+    _ensure_runtime_provider_mapping()
 
 
 # ---------------------------------------------------------------------------
@@ -1446,6 +1481,13 @@ def run_quick(only_category: str | None = None) -> None:
         size_str = f"{size_mb:.1f} MB"
     except Exception:
         size_str = "?"
+    try:
+        mapping_added = _upsert_runtime_provider_mapping(data.get("items") or [])
+        if mapping_added:
+            log.info(f"[SCAN] providers_mapping updated (+{mapping_added} raw provider(s))")
+    except Exception as e:
+        log.warning(f"[SCAN] providers_mapping update failed: {e}")
+
     elapsed = time.monotonic() - _t0
     if _nfo_stats["failed"] > 0:
         log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
@@ -2177,15 +2219,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 out.setdefault("jellyseerr", {})["apikey"] = "***"
             self._json(200, out)
         elif path == "/api/providers-map":
-            if os.path.exists(PROVIDERS_JSON_PATH):
-                try:
-                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-                        data = json.load(f)
-                        self._json(200, data.get("mapping", {}) if isinstance(data, dict) else {})
-                except Exception as e:
-                    self._json(500, {"error": str(e)})
-            else:
-                self._json(200, {})
+            self._json(200, _load_runtime_provider_mapping())
         else:
             self._json(404, {"error": "not found"})
 
@@ -2303,13 +2337,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             try:
-                data = {}
-                if os.path.exists(PROVIDERS_JSON_PATH):
-                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-                        data = json.load(f)
-                data["mapping"] = payload
-                with open(PROVIDERS_JSON_PATH, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                current = _load_runtime_provider_mapping()
+                # Replace full mapping payload (explicit save from editor UI)
+                # while preserving JSON object shape.
+                current = payload if isinstance(payload, dict) else {}
+                _save_runtime_provider_mapping(current)
                 self._json(200, {"ok": True})
             except Exception as e:
                 self._json(500, {"error": str(e)})

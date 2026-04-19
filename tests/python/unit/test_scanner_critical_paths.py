@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import sys
@@ -240,6 +241,55 @@ class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
         self.assertEqual(action, "cleared")
         self.assertNotIn("jellyseerr_apikey", secrets)
         self.assertNotIn("jellyseerr", payload)
+
+
+class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
+    def test_bootstrap_runtime_mapping_copies_source_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "providers_mapping.source.json"
+            dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
+            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                scanner._ensure_runtime_provider_mapping()
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {"Netflix": "Netflix"},
+            )
+
+            dst.write_text('{"Netflix":"NFX-custom"}', encoding="utf-8")
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                scanner._ensure_runtime_provider_mapping()
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {"Netflix": "NFX-custom"},
+            )
+
+    def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "providers_mapping.source.json"
+            dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
+            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
+            dst.write_text('{"Netflix":"Netflix","Disney+":"Disney+"}', encoding="utf-8")
+            items = [
+                {"providers": ["Netflix", "Premiere Max", "Premiere Max"]},
+                {"providers": ["Disney+", "Canal VOD"]},
+                {"providers": []},
+            ]
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                added = scanner._upsert_runtime_provider_mapping(items)
+            self.assertEqual(added, 2)
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {
+                    "Netflix": "Netflix",
+                    "Disney+": "Disney+",
+                    "Premiere Max": None,
+                    "Canal VOD": None,
+                },
+            )
 
     def test_jsr_cfg_uses_preserved_secret_for_scan_config(self):
         cfg = {"jellyseerr": {"enabled": True, "url": "https://example.test/"}}

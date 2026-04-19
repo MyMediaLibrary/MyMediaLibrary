@@ -63,20 +63,26 @@ let allItems=[], categories=[], groups=[];
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
   let libraryExportSource = null; // raw library.json payload used for export
-  let PROVIDERS_MAP = {};          // {raw_name: normalized_name} — mapping from /providers.json
-  let PROVIDERS_LOGOS = {};        // {normalized_name: filename} — logos section from /providers.json
+  let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
+  let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /providers_logo.json
   let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
   let audioLanguages = {};         // loaded from /audio_languages.json
 
   async function loadProvidersCatalog() {
     try {
-      const res = await fetch('/providers.json?_=' + Date.now());
-      if (res.ok) {
-        const data = await res.json();
-        PROVIDERS_MAP = (data && data.mapping) ? data.mapping : {};
-        PROVIDERS_LOGOS = (data && data.logos) ? data.logos : {};
+      const [mapRes, logosRes] = await Promise.all([
+        fetch('/api/providers-map?_=' + Date.now()),
+        fetch('/providers_logo.json?_=' + Date.now()),
+      ]);
+      if (mapRes.ok) {
+        const data = await mapRes.json();
+        PROVIDERS_MAP = (data && typeof data === 'object') ? data : {};
       }
-    } catch(e) { console.warn('providers.json load error:', e); }
+      if (logosRes.ok) {
+        const data = await logosRes.json();
+        PROVIDERS_LOGOS = (data && typeof data === 'object') ? data : {};
+      }
+    } catch(e) { console.warn('providers catalog load error:', e); }
   }
 
   async function loadAudioCodecMapping() {
@@ -314,16 +320,17 @@ let allItems=[], categories=[], groups=[];
   function resolveProvider(entry) {
     const rawName = _providerRawName(entry);
     if (!rawName) return { rawName: '', name: '', logoUrl: '' };
-
-    const normalizedName = (PROVIDERS_MAP[rawName] || rawName).trim();
-    const logoFile = PROVIDERS_LOGOS[normalizedName];
+    const hasMapping = Object.prototype.hasOwnProperty.call(PROVIDERS_MAP, rawName);
+    const mappedValue = hasMapping ? PROVIDERS_MAP[rawName] : null;
+    const normalizedName = (typeof mappedValue === 'string' && mappedValue.trim())
+      ? mappedValue.trim()
+      : 'Autres';
+    const logoFile = PROVIDERS_LOGOS[normalizedName] || PROVIDERS_LOGOS['Autres'];
     const logoFromCatalog = logoFile ? `/assets/providers/${logoFile}` : '';
-    // Transitional legacy fallback: remove when items are always string providers.
-    const logoLegacy = (entry && typeof entry === 'object' && entry.logo) ? String(entry.logo).trim() : '';
     return {
       rawName,
       name: normalizedName,
-      logoUrl: logoFromCatalog || logoLegacy || '',
+      logoUrl: logoFromCatalog || '',
     };
   }
 
@@ -403,7 +410,12 @@ let allItems=[], categories=[], groups=[];
     const lower = key.toLowerCase();
     if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
     if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
-    return PROVIDERS_MAP[key] || key;
+    const mapped = Object.prototype.hasOwnProperty.call(PROVIDERS_MAP, key)
+      ? PROVIDERS_MAP[key]
+      : undefined;
+    if (typeof mapped === 'string' && mapped.trim()) return mapped.trim();
+    if (mapped === null || mapped === undefined) return PROVIDER_OTHERS_KEY;
+    return key;
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
