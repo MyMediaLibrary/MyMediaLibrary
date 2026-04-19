@@ -191,7 +191,9 @@
 
     // Gather folder type/activation — always include current state
     const folderUpdates = gatherFolderEdits();
-    if (folderUpdates) partial.folders = folderUpdates;
+    if (folderUpdates && shouldTriggerScan(appConfig, { folders: folderUpdates })) {
+      partial.folders = folderUpdates;
+    }
 
     // Gather provider visibility and selected provider types
     const provTypes = gatherProviderVisibleTypes();
@@ -289,8 +291,8 @@
   function gatherFolderEdits() {
     const folders = JSON.parse(JSON.stringify(appConfig.folders || []));
     if (!folders.length) return null;
-    // Always read current DOM state — appConfig.folders may have been mutated by
-    // onFolderTypeChange() so we can't rely on a "changed" diff; always return full state.
+    // Always read current DOM state, then compare against previous scan-relevant
+    // folder configuration to decide if we need to persist/trigger a scan.
     document.querySelectorAll('[data-folder-idx][data-folder-key]').forEach(el => {
       const idx = parseInt(el.dataset.folderIdx);
       const key = el.dataset.folderKey;
@@ -307,6 +309,29 @@
       delete normalized.visible;
       return normalized;
     });
+  }
+
+  function _normalizeFolderForScan(folder) {
+    return {
+      name: String(folder?.name || ''),
+      type: folder?.type ?? null,
+      enabled: folder?.enabled === true,
+    };
+  }
+
+  function _foldersScanSignature(folders) {
+    if (!Array.isArray(folders)) return '[]';
+    const normalized = folders
+      .map(_normalizeFolderForScan)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return JSON.stringify(normalized);
+  }
+
+  function shouldTriggerScan(oldConfig, newConfig) {
+    if (!newConfig || !Array.isArray(newConfig.folders)) return false;
+    const prevSig = _foldersScanSignature(oldConfig?.folders || []);
+    const nextSig = _foldersScanSignature(newConfig.folders);
+    return prevSig !== nextSig;
   }
 
   // ── Settings: provider toggles ────────────────────────────────────────────

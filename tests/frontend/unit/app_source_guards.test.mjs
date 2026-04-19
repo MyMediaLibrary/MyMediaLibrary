@@ -120,10 +120,32 @@ test('loadLibrary resolves score feature from runtime config only', () => {
   assert.doesNotMatch(block, /data\.config/, 'loadLibrary should not depend on embedded config payload');
 });
 
+test('loadLibrary restores active tab only after data is loaded', () => {
+  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(block, /window\.MMLState\.isLoaded\s*=\s*true;/, 'loadLibrary should mark state as loaded before tab switch');
+  assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
+});
+
 test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
+});
+
+test('settings trigger scan only when folders changed', () => {
+  const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', '_getSelectedProviderTypesForSettings');
+  assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');
+  assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(newConfig\.folders\)/, 'scan trigger helper should compare new folder snapshot');
+  assert.match(shouldTriggerScanBlock, /return prevSig !== nextSig;/, 'scan trigger helper should only trigger on actual folder diff');
+
+  const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveSettingsBlock, /shouldTriggerScan\(appConfig, \{ folders: folderUpdates \}\)/, 'settings save should gate folder payload behind shouldTriggerScan');
+});
+
+test('restoreState defers stats tab render until library load is complete', () => {
+  const block = functionBlock(appSource, 'restoreState');
+  assert.match(block, /currentTab = s\.currentTab;/, 'restoreState should persist desired tab');
+  assert.doesNotMatch(block, /switchTab\(s\.currentTab\)/, 'restoreState should not render stats early before data load completion');
 });
 
 test('codec filters keep UNKNOWN distinct from missing metadata', () => {

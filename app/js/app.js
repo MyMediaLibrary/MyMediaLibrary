@@ -615,7 +615,9 @@ let allItems=[], categories=[], groups=[];
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
-      if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
+      if (s.currentTab === 'library' || s.currentTab === 'stats') {
+        currentTab = s.currentTab;
+      }
       updateGlobalResetButtons();
     } catch(e) {}
   }
@@ -744,7 +746,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded  = true;
       window.MMLState.isLoading = false;
       renderStats(filterItems());
-      render();
+      switchTab(currentTab);
       updateExportJsonButtonState();
     } catch(e) {
       const _is401 = String(e).includes('401');
