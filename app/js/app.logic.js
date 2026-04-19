@@ -55,6 +55,7 @@
   function getItemSearchFields(item) {
     const providers = (item.providers || []).join(' ');
     const audioSimple = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages || []);
+    const audioCodecDisplay = item.audio_codec || item.audio_codec_display || item.audio_codec_raw || '';
     const audioSimpleAliases = audioSimple === 'VF'
       ? 'vf french francais fr'
       : (audioSimple === 'VO'
@@ -66,7 +67,7 @@
       item.title,
       item.year,
       item.audio_codec,
-      item.audio_codec_display,
+      audioCodecDisplay,
       item.audio_codec_raw,
       item.codec,
       videoCodecAliases,
@@ -327,16 +328,12 @@
   }
 
   function getItemQualityLevel(item) {
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
   function getScoredQualityLevel(item) {
     const score = Number(item?.quality?.score);
     if (!Number.isFinite(score)) return null;
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(score);
   }
 

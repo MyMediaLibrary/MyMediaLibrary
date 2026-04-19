@@ -60,17 +60,17 @@ let allItems=[], categories=[], groups=[];
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
   let libraryExportSource = null; // raw library.json payload used for export
-  let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
-  let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
-  let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
+  let PROVIDERS_MAP = {};          // {raw_name: normalized_name} — mapping from /providers.json
+  let PROVIDERS_LOGOS = {};        // {normalized_name: filename} — logos section from /providers.json
   let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
   let audioLanguages = {};         // loaded from /audio_languages.json
 
-  async function loadProvidersLogos() {
+  async function loadProvidersCatalog() {
     try {
       const res = await fetch('/providers.json?_=' + Date.now());
       if (res.ok) {
         const data = await res.json();
+        PROVIDERS_MAP = (data && data.mapping) ? data.mapping : {};
         PROVIDERS_LOGOS = (data && data.logos) ? data.logos : {};
       }
     } catch(e) { console.warn('providers.json load error:', e); }
@@ -154,7 +154,19 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getAudioCodecLabel(item) {
-    return item?.audio_codec_display ?? getAudioCodecDisplay(getNormalizedAudioCodec(item));
+    const normalized = getNormalizedAudioCodec(item);
+    if (normalized && normalized !== FILTER_NONE_KEY) {
+      return getAudioCodecDisplay(normalized);
+    }
+
+    // Transitional legacy fallback: remove when backend stops emitting audio_codec_display.
+    const legacyDisplay = typeof item?.audio_codec_display === 'string' ? item.audio_codec_display.trim() : '';
+    if (legacyDisplay) return legacyDisplay;
+
+    const raw = typeof item?.audio_codec_raw === 'string' ? item.audio_codec_raw.trim() : '';
+    if (raw) return raw;
+
+    return getFilterDisplayValue(FILTER_NONE_KEY);
   }
 
   function getNormalizedResolution(item) {
@@ -202,8 +214,6 @@ let allItems=[], categories=[], groups=[];
     if (window.MMLLogic?.getItemQualityLevel) {
       return window.MMLLogic.getItemQualityLevel(item);
     }
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
@@ -213,8 +223,6 @@ let allItems=[], categories=[], groups=[];
     }
     const score = Number(item?.quality?.score);
     if (!Number.isFinite(score)) return null;
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(score);
   }
 
@@ -293,22 +301,39 @@ let allItems=[], categories=[], groups=[];
     return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
+  function _providerRawName(entry) {
+    if (entry && typeof entry === 'object') {
+      return String(entry.name || '').trim();
+    }
+    return String(entry || '').trim();
+  }
+
+  function resolveProvider(entry) {
+    const rawName = _providerRawName(entry);
+    if (!rawName) return { rawName: '', name: '', logoUrl: '' };
+
+    const normalizedName = (PROVIDERS_MAP[rawName] || rawName).trim();
+    const logoFile = PROVIDERS_LOGOS[normalizedName];
+    const logoFromCatalog = logoFile ? `/assets/providers/${logoFile}` : '';
+    // Transitional legacy fallback: remove when items are always string providers.
+    const logoLegacy = (entry && typeof entry === 'object' && entry.logo) ? String(entry.logo).trim() : '';
+    return {
+      rawName,
+      name: normalizedName,
+      logoUrl: logoFromCatalog || logoLegacy || '',
+    };
+  }
+
   function getProviderNames(item) {
     return (item?.providers || []).map(_pname).filter(Boolean);
   }
 
-  function getProviderLogo(name) {
-    const logo = PROVIDERS_LOGOS[name];
-    return logo ? `/assets/providers/${logo}` : null;
-  }
-
-  // Helpers: handle both string providers (new) and {name,logo} objects (legacy)
-  function _pname(p){ return (p && typeof p==='object') ? (p.name||'') : (p||''); }
+  // Helpers: canonicalize provider entries from library items.
+  function _pname(p){ return resolveProvider(p).name; }
   function _plogo(p){
-    const name = _pname(p);
-    const logo = getProviderLogo(name) || PROVIDERS_META[name]?.logo_url || (p && typeof p==='object' ? p.logo : null) || providerCatalog[name] || '';
-    if (!logo) console.warn('Unmapped provider:', name);
-    return logo;
+    const resolved = resolveProvider(p);
+    if (!resolved.logoUrl) console.warn('Unmapped provider:', resolved.rawName || resolved.name);
+    return resolved.logoUrl;
   }
 
   // Active category prefs (null = all active; Set = specific active names)
@@ -343,16 +368,13 @@ let allItems=[], categories=[], groups=[];
     return grouped;
   }
   function _canonicalProviderFilterKey(raw) {
-    if (window.MMLLogic?.canonicalProviderFilterKey) {
-      return window.MMLLogic.canonicalProviderFilterKey(raw);
-    }
     if (typeof raw !== 'string') return null;
     const key = raw.trim();
     if (!key) return null;
     const lower = key.toLowerCase();
     if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
     if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
-    return key;
+    return PROVIDERS_MAP[key] || key;
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
@@ -403,16 +425,13 @@ let allItems=[], categories=[], groups=[];
     else console.info('[filters]', message);
   }
   let appConfig = {};            // loaded from /api/config
-  let serverConfig = {};         // from library.json config block
+  let libraryPathLabel = '';     // from library.json root field: library_path
   let appVersionInfo = null;     // loaded from /version.json
 
-  function resolveScoreEnabled(libraryMetaScoreEnabled = null) {
+  function resolveScoreEnabled() {
     const configScoreEnabled = appConfig?.system?.enable_score;
     if (typeof configScoreEnabled === 'boolean') {
       return configScoreEnabled;
-    }
-    if (typeof libraryMetaScoreEnabled === 'boolean') {
-      return libraryMetaScoreEnabled;
     }
     return false;
   }
@@ -584,7 +603,7 @@ let allItems=[], categories=[], groups=[];
     window.MMLState.isLoading = true;
     window.MMLState.isLoaded  = false;
     window.MMLState.hasError  = false;
-    await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping(), loadAudioLanguages()]);
+    await Promise.all([loadConfig(), loadProvidersCatalog(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
     const lang = appConfig.system?.language || 'fr';
@@ -621,14 +640,6 @@ let allItems=[], categories=[], groups=[];
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
       });
-      // providers_meta: canonical logo source (new format)
-      PROVIDERS_META = data.providers_meta || {};
-      // Legacy fallback: old library.json used providers_catalog or embedded {name,logo} objects
-      if (data.providers_catalog) providerCatalog = data.providers_catalog;
-      allItems.forEach(i=>(i.providers||[]).forEach(p=>{
-        if (p && typeof p==='object' && p.name && p.logo && !providerCatalog[p.name])
-          providerCatalog[p.name] = p.logo;
-      }));
       groups.forEach((g,i)=>{ groupColorMap[g]=PALETTE[i%PALETTE.length]; });
       categories.forEach((c,i)=>{ catColorMap[c]=PALETTE[i%PALETTE.length]; });
 
@@ -637,8 +648,6 @@ let allItems=[], categories=[], groups=[];
         filterItems,
         allItems,
         PALETTE,
-        PROVIDERS_META,
-        providerCatalog,
         PROVIDER_OTHERS_KEY,
         getNormalizedVideoCodec,
         getNormalizedAudioCodec,
@@ -663,12 +672,9 @@ let allItems=[], categories=[], groups=[];
       document.getElementById('scanInfo').innerHTML=
         t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
-      if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
-      if (data.config) serverConfig = data.config;
-      const libraryMetaScoreEnabled = typeof data?.meta?.score_enabled === 'boolean'
-        ? data.meta.score_enabled
-        : null;
-      enableScore = resolveScoreEnabled(libraryMetaScoreEnabled);
+      libraryPathLabel = typeof data.library_path === 'string' ? data.library_path : '';
+      if (libraryPathLabel) document.getElementById('brandSub').textContent = libraryPathLabel;
+      enableScore = resolveScoreEnabled();
       applyScoreFeatureVisibility();
       renderStorageBar();
       renderProviderFilter();
@@ -1920,7 +1926,7 @@ let allItems=[], categories=[], groups=[];
         +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
         +'<td>'+(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
-        +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
+        +'<td>'+escH(getAudioCodecLabel(item))+'</td>'
         +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
@@ -1964,7 +1970,7 @@ let allItems=[], categories=[], groups=[];
       hg?csvC(i.group||''):null,
       csvC(i.category),
       includeScore ? (Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '') : null,
-      includeScore ? (Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '')) : null,
+      includeScore ? (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '') : null,
       includeScore ? (i.quality?.video ?? '') : null,
       includeScore ? (i.quality?.audio ?? '') : null,
       includeScore ? (i.quality?.languages ?? '') : null,
@@ -1973,7 +1979,7 @@ let allItems=[], categories=[], groups=[];
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
-      csvC(i.audio_codec_display??i.audio_codec??''),
+      csvC(getAudioCodecLabel(i)),
       csvC(getAudioLanguageSimple(i)),
       csvC((i.audio_languages??[]).join(', ')),
       i.runtime_min||'',

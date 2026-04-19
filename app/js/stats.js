@@ -19,8 +19,6 @@
     filterItems: null,
     allItems: null,
     PALETTE: null,
-    PROVIDERS_META: null,
-    providerCatalog: null,
     PROVIDER_OTHERS_KEY: null,
     getNormalizedVideoCodec: null,
     getNormalizedAudioCodec: null,
@@ -226,7 +224,8 @@
     let totalScore = 0, scoredCount = 0;
     items.forEach(i => {
       if (!i.quality) return;
-      const s = typeof i.quality.score === 'number' ? i.quality.score : (i.quality.level || 0) * 20;
+      const s = Number(i.quality.score);
+      if (!Number.isFinite(s)) return;
       totalScore += s; scoredCount++;
       const idx = qualityTranches.findIndex(tr => s >= tr.min && s <= tr.max);
       if (idx >= 0) qualityCounts[idx]++;

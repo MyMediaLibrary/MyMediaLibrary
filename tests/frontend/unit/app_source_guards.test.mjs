@@ -113,10 +113,11 @@ test('renderFolderFilter uses shared dropdown with include/exclude toggles', () 
   assert.match(block, /baseItems\('folder'\)/, 'folder counts should be scoped through shared baseItems logic');
 });
 
-test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {
+test('loadLibrary resolves score feature from runtime config only', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
-  assert.match(block, /resolveScoreEnabled\(libraryMetaScoreEnabled\)/, 'loadLibrary should use centralized score resolution');
-  assert.doesNotMatch(block, /enableScore\s*=\s*data\.meta\.score_enabled/, 'loadLibrary should not directly trust stale library meta score flag');
+  assert.match(block, /enableScore = resolveScoreEnabled\(\);/, 'loadLibrary should resolve score from centralized config-driven helper');
+  assert.doesNotMatch(block, /data\.meta/, 'loadLibrary should not depend on library meta payload');
+  assert.doesNotMatch(block, /data\.config/, 'loadLibrary should not depend on embedded config payload');
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
