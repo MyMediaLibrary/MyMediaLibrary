@@ -198,6 +198,14 @@ test('provider resolution maps null-or-missing entries to Autres with logo fallb
   assert.match(block, /PROVIDERS_LOGOS\[normalizedName\] \|\| PROVIDERS_LOGOS\['Autres'\]/, 'provider logo should fallback to Autres logo');
 });
 
+test('displayed providers are deduplicated post-mapping and ordered with Autres last', () => {
+  const block = functionBlock(appSource, 'getDisplayedProviders', '_providerGroupKey');
+  assert.match(block, /if \(!grouped\.has\(displayName\)\) grouped\.set\(displayName, resolved\);/, 'displayed providers should deduplicate after mapping');
+  assert.match(block, /return a\.name\.localeCompare\(b\.name, undefined, \{ sensitivity: 'base' \}\);/, 'mapped providers should be sorted alphabetically');
+  assert.match(block, /if \(aIsOthers && !bIsOthers\) return 1;/, 'Autres should be sorted after mapped providers');
+  assert.match(block, /name: _isOthersProviderName\(entry\.name\) \? DISPLAY_OTHERS_NAME : entry\.name/, 'Autres display label should be normalized once');
+});
+
 test('filter order is centralized and explicit for desktop and mobile', () => {
   assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'streaming',\s*'resolution',\s*'video_codec',\s*'audio_codec',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
   const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');

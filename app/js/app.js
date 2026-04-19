@@ -312,7 +312,7 @@ let allItems=[], categories=[], groups=[];
 
   function _providerRawName(entry) {
     if (entry && typeof entry === 'object') {
-      return String(entry.name || '').trim();
+      return String(entry.rawName || entry.raw_name || entry.name || '').trim();
     }
     return String(entry || '').trim();
   }
@@ -349,19 +349,11 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getEnabledProvidersForItem(item) {
-    return getItemProviders(item);
+    return getDisplayedProviders(item);
   }
 
   function getEnabledProviderNames(item) {
-    const seen = new Set();
-    const names = [];
-    getEnabledProvidersForItem(item).forEach((entry) => {
-      const name = _pname(entry);
-      if (!name || seen.has(name)) return;
-      seen.add(name);
-      names.push(name);
-    });
-    return names;
+    return getEnabledProvidersForItem(item).map((entry) => _pname(entry)).filter(Boolean);
   }
 
   // Helpers: canonicalize provider entries from library items.
@@ -377,6 +369,7 @@ let allItems=[], categories=[], groups=[];
   let visibleProviders  = null;
   const PROVIDER_OTHERS_KEY     = window.MMLConstants.PROVIDER_OTHERS_KEY;
   const PROVIDER_OTHERS_ALIASES = new Set(window.MMLConstants.PROVIDER_OTHERS_ALIASES);
+  const DISPLAY_OTHERS_NAME = 'Autres';
   function _catVisible(cat)  { return !enabledCategories || enabledCategories.has(cat); }
   function _isOthersProviderName(prov) {
     if (!prov) return false;
@@ -385,6 +378,31 @@ let allItems=[], categories=[], groups=[];
   function _provVisible(prov){
     if (_isOthersProviderName(prov) || prov === PROVIDER_OTHERS_KEY) return true;
     return !visibleProviders  || visibleProviders.has(prov);
+  }
+  function getDisplayedProviders(item, options = {}) {
+    const visibleOnly = options.visibleOnly === true;
+    const mappedOnly = options.mappedOnly === true;
+    const grouped = new Map();
+    getItemProviders(item).forEach((entry) => {
+      const resolved = resolveProvider(entry);
+      const displayName = resolved.name;
+      if (!displayName) return;
+      if (mappedOnly && _isOthersProviderName(displayName)) return;
+      if (visibleOnly && !_provVisible(displayName)) return;
+      if (!grouped.has(displayName)) grouped.set(displayName, resolved);
+    });
+    return [...grouped.values()]
+      .sort((a, b) => {
+        const aIsOthers = _isOthersProviderName(a.name);
+        const bIsOthers = _isOthersProviderName(b.name);
+        if (aIsOthers && !bIsOthers) return 1;
+        if (!aIsOthers && bIsOthers) return -1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      })
+      .map((entry) => ({
+        ...entry,
+        name: _isOthersProviderName(entry.name) ? DISPLAY_OTHERS_NAME : entry.name,
+      }));
   }
   function _providerGroupKey(prov) {
     if (!prov) return null;
@@ -419,13 +437,13 @@ let allItems=[], categories=[], groups=[];
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
-    return items.some(i => getEnabledProvidersForItem(i).some(p => {
+    return items.some(i => getDisplayedProviders(i, { mappedOnly: true }).some(p => {
       const name = _pname(p);
       return name && !_provVisible(name);
     }));
   }
   // Returns only the providers of an item that are currently visible
-  function _itemVisProviders(item){ return getEnabledProvidersForItem(item).filter(p=>_provVisible(_pname(p))); }
+  function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';

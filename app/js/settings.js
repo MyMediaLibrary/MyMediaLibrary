@@ -373,18 +373,16 @@
   }
 
   function _getItemProvidersForSettings(item) {
-    const entries = (typeof window.getItemProviders === 'function') ? window.getItemProviders(item) : [];
-    const result = [];
-    const seenRaw = new Set();
-    entries.forEach((entry) => {
-      const raw = (entry && typeof entry === 'object')
-        ? String(entry.name || '').trim()
-        : String(entry || '').trim();
-      if (!raw || seenRaw.has(raw)) return;
-      seenRaw.add(raw);
-      result.push(entry);
+    if (typeof window.getDisplayedProviders === 'function') {
+      return window.getDisplayedProviders(item, { mappedOnly: true });
+    }
+    const entries = (typeof window.getEnabledProvidersForItem === 'function')
+      ? window.getEnabledProvidersForItem(item)
+      : [];
+    return entries.filter((entry) => {
+      const name = window._pname ? window._pname(entry) : (entry?.name || entry);
+      return !!name && !_isOthersProviderName(name);
     });
-    return result;
   }
 
   // ── Settings: Jellyseerr ──────────────────────────────────────────────────
