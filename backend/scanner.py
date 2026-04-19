@@ -953,14 +953,20 @@ def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: b
 
 
 def _normalize_providers(providers) -> list[str]:
-    """Normalize providers to a list of canonical name strings (new format).
-    Handles both legacy {name, logo} objects and already-normalized strings."""
+    """Normalize provider entries to cleaned raw-name strings."""
     result = []
+    seen = set()
     for p in (providers or []):
-        if isinstance(p, str) and p:
-            result.append(p)
-        elif isinstance(p, dict) and p.get("name"):
-            result.append(p["name"])
+        if isinstance(p, str):
+            raw_name = p
+        elif isinstance(p, dict):
+            raw_name = p.get("name")
+        else:
+            raw_name = None
+        cleaned = _clean_raw_provider_name(raw_name)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            result.append(cleaned)
     return result
 
 def _strip_score_fields(item: dict) -> dict:
@@ -980,6 +986,10 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     clean = dict(item)
     clean.pop("runtime", None)
     clean.pop("audio_codec_display", None)
+    for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
+        if _is_unknown_sentinel(clean.get(field)):
+            clean[field] = None
+    clean["providers"] = _normalize_providers(clean.get("providers", []))
     quality = clean.get("quality")
     if isinstance(quality, dict):
         q = dict(quality)
@@ -1000,6 +1010,25 @@ def _sanitize_library_document(data: dict) -> dict:
     data.pop("enriched_at", None)
     data["items"] = [_sanitize_item_for_library_json(item) for item in (data.get("items") or [])]
     return data
+
+
+def _is_unknown_sentinel(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() == "unknown"
+
+
+def _clean_raw_provider_name(name: str | None) -> str | None:
+    if not isinstance(name, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", name.strip())
+    # Keep raw names, only strip trailing separator noise.
+    cleaned = re.sub(r"[\s\.,;:|/_-]+$", "", cleaned).strip()
+    if not cleaned:
+        return None
+    if cleaned.casefold() == "autres":
+        return None
+    return cleaned
 
 def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
@@ -1079,7 +1108,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
         "codec":              nfo_meta.get("codec")              or prev.get("codec"),
         "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
-        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
+        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec"),
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
@@ -1094,6 +1123,10 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
             q = dict(preserved_quality)
             q.pop("level", None)
             item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+    if _is_unknown_sentinel(item.get("audio_codec")):
+        item["audio_codec"] = None
+    if _is_unknown_sentinel(item.get("audio_languages_simple")):
+        item["audio_languages_simple"] = None
     return item
 
 
@@ -1397,8 +1430,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     failed_count += 1
                     failed_ids.append(item.get("tmdb_id", "?"))
                     continue
-                # Store raw provider names from Jellyseerr.
-                item["providers"]         = [p["raw_name"] for p in providers]
+                # Store cleaned raw provider names from Jellyseerr.
+                item["providers"]         = _normalize_providers([p["raw_name"] for p in providers])
                 item["providers_fetched"] = True
                 enriched += 1
                 log.debug(f"  {item['title']} — {len(providers)} provider(s)")

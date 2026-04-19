@@ -153,6 +153,8 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             self.assertNotIn("quality", item)
             self.assertNotIn("runtime", item)
             self.assertNotIn("audio_codec_display", item)
+            self.assertIsNone(item["audio_codec"])
+            self.assertIsNone(item["audio_languages_simple"])
 
 
 class FolderEnabledCompatibilityTest(unittest.TestCase):
