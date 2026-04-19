@@ -157,19 +157,7 @@
       "apikey_saved": "API key already saved",
       "test": "Test connection",
       "providers_visible": "Provider visibility",
-      "provider_types": {
-        "title": "Availability types",
-        "help": "Choose which availability types should be considered in the application",
-        "labels": {
-          "flatrate": "Subscription",
-          "free": "Free",
-          "ads": "Ad-supported",
-          "buy": "Buy",
-          "rent": "Rent"
-        }
-      },
       "no_provider_available": "No provider available.",
-      "no_provider_type_selected": "No availability type is active. Enable at least one type.",
       "visible": "Visible",
       "hidden": "Hidden"
     },

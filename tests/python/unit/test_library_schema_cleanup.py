@@ -26,11 +26,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
             providers = scanner.fetch_providers(tmdb_id="123", is_tv=False, jsr={"enabled": True})
-        self.assertEqual([p["raw_name"] for p in providers["flatrate"]], ["Netflix"])
-        self.assertEqual([p["raw_name"] for p in providers["free"]], ["Arte"])
-        self.assertEqual([p["raw_name"] for p in providers["ads"]], ["Pluto TV"])
-        self.assertEqual([p["raw_name"] for p in providers["buy"]], ["Canal VOD"])
-        self.assertEqual([p["raw_name"] for p in providers["rent"]], ["Orange VOD"])
+        self.assertEqual([p["raw_name"] for p in providers], ["Netflix", "Arte", "Pluto TV", "Canal VOD", "Orange VOD"])
 
     def test_fetch_providers_keeps_distinct_raw_names_even_if_map_would_merge_them(self):
         response = {
@@ -45,7 +41,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
             providers = scanner.fetch_providers(tmdb_id="123", is_tv=False, jsr={"enabled": True})
-        self.assertEqual([p["raw_name"] for p in providers["flatrate"]], ["Amazon Prime Video", "Prime Video"])
+        self.assertEqual([p["raw_name"] for p in providers], ["Amazon Prime Video", "Prime Video"])
 
     def test_fetch_providers_tv_supports_results_structure_and_multiple_regions(self):
         response = {
@@ -64,11 +60,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
             providers = scanner.fetch_providers(tmdb_id="999", is_tv=True, jsr={"enabled": True})
-        self.assertEqual([p["raw_name"] for p in providers["flatrate"]], ["Disney+", "Hulu"])
-        self.assertEqual([p["raw_name"] for p in providers["buy"]], ["Canal VOD"])
-        self.assertEqual([p["raw_name"] for p in providers["ads"]], ["Tubi"])
-        self.assertEqual(providers["free"], [])
-        self.assertEqual(providers["rent"], [])
+        self.assertEqual([p["raw_name"] for p in providers], ["Disney+", "Hulu", "Tubi", "Canal VOD"])
 
     def test_resolve_ids_from_search_prefers_tv_title_and_year(self):
         response = {
@@ -121,13 +113,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     return_value={
-                         "flatrate": [{"raw_name": "Netflix Standard with Ads", "logo": None, "logo_url": None}],
-                         "free": [],
-                         "ads": [],
-                         "buy": [],
-                         "rent": [],
-                     },
+                     return_value=[{"raw_name": "Netflix Standard with Ads", "logo": None, "logo_url": None}],
                  ):
                 scanner.run_enrich(force=True)
 
@@ -136,13 +122,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
 
             self.assertEqual(
                 item["providers"],
-                {
-                    "flatrate": ["Netflix Standard with Ads"],
-                    "free": None,
-                    "ads": None,
-                    "buy": None,
-                    "rent": None,
-                },
+                ["Netflix Standard with Ads"],
             )
             self.assertTrue(item["providers_fetched"])
             for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
@@ -180,26 +160,19 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     return_value={
-                         "flatrate": [
-                             {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None, "logo_url": None},
-                             {"raw_name": "Autres", "logo": None, "logo_url": None},
-                             {"raw_name": "Netflix   ", "logo": None, "logo_url": None},
-                             {"raw_name": "Netflix", "logo": None, "logo_url": None},
-                         ],
-                         "free": [],
-                         "ads": [],
-                         "buy": [],
-                         "rent": [],
-                     },
+                     return_value=[
+                         {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None, "logo_url": None},
+                         {"raw_name": "Autres", "logo": None, "logo_url": None},
+                         {"raw_name": "Netflix   ", "logo": None, "logo_url": None},
+                         {"raw_name": "Netflix", "logo": None, "logo_url": None},
+                     ],
                  ):
                 scanner.run_enrich(force=True)
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             item = payload["items"][0]
-            self.assertEqual(item["providers"]["flatrate"], ["HBO Max. Amazon Channel", "Netflix"])
-            self.assertNotIn("Autres", item["providers"]["flatrate"])
-            self.assertIsNone(item["providers"]["free"])
+            self.assertEqual(item["providers"], ["HBO Max. Amazon Channel", "Netflix"])
+            self.assertNotIn("Autres", item["providers"])
 
     def test_enrich_tv_item_without_providers_still_marks_fetch_success(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -234,23 +207,14 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     return_value={group: [] for group in scanner._PROVIDER_TYPES},
+                     return_value=[],
                  ):
                 scanner.run_enrich(force=True)
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             item = payload["items"][0]
             self.assertTrue(item["providers_fetched"])
-            self.assertEqual(
-                item["providers"],
-                {
-                    "flatrate": None,
-                    "free": None,
-                    "ads": None,
-                    "buy": None,
-                    "rent": None,
-                },
-            )
+            self.assertEqual(item["providers"], [])
 
     def test_enrich_tv_item_on_fetch_error_keeps_providers_fetched_false(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -269,7 +233,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "category": "Series",
                                 "tmdb_id": "7777",
                                 "tvdb_id": "7777",
-                                "providers": {"flatrate": ["Legacy"], "free": None, "ads": None, "buy": None, "rent": None},
+                                "providers": ["Legacy"],
                                 "providers_fetched": False,
                             }
                         ],
@@ -288,7 +252,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             item = payload["items"][0]
             self.assertFalse(item["providers_fetched"])
-            self.assertEqual(item["providers"]["flatrate"], ["Legacy"])
+            self.assertEqual(item["providers"], ["Legacy"])
 
     def test_enrich_tv_retries_with_search_resolved_tvdb_id(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -337,9 +301,9 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = {"flatrate": [{"raw_name": "Disney+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
-            providers_hulu = {"flatrate": [{"raw_name": "Hulu", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
-            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
+            providers_hulu = [{"raw_name": "Hulu", "logo": None, "logo_url": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 mapping = {
@@ -384,9 +348,9 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertEqual(by_title["Paradise"]["tmdb_id"], "9001")
             self.assertEqual(by_title["Andor"]["tmdb_id"], "9002")
             self.assertEqual(by_title["La Casa de Papel"]["tmdb_id"], "9003")
-            self.assertEqual(by_title["Paradise"]["providers"]["flatrate"], ["Disney+"])
-            self.assertEqual(by_title["Andor"]["providers"]["flatrate"], ["Hulu"])
-            self.assertEqual(by_title["La Casa de Papel"]["providers"]["flatrate"], ["Netflix"])
+            self.assertEqual(by_title["Paradise"]["providers"], ["Disney+"])
+            self.assertEqual(by_title["Andor"]["providers"], ["Hulu"])
+            self.assertEqual(by_title["La Casa de Papel"]["providers"], ["Netflix"])
             self.assertTrue(by_title["Paradise"]["providers_fetched"])
             self.assertTrue(by_title["Andor"]["providers_fetched"])
             self.assertTrue(by_title["La Casa de Papel"]["providers_fetched"])
@@ -417,7 +381,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -429,7 +393,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             item = payload["items"][0]
             self.assertEqual(item["tmdb_id"], "11001")
-            self.assertEqual(item["providers"]["flatrate"], ["Netflix"])
+            self.assertEqual(item["providers"], ["Netflix"])
             self.assertTrue(item["providers_fetched"])
 
     def test_enrich_movie_nominal_uses_tmdb_id(self):
@@ -458,7 +422,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -496,7 +460,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = {"flatrate": [{"raw_name": "Disney+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -534,7 +498,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_apple = {"flatrate": [{"raw_name": "Apple TV+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            providers_apple = [{"raw_name": "Apple TV+", "logo": None, "logo_url": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -544,7 +508,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             item = payload["items"][0]
-            self.assertEqual(item["providers"]["flatrate"], ["Apple TV+"])
+            self.assertEqual(item["providers"], ["Apple TV+"])
             self.assertTrue(item["providers_fetched"])
 
     def test_enrich_has_no_implicit_category_filter(self):
@@ -570,7 +534,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            default_providers = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            default_providers = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 return default_providers
@@ -586,7 +550,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertEqual(len(payload["items"]), len(items))
             by_title = {item["title"]: item for item in payload["items"]}
             for key in ("AnimA", "MovieA", "ShowA", "TvA", "AnimeA"):
-                self.assertEqual(by_title[key]["providers"]["flatrate"], ["Netflix"])
+                self.assertEqual(by_title[key]["providers"], ["Netflix"])
                 self.assertTrue(by_title[key]["providers_fetched"])
 
     def test_sanitize_item_converts_unknown_sentinels_to_null(self):
@@ -602,8 +566,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertIsNone(clean["audio_languages_simple"])
         self.assertIsNone(clean["codec"])
         self.assertIsNone(clean["resolution"])
-        self.assertEqual(clean["providers"]["flatrate"], ["Netflix"])
-        self.assertIsNone(clean["providers"]["free"])
+        self.assertEqual(clean["providers"], ["Netflix"])
 
 
 if __name__ == "__main__":

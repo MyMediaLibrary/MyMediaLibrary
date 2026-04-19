@@ -458,8 +458,8 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     """
     Fetch FR streaming providers from Jellyseerr.
     Returns:
-      dict[str, list[dict]] — success (may contain empty lists per provider type)
-                              each dict entry: {raw_name, logo, logo_url}
+      list[dict]   — success as flat raw provider entries
+                     each dict entry: {raw_name, logo, logo_url}
       _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
@@ -502,8 +502,8 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
         region_keys = [region for region, _ in regions] if regions else []
         log.debug(f"[providers] {media}/{media_id}: no providers extracted (regions: {region_keys or 'none'})")
 
-    result: dict[str, list[dict]] = {group: [] for group in _PROVIDER_TYPES}
-    seen_by_group: dict[str, set[str]] = {group: set() for group in _PROVIDER_TYPES}
+    result: list[dict] = []
+    seen_raw_names: set[str] = set()
     for group in _PROVIDER_TYPES:
         for p in providers_by_type_raw[group]:
             if not isinstance(p, dict):
@@ -512,9 +512,9 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
             if not raw_name:
                 continue
             raw_name = str(raw_name)
-            if raw_name in seen_by_group[group]:
+            if raw_name in seen_raw_names:
                 continue
-            seen_by_group[group].add(raw_name)
+            seen_raw_names.add(raw_name)
             log.debug(f"[providers_raw] {media}/{media_id} [{group}]: {raw_name!r}")
             # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
@@ -527,7 +527,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
             else:
                 log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{media_id}, raw={p}")
                 logo_url = logo = None
-            result[group].append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
+            result.append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
     return result
 
 
@@ -1092,7 +1092,12 @@ def _normalize_provider_entries(providers) -> list[str]:
         if isinstance(p, str):
             raw_name = p
         elif isinstance(p, dict):
-            raw_name = p.get("name")
+            raw_name = (
+                p.get("raw_name")
+                or p.get("name")
+                or p.get("provider_name")
+                or p.get("providerName")
+            )
         else:
             raw_name = None
         cleaned = _clean_raw_provider_name(raw_name)
@@ -1102,19 +1107,25 @@ def _normalize_provider_entries(providers) -> list[str]:
     return result
 
 
-def _normalize_providers(providers) -> dict[str, list[str] | None]:
-    """Normalize providers payload to typed groups: flatrate/free/ads/buy/rent."""
-    normalized = {group: None for group in _PROVIDER_TYPES}
+def _normalize_providers(providers) -> list[str]:
+    """Normalize providers payload to a flat cleaned raw-name list."""
     if isinstance(providers, list):
-        flatrate = _normalize_provider_entries(providers)
-        normalized["flatrate"] = flatrate if flatrate else None
-        return normalized
+        return _normalize_provider_entries(providers)
     if not isinstance(providers, dict):
-        return normalized
+        return []
+
+    ordered_entries = []
     for group in _PROVIDER_TYPES:
-        cleaned = _normalize_provider_entries(providers.get(group, []))
-        normalized[group] = cleaned if cleaned else None
-    return normalized
+        values = providers.get(group)
+        if isinstance(values, list):
+            ordered_entries.extend(values)
+
+    for key in sorted(k for k in providers.keys() if k not in _PROVIDER_TYPES):
+        values = providers.get(key)
+        if isinstance(values, list):
+            ordered_entries.extend(values)
+
+    return _normalize_provider_entries(ordered_entries)
 
 def _strip_score_fields(item: dict) -> dict:
     """Remove score-related fields from one item (in place) for score-disabled runs."""
@@ -1630,7 +1641,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 item, providers = future.result()
                 if providers is _JSR_NOT_FOUND:
                     # Item not in Jellyseerr — mark as fetched (no FR providers)
-                    item["providers"]         = {group: None for group in _PROVIDER_TYPES}
+                    item["providers"]         = []
                     item["providers_fetched"] = True
                     not_found_count += 1
                     not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
@@ -1641,15 +1652,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 # Store cleaned raw provider names from Jellyseerr.
-                item["providers"] = _normalize_providers(
-                    {
-                        group: [p["raw_name"] for p in providers.get(group, [])]
-                        for group in _PROVIDER_TYPES
-                    }
-                )
+                item["providers"] = _normalize_providers([p["raw_name"] for p in (providers or [])])
                 item["providers_fetched"] = True
                 enriched += 1
-                total_providers = sum(len(providers.get(group, [])) for group in _PROVIDER_TYPES)
+                total_providers = len(providers or [])
                 log.debug(f"  {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)

@@ -255,10 +255,12 @@
     const enabled = getDep('getEnabledProvidersForItem');
     if (typeof enabled === 'function') return enabled(item);
     const fromDep = getDep('getItemProviders');
-    if (typeof fromDep === 'function') return fromDep(item, 'flatrate');
+    if (typeof fromDep === 'function') return fromDep(item);
     const providers = item?.providers;
     if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
-      return Array.isArray(providers.flatrate) ? providers.flatrate : [];
+      return Object.values(providers)
+        .filter((values) => Array.isArray(values))
+        .flat();
     }
     return Array.isArray(providers) ? providers : [];
   }

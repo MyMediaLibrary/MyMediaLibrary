@@ -22,7 +22,6 @@
 
   // ── Private constants ─────────────────────────────────────────────────────
   const _DEFAULT_ACCENT = '#7c6aff';
-  const _PROVIDER_TYPES = window.MMLConstants?.PROVIDER_TYPES || ['flatrate', 'free', 'ads', 'buy', 'rent'];
 
   // ── Settings private state ────────────────────────────────────────────────
   let _settingsJsrTestOk = false;
@@ -141,7 +140,6 @@
     toggleJsrFields();
 
     renderFoldersUI();
-    renderProviderTypeToggles();
     renderProviderToggles();
   }
 
@@ -195,9 +193,7 @@
       partial.folders = folderUpdates;
     }
 
-    // Gather provider visibility and selected provider types
-    const provTypes = gatherProviderVisibleTypes();
-    if (provTypes !== undefined) partial.providers_visible_types = provTypes;
+    // Gather provider visibility
     const provVis = gatherProviderVisibility();
     if (provVis !== undefined) partial.providers_visible = provVis;
 
@@ -335,67 +331,14 @@
   }
 
   // ── Settings: provider toggles ────────────────────────────────────────────
-  function _getSelectedProviderTypesForSettings() {
-    const toggles = [...document.querySelectorAll('.provider-type-toggle')];
-    if (toggles.length) {
-      return new Set(
-        toggles
-          .filter((el) => el.checked)
-          .map((el) => el.dataset.providerType)
-          .filter((type) => _PROVIDER_TYPES.includes(type))
-      );
-    }
-    const cfgTypes = appConfig.providers_visible_types;
-    if (!Array.isArray(cfgTypes)) return new Set(_PROVIDER_TYPES);
-    return new Set(cfgTypes.filter((type) => _PROVIDER_TYPES.includes(type)));
-  }
-
-  function _getProviderTypeLabel(type) {
-    return t(`settings.jellyseerr.provider_types.labels.${type}`);
-  }
-
-  function renderProviderTypeToggles() {
-    const container = document.getElementById('cfgProviderTypeToggles');
-    if (!container) return;
-    const selected = _getSelectedProviderTypesForSettings();
-    let html = '';
-    _PROVIDER_TYPES.forEach((type) => {
-      html += '<div class="settings-row" style="margin-bottom:6px">'
-        + '<label class="settings-label">' + escH(_getProviderTypeLabel(type)) + '</label>'
-        + '<label class="toggle-switch"><input type="checkbox" class="provider-type-toggle" data-provider-type="' + escH(type) + '"'
-        + (selected.has(type) ? ' checked' : '') + '/><span class="toggle-switch-slider"></span></label>'
-        + '</div>';
-    });
-    container.innerHTML = html;
-    container.querySelectorAll('.provider-type-toggle').forEach((el) => {
-      el.addEventListener('change', () => {
-        renderProviderToggles();
-      });
-    });
-  }
-
-  function gatherProviderVisibleTypes() {
-    const toggles = [...document.querySelectorAll('.provider-type-toggle')];
-    if (!toggles.length) return undefined;
-    return toggles
-      .filter((el) => el.checked)
-      .map((el) => el.dataset.providerType)
-      .filter((type) => _PROVIDER_TYPES.includes(type));
-  }
-
   function renderProviderToggles() {
     const container = document.getElementById('cfgProviderToggles');
     if (!container) return;
-    const selectedTypes = _getSelectedProviderTypesForSettings();
-    if (!selectedTypes.size) {
-      container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_type_selected') + '</div>';
-      return;
-    }
-    const provs = [...new Set(allItems.flatMap((i) => _getItemProvidersForSettings(i, selectedTypes).map((p) => window._pname ? window._pname(p) : (p.name || p)).filter(Boolean)))]
+    const provs = [...new Set(allItems.flatMap((i) => _getItemProvidersForSettings(i).map((p) => window._pname ? window._pname(p) : (p.name || p)).filter(Boolean)))]
       .filter((p) => !_isOthersProviderName(p))
       .sort();
     const hasHidden = allItems.some((i) =>
-      _getItemProvidersForSettings(i, selectedTypes).some((entry) => {
+      _getItemProvidersForSettings(i).some((entry) => {
         const name = window._pname ? window._pname(entry) : (entry?.name || entry);
         return !!name && !_isOthersProviderName(name) && !_provVisible(name);
       })
@@ -429,19 +372,17 @@
     return toggles.filter((el) => el.checked).map((el) => el.dataset.prov);
   }
 
-  function _getItemProvidersForSettings(item, selectedTypes = _getSelectedProviderTypesForSettings()) {
+  function _getItemProvidersForSettings(item) {
+    const entries = (typeof window.getItemProviders === 'function') ? window.getItemProviders(item) : [];
     const result = [];
     const seenRaw = new Set();
-    selectedTypes.forEach((type) => {
-      const entries = (typeof window.getItemProviders === 'function') ? window.getItemProviders(item, type) : [];
-      entries.forEach((entry) => {
-        const raw = (entry && typeof entry === 'object')
-          ? String(entry.name || '').trim()
-          : String(entry || '').trim();
-        if (!raw || seenRaw.has(raw)) return;
-        seenRaw.add(raw);
-        result.push(entry);
-      });
+    entries.forEach((entry) => {
+      const raw = (entry && typeof entry === 'object')
+        ? String(entry.name || '').trim()
+        : String(entry || '').trim();
+      if (!raw || seenRaw.has(raw)) return;
+      seenRaw.add(raw);
+      result.push(entry);
     });
     return result;
   }
@@ -451,7 +392,6 @@
     const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
     const jellyFields = document.getElementById('cfgJellyseerrFields');
     const jellyBlock = document.getElementById('cfgJellyseerrBlock');
-    const providerTypesBlock = document.getElementById('cfgProviderTypesBlock');
     const providersBlock = document.getElementById('cfgProvidersBlock');
     ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
@@ -459,11 +399,9 @@
     });
     if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
     if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
-    if (providerTypesBlock) providerTypesBlock.style.display = enabled ? '' : 'none';
     if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
     if (enabled) {
       _setSettingsCollapsed('settingsJellyseerrBody', true);
-      _setSettingsCollapsed('settingsProviderTypesBody', true);
       _setSettingsCollapsed('settingsProvidersBody', true);
     }
     if (!enabled) {
@@ -697,7 +635,6 @@
     _settingsJsrTestOk = false;
     loadSettings();
     loadVersion();
-    renderProviderTypeToggles();
     renderProviderToggles();
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');

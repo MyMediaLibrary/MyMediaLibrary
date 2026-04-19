@@ -41,7 +41,6 @@ let allItems=[], categories=[], groups=[];
     return Array.isArray(value) ? value : [];
   }
   const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
-  const PROVIDER_TYPES = window.MMLConstants.PROVIDER_TYPES || ['flatrate', 'free', 'ads', 'buy', 'rent'];
   const FILTER_ORDER = [
     'type',
     'folder',
@@ -332,40 +331,18 @@ let allItems=[], categories=[], groups=[];
     return getEnabledProviderNames(item);
   }
 
-  function getItemProviders(item, providerType = 'flatrate') {
+  function getItemProviders(item) {
     const providers = item?.providers;
     if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
-      const values = providers[providerType];
-      return Array.isArray(values) ? values : [];
+      return Object.values(providers)
+        .filter((values) => Array.isArray(values))
+        .flat();
     }
-    if (providerType === 'flatrate' && Array.isArray(providers)) {
-      return providers;
-    }
-    return [];
-  }
-
-  function _normalizeProviderTypesSelection(raw) {
-    if (!Array.isArray(raw)) return new Set(PROVIDER_TYPES);
-    return new Set(raw.map((v) => String(v || '').trim()).filter((v) => PROVIDER_TYPES.includes(v)));
-  }
-
-  function getEnabledProviderTypes() {
-    return _normalizeProviderTypesSelection(appConfig.providers_visible_types);
+    return Array.isArray(providers) ? providers : [];
   }
 
   function getEnabledProvidersForItem(item) {
-    const selectedTypes = getEnabledProviderTypes();
-    const seenRaw = new Set();
-    const providers = [];
-    selectedTypes.forEach((ptype) => {
-      getItemProviders(item, ptype).forEach((entry) => {
-        const raw = _providerRawName(entry);
-        if (!raw || seenRaw.has(raw)) return;
-        seenRaw.add(raw);
-        providers.push(entry);
-      });
-    });
-    return providers;
+    return getItemProviders(item);
   }
 
   function getEnabledProviderNames(item) {

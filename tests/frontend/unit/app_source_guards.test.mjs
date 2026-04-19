@@ -133,7 +133,7 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
 });
 
 test('settings trigger scan only when folders changed', () => {
-  const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', '_getSelectedProviderTypesForSettings');
+  const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(newConfig\.folders\)/, 'scan trigger helper should compare new folder snapshot');
   assert.match(shouldTriggerScanBlock, /return prevSig !== nextSig;/, 'scan trigger helper should only trigger on actual folder diff');
@@ -173,19 +173,16 @@ test('audio language simplified stats keep all categories without auto-grouping 
   assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
 });
 
-test('provider type visibility is defaulted and persisted from settings', () => {
-  const normalizeBlock = functionBlock(appSource, '_normalizeProviderTypesSelection', 'getEnabledProviderTypes');
-  assert.match(normalizeBlock, /if \(!Array\.isArray\(raw\)\) return new Set\(PROVIDER_TYPES\);/, 'provider types should default to all when config is missing');
-
+test('settings persist only providers visibility whitelist (no provider types)', () => {
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
-  assert.match(saveSettingsBlock, /partial\.providers_visible_types = provTypes;/, 'settings save should persist selected provider types');
   assert.match(saveSettingsBlock, /partial\.providers_visible = provVis;/, 'settings save should persist selected providers whitelist');
+  assert.doesNotMatch(saveSettingsBlock, /providers_visible_types/, 'settings save should not persist provider type config');
 });
 
-test('stats providers rely on enabled provider types, not flatrate-only fallback', () => {
+test('stats providers rely on flat provider lists', () => {
   const buildStatsBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
   assert.match(buildStatsBlock, /getScopedProviders\(i\)/, 'stats should aggregate providers from selected provider types');
-  assert.doesNotMatch(buildStatsBlock, /getFlatProviders\(i\)/, 'stats should not force flatrate-only provider extraction');
+  assert.doesNotMatch(buildStatsBlock, /providers\.flatrate/, 'stats should not rely on flatrate-only provider extraction');
 });
 
 test('filter order is centralized and explicit for desktop and mobile', () => {
