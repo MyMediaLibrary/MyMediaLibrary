@@ -344,11 +344,11 @@ def _normalize_lookup_title(value: str | None) -> str:
     return re.sub(r"\s+", " ", value).strip().casefold()
 
 
-def _resolve_tmdb_id_from_search(title: str | None, year: str | int | None, is_tv: bool, jsr: dict | None = None):
+def _resolve_ids_from_search(title: str | None, year: str | int | None, is_tv: bool, jsr: dict | None = None):
     """
     Resolve TMDB id via Jellyseerr search when direct /tv/{id} fetch fails.
     Returns:
-      str | int   — resolved tmdb id
+      dict        — {"tmdb_id": str|int|None, "tvdb_id": str|int|None}
       None        — nothing matched
       _FETCH_ERROR — Jellyseerr request failure
     """
@@ -369,7 +369,7 @@ def _resolve_tmdb_id_from_search(title: str | None, year: str | int | None, is_t
     expected_year = str(year).strip() if year is not None and str(year).strip() else None
     wanted_title = _normalize_lookup_title(title)
 
-    scored: list[tuple[int, str | int]] = []
+    scored: list[tuple[int, dict]] = []
     for item in results:
         if not isinstance(item, dict):
             continue
@@ -377,7 +377,8 @@ def _resolve_tmdb_id_from_search(title: str | None, year: str | int | None, is_t
         if media_type and media_type != target_media:
             continue
         tmdb_id = item.get("id") or item.get("tmdbId") or item.get("tmdb_id")
-        if tmdb_id in (None, ""):
+        tvdb_id = item.get("tvdbId") or item.get("tvdb_id")
+        if tmdb_id in (None, "") and tvdb_id in (None, ""):
             continue
         candidate_title = (
             item.get("title")
@@ -398,7 +399,7 @@ def _resolve_tmdb_id_from_search(title: str | None, year: str | int | None, is_t
         if expected_year and candidate_year == expected_year:
             score += 2
         if score > 0:
-            scored.append((score, tmdb_id))
+            scored.append((score, {"tmdb_id": tmdb_id, "tvdb_id": tvdb_id}))
 
     if not scored:
         return None
@@ -1221,8 +1222,18 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     else:
         poster = prev.get("poster")
 
-    # --- tmdb_id from NFO (always fresh) ---
-    tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
+    # --- IDs from NFO (always fresh). For TV, keep tmdb_id and tvdb_id separated. ---
+    if is_tv:
+        nfo_tmdb_id = nfo_meta.get("tmdb_id")
+        nfo_tvdb_id = nfo_meta.get("tvdb_id")
+        tmdb_id = nfo_tmdb_id or (prev.get("tmdb_id") if not nfo_tvdb_id else None)
+        tvdb_id = nfo_tvdb_id or prev.get("tvdb_id")
+        # Guard: never persist tvdb-style fallback into tmdb_id when tvdb_id is explicitly known.
+        if tmdb_id and tvdb_id and str(tmdb_id).strip() == str(tvdb_id).strip():
+            tmdb_id = None
+    else:
+        tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
+        tvdb_id = None
     size_b = get_dir_size(media_dir)
 
     hdr_current = bool(nfo_meta.get("hdr", False))
@@ -1245,6 +1256,7 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "added_ts":          int(mtime),
         "poster":            poster,
         "tmdb_id":           tmdb_id,
+        "tvdb_id":           tvdb_id,
         "resolution":        nfo_meta.get("resolution") or prev.get("resolution"),
         "width":             nfo_meta.get("width")      or prev.get("width"),
         "height":            nfo_meta.get("height")     or prev.get("height"),
@@ -1509,8 +1521,14 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     def needs_enrich(item: dict) -> bool:
         if only_category and item.get("category") != only_category:
             return False
-        if not item.get("tmdb_id"):
-            return False  # no tmdb_id from NFO → can't fetch
+        is_tv = item.get("type") == "tv"
+        if is_tv:
+            # TV nominal path uses tvdb_id. If missing, allow fallback search by title.
+            if not item.get("tvdb_id") and not item.get("title"):
+                return False
+        else:
+            if not item.get("tmdb_id"):
+                return False
         if force:
             return True
         return not item.get("providers_fetched")
@@ -1540,19 +1558,34 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
-            providers = fetch_providers(item["tmdb_id"], is_tv, jsr)
-            if providers is _JSR_NOT_FOUND and is_tv:
-                resolved_id = _resolve_tmdb_id_from_search(item.get("title"), item.get("year"), is_tv=True, jsr=jsr)
-                if resolved_id is _FETCH_ERROR:
-                    providers = _FETCH_ERROR
-                elif resolved_id not in (None, "", item.get("tmdb_id")):
-                    log.info(
-                        f"[enrich-tv] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_id}"
-                    )
-                    item["tmdb_id"] = str(resolved_id)
-                    providers = fetch_providers(item["tmdb_id"], True, jsr)
+            if is_tv:
+                lookup_id = item.get("tvdb_id")
+                if lookup_id:
+                    providers = fetch_providers(lookup_id, True, jsr)
+                else:
+                    providers = _JSR_NOT_FOUND
+                if providers is _JSR_NOT_FOUND:
+                    resolved_ids = _resolve_ids_from_search(item.get("title"), item.get("year"), is_tv=True, jsr=jsr)
+                    if resolved_ids is _FETCH_ERROR:
+                        providers = _FETCH_ERROR
+                    elif isinstance(resolved_ids, dict):
+                        resolved_tvdb = resolved_ids.get("tvdb_id")
+                        resolved_tmdb = resolved_ids.get("tmdb_id")
+                        if resolved_tmdb not in (None, ""):
+                            item["tmdb_id"] = str(resolved_tmdb)
+                        if resolved_tvdb not in (None, ""):
+                            log.info(
+                                f"[enrich-tv] Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                            )
+                            item["tvdb_id"] = str(resolved_tvdb)
+                            providers = fetch_providers(item["tvdb_id"], True, jsr)
+            else:
+                providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
-            log.warning(f"[enrich] Unexpected exception tmdb_id={item.get('tmdb_id')} {item.get('title')!r}: {e}")
+            log.warning(
+                f"[enrich] Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{item.get('title')!r}: {e}"
+            )
             providers = _FETCH_ERROR
         time.sleep(0.05)
         return item, providers
@@ -1575,12 +1608,12 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     item["providers"]         = {group: None for group in _PROVIDER_TYPES}
                     item["providers_fetched"] = True
                     not_found_count += 1
-                    not_found_ids.append(item.get("tmdb_id", "?"))
+                    not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 if providers is _FETCH_ERROR:
                     # Jellyseerr unreachable — leave providers_fetched False, retry next run
                     failed_count += 1
-                    failed_ids.append(item.get("tmdb_id", "?"))
+                    failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 # Store cleaned raw provider names from Jellyseerr.
                 item["providers"] = _normalize_providers(

@@ -157,6 +157,21 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             self.assertIsNone(item["audio_codec"])
             self.assertIsNone(item["audio_languages_simple"])
 
+    def test_scan_media_item_tv_keeps_tmdb_and_tvdb_separate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            media_dir = root / "Series" / "Andor"
+            media_dir.mkdir(parents=True)
+            (media_dir / "tvshow.nfo").write_text("<tvshow/>", encoding="utf-8")
+            cat = {"name": "Series", "type": "tv"}
+            prev = {"tmdb_id": "legacy", "tvdb_id": "legacy-tvdb"}
+            with patch.object(scanner, "parse_tvshow_nfo", return_value={"title": "Andor", "tmdb_id": "228068", "tvdb_id": "83867"}), \
+                 patch.object(scanner, "find_episode_nfo", return_value={}), \
+                 patch.object(scanner, "count_seasons_episodes", return_value=(1, 12)):
+                item = scanner.scan_media_item(media_dir, root, cat, prev, enable_score=False)
+            self.assertEqual(item["tmdb_id"], "228068")
+            self.assertEqual(item["tvdb_id"], "83867")
+
 
 class FolderEnabledCompatibilityTest(unittest.TestCase):
     def test_enabled_falls_back_to_visible_when_missing(self):

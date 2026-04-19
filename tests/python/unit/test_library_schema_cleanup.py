@@ -70,17 +70,18 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertEqual(providers["free"], [])
         self.assertEqual(providers["rent"], [])
 
-    def test_resolve_tmdb_id_from_search_prefers_tv_title_and_year(self):
+    def test_resolve_ids_from_search_prefers_tv_title_and_year(self):
         response = {
             "results": [
-                {"mediaType": "movie", "id": 1, "title": "Paradise", "releaseDate": "2025-01-01"},
-                {"mediaType": "tv", "id": 99, "name": "Paradise", "firstAirDate": "2024-01-01"},
-                {"mediaType": "tv", "id": 321, "name": "Paradise", "firstAirDate": "2025-01-26"},
+                {"mediaType": "movie", "id": 1, "title": "Paradise", "releaseDate": "2025-01-01", "tvdbId": 11},
+                {"mediaType": "tv", "id": 99, "name": "Paradise", "firstAirDate": "2024-01-01", "tvdbId": 991},
+                {"mediaType": "tv", "id": 321, "name": "Paradise", "firstAirDate": "2025-01-26", "tvdbId": 3321},
             ]
         }
         with patch.object(scanner, "_jsr_get", return_value=response):
-            resolved = scanner._resolve_tmdb_id_from_search("Paradise", 2025, is_tv=True, jsr={"enabled": True})
-        self.assertEqual(resolved, 321)
+            resolved = scanner._resolve_ids_from_search("Paradise", 2025, is_tv=True, jsr={"enabled": True})
+        self.assertEqual(resolved["tmdb_id"], 321)
+        self.assertEqual(resolved["tvdb_id"], 3321)
 
     def test_enrich_stores_raw_provider_names_and_drops_legacy_root_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -216,6 +217,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "type": "tv",
                                 "category": "Series",
                                 "tmdb_id": "7777",
+                                "tvdb_id": "7777",
                                 "providers": [],
                                 "providers_fetched": False,
                             }
@@ -266,6 +268,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "type": "tv",
                                 "category": "Series",
                                 "tmdb_id": "7777",
+                                "tvdb_id": "7777",
                                 "providers": {"flatrate": ["Legacy"], "free": None, "ads": None, "buy": None, "rent": None},
                                 "providers_fetched": False,
                             }
@@ -287,7 +290,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertFalse(item["providers_fetched"])
             self.assertEqual(item["providers"]["flatrate"], ["Legacy"])
 
-    def test_enrich_tv_retries_with_search_resolved_tmdb_id(self):
+    def test_enrich_tv_retries_with_search_resolved_tvdb_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
             out_path.write_text(
@@ -303,7 +306,8 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "year": "2025",
                                 "type": "tv",
                                 "category": "Series",
-                                "tmdb_id": "bad-id-1",
+                                "tmdb_id": None,
+                                "tvdb_id": "bad-id-1",
                                 "providers": [],
                                 "providers_fetched": False,
                             },
@@ -312,7 +316,8 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "year": "2022",
                                 "type": "tv",
                                 "category": "Series",
-                                "tmdb_id": "bad-id-2",
+                                "tmdb_id": None,
+                                "tvdb_id": "bad-id-2",
                                 "providers": [],
                                 "providers_fetched": False,
                             },
@@ -321,7 +326,8 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "year": "2017",
                                 "type": "tv",
                                 "category": "Series",
-                                "tmdb_id": "bad-id-3",
+                                "tmdb_id": None,
+                                "tvdb_id": "bad-id-3",
                                 "providers": [],
                                 "providers_fetched": False,
                             },
@@ -350,16 +356,23 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  ), \
                  patch.object(
                      scanner,
-                     "_resolve_tmdb_id_from_search",
-                     side_effect=["9991", "9992", "9993"],
+                     "_resolve_ids_from_search",
+                     side_effect=[
+                         {"tmdb_id": "9001", "tvdb_id": "9991"},
+                         {"tmdb_id": "9002", "tvdb_id": "9992"},
+                         {"tmdb_id": "9003", "tvdb_id": "9993"},
+                     ],
                  ):
                 scanner.run_enrich(force=True)
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             by_title = {item["title"]: item for item in payload["items"]}
-            self.assertEqual(by_title["Paradise"]["tmdb_id"], "9991")
-            self.assertEqual(by_title["Andor"]["tmdb_id"], "9992")
-            self.assertEqual(by_title["La Casa de Papel"]["tmdb_id"], "9993")
+            self.assertEqual(by_title["Paradise"]["tvdb_id"], "9991")
+            self.assertEqual(by_title["Andor"]["tvdb_id"], "9992")
+            self.assertEqual(by_title["La Casa de Papel"]["tvdb_id"], "9993")
+            self.assertEqual(by_title["Paradise"]["tmdb_id"], "9001")
+            self.assertEqual(by_title["Andor"]["tmdb_id"], "9002")
+            self.assertEqual(by_title["La Casa de Papel"]["tmdb_id"], "9003")
             self.assertEqual(by_title["Paradise"]["providers"]["flatrate"], ["Disney+"])
             self.assertEqual(by_title["Andor"]["providers"]["flatrate"], ["Hulu"])
             self.assertEqual(by_title["La Casa de Papel"]["providers"]["flatrate"], ["Netflix"])

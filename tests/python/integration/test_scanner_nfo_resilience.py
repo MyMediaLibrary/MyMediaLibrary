@@ -36,6 +36,50 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             self.assertEqual(result["audio_languages"], [])
             self.assertEqual(result["audio_languages_simple"], "UNKNOWN")
 
+    def test_movie_nfo_prefers_tmdb_uniqueid(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Inception</title>
+  <id>99999</id>
+  <uniqueid type="tmdb" default="true">27205</uniqueid>
+</movie>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "movie.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_movie_nfo(path)
+            self.assertEqual(result.get("tmdb_id"), "27205")
+
+    def test_tvshow_nfo_separates_tmdb_and_tvdb_ids(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<tvshow>
+  <title>Andor</title>
+  <id>83867</id>
+  <uniqueid type="tvdb" default="true">83867</uniqueid>
+  <uniqueid type="tmdb">228068</uniqueid>
+</tvshow>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "tvshow.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_tvshow_nfo(path)
+            self.assertEqual(result.get("tmdb_id"), "228068")
+            self.assertEqual(result.get("tvdb_id"), "83867")
+
+    def test_tvshow_nfo_id_fallback_maps_to_tvdb_not_tmdb(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<tvshow>
+  <title>La Casa de Papel</title>
+  <id>311954</id>
+</tvshow>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "tvshow.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_tvshow_nfo(path)
+            self.assertIsNone(result.get("tmdb_id"))
+            self.assertEqual(result.get("tvdb_id"), "311954")
+
 
 if __name__ == "__main__":
     unittest.main()
