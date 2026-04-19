@@ -518,9 +518,17 @@ def migrate_env_to_config() -> None:
     cfg = load_config()
     changed = False
 
-    # Jellyseerr
-    env_url    = os.environ.get("JELLYSEERR_URL",    "").rstrip("/")
-    env_apikey = os.environ.get("JELLYSEERR_APIKEY", "")
+    # Jellyseerr bootstrap (supports both JELLYSEERR_* and JELLYSEER_* spellings)
+    raw_env_url = os.environ.get("JELLYSEERR_URL")
+    if raw_env_url is None:
+        raw_env_url = os.environ.get("JELLYSEER_URL")
+    env_url = (raw_env_url or "").strip().rstrip("/")
+
+    raw_env_apikey = os.environ.get("JELLYSEERR_APIKEY")
+    if raw_env_apikey is None:
+        raw_env_apikey = os.environ.get("JELLYSEER_APIKEY")
+    env_apikey = (raw_env_apikey or "").strip()
+
     env_jsr_on = os.environ.get("ENABLE_JELLYSEERR", "")
     jsr = cfg.setdefault("jellyseerr", {})
     if env_url and not jsr.get("url"):

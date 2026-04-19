@@ -1,3 +1,4 @@
+import os
 import pathlib
 import sys
 import tempfile
@@ -235,6 +236,102 @@ class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
         self.assertTrue(jsr["enabled"])
         self.assertEqual(jsr["url"], "https://example.test")
         self.assertEqual(jsr["apikey"], "kept-secret")
+
+
+class JellyseerrEnvBootstrapTest(unittest.TestCase):
+    def test_bootstrap_url_when_config_empty_uses_jellyseer_alias_and_trims(self):
+        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": " https://bootstrap.example/ "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://bootstrap.example")
+        save_secrets.assert_not_called()
+
+    def test_bootstrap_url_does_not_overwrite_existing_config_value(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": "https://bootstrap.example"}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
+        save_secrets.assert_not_called()
+
+    def test_bootstrap_apikey_when_secret_absent_writes_only_internal_secrets(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_APIKEY": "  boot-key  "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_called_once_with({"jellyseerr_apikey": "boot-key"})
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertNotIn("apikey", saved_cfg.get("jellyseerr", {}))
+
+    def test_bootstrap_apikey_does_not_overwrite_existing_secret(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"jellyseerr_apikey": "existing-key"}
+
+        with patch.dict(os.environ, {"JELLYSEER_APIKEY": "boot-key"}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+
+    def test_bootstrap_ignores_blank_values(self):
+        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": "   ", "JELLYSEER_APIKEY": "   "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "")
+
+    def test_bootstrap_no_env_vars_keeps_existing_values(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"jellyseerr_apikey": "existing-key"}
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
 
 
 class HdrFallbackSafetyTest(unittest.TestCase):
