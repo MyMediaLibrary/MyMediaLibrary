@@ -341,6 +341,21 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             providers_hulu = {"flatrate": [{"raw_name": "Hulu", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
             providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
 
+            def fake_fetch(identifier, is_tv, jsr):
+                mapping = {
+                    "bad-id-1": scanner._JSR_NOT_FOUND,
+                    "bad-id-2": scanner._JSR_NOT_FOUND,
+                    "bad-id-3": scanner._JSR_NOT_FOUND,
+                    "9991": providers_disney,
+                    "9992": providers_hulu,
+                    "9993": providers_netflix,
+                    # TMDB fallback path should stay unused in this test.
+                    "9001": scanner._JSR_NOT_FOUND,
+                    "9002": scanner._JSR_NOT_FOUND,
+                    "9003": scanner._JSR_NOT_FOUND,
+                }
+                return mapping.get(str(identifier), scanner._JSR_NOT_FOUND)
+
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -348,11 +363,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     side_effect=[
-                         scanner._JSR_NOT_FOUND, providers_disney,
-                         scanner._JSR_NOT_FOUND, providers_hulu,
-                         scanner._JSR_NOT_FOUND, providers_netflix,
-                     ],
+                     side_effect=fake_fetch,
                  ), \
                  patch.object(
                      scanner,
@@ -379,6 +390,129 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
             self.assertTrue(by_title["Paradise"]["providers_fetched"])
             self.assertTrue(by_title["Andor"]["providers_fetched"])
             self.assertTrue(by_title["La Casa de Papel"]["providers_fetched"])
+
+    def test_enrich_movie_retries_with_search_resolved_tmdb_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Movies"],
+                        "items": [
+                            {
+                                "title": "Back in Action",
+                                "year": "2025",
+                                "type": "movie",
+                                "category": "Movies",
+                                "tmdb_id": None,
+                                "providers": [],
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            providers_netflix = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", side_effect=[providers_netflix]), \
+                 patch.object(scanner, "_resolve_ids_from_search", return_value={"tmdb_id": "11001", "tvdb_id": None}):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            item = payload["items"][0]
+            self.assertEqual(item["tmdb_id"], "11001")
+            self.assertEqual(item["providers"]["flatrate"], ["Netflix"])
+            self.assertTrue(item["providers_fetched"])
+
+    def test_enrich_tv_fallbacks_to_tmdb_when_tvdb_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": 1,
+                        "categories": ["Tv"],
+                        "items": [
+                            {
+                                "title": "Debris",
+                                "year": "2021",
+                                "type": "tv",
+                                "category": "Tv",
+                                "tmdb_id": "99901",
+                                "tvdb_id": "bad-tvdb",
+                                "providers": [],
+                                "providers_fetched": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            providers_apple = {"flatrate": [{"raw_name": "Apple TV+", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", side_effect=[scanner._JSR_NOT_FOUND, providers_apple]):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            item = payload["items"][0]
+            self.assertEqual(item["providers"]["flatrate"], ["Apple TV+"])
+            self.assertTrue(item["providers_fetched"])
+
+    def test_enrich_has_no_implicit_category_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "library.json"
+            items = [
+                {"title": "AnimA", "type": "movie", "category": "Animation", "tmdb_id": "1", "providers": [], "providers_fetched": False},
+                {"title": "MovieA", "type": "movie", "category": "Movies", "tmdb_id": "2", "providers": [], "providers_fetched": False},
+                {"title": "ShowA", "type": "movie", "category": "Spectacles", "tmdb_id": "3", "providers": [], "providers_fetched": False},
+                {"title": "TvA", "type": "tv", "category": "Tv", "tvdb_id": "4", "tmdb_id": "40", "providers": [], "providers_fetched": False},
+                {"title": "AnimeA", "type": "tv", "category": "Anime", "tvdb_id": "5", "tmdb_id": "50", "providers": [], "providers_fetched": False},
+            ]
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": "2026-04-19T00:00:00",
+                        "library_path": "/library",
+                        "total_items": len(items),
+                        "categories": ["Animation", "Movies", "Spectacles", "Tv", "Anime"],
+                        "items": items,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            default_providers = {"flatrate": [{"raw_name": "Netflix", "logo": None, "logo_url": None}], "free": [], "ads": [], "buy": [], "rent": []}
+
+            def fake_fetch(identifier, is_tv, jsr):
+                return default_providers
+
+            with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
+                 patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", side_effect=fake_fetch):
+                scanner.run_enrich(force=True)
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["items"]), len(items))
+            by_title = {item["title"]: item for item in payload["items"]}
+            for key in ("AnimA", "MovieA", "ShowA", "TvA", "AnimeA"):
+                self.assertEqual(by_title[key]["providers"]["flatrate"], ["Netflix"])
+                self.assertTrue(by_title[key]["providers_fetched"])
 
     def test_sanitize_item_converts_unknown_sentinels_to_null(self):
         item = {

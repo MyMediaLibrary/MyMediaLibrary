@@ -1155,7 +1155,17 @@ def _sanitize_library_document(data: dict) -> dict:
     data.pop("providers_raw", None)
     data.pop("providers_raw_meta", None)
     data.pop("enriched_at", None)
-    data["items"] = [_sanitize_item_for_library_json(item) for item in (data.get("items") or [])]
+    items = data.get("items") or []
+    if isinstance(items, list):
+        for idx, item in enumerate(items):
+            clean_item = _sanitize_item_for_library_json(item)
+            if isinstance(item, dict) and isinstance(clean_item, dict):
+                # Keep dict identity so existing references (e.g. enrich batches)
+                # remain valid across per-folder writes.
+                item.clear()
+                item.update(clean_item)
+            else:
+                items[idx] = clean_item
     return data
 
 
@@ -1521,14 +1531,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     def needs_enrich(item: dict) -> bool:
         if only_category and item.get("category") != only_category:
             return False
-        is_tv = item.get("type") == "tv"
-        if is_tv:
-            # TV nominal path uses tvdb_id. If missing, allow fallback search by title.
-            if not item.get("tvdb_id") and not item.get("title"):
-                return False
-        else:
-            if not item.get("tmdb_id"):
-                return False
+        # Enrichment can run from IDs or fallback search (requires title).
+        # Keep this broad even in force mode to avoid skipping valid items.
+        if not item.get("title") and not item.get("tmdb_id") and not item.get("tvdb_id"):
+            return False
         if force:
             return True
         return not item.get("providers_fetched")
@@ -1558,12 +1564,15 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
+            providers = _JSR_NOT_FOUND
             if is_tv:
-                lookup_id = item.get("tvdb_id")
-                if lookup_id:
-                    providers = fetch_providers(lookup_id, True, jsr)
-                else:
-                    providers = _JSR_NOT_FOUND
+                # Nominal path for TV: tvdb_id.
+                tv_lookup_id = item.get("tvdb_id")
+                if tv_lookup_id:
+                    providers = fetch_providers(tv_lookup_id, True, jsr)
+                # Compatibility fallback: some Jellyseerr instances/media still resolve with TMDB tv id.
+                if providers is _JSR_NOT_FOUND and item.get("tmdb_id"):
+                    providers = fetch_providers(item["tmdb_id"], True, jsr)
                 if providers is _JSR_NOT_FOUND:
                     resolved_ids = _resolve_ids_from_search(item.get("title"), item.get("year"), is_tv=True, jsr=jsr)
                     if resolved_ids is _FETCH_ERROR:
@@ -1579,8 +1588,23 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
                             providers = fetch_providers(item["tvdb_id"], True, jsr)
+                        if providers is _JSR_NOT_FOUND and item.get("tmdb_id"):
+                            providers = fetch_providers(item["tmdb_id"], True, jsr)
             else:
-                providers = fetch_providers(item["tmdb_id"], False, jsr)
+                if item.get("tmdb_id"):
+                    providers = fetch_providers(item["tmdb_id"], False, jsr)
+                if providers is _JSR_NOT_FOUND:
+                    resolved_ids = _resolve_ids_from_search(item.get("title"), item.get("year"), is_tv=False, jsr=jsr)
+                    if resolved_ids is _FETCH_ERROR:
+                        providers = _FETCH_ERROR
+                    elif isinstance(resolved_ids, dict):
+                        resolved_tmdb = resolved_ids.get("tmdb_id")
+                        if resolved_tmdb not in (None, ""):
+                            log.info(
+                                f"[enrich-movie] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                            )
+                            item["tmdb_id"] = str(resolved_tmdb)
+                            providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
             log.warning(
                 f"[enrich] Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
@@ -1635,11 +1659,11 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — tmdb_ids: {ids_str}{suffix}")
+        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — tmdb_ids: {ids_str}{suffix}")
+        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
     if not_found_count: parts.append(f"{not_found_count} not found in Jellyseerr")
     if failed_count:    parts.append(f"{failed_count} errors")
