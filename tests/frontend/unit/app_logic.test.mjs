@@ -65,6 +65,18 @@ test('filters include/exclude and reset state behavior', () => {
   assert.equal(logic.hasActiveFilters(reset), true);
 });
 
+test('provider exclude keeps item only if a non-others provider remains', () => {
+  const sample = [
+    { title: 'OnlyOthers', providers: ['Autres'] },
+    { title: 'NetflixAndOthers', providers: ['Netflix', 'Autres'] },
+    { title: 'NetflixPrimeOthers', providers: ['Netflix', 'Prime Video', 'Autres'] },
+  ];
+  const state = baseState();
+  state.activeProviders = new Set(['Netflix']);
+  state.providerExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['NetflixPrimeOthers']);
+});
+
 test('score filter defaults include unscored items', () => {
   const qualityItems = [
     { title: 'Unscored' },

@@ -193,6 +193,12 @@ test('stats providers rely on flat provider lists', () => {
   assert.doesNotMatch(buildStatsBlock, /providers\.flatrate/, 'stats should not rely on flatrate-only provider extraction');
 });
 
+test('provider count chart displays raw counts without "media" unit suffix', () => {
+  const block = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+  assert.match(block, /valueFormatter:\s*\(value\)\s*=>\s*String\(value\)/, 'provider count values should be displayed as raw numbers');
+  assert.doesNotMatch(block, /stats\.media_count/, 'provider count chart should not append "media" unit text');
+});
+
 test('providers catalog loads runtime mapping API and logo catalog', () => {
   const block = functionBlock(appSource, 'loadProvidersCatalog');
   assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
@@ -212,6 +218,11 @@ test('displayed providers are deduplicated post-mapping and ordered with Autres 
   assert.match(block, /return a\.name\.localeCompare\(b\.name, undefined, \{ sensitivity: 'base' \}\);/, 'mapped providers should be sorted alphabetically');
   assert.match(block, /if \(aIsOthers && !bIsOthers\) return 1;/, 'Autres should be sorted after mapped providers');
   assert.match(block, /name: _isOthersProviderName\(entry\.name\) \? DISPLAY_OTHERS_NAME : entry\.name/, 'Autres display label should be normalized once');
+});
+
+test('provider exclude requires at least one remaining non-Autres provider', () => {
+  const block = functionBlock(appSource, '_matchesProviderFilters', '_canonicalProviderFilterKey');
+  assert.match(block, /return remaining\.some\(\(p\) => p !== PROVIDER_OTHERS_KEY\);/, 'exclude mode should keep item only when a non-Autres provider remains');
 });
 
 test('filter order is centralized and explicit for desktop and mobile', () => {

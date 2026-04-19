@@ -8,6 +8,11 @@
   const PROVIDER_OTHERS_KEY = '__others__';
   const PROVIDER_NONE_KEY = '__none__';
   const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  function isOthersProvider(value) {
+    if (value === PROVIDER_OTHERS_KEY) return true;
+    if (typeof value !== 'string') return false;
+    return PROVIDER_OTHERS_ALIASES.has(value.trim().toLowerCase());
+  }
   const SCORE_FILTER_RANGES = [
     { key: '0_20', level: 1 },
     { key: '20_40', level: 2 },
@@ -179,7 +184,7 @@
           if (state.activeProviders.has(PROVIDER_NONE_KEY) && hasNone) return false;
           if (hasNone) return true;
           const remaining = providers.filter((name) => !state.activeProviders.has(name));
-          return remaining.length > 0;
+          return remaining.some((name) => !isOthersProvider(name));
         });
       } else {
         out = applySelectionFilter(

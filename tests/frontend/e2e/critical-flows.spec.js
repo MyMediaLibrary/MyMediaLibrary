@@ -93,6 +93,7 @@ test('configured app with missing library.json shows empty-library state without
 
   await expect(page.locator('#onboardingOverlay')).toBeHidden();
   await expect(page.locator('#library')).toContainText('Veuillez lancer un scan');
+  await expect(page.locator('#library')).not.toContainText('Aucun résultat');
 });
 
 test('global search keyboard interactions and filtering', async ({ page }) => {

@@ -447,7 +447,7 @@ let allItems=[], categories=[], groups=[];
     if (activeProviders.has(FILTER_NONE_KEY) && hasNoProvider) return false;
     if (hasNoProvider) return true;
     const remaining = groupedProv.filter((p) => !activeProviders.has(p));
-    return remaining.length > 0;
+    return remaining.some((p) => p !== PROVIDER_OTHERS_KEY);
   }
   function _canonicalProviderFilterKey(raw) {
     if (typeof raw !== 'string') return null;
@@ -692,6 +692,7 @@ let allItems=[], categories=[], groups=[];
     window.MMLState.isLoading = true;
     window.MMLState.isLoaded  = false;
     window.MMLState.hasError  = false;
+    window.MMLState.isLibraryMissing = false;
     await Promise.all([loadConfig(), loadProvidersCatalog(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
@@ -715,6 +716,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       window.MMLState.isLoaded = false;
       window.MMLState.hasError = false;
+      window.MMLState.isLibraryMissing = false;
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
@@ -727,6 +729,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       window.MMLState.isLoaded = true;
       window.MMLState.hasError = false;
+      window.MMLState.isLibraryMissing = true;
       libraryExportSource = null;
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.run_scan');
@@ -830,6 +833,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
       window.MMLState.hasError = true;
+      window.MMLState.isLibraryMissing = false;
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
@@ -1851,7 +1855,15 @@ let allItems=[], categories=[], groups=[];
     let items=filterItems();
     renderStats(items);
     const c=document.getElementById('library');
-    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>'; return; }
+    if (!items.length) {
+      c.className='';
+      if (window.MMLState?.isLibraryMissing) {
+        c.innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
+      } else {
+        c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>';
+      }
+      return;
+    }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }

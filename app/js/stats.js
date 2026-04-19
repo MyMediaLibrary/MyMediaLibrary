@@ -497,7 +497,7 @@
           {
             count: {
               percentBase: Number(provReferenceCount || 0),
-              valueFormatter: (value) => `${value} ${getDep('t')('stats.media_count')}`,
+              valueFormatter: (value) => String(value),
             },
           }
         )
