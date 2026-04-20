@@ -183,6 +183,7 @@
       noneCount: items.filter(i => !getScopedProviders(i).length).length,
       noneSize:  items.filter(i => !getScopedProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
       referenceCount: items.length,
+      referenceSize: items.reduce((sum, i) => sum + (i.size_b || 0), 0),
     };
 
     // ── Timeline (daily + monthly buckets) ───────────────────
@@ -369,7 +370,7 @@
 
   function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size', options = {}) {
     const showCount = defaultUnit === 'count';
-    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'));
+    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'), options.size || {});
     const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v), options.count || {});
     return '<div class="stats-block">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
@@ -474,7 +475,7 @@
     const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
 
     // ── Provider entries with size ───────────────────────────
-    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize, referenceCount: provReferenceCount } = data.providers;
+    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize, referenceCount: provReferenceCount, referenceSize: provReferenceSize } = data.providers;
     const provCountEntries = [
       ...provEntries.map(([k,v]) => [k, v.count]),
       ...(noneCount > 0 ? [[noProviderLabel, noneCount]] : []),
@@ -495,6 +496,9 @@
           getDep('_providerGroupLabel'),
           'count',
           {
+            size: {
+              percentBase: Number(provReferenceSize || 0),
+            },
             count: {
               percentBase: Number(provReferenceCount || 0),
               valueFormatter: (value) => String(value),

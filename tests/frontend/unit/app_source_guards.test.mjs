@@ -199,6 +199,14 @@ test('provider count chart displays raw counts without "media" unit suffix', () 
   assert.doesNotMatch(block, /stats\.media_count/, 'provider count chart should not append "media" unit text');
 });
 
+test('provider size chart uses library-size reference base (not cumulative provider-size base)', () => {
+  const dataBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+  assert.match(dataBlock, /referenceSize:\s*items\.reduce\(\(sum, i\) => sum \+ \(i\.size_b \|\| 0\), 0\)/, 'provider stats should expose unique library-size reference base');
+
+  const renderBlock = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+  assert.match(renderBlock, /size:\s*\{\s*percentBase:\s*Number\(provReferenceSize \|\| 0\)/, 'provider size pie should compute percentages against library-size reference base');
+});
+
 test('providers catalog loads runtime mapping API and logo catalog', () => {
   const block = functionBlock(appSource, 'loadProvidersCatalog');
   assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
