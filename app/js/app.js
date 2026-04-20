@@ -264,13 +264,19 @@ let allItems=[], categories=[], groups=[];
     const score = Number(quality?.score);
     if (!Number.isFinite(score)) return '';
 
+    const details = quality?.score_details || {};
+    const video = Number.isFinite(Number(details?.video)) ? Number(details.video) : Number(quality?.video);
+    const audio = Number.isFinite(Number(details?.audio)) ? Number(details.audio) : Number(quality?.audio);
+    const languages = Number.isFinite(Number(details?.languages)) ? Number(details.languages) : Number(quality?.languages);
+    const size = Number.isFinite(Number(details?.size)) ? Number(details.size) : Number(quality?.size);
+
     const lines = [
       `${t('quality_tooltip.score')}: ${Math.round(score)}`,
       '',
-      `${t('quality_tooltip.video')}: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
-      `${t('quality_tooltip.audio')}: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
-      `${t('quality_tooltip.languages')}: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
-      `${t('quality_tooltip.size')}: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
+      `${t('quality_tooltip.video')}: ${Number.isFinite(video) ? Math.round(video) : 0}`,
+      `${t('quality_tooltip.audio')}: ${Number.isFinite(audio) ? Math.round(audio) : 0}`,
+      `${t('quality_tooltip.languages')}: ${Number.isFinite(languages) ? Math.round(languages) : 0}`,
+      `${t('quality_tooltip.size')}: ${Number.isFinite(size) ? Math.round(size) : 0}`
     ];
 
     const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];

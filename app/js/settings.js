@@ -26,6 +26,8 @@
   // ── Settings private state ────────────────────────────────────────────────
   let _settingsJsrTestOk = false;
   let _settingsLayoutMode = null;
+  let _scoreSettingsMeta = null;
+  let _scoreSettingsDraft = null;
 
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
@@ -74,6 +76,201 @@
     if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     panel.classList.toggle('is-collapsed', collapsed);
     panel.style.display = collapsed ? 'none' : 'block';
+  }
+
+  function _cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function _scorePathLabel(path) {
+    return path.split('.').join('.');
+  }
+
+  function _scoreGetAtPath(root, path) {
+    return path.split('.').reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), root);
+  }
+
+  function _scoreSetAtPath(root, path, value) {
+    const parts = path.split('.');
+    const last = parts.pop();
+    let cur = root;
+    parts.forEach((part) => {
+      if (!cur[part] || typeof cur[part] !== 'object') cur[part] = {};
+      cur = cur[part];
+    });
+    cur[last] = value;
+  }
+
+  function _setScoreStatus(message, isError = false) {
+    const status = document.getElementById('scoreSettingsStatus');
+    if (!status) return;
+    if (!message) {
+      status.style.display = 'none';
+      status.textContent = '';
+      status.style.color = 'var(--muted)';
+      return;
+    }
+    status.style.display = '';
+    status.textContent = message;
+    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+  }
+
+  function _renderScoreInput(path, key, value) {
+    if (typeof value === 'number') {
+      const isInt = Number.isInteger(value);
+      const step = isInt ? '1' : '0.01';
+      const attrs = path.startsWith('weights.') ? ' min="0" max="100"' : '';
+      const title = key === 'default' ? ` title="${escH(t('settings.score.default_help'))}"` : '';
+      return '<div class="settings-row score-config-row">'
+        + `<label class="settings-label"${title}>${escH(key)}</label>`
+        + `<input class="settings-input score-config-input" type="number" step="${step}"${attrs} data-score-path="${escH(path)}" value="${String(value)}"/>`
+        + '</div>';
+    }
+    if (typeof value === 'boolean') {
+      return '<div class="settings-row score-config-row">'
+        + `<label class="settings-label">${escH(key)}</label>`
+        + `<label class="toggle-switch"><input type="checkbox" data-score-path="${escH(path)}"${value ? ' checked' : ''}/><span class="toggle-switch-slider"></span></label>`
+        + '</div>';
+    }
+    return '<div class="settings-row score-config-row">'
+      + `<label class="settings-label">${escH(key)}</label>`
+      + `<input class="settings-input score-config-input" type="text" data-score-path="${escH(path)}" value="${escH(String(value ?? ''))}"/>`
+      + '</div>';
+  }
+
+  function _renderScoreObject(obj, parentPath) {
+    let html = '';
+    Object.entries(obj || {}).forEach(([key, value]) => {
+      const path = parentPath ? `${parentPath}.${key}` : key;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const title = key === 'default' ? ` title="${escH(t('settings.score.default_help'))}"` : '';
+        html += '<details class="score-config-group">';
+        html += `<summary class="score-config-summary"${title}>${escH(key)}</summary>`;
+        html += '<div class="score-config-group-body">';
+        html += _renderScoreObject(value, path);
+        html += '</div></details>';
+      } else {
+        html += _renderScoreInput(path, key, value);
+      }
+    });
+    return html;
+  }
+
+  function _renderScoreWeights() {
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const min = Number.isFinite(Number(ui.min)) ? Number(ui.min) : 0;
+    const max = Number.isFinite(Number(ui.max)) ? Number(ui.max) : 100;
+
+    let total = 0;
+    let html = '<div class="settings-group"><div class="settings-row score-weights-head">'
+      + `<div class="settings-label score-weights-title">${escH(t('settings.score.weights'))}</div>`;
+    Object.entries(weights).forEach(([key, value]) => {
+      total += Number.isFinite(Number(value)) ? Number(value) : 0;
+      html += '</div><div class="settings-row score-config-row">'
+        + `<label class="settings-label">${escH(key)}</label>`
+        + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`;
+    });
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const valid = total === expected;
+    html += '</div><div class="settings-row score-weights-total">'
+      + `<span class="settings-label">${escH(t('settings.score.weights_total'))}</span>`
+      + `<span class="score-weights-total-value${valid ? '' : ' is-invalid'}">${total}</span>`
+      + '</div></div>';
+    return { html, valid, total, expected };
+  }
+
+  function _renderScoreSettings() {
+    const container = document.getElementById('scoreSettingsContainer');
+    const saveBtn = document.getElementById('scoreSaveBtn');
+    if (!container || !_scoreSettingsDraft) return;
+
+    const { html: weightsHtml, valid, expected } = _renderScoreWeights();
+    let html = weightsHtml;
+    Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
+      if (key === 'weights') return;
+      html += '<details class="score-config-group root">'
+        + `<summary class="score-config-summary">${escH(key)}</summary>`
+        + '<div class="score-config-group-body">'
+        + (value && typeof value === 'object' && !Array.isArray(value)
+          ? _renderScoreObject(value, key)
+          : _renderScoreInput(key, key, value))
+        + '</div></details>';
+    });
+    container.innerHTML = html;
+
+    if (saveBtn) saveBtn.disabled = !valid;
+    if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
+    else _setScoreStatus('');
+  }
+
+  function _refreshScoreWeightStatusOnly() {
+    const saveBtn = document.getElementById('scoreSaveBtn');
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const total = Object.values(weights).reduce((sum, v) => sum + (Number.isFinite(Number(v)) ? Number(v) : 0), 0);
+    const valid = total === expected;
+    const totalEl = document.querySelector('.score-weights-total-value');
+    if (totalEl) {
+      totalEl.textContent = String(total);
+      totalEl.classList.toggle('is-invalid', !valid);
+    }
+    if (saveBtn) saveBtn.disabled = !valid;
+    if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
+    else _setScoreStatus('');
+  }
+
+  async function loadScoreSettings() {
+    try {
+      const res = await fetch('/api/settings/score');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _scoreSettingsMeta = await res.json();
+      _scoreSettingsDraft = _cloneJson(_scoreSettingsMeta.effective || {});
+      _renderScoreSettings();
+    } catch (e) {
+      _setScoreStatus(t('settings.score.load_error'), true);
+      const container = document.getElementById('scoreSettingsContainer');
+      if (container) container.innerHTML = '';
+      console.warn('loadScoreSettings error:', e);
+    }
+  }
+
+  async function saveScoreSettings() {
+    if (!_scoreSettingsDraft) return;
+    try {
+      const res = await fetch('/api/settings/score', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ score: _scoreSettingsDraft })
+      });
+      const payload = await res.json();
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+      _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
+      _setScoreStatus(t('settings.score.saved', { count: payload?.status?.recalculated_items ?? 0 }), false);
+      _renderScoreSettings();
+      if (typeof window.loadLibrary === 'function') window.loadLibrary();
+    } catch (e) {
+      _setScoreStatus(`${t('settings.score.save_error')}: ${e.message}`, true);
+    }
+  }
+
+  async function resetScoreSettings() {
+    try {
+      const res = await fetch('/api/settings/score/reset', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}'
+      });
+      const payload = await res.json();
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+      _scoreSettingsDraft = _cloneJson(payload.effective || {});
+      _setScoreStatus(t('settings.score.reset_done', { count: payload?.status?.recalculated_items ?? 0 }), false);
+      _renderScoreSettings();
+      if (typeof window.loadLibrary === 'function') window.loadLibrary();
+    } catch (e) {
+      _setScoreStatus(`${t('settings.score.reset_error')}: ${e.message}`, true);
+    }
   }
 
   // ── Settings: folder helpers (private to this module) ────────────────────
@@ -141,6 +338,7 @@
 
     renderFoldersUI();
     renderProviderToggles();
+    loadScoreSettings();
   }
 
   function saveSettings() {
@@ -1124,6 +1322,30 @@
     if (el) el.addEventListener('input', _resetJsrTestState);
   });
 
+  const _scoreContainer = document.getElementById('scoreSettingsContainer');
+  if (_scoreContainer) {
+    _scoreContainer.addEventListener('input', function (event) {
+      const target = event.target;
+      const path = target?.dataset?.scorePath;
+      if (!path || !_scoreSettingsDraft) return;
+      if (target.type === 'checkbox') {
+        _scoreSetAtPath(_scoreSettingsDraft, path, !!target.checked);
+      } else if (target.type === 'number') {
+        const next = target.value === '' ? 0 : Number(target.value);
+        _scoreSetAtPath(_scoreSettingsDraft, path, Number.isFinite(next) ? next : 0);
+      } else {
+        _scoreSetAtPath(_scoreSettingsDraft, path, String(target.value ?? ''));
+      }
+      if (path.startsWith('weights.')) _refreshScoreWeightStatusOnly();
+    });
+    _scoreContainer.addEventListener('change', function (event) {
+      const target = event.target;
+      if (target?.type === 'number' && target.dataset?.scorePath?.startsWith('weights.')) {
+        target.value = String(Math.round(Number(target.value || 0)));
+      }
+    });
+  }
+
   // ── Public API ────────────────────────────────────────────────────────────
   window.MMLSettings = {
     showOnboarding,
@@ -1144,6 +1366,8 @@
   window.toggleMobileSettingsSection = toggleMobileSettingsSection;
   window.openMobileScanFromSettings = openMobileScanFromSettings;
   window.switchStab                = switchStab;
+  window.saveScoreSettings         = saveScoreSettings;
+  window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
   window.testJellyseerr            = testJellyseerr;
   window.updateCronHint            = updateCronHint;

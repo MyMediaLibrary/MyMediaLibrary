@@ -6,6 +6,7 @@ Scans LIBRARY_PATH and generates a library.json file.
 Modes:
   --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
   --full     All 4 phases: filesystem scan, Jellyseerr (force re-fetch), scoring, inventory.
+  --score-only Recompute quality scores from existing library.json only.
   --reset    Delete library.json and exit.
   (default)  Same as --full.
 
@@ -92,6 +93,7 @@ LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
 OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
+SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
 PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
@@ -123,10 +125,10 @@ except Exception:
 log = logging.getLogger("scanner")
 
 try:
-    from backend.scoring import compute_quality
+    from backend.scoring import compute_quality, get_builtin_score_defaults
 except Exception:
     try:
-        from scoring import compute_quality
+        from scoring import compute_quality, get_builtin_score_defaults
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
@@ -143,6 +145,13 @@ except Exception:
                 "languages": 0,
                 "size": 0,
                 "penalties": [{"code": "scoring_unavailable", "value": 0}],
+            }
+
+        def get_builtin_score_defaults() -> dict:
+            return {
+                "schema_version": 1,
+                "enabled": True,
+                "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
             }
 
 try:
@@ -745,6 +754,21 @@ def migrate_env_to_config() -> None:
         ui_cfg["synopsis_on_hover"] = False
         changed = True
 
+    defaults = load_score_defaults()
+    current_score = cfg.get("score")
+    effective_score, score_status = validate_score_config(
+        merge_score_config(defaults, current_score if isinstance(current_score, dict) else {}),
+        defaults=defaults,
+    )
+    if (not isinstance(current_score, dict)) or current_score != effective_score:
+        cfg["score"] = effective_score
+        changed = True
+    if not score_status.get("weights_valid", False):
+        log.warning(
+            "[score] Weight total is %s (expected 100) in effective score config",
+            score_status.get("weights_total"),
+        )
+
     if changed:
         save_config(cfg)
         log.info("[MIGRATION] Env vars migrated to config.json")
@@ -1004,6 +1028,7 @@ _DEFAULT_CONFIG: dict = {
         "theme": "dark",
         "accent_color": "#7c6aff",
     },
+    "score": get_builtin_score_defaults(),
 }
 
 
@@ -1012,7 +1037,7 @@ def load_config() -> dict:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return dict(_DEFAULT_CONFIG)
+        return copy.deepcopy(_DEFAULT_CONFIG)
 
 
 def _config_file_exists() -> bool:
@@ -1099,6 +1124,215 @@ def deep_merge(base: dict, update: dict) -> dict:
         else:
             result[k] = v
     return result
+
+
+_SCORE_REQUIRED_DEFAULT_PATHS = (
+    "video.resolution.default",
+    "video.codec.default",
+    "video.hdr.default",
+    "audio.codec.default",
+    "languages.profile.default",
+    "size.points.default",
+    "size.profiles.movie.default.default.min_gb",
+    "size.profiles.movie.default.default.max_gb",
+    "size.profiles.series.default.default.min_gb",
+    "size.profiles.series.default.default.max_gb",
+)
+
+_SCORE_NUMERIC_FIELDS = (
+    "weights.video",
+    "weights.audio",
+    "weights.languages",
+    "weights.size",
+    "penalties.max_total",
+)
+
+
+def _score_get_path(root: dict, path: str):
+    cur = root
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _score_set_path(root: dict, path: str, value) -> None:
+    cur = root
+    parts = path.split(".")
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+
+
+def _as_number(value, fallback=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
+def _as_int(value, fallback=0) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def _clamp_int(value, low: int, high: int) -> int:
+    return max(low, min(high, int(value)))
+
+
+def load_score_defaults() -> dict:
+    try:
+        with open(SCORE_DEFAULTS_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return payload
+    except Exception as e:
+        log.warning(f"[score] Could not load score defaults from {SCORE_DEFAULTS_PATH}: {e}")
+    return get_builtin_score_defaults()
+
+
+def merge_score_config(defaults: dict, user_score: dict | None) -> dict:
+    if not isinstance(defaults, dict):
+        defaults = get_builtin_score_defaults()
+    if not isinstance(user_score, dict):
+        return copy.deepcopy(defaults)
+    return deep_merge(copy.deepcopy(defaults), user_score)
+
+
+def validate_score_config(score_config: dict, defaults: dict | None = None) -> tuple[dict, dict]:
+    base_defaults = defaults if isinstance(defaults, dict) else get_builtin_score_defaults()
+    cfg = merge_score_config(base_defaults, score_config)
+    notes: list[dict] = []
+
+    weights = cfg.setdefault("weights", {})
+    for key in ("video", "audio", "languages", "size"):
+        raw = weights.get(key)
+        normalized = _clamp_int(_as_int(raw, _score_get_path(base_defaults, f"weights.{key}") or 0), 0, 100)
+        if raw != normalized:
+            notes.append({"path": f"weights.{key}", "reason": "clamped_or_defaulted"})
+        weights[key] = normalized
+
+    penalties = cfg.setdefault("penalties", {})
+    max_total = penalties.get("max_total")
+    normalized_max = _clamp_int(_as_int(max_total, _score_get_path(base_defaults, "penalties.max_total") or 20), 0, 100)
+    if max_total != normalized_max:
+        notes.append({"path": "penalties.max_total", "reason": "clamped_or_defaulted"})
+    penalties["max_total"] = normalized_max
+
+    for path in _SCORE_REQUIRED_DEFAULT_PATHS:
+        if _score_get_path(cfg, path) is None:
+            fallback = _score_get_path(base_defaults, path)
+            _score_set_path(cfg, path, fallback)
+            notes.append({"path": path, "reason": "missing_default_restored"})
+
+    status = compute_score_status(cfg)
+    status["normalization_notes"] = notes
+    return cfg, status
+
+
+def validate_score_payload(payload: dict, defaults: dict, strict: bool = True) -> tuple[bool, dict]:
+    if not isinstance(payload, dict):
+        return False, {
+            "ok": False,
+            "error": {
+                "code": "INVALID_SCORE_CONFIG",
+                "message": "Payload must be a JSON object",
+                "details": {"field": "payload"},
+            },
+        }
+
+    score = payload.get("score")
+    if not isinstance(score, dict):
+        return False, {
+            "ok": False,
+            "error": {
+                "code": "INVALID_SCORE_CONFIG",
+                "message": "Missing score object in payload",
+                "details": {"field": "score"},
+            },
+        }
+
+    merged = merge_score_config(defaults, score)
+    weights = merged.get("weights", {})
+    for key in ("video", "audio", "languages", "size"):
+        value = weights.get(key)
+        if not isinstance(value, int):
+            return False, {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SCORE_CONFIG",
+                    "message": "Weights must be integer values",
+                    "details": {"field": f"weights.{key}", "value": value},
+                },
+            }
+        if value < 0 or value > 100:
+            return False, {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SCORE_CONFIG",
+                    "message": "Weights must be between 0 and 100",
+                    "details": {"field": f"weights.{key}", "value": value},
+                },
+            }
+
+    weights_total = sum(int(weights.get(k, 0)) for k in ("video", "audio", "languages", "size"))
+    if strict and weights_total != 100:
+        return False, {
+            "ok": False,
+            "error": {
+                "code": "INVALID_SCORE_CONFIG",
+                "message": "Weights total must equal 100",
+                "details": {"weights_total": weights_total, "field": "weights"},
+            },
+        }
+
+    for path in _SCORE_REQUIRED_DEFAULT_PATHS:
+        if _score_get_path(merged, path) is None:
+            return False, {
+                "ok": False,
+                "error": {
+                    "code": "MISSING_DEFAULT_VALUE",
+                    "message": f"Missing default fallback in {'.'.join(path.split('.')[:-1])}",
+                    "details": {"path": f"score.{path}"},
+                },
+            }
+
+    for path in _SCORE_NUMERIC_FIELDS:
+        value = _score_get_path(merged, path)
+        if not isinstance(value, (int, float)):
+            return False, {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SCORE_CONFIG",
+                    "message": "Numeric field expected",
+                    "details": {"field": path, "value": value},
+                },
+            }
+    return True, {}
+
+
+def compute_score_status(score_config: dict) -> dict:
+    weights = score_config.get("weights", {}) if isinstance(score_config, dict) else {}
+    total = sum(_as_int(weights.get(k), 0) for k in ("video", "audio", "languages", "size"))
+    return {
+        "weights_total": total,
+        "weights_valid": total == 100,
+    }
+
+
+def get_effective_score_config(cfg: dict | None = None) -> tuple[dict, dict, dict]:
+    defaults = load_score_defaults()
+    base_cfg = cfg if isinstance(cfg, dict) else load_config()
+    user_score = base_cfg.get("score") if isinstance(base_cfg, dict) else None
+    effective, status = validate_score_config(merge_score_config(defaults, user_score), defaults=defaults)
+    return defaults, effective, status
 
 
 # ---------------------------------------------------------------------------
@@ -1482,7 +1716,7 @@ def run_quick(only_category: str | None = None) -> None:
     except Exception:
         size_str = "?"
     try:
-        mapping_added = _upsert_runtime_provider_mapping(data.get("items") or [])
+        mapping_added = _upsert_runtime_provider_mapping(items)
         if mapping_added:
             log.info(f"[SCAN] providers_mapping updated (+{mapping_added} raw provider(s))")
     except Exception as e:
@@ -1723,6 +1957,38 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 # SCORING PHASE
 # ---------------------------------------------------------------------------
 
+def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
+    updated = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item["quality"] = compute_quality(item, score_config)
+        item.pop("score", None)
+        updated += 1
+    return updated
+
+
+def recompute_scores_only(score_config: dict | None = None) -> int:
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        log.error(f"[score] Cannot read {OUTPUT_PATH}: {e}")
+        return 0
+
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return 0
+
+    _, effective_score_config, _ = get_effective_score_config()
+    if isinstance(score_config, dict):
+        effective_score_config, _ = validate_score_config(score_config, defaults=load_score_defaults())
+
+    recalculated = recompute_scores_for_items(items, effective_score_config)
+    write_json(data, OUTPUT_PATH)
+    return recalculated
+
+
 def run_scoring(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     cfg = load_config()
@@ -1755,21 +2021,33 @@ def run_scoring(only_category: str | None = None) -> None:
     # Build category display-name → raw folder name lookup for consistent log labels
     cat_folder_by_name = {c["name"]: c["folder"] for c in build_categories_from_config(cfg)}
 
+    _, effective_score_config, _ = get_effective_score_config(cfg)
+
     scored_total = 0
     sorted_score_cats = sorted(by_cat.items())
     n_score_cats = len(sorted_score_cats)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
         cat_folder = cat_folder_by_name.get(cat_name, cat_name)
         log.info(f"[SCAN] Scoring folder [{cat_folder}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
-        for item in cat_items:
-            item["quality"] = compute_quality(item)
-            scored_total += 1
+        scored_total += recompute_scores_for_items(cat_items, effective_score_config)
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN] Folder [{cat_folder}] scored")
 
     elapsed = time.monotonic() - _t0
     log.info(f"[SCAN] Phase 3 completed — {scored_total} item(s) scored in {elapsed:.1f}s")
+
+
+def run_score_only() -> int:
+    with _scan_lock("score_only"):
+        _t0 = time.monotonic()
+        log.info("[SCAN] ── Score-only recompute ───────────────────────────")
+        defaults, effective_score_config, _ = get_effective_score_config()
+        del defaults  # only used for lazy bootstrap and validation side-effects
+        recalculated = recompute_scores_only(effective_score_config)
+        elapsed = time.monotonic() - _t0
+        log.info(f"[SCAN] Score-only completed — {recalculated} item(s) scored in {elapsed:.1f}s")
+        return recalculated
 
 
 # ---------------------------------------------------------------------------
@@ -2039,14 +2317,40 @@ _srv_state = {
 }
 _srv_proc = None
 
-VALID_MODES = {"quick", "full", "default"}
+VALID_MODES = {"quick", "full", "default", "score_only"}
 
 
 def _scanner_cmd(mode: str) -> list[str]:
     base = [sys.executable, __file__]
     if mode == "quick": return base + ["--quick"]
     if mode == "full":  return base + ["--full"]
+    if mode == "score_only": return base + ["--score-only"]
     return base + ["--full"]  # default → full
+
+
+def _score_ui_schema() -> dict:
+    return {
+        "weights": {
+            "field_type": "integer",
+            "min": 0,
+            "max": 100,
+            "sum_must_equal": 100,
+        },
+        "numeric_default": {
+            "field_type": "number",
+        },
+    }
+
+
+def _score_settings_payload(cfg: dict | None = None) -> dict:
+    defaults, effective, status = get_effective_score_config(cfg)
+    return {
+        "schema_version": int(_as_int(effective.get("schema_version"), 1)),
+        "defaults": defaults,
+        "effective": effective,
+        "ui_schema": _score_ui_schema(),
+        "status": status,
+    }
 
 
 def _run_scan_bg(mode: str):
@@ -2134,7 +2438,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -2218,10 +2522,109 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             elif _load_secrets().get("jellyseerr_apikey"):
                 out.setdefault("jellyseerr", {})["apikey"] = "***"
             self._json(200, out)
+        elif path == "/api/settings/score":
+            cfg = load_config()
+            cfg, changed = _ensure_needs_onboarding(cfg)
+            if "score" not in cfg:
+                cfg["score"] = load_score_defaults()
+                changed = True
+            if changed:
+                save_config(cfg)
+            self._json(200, _score_settings_payload(cfg))
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
         else:
             self._json(404, {"error": "not found"})
+
+    def _scan_running_error_payload(self) -> dict:
+        return {
+            "ok": False,
+            "error": {
+                "code": "SCAN_RUNNING",
+                "message": "A scan is currently running",
+                "details": {},
+            },
+        }
+
+    def _handle_score_settings_update(self, payload: dict) -> None:
+        if _is_scan_locked():
+            self._json(409, self._scan_running_error_payload())
+            return
+
+        defaults = load_score_defaults()
+        valid, err = validate_score_payload(payload, defaults, strict=True)
+        if not valid:
+            self._json(400, err)
+            return
+
+        cfg = load_config()
+        merged = merge_score_config(defaults, payload.get("score"))
+        effective, _ = validate_score_config(merged, defaults=defaults)
+        cfg["score"] = effective
+        save_config(cfg)
+
+        try:
+            recalculated = run_score_only()
+        except BlockingIOError:
+            self._json(409, self._scan_running_error_payload())
+            return
+        _, effective_after, status_after = get_effective_score_config(cfg)
+        status_after = dict(status_after)
+        status_after.update({
+            "recalculated_items": recalculated,
+            "mode": "score_only",
+        })
+        self._json(200, {
+            "ok": True,
+            "effective": effective_after,
+            "status": status_after,
+        })
+
+    def _handle_score_settings_reset(self) -> None:
+        if _is_scan_locked():
+            self._json(409, self._scan_running_error_payload())
+            return
+
+        defaults = load_score_defaults()
+        cfg = load_config()
+        cfg["score"] = copy.deepcopy(defaults)
+        save_config(cfg)
+
+        try:
+            recalculated = run_score_only()
+        except BlockingIOError:
+            self._json(409, self._scan_running_error_payload())
+            return
+        _, effective_after, status_after = get_effective_score_config(cfg)
+        status_after = dict(status_after)
+        status_after.update({
+            "recalculated_items": recalculated,
+            "mode": "score_only",
+        })
+        self._json(200, {
+            "ok": True,
+            "effective": effective_after,
+            "status": status_after,
+        })
+
+    def do_PUT(self):
+        path = self.path.split("?")[0]
+        if path not in _PUBLIC_POST and not self._check_auth():
+            self._json(401, {"error": "unauthorized"})
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(body)
+        except Exception:
+            payload = {}
+
+        if path == "/api/settings/score":
+            self._handle_score_settings_update(payload)
+            return
+
+        self._json(404, {"error": "not found"})
 
     def do_POST(self):
         path = self.path.split("?")[0]
@@ -2260,7 +2663,14 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
             return
-        if path not in ("/api/scan/start", "/api/config", "/api/jellyseerr/test", "/api/providers-map"):
+        if path not in (
+            "/api/scan/start",
+            "/api/config",
+            "/api/jellyseerr/test",
+            "/api/providers-map",
+            "/api/settings/score",
+            "/api/settings/score/reset",
+        ):
             self._json(404, {"error": "not found"})
             return
         try:
@@ -2333,6 +2743,12 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             self._json(200, {"ok": True})
 
+        elif path == "/api/settings/score":
+            self._handle_score_settings_update(payload)
+
+        elif path == "/api/settings/score/reset":
+            self._handle_score_settings_reset()
+
         elif path == "/api/providers-map":
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
@@ -2371,6 +2787,8 @@ def main():
         help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
     mode_group.add_argument("--full",  action="store_true",
         help="All 4 phases: filesystem scan + Jellyseerr + scoring + inventory (default)")
+    mode_group.add_argument("--score-only", action="store_true",
+        help="Recompute score fields from existing library.json only")
     mode_group.add_argument("--serve", action="store_true",
         help="Start HTTP API server on 127.0.0.1:8095")
     mode_group.add_argument("--reset", action="store_true",
@@ -2393,6 +2811,9 @@ def main():
     if args.quick:
         lock_mode = "quick"
         mode_label = "--quick"
+    elif args.score_only:
+        lock_mode = "score_only"
+        mode_label = "--score-only"
     else:
         lock_mode = "full"
         mode_label = "--full"
@@ -2406,6 +2827,8 @@ def main():
 
             if args.quick:
                 run_quick(only_category=args.category)
+            elif args.score_only:
+                run_score_only()
             else:
                 # --full or default
                 run_quick(only_category=args.category)

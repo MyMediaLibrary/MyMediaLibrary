@@ -122,8 +122,22 @@
     "tabs": {
       "library": "Bibliothèque",
       "configuration": "Configuration",
+      "score": "Score",
       "connections": "Connexions",
       "system": "Système"
+    },
+    "score": {
+      "save": "Enregistrer le score",
+      "reset": "Réinitialiser",
+      "weights": "Poids",
+      "weights_total": "Total",
+      "default_help": "utilisé si aucune clé spécifique ne correspond",
+      "invalid_total": "Le total des poids doit être égal à 100",
+      "load_error": "Impossible de charger la configuration du score",
+      "save_error": "Impossible d'enregistrer la configuration du score",
+      "reset_error": "Impossible de réinitialiser la configuration du score",
+      "saved": "Configuration du score enregistrée ({count} items recalculés)",
+      "reset_done": "Score réinitialisé ({count} items recalculés)"
     },
     "connections": {
       "jellyseerr_block": "Jellyseerr",

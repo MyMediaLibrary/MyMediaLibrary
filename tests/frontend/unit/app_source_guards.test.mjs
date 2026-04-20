@@ -140,6 +140,19 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('score settings tab loads schema dynamically from dedicated API', () => {
+  assert.match(settingsSource, /async function loadScoreSettings\(\)/, 'loadScoreSettings should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score'\)/, 'score settings should be fetched from dedicated score API');
+  assert.match(settingsSource, /_scoreSettingsDraft = _cloneJson\(_scoreSettingsMeta\.effective \|\| \{\}\);/, 'score settings should render from effective backend payload');
+});
+
+test('score settings save/reset call score-only endpoints', () => {
+  assert.match(settingsSource, /async function saveScoreSettings\(\)/, 'saveScoreSettings should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score', \{[\s\S]*method: 'PUT'/, 'score save should use PUT score endpoint');
+  assert.match(settingsSource, /async function resetScoreSettings\(\)/, 'resetScoreSettings should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score\/reset', \{[\s\S]*method: 'POST'/, 'score reset should use POST endpoint');
+});
+
 test('settings trigger scan only when folders changed', () => {
   const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');

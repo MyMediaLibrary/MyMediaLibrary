@@ -257,6 +257,7 @@
       <div class="settings-tabs">
         <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">Bibliothèque</button>
         <button class="stab" onclick="switchStab(this,'stab-configuration')" data-i18n="settings.tabs.configuration">Configuration</button>
+        <button class="stab" onclick="switchStab(this,'stab-score')" data-i18n="settings.tabs.score">Score</button>
         <button class="stab" onclick="switchStab(this,'stab-connections')" data-i18n="settings.tabs.connections">Connexions</button>
         <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">Système</button>
       </div>
@@ -321,6 +322,24 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
+          </div>
+          </div>
+        </div>
+
+        <!-- TAB: SCORE -->
+        <div id="stab-score" class="stab-panel" style="display:none" data-mobile-panel="score">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.score">Score</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
+          <div class="settings-group">
+            <div id="scoreSettingsStatus" class="settings-note" style="display:none;margin-bottom:10px"></div>
+            <div class="settings-row" style="justify-content:flex-end;gap:8px;margin-bottom:10px">
+              <button id="scoreResetBtn" class="scan-btn" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" onclick="resetScoreSettings()" data-i18n="settings.score.reset">Réinitialiser</button>
+              <button id="scoreSaveBtn" class="scan-btn" style="padding:5px 12px;font-size:12px" onclick="saveScoreSettings()" data-i18n="settings.score.save">Enregistrer le score</button>
+            </div>
+            <div id="scoreSettingsContainer"></div>
           </div>
           </div>
         </div>

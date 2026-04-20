@@ -32,7 +32,47 @@ function libraryPayload() {
   };
 }
 
+function scoreSettingsPayload() {
+  return {
+    schema_version: 1,
+    defaults: {
+      schema_version: 1,
+      weights: { video: 50, audio: 20, languages: 15, size: 15 },
+    },
+    effective: {
+      schema_version: 1,
+      enabled: true,
+      weights: { video: 50, audio: 20, languages: 15, size: 15 },
+      video: {
+        codec: { hevc: 15, vp9: 9, default: 6 },
+        resolution: { '1080p': 20, default: 8 },
+        hdr: { hdr10: 5, default: 0 },
+      },
+      audio: { codec: { dts: 15, default: 8 } },
+      languages: { profile: { multi: 15, default: 3 } },
+      size: { points: { coherent: 15, default: 5 }, profiles: { movie: { default: { default: { min_gb: 1, max_gb: 10 } } }, series: { default: { default: { min_gb: 0.2, max_gb: 4 } } } } },
+      penalties: { max_total: 20, rules: { good_video_few_languages: -5 } },
+    },
+    ui_schema: {
+      weights: { field_type: 'integer', min: 0, max: 100, sum_must_equal: 100 },
+      numeric_default: { field_type: 'number' },
+    },
+    status: { weights_total: 100, weights_valid: true },
+  };
+}
+
 async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false } = {}) {
+  await page.route('**/api/settings/score', async (route) => {
+    const method = route.request().method();
+    if (method === 'GET') {
+      await route.fulfill({ json: scoreSettingsPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 3, mode: 'score_only' } } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 3, mode: 'score_only' } } });
+  });
   await page.route('**/api/config', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: onboarding ? onboardingPayload() : configuredPayload() });
@@ -293,4 +333,63 @@ test('resetting persisted config makes onboarding visible again', async ({ page 
   onboarding = true;
   await page.reload();
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
+});
+
+test('score settings tab renders dynamic keys and blocks save when weights total is invalid', async ({ page }) => {
+  let capturedScorePayload = null;
+
+  await page.route('**/api/settings/score', async (route) => {
+    const method = route.request().method();
+    if (method === 'GET') {
+      await route.fulfill({ json: scoreSettingsPayload() });
+      return;
+    }
+    capturedScorePayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true, effective: capturedScorePayload.score, status: { weights_total: 100, weights_valid: true, recalculated_items: 2, mode: 'score_only' } } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 2, mode: 'score_only' } } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#stab-score')).toBeVisible();
+  await expect(page.locator('#scoreSettingsContainer')).toContainText('vp9');
+
+  const videoWeightInput = page.locator('input[data-score-path="weights.video"]');
+  await videoWeightInput.fill('40');
+  await videoWeightInput.dispatchEvent('input');
+  await expect(page.locator('#scoreSaveBtn')).toBeDisabled();
+
+  await videoWeightInput.fill('50');
+  await videoWeightInput.dispatchEvent('input');
+  await expect(page.locator('#scoreSaveBtn')).toBeEnabled();
+
+  await page.click('#scoreSaveBtn');
+  await expect.poll(() => capturedScorePayload).not.toBeNull();
+  expect(capturedScorePayload.score.video.codec.vp9).toBe(9);
 });
