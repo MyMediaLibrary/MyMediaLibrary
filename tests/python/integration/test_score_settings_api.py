@@ -102,6 +102,8 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertIn("status", payload)
         self.assertEqual(payload["status"]["weights_total"], 100)
         self.assertTrue(payload["status"]["weights_valid"])
+        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertIn("score", cfg)
 
     def test_put_score_settings_recomputes_scores_only(self):
         status, get_payload = self._request("/api/settings/score")

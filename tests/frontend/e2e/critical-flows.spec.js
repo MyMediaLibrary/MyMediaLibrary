@@ -393,3 +393,41 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   await expect.poll(() => capturedScorePayload).not.toBeNull();
   expect(capturedScorePayload.score.video.codec.vp9).toBe(9);
 });
+
+test('score settings displays friendly error when API load fails', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'SCORE_SETTINGS_LOAD_FAILED' } }) });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false }) });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#scoreSettingsStatus')).toBeVisible();
+  await expect(page.locator('#scoreSettingsStatus')).toContainText('Impossible de charger la configuration du score');
+});

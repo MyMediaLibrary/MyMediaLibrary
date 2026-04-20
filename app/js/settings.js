@@ -101,6 +101,16 @@
     cur[last] = value;
   }
 
+  async function _buildApiError(res, fallbackLabel) {
+    let details = '';
+    try {
+      const text = await res.text();
+      if (text) details = text.slice(0, 400);
+    } catch (_) {}
+    const base = `${fallbackLabel} (HTTP ${res.status})`;
+    return details ? `${base} — ${details}` : base;
+  }
+
   function _setScoreStatus(message, isError = false) {
     const status = document.getElementById('scoreSettingsStatus');
     if (!status) return;
@@ -224,15 +234,18 @@
   async function loadScoreSettings() {
     try {
       const res = await fetch('/api/settings/score');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await _buildApiError(res, 'GET /api/settings/score failed'));
       _scoreSettingsMeta = await res.json();
+      if (!_scoreSettingsMeta || typeof _scoreSettingsMeta !== 'object' || !_scoreSettingsMeta.effective) {
+        throw new Error('Invalid score payload: missing effective');
+      }
       _scoreSettingsDraft = _cloneJson(_scoreSettingsMeta.effective || {});
       _renderScoreSettings();
     } catch (e) {
       _setScoreStatus(t('settings.score.load_error'), true);
       const container = document.getElementById('scoreSettingsContainer');
       if (container) container.innerHTML = '';
-      console.warn('loadScoreSettings error:', e);
+      console.error('loadScoreSettings error:', e);
     }
   }
 
@@ -244,6 +257,7 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ score: _scoreSettingsDraft })
       });
+      if (!res.ok) throw new Error(await _buildApiError(res, 'PUT /api/settings/score failed'));
       const payload = await res.json();
       if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
       _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
@@ -252,6 +266,7 @@
       if (typeof window.loadLibrary === 'function') window.loadLibrary();
     } catch (e) {
       _setScoreStatus(`${t('settings.score.save_error')}: ${e.message}`, true);
+      console.error('saveScoreSettings error:', e);
     }
   }
 
@@ -262,6 +277,7 @@
         headers: {'Content-Type': 'application/json'},
         body: '{}'
       });
+      if (!res.ok) throw new Error(await _buildApiError(res, 'POST /api/settings/score/reset failed'));
       const payload = await res.json();
       if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
       _scoreSettingsDraft = _cloneJson(payload.effective || {});
@@ -270,6 +286,7 @@
       if (typeof window.loadLibrary === 'function') window.loadLibrary();
     } catch (e) {
       _setScoreStatus(`${t('settings.score.reset_error')}: ${e.message}`, true);
+      console.error('resetScoreSettings error:', e);
     }
   }
 

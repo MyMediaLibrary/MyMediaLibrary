@@ -2523,14 +2523,25 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 out.setdefault("jellyseerr", {})["apikey"] = "***"
             self._json(200, out)
         elif path == "/api/settings/score":
-            cfg = load_config()
-            cfg, changed = _ensure_needs_onboarding(cfg)
-            if "score" not in cfg:
-                cfg["score"] = load_score_defaults()
-                changed = True
-            if changed:
-                save_config(cfg)
-            self._json(200, _score_settings_payload(cfg))
+            try:
+                cfg = load_config()
+                cfg, changed = _ensure_needs_onboarding(cfg)
+                if "score" not in cfg:
+                    cfg["score"] = load_score_defaults()
+                    changed = True
+                if changed:
+                    save_config(cfg)
+                self._json(200, _score_settings_payload(cfg))
+            except Exception as e:
+                log.exception("[score] GET /api/settings/score failed: %s", e)
+                self._json(500, {
+                    "ok": False,
+                    "error": {
+                        "code": "SCORE_SETTINGS_LOAD_FAILED",
+                        "message": "Failed to load score settings",
+                        "details": {"path": "/api/settings/score"},
+                    },
+                })
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
         else:
@@ -2547,65 +2558,87 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         }
 
     def _handle_score_settings_update(self, payload: dict) -> None:
-        if _is_scan_locked():
-            self._json(409, self._scan_running_error_payload())
-            return
-
-        defaults = load_score_defaults()
-        valid, err = validate_score_payload(payload, defaults, strict=True)
-        if not valid:
-            self._json(400, err)
-            return
-
-        cfg = load_config()
-        merged = merge_score_config(defaults, payload.get("score"))
-        effective, _ = validate_score_config(merged, defaults=defaults)
-        cfg["score"] = effective
-        save_config(cfg)
-
         try:
-            recalculated = run_score_only()
-        except BlockingIOError:
-            self._json(409, self._scan_running_error_payload())
-            return
-        _, effective_after, status_after = get_effective_score_config(cfg)
-        status_after = dict(status_after)
-        status_after.update({
-            "recalculated_items": recalculated,
-            "mode": "score_only",
-        })
-        self._json(200, {
-            "ok": True,
-            "effective": effective_after,
-            "status": status_after,
-        })
+            if _is_scan_locked():
+                self._json(409, self._scan_running_error_payload())
+                return
+
+            defaults = load_score_defaults()
+            valid, err = validate_score_payload(payload, defaults, strict=True)
+            if not valid:
+                self._json(400, err)
+                return
+
+            cfg = load_config()
+            merged = merge_score_config(defaults, payload.get("score"))
+            effective, _ = validate_score_config(merged, defaults=defaults)
+            cfg["score"] = effective
+            save_config(cfg)
+
+            try:
+                recalculated = run_score_only()
+            except BlockingIOError:
+                self._json(409, self._scan_running_error_payload())
+                return
+            _, effective_after, status_after = get_effective_score_config(cfg)
+            status_after = dict(status_after)
+            status_after.update({
+                "recalculated_items": recalculated,
+                "mode": "score_only",
+            })
+            self._json(200, {
+                "ok": True,
+                "effective": effective_after,
+                "status": status_after,
+            })
+        except Exception as e:
+            log.exception("[score] PUT /api/settings/score failed: %s", e)
+            self._json(500, {
+                "ok": False,
+                "error": {
+                    "code": "SCORE_SETTINGS_SAVE_FAILED",
+                    "message": "Failed to save score settings",
+                    "details": {"path": "/api/settings/score"},
+                },
+            })
 
     def _handle_score_settings_reset(self) -> None:
-        if _is_scan_locked():
-            self._json(409, self._scan_running_error_payload())
-            return
-
-        defaults = load_score_defaults()
-        cfg = load_config()
-        cfg["score"] = copy.deepcopy(defaults)
-        save_config(cfg)
-
         try:
-            recalculated = run_score_only()
-        except BlockingIOError:
-            self._json(409, self._scan_running_error_payload())
-            return
-        _, effective_after, status_after = get_effective_score_config(cfg)
-        status_after = dict(status_after)
-        status_after.update({
-            "recalculated_items": recalculated,
-            "mode": "score_only",
-        })
-        self._json(200, {
-            "ok": True,
-            "effective": effective_after,
-            "status": status_after,
-        })
+            if _is_scan_locked():
+                self._json(409, self._scan_running_error_payload())
+                return
+
+            defaults = load_score_defaults()
+            cfg = load_config()
+            cfg["score"] = copy.deepcopy(defaults)
+            save_config(cfg)
+
+            try:
+                recalculated = run_score_only()
+            except BlockingIOError:
+                self._json(409, self._scan_running_error_payload())
+                return
+            _, effective_after, status_after = get_effective_score_config(cfg)
+            status_after = dict(status_after)
+            status_after.update({
+                "recalculated_items": recalculated,
+                "mode": "score_only",
+            })
+            self._json(200, {
+                "ok": True,
+                "effective": effective_after,
+                "status": status_after,
+            })
+        except Exception as e:
+            log.exception("[score] POST /api/settings/score/reset failed: %s", e)
+            self._json(500, {
+                "ok": False,
+                "error": {
+                    "code": "SCORE_SETTINGS_RESET_FAILED",
+                    "message": "Failed to reset score settings",
+                    "details": {"path": "/api/settings/score/reset"},
+                },
+            })
 
     def do_PUT(self):
         path = self.path.split("?")[0]
