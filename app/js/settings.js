@@ -410,7 +410,10 @@
     Object.entries(weights).forEach(([key, value]) => {
       html += '<div class="score-weight-cell">'
         + `<label class="settings-label">${escH(_scoreLabel(`weights.${key}`, key))}</label>`
+        + '<div class="score-weight-input-wrap">'
         + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`
+        + '<span class="score-weight-suffix" aria-hidden="true">%</span>'
+        + '</div>'
         + '</div>';
     });
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
