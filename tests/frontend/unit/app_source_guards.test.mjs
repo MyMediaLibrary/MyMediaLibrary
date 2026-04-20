@@ -175,6 +175,16 @@ test('penalties section renders max_total first then rules', () => {
 test('score weights renderer outputs dedicated grid container', () => {
   const block = functionBlock(settingsSource, '_renderScoreWeights', '_renderScorePenalties');
   assert.match(block, /class=\"score-weights-grid\"/, 'weights block should render a dedicated grid container');
+  assert.match(block, /settings\.score\.summary_pattern/, 'weights block should render score summary line');
+  assert.match(block, /score-validation-status/, 'weights block should render a validation status');
+});
+
+test('score settings render guided help and size min\/max layout', () => {
+  assert.match(settingsSource, /function _scoreSectionHelp\(/, 'score section help resolver should exist');
+  assert.match(settingsSource, /score-section-help/, 'score sections should render short help text');
+  assert.match(settingsSource, /function _renderSizeProfiles\(/, 'size section should use dedicated renderer');
+  assert.match(settingsSource, /function _renderMinMaxRange\(/, 'size renderer should support min\/max range rows');
+  assert.match(settingsSource, /settings\.score\.labels\.min_short/, 'min\/max labels should use i18n keys');
 });
 
 test('settings trigger scan only when folders changed', () => {

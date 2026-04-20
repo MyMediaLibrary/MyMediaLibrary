@@ -229,6 +229,14 @@
 
   function _renderScoreInput(path, key, value) {
     const label = _scoreLabel(path, key);
+    const isDefaultField = key === 'default';
+    const isKeyField = key === 'max_total' || path.startsWith('weights.');
+    const rowClasses = ['settings-row', 'score-config-row'];
+    if (isDefaultField) rowClasses.push('is-default-field');
+    if (isKeyField) rowClasses.push('is-key-field');
+    const defaultBadge = isDefaultField
+      ? ` <span class="score-key-badge">${escH(_scoreT('settings.score.badges.default', {}, 'Par défaut', 'Default'))}</span>`
+      : '';
     if (typeof value === 'number') {
       const isInt = Number.isInteger(value);
       const step = isInt ? '1' : '0.01';
@@ -236,26 +244,109 @@
       const title = key === 'default'
         ? ` title="${escH(_scoreT('settings.score.default_help', {}, 'Valeur par défaut', 'Default value'))}"`
         : '';
-      return '<div class="settings-row score-config-row">'
-        + `<label class="settings-label"${title}>${escH(label)}</label>`
+      return `<div class="${rowClasses.join(' ')}">`
+        + `<label class="settings-label"${title}>${escH(label)}${defaultBadge}</label>`
         + `<input class="settings-input score-config-input" type="number" step="${step}"${attrs} data-score-path="${escH(path)}" value="${String(value)}"/>`
         + '</div>';
     }
     if (typeof value === 'boolean') {
-      return '<div class="settings-row score-config-row">'
-        + `<label class="settings-label">${escH(label)}</label>`
+      return `<div class="${rowClasses.join(' ')}">`
+        + `<label class="settings-label">${escH(label)}${defaultBadge}</label>`
         + `<label class="toggle-switch"><input type="checkbox" data-score-path="${escH(path)}"${value ? ' checked' : ''}/><span class="toggle-switch-slider"></span></label>`
         + '</div>';
     }
-    return '<div class="settings-row score-config-row">'
-      + `<label class="settings-label">${escH(label)}</label>`
+    return `<div class="${rowClasses.join(' ')}">`
+      + `<label class="settings-label">${escH(label)}${defaultBadge}</label>`
       + `<input class="settings-input score-config-input" type="text" data-score-path="${escH(path)}" value="${escH(String(value ?? ''))}"/>`
       + '</div>';
+  }
+
+  function _hasMinMaxRange(value) {
+    return _isPlainObject(value)
+      && value.min_gb !== undefined
+      && value.max_gb !== undefined
+      && !Object.entries(value).some(([, v]) => _isPlainObject(v));
+  }
+
+  function _renderMinMaxRange(parentPath, value, options = {}) {
+    const { codecLabel = null } = options;
+    const labelPrefix = codecLabel ? `${escH(codecLabel)} ` : '';
+    return '<div class="score-minmax-range">'
+      + `<div class="score-minmax-cell"><label class="settings-label">${labelPrefix}${escH(_scoreT('settings.score.labels.min_short', {}, 'Min (Go)', 'Min (GB)'))}</label>`
+      + `<input class="settings-input score-config-input" type="number" step="0.01" data-score-path="${escH(`${parentPath}.min_gb`)}" value="${String(value.min_gb)}"/></div>`
+      + `<div class="score-minmax-cell"><label class="settings-label">${escH(_scoreT('settings.score.labels.max_short', {}, 'Max (Go)', 'Max (GB)'))}</label>`
+      + `<input class="settings-input score-config-input" type="number" step="0.01" data-score-path="${escH(`${parentPath}.max_gb`)}" value="${String(value.max_gb)}"/></div>`
+      + '</div>';
+  }
+
+  function _orderedSizeProfileKeys(obj, preferred = []) {
+    const entries = Object.entries(obj || {});
+    const pref = new Map(preferred.map((key, idx) => [String(key).toLowerCase(), idx]));
+    return [...entries].sort(([aKey], [bKey]) => {
+      const a = String(aKey).toLowerCase();
+      const b = String(bKey).toLowerCase();
+      const aPref = pref.has(a) ? pref.get(a) : Number.POSITIVE_INFINITY;
+      const bPref = pref.has(b) ? pref.get(b) : Number.POSITIVE_INFINITY;
+      if (aPref !== bPref) return aPref - bPref;
+      if (a === 'unknown') return 1;
+      if (b === 'unknown') return -1;
+      if (a === 'default') return 1;
+      if (b === 'default') return -1;
+      return 0;
+    });
+  }
+
+  function _renderSizeProfiles(profiles, parentPath) {
+    if (!_isPlainObject(profiles)) return _renderScoreObject(profiles, parentPath, { noHeader: false });
+    const mediaEntries = _orderedSizeProfileKeys(profiles, ['movie', 'series']);
+    let html = '<div class="score-size-layout">';
+    mediaEntries.forEach(([mediaTypeKey, mediaTypeValue]) => {
+      const mediaPath = `${parentPath}.${mediaTypeKey}`;
+      if (!_isPlainObject(mediaTypeValue)) {
+        html += _renderScoreInput(mediaPath, mediaTypeKey, mediaTypeValue);
+        return;
+      }
+      html += '<div class="score-size-media-block">'
+        + `<div class="score-subgroup-title">${escH(_scoreLabel(mediaPath, mediaTypeKey))}</div>`;
+      const resolutionEntries = _orderedSizeProfileKeys(mediaTypeValue, ['2160p', '1080p', '720p', 'sd']);
+      resolutionEntries.forEach(([resolutionKey, resolutionValue]) => {
+        const resolutionPath = `${mediaPath}.${resolutionKey}`;
+        if (!_isPlainObject(resolutionValue)) {
+          html += _renderScoreInput(resolutionPath, resolutionKey, resolutionValue);
+          return;
+        }
+        html += '<div class="score-size-resolution-block">'
+          + `<div class="score-size-resolution-title">${escH(_scoreLabel(resolutionPath, resolutionKey))}</div>`;
+        const codecEntries = _orderedSizeProfileKeys(resolutionValue, []);
+        codecEntries.forEach(([codecKey, codecValue]) => {
+          const codecPath = `${resolutionPath}.${codecKey}`;
+          if (_hasMinMaxRange(codecValue)) {
+            html += _renderMinMaxRange(codecPath, codecValue, {
+              codecLabel: _scoreLabel(codecPath, codecKey),
+            });
+            return;
+          }
+          if (_isPlainObject(codecValue)) {
+            html += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(codecPath, codecKey))}</div>`
+              + _renderScoreObject(codecValue, codecPath, { noHeader: true })
+              + '</div>';
+            return;
+          }
+          html += _renderScoreInput(codecPath, codecKey, codecValue);
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
   }
 
   function _renderScoreObject(obj, parentPath, options = {}) {
     const { noHeader = false } = options;
     let html = '';
+    if (_hasMinMaxRange(obj)) return _renderMinMaxRange(parentPath, obj);
     const orderedEntries = Object.entries(obj || {});
     const workingEntries = orderedEntries;
 
@@ -300,9 +391,11 @@
     const max = Number.isFinite(Number(ui.max)) ? Number(ui.max) : 100;
 
     let total = 0;
-    let html = '<div class="settings-group"><div class="settings-row score-weights-head">'
+    let html = '<div class="settings-group score-weights-card"><div class="settings-row score-weights-head">'
       + `<div class="settings-label score-weights-title">${escH(_scoreT('settings.score.weights', {}, 'Poids', 'Weights'))}</div>`
-      + '</div><div class="score-weights-grid">';
+      + '</div>'
+      + `<div class="score-section-help">${escH(_scoreSectionHelp('weights'))}</div>`
+      + '<div class="score-weights-grid">';
     Object.entries(weights).forEach(([key, value]) => {
       total += Number.isFinite(Number(value)) ? Number(value) : 0;
       html += '<div class="score-weight-cell">'
@@ -312,10 +405,28 @@
     });
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
     const valid = total === expected;
+    const summaryLine = _scoreT(
+      'settings.score.summary_pattern',
+      {
+        video: Number(weights.video || 0),
+        audio: Number(weights.audio || 0),
+        languages: Number(weights.languages || 0),
+        size: Number(weights.size || 0),
+      },
+      `Vidéo ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Langues ${Number(weights.languages || 0)}% • Taille ${Number(weights.size || 0)}%`,
+      `Video ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Languages ${Number(weights.languages || 0)}% • Size ${Number(weights.size || 0)}%`,
+    );
+    const validationText = valid
+      ? _scoreT('settings.score.validation_ok', {}, 'Configuration valide', 'Configuration is valid')
+      : _scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100');
+    const validationClass = valid ? 'is-valid' : 'is-invalid';
     html += '</div><div class="settings-row score-weights-total">'
       + `<span class="settings-label">${escH(_scoreT('settings.score.weights_total', {}, 'Total', 'Total'))}</span>`
       + `<span class="score-weights-total-value${valid ? '' : ' is-invalid'}">${total}</span>`
-      + '</div></div>';
+      + '</div>'
+      + `<div class="score-weights-summary">${escH(summaryLine)}</div>`
+      + `<div class="score-validation-status ${validationClass}">${escH(validationText)}</div>`
+      + '</div>';
     return { html, valid, total, expected };
   }
 
@@ -329,9 +440,9 @@
     Object.entries(rules).forEach(([ruleKey, ruleValue]) => {
       const rulePath = `${parentPath}.rules.${ruleKey}`;
       if (_isPlainObject(ruleValue)) {
-        html += '<div class="score-subgroup score-penalty-rule">'
-          + `<div class="score-subgroup-title">${escH(_scoreLabel(rulePath, ruleKey))}</div>`
-          + _renderScoreObject(ruleValue, rulePath, { noHeader: true })
+        html += '<div class="score-penalty-rule">'
+          + `<div class="score-penalty-rule-title">${escH(_scoreLabel(rulePath, ruleKey))}</div>`
+          + `<div class="score-penalty-rule-body">${_renderScoreObject(ruleValue, rulePath, { noHeader: true })}</div>`
           + '</div>';
       } else {
         html += _renderScoreInput(rulePath, ruleKey, ruleValue);
@@ -341,11 +452,70 @@
     return html;
   }
 
+  function _scoreSectionHelp(sectionKey) {
+    const defaults = {
+      weights: {
+        fr: 'Définit l’importance de chaque composante dans le score final.',
+        en: 'Defines how much each component contributes to the final score.',
+      },
+      video: {
+        fr: 'Ajuste les points liés à la résolution, au codec vidéo et au HDR.',
+        en: 'Adjusts points related to resolution, video codec, and HDR.',
+      },
+      audio: {
+        fr: 'Ajuste les points attribués selon le codec audio.',
+        en: 'Adjusts the points assigned to each audio codec.',
+      },
+      languages: {
+        fr: 'Définit la valeur des profils linguistiques détectés.',
+        en: 'Defines the value of detected language profiles.',
+      },
+      size: {
+        fr: 'Évalue la cohérence de la taille selon le type, la résolution et parfois le codec.',
+        en: 'Evaluates size consistency depending on type, resolution, and sometimes codec.',
+      },
+      penalties: {
+        fr: 'Réduit le score en cas d’incohérence technique.',
+        en: 'Reduces the score when technical inconsistencies are detected.',
+      },
+    };
+    const fallback = defaults[sectionKey] || { fr: '', en: '' };
+    return _scoreT(
+      `settings.score.help.${sectionKey}`,
+      {},
+      fallback.fr,
+      fallback.en,
+    );
+  }
+
   function _renderScoreSection(sectionKey, sectionValue, idx) {
     const bodyId = _scoreSectionBodyId(sectionKey, idx);
     let bodyHtml = '';
     if (_isPlainObject(sectionValue)) {
       if (sectionKey === 'penalties') bodyHtml = _renderScorePenalties(sectionValue, sectionKey);
+      else if (sectionKey === 'size' && _isPlainObject(sectionValue.profiles)) {
+        const sizeEntries = Object.entries(sectionValue);
+        let sizeHtml = '';
+        sizeEntries.forEach(([sizeKey, sizeValue]) => {
+          const sizePath = `${sectionKey}.${sizeKey}`;
+          if (sizeKey === 'profiles') {
+            sizeHtml += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(sizePath, sizeKey))}</div>`
+              + _renderSizeProfiles(sizeValue, sizePath)
+              + '</div>';
+            return;
+          }
+          if (_isPlainObject(sizeValue)) {
+            sizeHtml += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(sizePath, sizeKey))}</div>`
+              + _renderScoreObject(sizeValue, sizePath, { noHeader: false })
+              + '</div>';
+            return;
+          }
+          sizeHtml += _renderScoreInput(sizePath, sizeKey, sizeValue);
+        });
+        bodyHtml = sizeHtml;
+      }
       else {
         const flattened = _flattenSingleObjectLayer(sectionKey, sectionValue);
         bodyHtml = _renderScoreObject(flattened.value, flattened.path, { noHeader: false });
@@ -359,7 +529,7 @@
       + '<span class="settings-collapsible-icon">▾</span>'
       + '</button>'
       + `<div class="settings-collapsible-body is-collapsed" id="${escH(bodyId)}">`
-      + `<div class="score-section-body">${bodyHtml}</div>`
+      + `<div class="score-section-body"><div class="score-section-help">${escH(_scoreSectionHelp(sectionKey))}</div>${bodyHtml}</div>`
       + '</div></div>';
   }
 
@@ -426,7 +596,7 @@
       html += _renderScoreSection(key, value, sectionIdx);
       sectionIdx += 1;
     });
-    container.innerHTML = html;
+    container.innerHTML = `<div class="score-settings-shell">${html}</div>`;
 
     if (!valid) _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(expected)), true);
     else _setScoreStatus('');

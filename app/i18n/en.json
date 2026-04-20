@@ -131,6 +131,20 @@
       "reset": "Reset",
       "weights": "Weights",
       "weights_total": "Total",
+      "summary_pattern": "Video {video}% • Audio {audio}% • Languages {languages}% • Size {size}%",
+      "validation_ok": "Configuration is valid",
+      "validation_bad": "Weight total must be equal to 100",
+      "badges": {
+        "default": "Default"
+      },
+      "help": {
+        "weights": "Defines how much each component contributes to the final score.",
+        "video": "Adjusts points related to resolution, video codec, and HDR.",
+        "audio": "Adjusts the points assigned to each audio codec.",
+        "languages": "Defines the value of detected language profiles.",
+        "size": "Evaluates size consistency depending on type, resolution, and sometimes codec.",
+        "penalties": "Reduces the score when technical inconsistencies are detected."
+      },
       "default_help": "Default value used when no specific key matches",
       "invalid_total": "Weights total must equal 100",
       "load_error": "Unable to load score configuration",
@@ -163,8 +177,10 @@
         "unknown": "Unknown",
         "enabled": "Enabled",
         "max_total": "Maximum penalty",
-        "min_gb": "Min size (GB)",
-        "max_gb": "Max size (GB)",
+        "min_gb": "Min (GB)",
+        "max_gb": "Max (GB)",
+        "min_short": "Min (GB)",
+        "max_short": "Max (GB)",
         "movie": "Movies",
         "series": "Series",
         "coherent": "Coherent",
