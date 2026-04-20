@@ -614,9 +614,9 @@ Le score qualité est visible dans toute l'interface :
 Au survol du badge, une infobulle détaillée est affichée :
 - détail complet par catégorie
 
-### Désactivation complète du score (`enable_score`)
+### Désactivation complète du score (`score.enabled`)
 
-Le paramètre système `enable_score` permet de couper totalement la fonctionnalité.
+Le paramètre `score.enabled` dans `config.json` permet de couper totalement la fonctionnalité.
 
 Si désactivé :
 - le backend bypass complètement le calcul de score pendant le scan
@@ -636,7 +636,7 @@ Si réactivé :
 - options à 0 masquées (sauf options actives)
 - sections de filtres vides masquées automatiquement
 - tri dynamique des options selon les counts
-- UI réactive immédiatement aux changements de configuration (ex: `enable_score` OFF)
+- UI réactive immédiatement aux changements de configuration (ex: `score.enabled = false`)
 
 ### Statistiques
 

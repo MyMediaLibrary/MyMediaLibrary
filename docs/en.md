@@ -613,9 +613,9 @@ Quality scoring is visible throughout the interface:
 Hovering the quality badge shows a complete detailed tooltip:
 - full breakdown by category
 
-### Full score disable (`enable_score`)
+### Full score disable (`score.enabled`)
 
-The `enable_score` system setting can disable the feature entirely.
+The `score.enabled` setting in `config.json` can disable the feature entirely.
 
 When disabled:
 - backend scan fully bypasses quality score computation
