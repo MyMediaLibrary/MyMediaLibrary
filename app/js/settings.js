@@ -2,7 +2,7 @@
  * MyMediaLibrary — Settings & Onboarding Module
  *
  * Handles all settings panel logic (open/close/save, folders, providers,
- * Jellyseerr, cron hints, mobile layout) and the first-run onboarding flow.
+ * Seerr, cron hints, mobile layout) and the first-run onboarding flow.
  *
  * Depends on globals populated by app.js at runtime:
  *   appConfig, libraryPathLabel, allItems, enablePlot, enableScore,
@@ -747,6 +747,14 @@
     });
   }
 
+  function _getSeerrConfig() {
+    const seerr = appConfig?.seerr;
+    if (seerr && typeof seerr === 'object') return seerr;
+    const legacy = appConfig?.jellyseerr;
+    if (legacy && typeof legacy === 'object') return legacy;
+    return {};
+  }
+
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
     if (!_field('cfgLibraryPath')) return;
@@ -777,14 +785,15 @@
     _rw('cfgEnableScore', isScoreEnabled());
     updateCronHint();
 
-    // Jellyseerr — editable from appConfig
-    _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
-    _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
-    _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
-    const jsrKeyInput = _field('cfgJellyseerrKey');
+    // Seerr — editable from appConfig
+    const seerrCfg = _getSeerrConfig();
+    _rw('cfgEnableSeerr', seerrCfg.enabled ?? false);
+    _rw('cfgSeerrUrl',    seerrCfg.url || '');
+    _rw('cfgSeerrKey',    '');   // never pre-fill the key
+    const jsrKeyInput = _field('cfgSeerrKey');
     if (jsrKeyInput) {
-      const hasStoredKey = appConfig.jellyseerr?.apikey === '***';
-      jsrKeyInput.placeholder = hasStoredKey ? t('settings.jellyseerr.apikey_saved') : '••••••••••••';
+      const hasStoredKey = seerrCfg.apikey === '***';
+      jsrKeyInput.placeholder = hasStoredKey ? t('settings.seerr.apikey_saved') : '••••••••••••';
     }
     toggleJsrFields();
 
@@ -826,16 +835,16 @@
     const es = get('cfgEnableSeries');
     if (es !== null) partial.enable_series = es;
 
-    const jEnabled = get('cfgEnableJellyseerr');
-    const jUrl     = get('cfgJellyseerrUrl');
-    const jKeyRaw  = get('cfgJellyseerrKey');
+    const jEnabled = get('cfgEnableSeerr');
+    const jUrl     = get('cfgSeerrUrl');
+    const jKeyRaw  = get('cfgSeerrKey');
     const jKey     = (typeof jKeyRaw === 'string') ? jKeyRaw.trim() : '';
-    const hasNewJellyseerrKey = !!jKey && jKey !== '***';
-    if (jEnabled !== null || jUrl !== null || hasNewJellyseerrKey) {
-      partial.jellyseerr = partial.jellyseerr || {};
-      if (jEnabled !== null)           partial.jellyseerr.enabled = jEnabled;
-      if (jUrl     !== null)           partial.jellyseerr.url     = jUrl;
-      if (hasNewJellyseerrKey)         partial.jellyseerr.apikey  = jKey;
+    const hasNewSeerrKey = !!jKey && jKey !== '***';
+    if (jEnabled !== null || jUrl !== null || hasNewSeerrKey) {
+      partial.seerr = partial.seerr || {};
+      if (jEnabled !== null)           partial.seerr.enabled = jEnabled;
+      if (jUrl     !== null)           partial.seerr.url     = jUrl;
+      if (hasNewSeerrKey)         partial.seerr.apikey  = jKey;
     }
 
     // Gather folder type/activation — always include current state
@@ -1009,7 +1018,7 @@
       })
     );
     if (!provs.length && !hasHidden) {
-      container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>';
+      container.innerHTML = '<div class="settings-note">' + t('settings.seerr.no_provider_available') + '</div>';
       return;
     }
     let html = '';
@@ -1050,21 +1059,21 @@
     });
   }
 
-  // ── Settings: Jellyseerr ──────────────────────────────────────────────────
+  // ── Settings: Seerr ──────────────────────────────────────────────────
   function toggleJsrFields() {
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
-    const jellyFields = document.getElementById('cfgJellyseerrFields');
-    const jellyBlock = document.getElementById('cfgJellyseerrBlock');
+    const enabled = document.getElementById('cfgEnableSeerr')?.checked;
+    const seerrFields = document.getElementById('cfgSeerrFields');
+    const seerrBlock = document.getElementById('cfgSeerrBlock');
     const providersBlock = document.getElementById('cfgProvidersBlock');
-    ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
+    ['cfgSeerrUrl', 'cfgSeerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
-    if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
-    if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
+    if (seerrFields) seerrFields.style.display = enabled ? '' : 'none';
+    if (seerrBlock) seerrBlock.style.display = enabled ? '' : 'none';
     if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
     if (enabled) {
-      _setSettingsCollapsed('settingsJellyseerrBody', true);
+      _setSettingsCollapsed('settingsSeerrBody', true);
       _setSettingsCollapsed('settingsProvidersBody', true);
     }
     if (!enabled) {
@@ -1074,13 +1083,13 @@
     }
   }
 
-  async function _runJellyseerrConnectionTest(btn, res, onSuccess) {
+  async function _runSeerrConnectionTest(btn, res, onSuccess) {
     if (!res) return false;
     res.textContent = '…';
     res.style.color = 'var(--muted)';
     if (btn) btn.disabled = true;
     try {
-      const r = await fetch('/api/jellyseerr/test');
+      const r = await fetch('/api/seerr/test');
       const d = await r.json();
       if (d.ok) {
         res.textContent = '✓ ' + t('onboarding.jsr_ok');
@@ -1100,24 +1109,24 @@
     }
   }
 
-  async function testJellyseerr() {
+  async function testSeerr() {
     const btn = document.getElementById('cfgJsrTestBtn');
     const res = document.getElementById('cfgJsrTestResult');
     if (!res) return;
 
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked ?? false;
-    const url = (document.getElementById('cfgJellyseerrUrl')?.value || '').trim();
-    const key = (document.getElementById('cfgJellyseerrKey')?.value || '').trim();
+    const enabled = document.getElementById('cfgEnableSeerr')?.checked ?? false;
+    const url = (document.getElementById('cfgSeerrUrl')?.value || '').trim();
+    const key = (document.getElementById('cfgSeerrKey')?.value || '').trim();
 
     try {
       await saveConfig({
-        jellyseerr: {
+        seerr: {
           enabled,
           url,
           ...(key ? { apikey: key } : {}),
         },
       });
-      _settingsJsrTestOk = await _runJellyseerrConnectionTest(btn, res);
+      _settingsJsrTestOk = await _runSeerrConnectionTest(btn, res);
     } catch (e) {
       _settingsJsrTestOk = false;
       res.textContent = '✗ ' + (e?.message || t('onboarding.jsr_fail'));
@@ -1437,9 +1446,10 @@
     _onbStep = 0;
     _onbLang = null;
     _onbTheme = appConfig.ui?.theme || 'dark';
+    const seerrCfg = _getSeerrConfig();
     _onbJsr = {
-      enabled: appConfig.jellyseerr?.enabled ?? false,
-      url:     appConfig.jellyseerr?.url     || '',
+      enabled: seerrCfg.enabled ?? false,
+      url:     seerrCfg.url || '',
       key:     '',
     };
     _onbLogSeen = 0;
@@ -1486,7 +1496,7 @@
       if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
-      // Step 2: disable next until Jellyseerr test passes
+      // Step 2: disable next until Seerr test passes
       if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
       else if (_onbStep === 2) { next.disabled = true; }
       else next.disabled = false;
@@ -1589,12 +1599,12 @@
     if (!btn) return;
     const enabled = document.getElementById('onbJsrEnabled')?.checked ?? _onbJsr.enabled;
     if (enabled) {
-      // Jellyseerr on → Skip grayed (but clickable)
+      // Seerr on → Skip grayed (but clickable)
       btn.style.background  = 'transparent';
       btn.style.borderColor = 'var(--border)';
       btn.style.color       = 'var(--muted)';
     } else {
-      // Jellyseerr off → Skip highlighted (violet)
+      // Seerr off → Skip highlighted (violet)
       btn.style.background  = 'var(--accent)';
       btn.style.borderColor = 'var(--accent)';
       btn.style.color       = '#fff';
@@ -1627,7 +1637,7 @@
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
-        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
+        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://seerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
         + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row">'
@@ -1652,7 +1662,7 @@
       + '</div>'
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
-      + '<div>🔍 Jellyseerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
       + '</div>';
   }
 
@@ -1662,8 +1672,8 @@
     if (!res) return;
     _captureOnbJsr();
     const onbKey = (_onbJsr.key || '').trim();
-    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
-    await _runJellyseerrConnectionTest(btn, res, () => {
+    await saveConfig({ seerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
+    await _runSeerrConnectionTest(btn, res, () => {
       const next = document.getElementById('onbNextBtn');
       if (next) next.disabled = false;
     });
@@ -1680,7 +1690,7 @@
   }
 
   function onbSkip() {
-    // Only shown on step 2 — Skip means disable Jellyseerr
+    // Only shown on step 2 — Skip means disable Seerr
     if (_onbStep === 2) {
       _captureOnbJsr();
       _onbJsr.enabled = false;
@@ -1705,7 +1715,7 @@
       folders,
       enable_movies: folders.some(f => f.type === 'movie'),
       enable_series: folders.some(f => f.type === 'tv'),
-      jellyseerr: (() => {
+      seerr: (() => {
         const onbKey = (_onbJsr.key || '').trim();
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
@@ -1782,13 +1792,13 @@
   const _epEl = document.getElementById('cfgEnablePlot');
   if (_epEl) _epEl.addEventListener('change', saveSettings);
 
-  // Jellyseerr URL/key: reset connection test state on any edit
+  // Seerr URL/key: reset connection test state on any edit
   function _resetJsrTestState() {
     _settingsJsrTestOk = false;
     const res = document.getElementById('cfgJsrTestResult');
     if (res) res.textContent = '';
   }
-  ['cfgJellyseerrUrl', 'cfgJellyseerrKey'].forEach(function (id) {
+  ['cfgSeerrUrl', 'cfgSeerrKey'].forEach(function (id) {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', _resetJsrTestState);
   });
@@ -1839,7 +1849,7 @@
   window.switchStab                = switchStab;
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
-  window.testJellyseerr            = testJellyseerr;
+  window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;
   window.showOnboarding            = showOnboarding;

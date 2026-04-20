@@ -9,7 +9,7 @@ function configuredPayload() {
     needs_onboarding: false,
     ui: { language: 'fr' },
     score: { enabled: true },
-    jellyseerr: { enabled: true },
+    seerr: { enabled: true },
     folders: [{ name: 'Cinema', type: 'movie', enabled: true, missing: false }],
   };
 }
@@ -18,7 +18,7 @@ function onboardingPayload() {
   return {
     needs_onboarding: true,
     ui: { language: 'fr' },
-    jellyseerr: { enabled: false },
+    seerr: { enabled: false },
     folders: [{ name: 'Cinema', type: '', enabled: true, missing: false }],
   };
 }

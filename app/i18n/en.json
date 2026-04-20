@@ -14,7 +14,7 @@
     "folder_ignore": "Ignore",
     "step_jsr_title": "Streaming enrichment",
     "step_jsr_desc": "Optional — shows FR streaming providers (Netflix, Canal+…) on each title.",
-    "jsr_enable": "Enable Jellyseerr",
+    "jsr_enable": "Enable Seerr",
     "jsr_url": "URL",
     "jsr_apikey": "API Key",
     "jsr_test": "Test connection",
@@ -200,9 +200,9 @@
       }
     },
     "connections": {
-      "jellyseerr_block": "Jellyseerr",
+      "seerr_block": "Seerr",
       "providers_block": "Providers",
-      "enable_jellyseerr": "Enable Jellyseerr"
+      "enable_seerr": "Enable Seerr"
     },
     "library": {
       "path": "Library path",
@@ -224,7 +224,7 @@
       "no_folders": "No folders detected. Run a scan to detect folders.",
       "env_defined": "Defined via compose.yaml"
     },
-    "jellyseerr": {
+    "seerr": {
       "enable": "Enable",
       "url": "URL",
       "apikey": "API Key",

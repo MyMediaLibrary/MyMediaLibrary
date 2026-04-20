@@ -28,7 +28,7 @@ class TestScoreSettingsApi(unittest.TestCase):
             "folders": [],
             "enable_movies": True,
             "enable_series": True,
-            "jellyseerr": {"enabled": False, "url": ""},
+            "seerr": {"enabled": False, "url": ""},
             "providers_visible": [],
             "ui": {"synopsis_on_hover": False},
             "custom_flag": "keep-me",

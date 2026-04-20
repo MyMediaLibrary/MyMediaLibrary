@@ -5,14 +5,14 @@ Scans LIBRARY_PATH and generates a library.json file.
 
 Modes:
   --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
-  --full     All 4 phases: filesystem scan, Jellyseerr (force re-fetch), scoring, inventory.
+  --full     All 4 phases: filesystem scan, Seerr (force re-fetch), scoring, inventory.
   --score-only Recompute quality scores from existing library.json only.
   --reset    Delete library.json and exit.
   (default)  Same as --full.
 
 Phases:
   1. Filesystem + NFO scan — builds library.json, writes after each folder.
-  2. Jellyseerr enrichment — fetches streaming providers, writes after each folder.
+  2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
   4. Inventory            — updates library_inventory.json, writes after each folder + final pass.
 
@@ -180,12 +180,12 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Jellyseerr — providers only
+# Seerr — providers only
 # ---------------------------------------------------------------------------
 
-_JSR_NOT_CONFIGURED = object()  # sentinel: Jellyseerr not configured/disabled
+_JSR_NOT_CONFIGURED = object()  # sentinel: Seerr not configured/disabled
 _JSR_ERROR          = object()  # sentinel: HTTP/network error (transient — do not mark providers_fetched)
-_JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — item not in Jellyseerr
+_JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — item not in Seerr
 
 
 def _load_secrets() -> dict:
@@ -213,15 +213,44 @@ def _save_secrets(data: dict) -> None:
 def _redact_config_payload(payload: dict) -> dict:
     """Return a copy of payload with sensitive fields redacted for safe logging."""
     safe_payload = copy.deepcopy(payload)
-    jsr = safe_payload.get("jellyseerr")
-    if isinstance(jsr, dict) and "apikey" in jsr:
-        jsr["apikey"] = "***"
+    for key in ("seerr", "jellyseerr"):
+        jsr = safe_payload.get(key)
+        if isinstance(jsr, dict) and "apikey" in jsr:
+            jsr["apikey"] = "***"
     return safe_payload
 
 
-def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
+def _normalize_seerr_secret_keys(secrets: dict) -> tuple[dict, bool]:
+    changed = False
+    if not isinstance(secrets, dict):
+        return {}, False
+    if secrets.get("seerr_apikey") is None and secrets.get("jellyseerr_apikey"):
+        secrets["seerr_apikey"] = secrets.get("jellyseerr_apikey")
+        changed = True
+    if "jellyseerr_apikey" in secrets:
+        secrets.pop("jellyseerr_apikey", None)
+        changed = True
+    return secrets, changed
+
+
+def normalize_seerr_config(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    legacy = cfg.get("jellyseerr") if isinstance(cfg.get("jellyseerr"), dict) else {}
+    current = cfg.get("seerr") if isinstance(cfg.get("seerr"), dict) else {}
+    merged = dict(legacy)
+    merged.update(current)
+    if cfg.get("seerr") != merged:
+        cfg["seerr"] = merged
+        changed = True
+    if "jellyseerr" in cfg:
+        cfg.pop("jellyseerr", None)
+        changed = True
+    return cfg, changed
+
+
+def _apply_seerr_secret_update(payload: dict, secrets: dict) -> str:
     """
-    Apply Jellyseerr API key update policy from payload to secrets.
+    Apply Seerr API key update policy from payload to secrets.
 
     Rules:
     - apikey missing        => not modified
@@ -229,7 +258,9 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
     - apikey non-empty      => updated
     - clear_apikey=true     => explicit clear
     """
-    jsr = payload.get("jellyseerr")
+    jsr = payload.get("seerr")
+    if not isinstance(jsr, dict):
+        jsr = payload.get("jellyseerr")
     if not isinstance(jsr, dict):
         return "not modified"
 
@@ -238,9 +269,11 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
     raw_apikey = jsr.pop("apikey", None) if has_apikey_field else None
 
     if not jsr:
+        payload.pop("seerr", None)
         payload.pop("jellyseerr", None)
 
     if clear_requested:
+        secrets.pop("seerr_apikey", None)
         secrets.pop("jellyseerr_apikey", None)
         return "cleared"
 
@@ -251,17 +284,26 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
     if not normalized or normalized == "***":
         return "preserved"
 
-    secrets["jellyseerr_apikey"] = normalized
+    secrets["seerr_apikey"] = normalized
+    secrets.pop("jellyseerr_apikey", None)
     return "updated"
 
 
+def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
+    """Backward-compatible alias kept for legacy tests/callers."""
+    return _apply_seerr_secret_update(payload, secrets)
+
+
 def _jsr_cfg() -> dict:
-    """Read Jellyseerr settings. API key comes from /app/.secrets, rest from config.json."""
+    """Read Seerr settings. API key comes from /app/.secrets, rest from config.json."""
     cfg = load_config()
-    jsr = cfg.get("jellyseerr", {})
+    jsr = cfg.get("seerr", {}) or cfg.get("jellyseerr", {})
     secrets = _load_secrets()
+    secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
+    if secrets_changed:
+        _save_secrets(secrets)
     # Prefer secrets file for apikey; fall back to config.json (legacy / migration)
-    apikey = secrets.get("jellyseerr_apikey") or jsr.get("apikey", "")
+    apikey = secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey") or jsr.get("apikey", "")
     return {
         "enabled": jsr.get("enabled", False),
         "url":     jsr.get("url", "").rstrip("/"),
@@ -273,7 +315,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
     """
     Returns:
       dict              — success (parsed JSON)
-      _JSR_NOT_CONFIGURED — Jellyseerr disabled or not configured
+      _JSR_NOT_CONFIGURED — Seerr disabled or not configured
       _JSR_ERROR          — HTTP/network error (already logged as WARNING)
     """
     if jsr is None:
@@ -281,7 +323,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
     if not jsr["enabled"] or not jsr["url"] or not jsr["apikey"]:
         return _JSR_NOT_CONFIGURED
     url = f"{jsr['url']}/api/v1{path}"
-    log.debug(f"Jellyseerr GET: {url}")
+    log.debug(f"Seerr GET: {url}")
     req = urllib.request.Request(url, headers={
         "X-Api-Key": jsr["apikey"].strip(),
         "Accept": "application/json",
@@ -293,12 +335,12 @@ def _jsr_get(path: str, jsr: dict | None = None):
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors='replace')[:300]
         if e.code in (404, 500) and "Unable to retrieve" in body:
-            log.debug(f"[jellyseerr] Item not found for {path} (not in Jellyseerr/TMDB)")
+            log.debug(f"[seerr] Item not found for {path} (not in Seerr/TMDB)")
             return _JSR_NOT_FOUND
-        log.warning(f"Jellyseerr HTTP {e.code} for {path}: {body}")
+        log.warning(f"Seerr HTTP {e.code} for {path}: {body}")
         return _JSR_ERROR
     except Exception as e:
-        log.warning(f"Jellyseerr request failed for {path}: {type(e).__name__}: {e}")
+        log.warning(f"Seerr request failed for {path}: {type(e).__name__}: {e}")
         return _JSR_ERROR
 
 
@@ -373,9 +415,9 @@ def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
 
 _fetch_providers_sampled = False  # log raw response once per run
 
-# Sentinel returned when Jellyseerr call fails (vs [] = success with no FR providers)
+# Sentinel returned when Seerr call fails (vs [] = success with no FR providers)
 _FETCH_ERROR    = object()
-_ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
+_ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Seerr enrichment
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 _PROVIDER_ENRICH_GROUP = "flatrate"
 
@@ -387,11 +429,11 @@ def _normalize_lookup_title(value: str | None) -> str:
 
 def _resolve_ids_from_search(title: str | None, year: str | int | None, is_tv: bool, jsr: dict | None = None):
     """
-    Resolve TMDB id via Jellyseerr search when direct /tv/{id} fetch fails.
+    Resolve TMDB id via Seerr search when direct /tv/{id} fetch fails.
     Returns:
       dict        — {"tmdb_id": str|int|None, "tvdb_id": str|int|None}
       None        — nothing matched
-      _FETCH_ERROR — Jellyseerr request failure
+      _FETCH_ERROR — Seerr request failure
     """
     if not isinstance(title, str) or not title.strip():
         return None
@@ -449,7 +491,7 @@ def _resolve_ids_from_search(title: str | None, year: str | int | None, is_tv: b
 
 def _extract_watch_provider_regions(watch_providers) -> list[tuple[str, dict]]:
     """
-    Normalize Jellyseerr/TMDB watch providers payload to a list of region payloads.
+    Normalize Seerr/TMDB watch providers payload to a list of region payloads.
 
     Supported shapes:
       - {"FR": {...}, "US": {...}}
@@ -497,11 +539,11 @@ def _extract_watch_provider_regions(watch_providers) -> list[tuple[str, dict]]:
 
 def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     """
-    Fetch FR streaming providers from Jellyseerr.
+    Fetch FR streaming providers from Seerr.
     Returns:
       list[dict]   — success as flat raw provider entries
                      each dict entry: {raw_name, logo, logo_url}
-      _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
+      _FETCH_ERROR — Seerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
     media_id = tmdb_id
@@ -523,7 +565,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     if not _fetch_providers_sampled:
         _fetch_providers_sampled = True
         top_keys = list(data.keys())
-        log.debug(f"[providers] Jellyseerr response keys for {media}/{media_id}: {top_keys}")
+        log.debug(f"[providers] Seerr response keys for {media}/{media_id}: {top_keys}")
         wp_raw = data.get("watchProviders")
         log.debug(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
 
@@ -556,7 +598,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
                 continue
             seen_raw_names.add(raw_name)
             log.debug(f"[providers_raw] {media}/{media_id} [{group}]: {raw_name!r}")
-            # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
+            # logoPath (camelCase Seerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
             if raw_logo and raw_logo.startswith("http"):
                 logo_url  = raw_logo
@@ -677,34 +719,48 @@ def sync_folders(root: Path, cfg: dict) -> bool:
 def migrate_env_to_config() -> None:
     """
     One-time migration: read legacy env vars (MOVIES_FOLDERS, SERIES_FOLDERS,
-    JELLYSEERR_URL, etc.) and populate config.json if the corresponding fields
+    SEERR_URL, etc.) and populate config.json if the corresponding fields
     are still at their defaults/empty. Idempotent — safe to call every startup.
     """
     cfg = load_config()
     changed = False
 
-    # Jellyseerr bootstrap (supports both JELLYSEERR_* and JELLYSEER_* spellings)
-    raw_env_url = os.environ.get("JELLYSEERR_URL")
+    # Seerr bootstrap (supports both SEERR_* and legacy JELLYSEERR_* spellings)
+    cfg, seerr_cfg_changed = normalize_seerr_config(cfg)
+    changed = changed or seerr_cfg_changed
+
+    raw_env_url = os.environ.get("SEERR_URL")
+    if raw_env_url is None:
+        raw_env_url = os.environ.get("JELLYSEERR_URL")
     if raw_env_url is None:
         raw_env_url = os.environ.get("JELLYSEER_URL")
     env_url = (raw_env_url or "").strip().rstrip("/")
 
-    raw_env_apikey = os.environ.get("JELLYSEERR_APIKEY")
+    raw_env_apikey = os.environ.get("SEERR_API_KEY")
+    if raw_env_apikey is None:
+        raw_env_apikey = os.environ.get("SEERR_APIKEY")
+    if raw_env_apikey is None:
+        raw_env_apikey = os.environ.get("JELLYSEERR_APIKEY")
     if raw_env_apikey is None:
         raw_env_apikey = os.environ.get("JELLYSEER_APIKEY")
     env_apikey = (raw_env_apikey or "").strip()
 
-    env_jsr_on = os.environ.get("ENABLE_JELLYSEERR", "")
-    jsr = cfg.setdefault("jellyseerr", {})
+    env_jsr_on = os.environ.get("ENABLE_SEERR", "")
+    if not env_jsr_on:
+        env_jsr_on = os.environ.get("ENABLE_JELLYSEERR", "")
+    jsr = cfg.setdefault("seerr", {})
     if env_url and not jsr.get("url"):
         jsr["url"]     = env_url
         jsr["enabled"] = env_jsr_on.lower() == "true" if env_jsr_on else True
         changed = True
     secrets = _load_secrets()
-    if env_apikey and not secrets.get("jellyseerr_apikey") and not jsr.get("apikey"):
-        secrets["jellyseerr_apikey"] = env_apikey
+    secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
+    if secrets_changed:
         _save_secrets(secrets)
-        log.info("[migrate] Jellyseerr API key migrated to /app/.secrets")
+    if env_apikey and not secrets.get("seerr_apikey") and not jsr.get("apikey"):
+        secrets["seerr_apikey"] = env_apikey
+        _save_secrets(secrets)
+        log.info("[migrate] Seerr API key migrated to /app/.secrets")
     # Remove apikey from config.json if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
@@ -1003,7 +1059,7 @@ _DEFAULT_CONFIG: dict = {
     "folders": [],
     "enable_movies": True,
     "enable_series": True,
-    "jellyseerr": {
+    "seerr": {
         "enabled": False,
         "url": "",
     },
@@ -1029,8 +1085,9 @@ def load_config() -> dict:
     except Exception:
         cfg = copy.deepcopy(_DEFAULT_CONFIG)
     if isinstance(cfg, dict):
+        cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
-        if changed:
+        if seerr_changed or changed:
             save_config(cfg)
     return cfg
 
@@ -1854,21 +1911,21 @@ def run_quick(only_category: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ENRICH (providers via Jellyseerr)
+# ENRICH (providers via Seerr)
 # ---------------------------------------------------------------------------
 
 def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] ── Phase 2 : Jellyseerr enrichment ({label}){scope} ──")
+    log.info(f"[SCAN] ── Phase 2 : Seerr enrichment ({label}){scope} ──")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("[SCAN] Jellyseerr disabled in config.json — skipping enrichment")
+        log.warning("[SCAN] Seerr disabled in config.json — skipping enrichment")
         return
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("[SCAN] Jellyseerr URL or apikey missing in config.json — skipping enrichment")
+        log.warning("[SCAN] Seerr URL or apikey missing in config.json — skipping enrichment")
         return
 
     try:
@@ -1893,7 +1950,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     to_enrich = [i for i in items if needs_enrich(i)]
     skipped   = len(items) - len(to_enrich)
-    log.info(f"[SCAN] Jellyseerr enrichment: {len(to_enrich)} items to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
+    log.info(f"[SCAN] Seerr enrichment: {len(to_enrich)} items to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
         log.info("[SCAN] Nothing to enrich.")
@@ -1922,7 +1979,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 tv_lookup_id = item.get("tvdb_id")
                 if tv_lookup_id:
                     providers = fetch_providers(tv_lookup_id, True, jsr)
-                # Compatibility fallback: some Jellyseerr instances/media still resolve with TMDB tv id.
+                # Compatibility fallback: some Seerr instances/media still resolve with TMDB tv id.
                 if providers is _JSR_NOT_FOUND and item.get("tmdb_id"):
                     providers = fetch_providers(item["tmdb_id"], True, jsr)
                 if providers is _JSR_NOT_FOUND:
@@ -1980,18 +2037,18 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
             for future in as_completed(futures):
                 item, providers = future.result()
                 if providers is _JSR_NOT_FOUND:
-                    # Item not in Jellyseerr — mark as fetched (no FR providers)
+                    # Item not in Seerr — mark as fetched (no FR providers)
                     item["providers"]         = []
                     item["providers_fetched"] = True
                     not_found_count += 1
                     not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 if providers is _FETCH_ERROR:
-                    # Jellyseerr unreachable — leave providers_fetched False, retry next run
+                    # Seerr unreachable — leave providers_fetched False, retry next run
                     failed_count += 1
                     failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
-                # Store cleaned raw provider names from Jellyseerr.
+                # Store cleaned raw provider names from Seerr.
                 item["providers"] = _normalize_providers([p["raw_name"] for p in (providers or [])])
                 item["providers_fetched"] = True
                 enriched += 1
@@ -2006,13 +2063,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — ids: {ids_str}{suffix}")
+        log.info(f"[SCAN] {not_found_count} item(s) not found in Seerr — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — ids: {ids_str}{suffix}")
+        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Seerr error) — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
-    if not_found_count: parts.append(f"{not_found_count} not found in Jellyseerr")
+    if not_found_count: parts.append(f"{not_found_count} not found in Seerr")
     if failed_count:    parts.append(f"{failed_count} errors")
     log.info(f"[SCAN] Phase 2 completed in {elapsed:.1f}s — {' / '.join(parts)}")
 
@@ -2542,11 +2599,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 "language": lang,
                 "authenticated": (not required) or self._check_auth(),
             })
-        elif path in ("/api/scan/test-jsr", "/api/jellyseerr/test"):
-            # Test Jellyseerr connectivity
+        elif path in ("/api/scan/test-jsr", "/api/seerr/test", "/api/jellyseerr/test"):
+            # Test Seerr connectivity
             jsr = _jsr_cfg()
             if not jsr["enabled"] or not jsr["url"] or not jsr["apikey"]:
-                self._json(200, {"ok": False, "error": "Jellyseerr not configured (enable and set URL + API key)"})
+                self._json(200, {"ok": False, "error": "Seerr not configured (enable and set URL + API key)"})
                 return
             resp = _jsr_get("/settings/main", jsr)
             if resp is _JSR_NOT_CONFIGURED:
@@ -2582,10 +2639,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
             out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
-            if out.get("jellyseerr", {}).get("apikey"):
-                out["jellyseerr"]["apikey"] = "***"
-            elif _load_secrets().get("jellyseerr_apikey"):
-                out.setdefault("jellyseerr", {})["apikey"] = "***"
+            out, seerr_changed = normalize_seerr_config(out)
+            if seerr_changed:
+                changed = True
+            secrets = _load_secrets()
+            secrets, _ = _normalize_seerr_secret_keys(secrets)
+            if out.get("seerr", {}).get("apikey"):
+                out["seerr"]["apikey"] = "***"
+            elif secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey"):
+                out.setdefault("seerr", {})["apikey"] = "***"
             self._json(200, out)
         elif path == "/api/settings/score":
             try:
@@ -2779,6 +2841,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         if path not in (
             "/api/scan/start",
             "/api/config",
+            "/api/seerr/test",
             "/api/jellyseerr/test",
             "/api/providers-map",
             "/api/settings/score",
@@ -2826,28 +2889,30 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
-            jsr_key_action = _apply_jellyseerr_secret_update(payload, secrets_after)
+            jsr_key_action = _apply_seerr_secret_update(payload, secrets_after)
 
             merged = deep_merge(cfg, payload)
             merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
             normalize_folder_enabled_flags(merged, drop_visible=True)
+            merged, _ = normalize_seerr_config(merged)
             merged, _, _ = normalize_score_configuration_sections(merged)
             # Ensure apikey never persists in config.json
-            if "jellyseerr" in merged:
-                merged["jellyseerr"].pop("apikey", None)
-                merged["jellyseerr"].pop("clear_apikey", None)
+            if "seerr" in merged:
+                merged["seerr"].pop("apikey", None)
+                merged["seerr"].pop("clear_apikey", None)
+            merged.pop("jellyseerr", None)
             save_config(merged)
             if secrets_after != secrets_before:
                 _save_secrets(secrets_after)
 
             if jsr_key_action == "updated":
-                log.info("[config] Jellyseerr API key updated")
+                log.info("[config] Seerr API key updated")
             elif jsr_key_action == "preserved":
-                log.info("[config] Jellyseerr API key preserved")
+                log.info("[config] Seerr API key preserved")
             elif jsr_key_action == "cleared":
-                log.info("[config] Jellyseerr API key cleared (explicit request)")
+                log.info("[config] Seerr API key cleared (explicit request)")
             else:
-                log.info("[config] Jellyseerr API key not modified")
+                log.info("[config] Seerr API key not modified")
 
             log.info("[config] Saved")
             # Apply log_level change immediately without restart
@@ -2908,7 +2973,7 @@ def main():
     mode_group.add_argument("--quick", action="store_true",
         help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
     mode_group.add_argument("--full",  action="store_true",
-        help="All 4 phases: filesystem scan + Jellyseerr + scoring + inventory (default)")
+        help="All 4 phases: filesystem scan + Seerr + scoring + inventory (default)")
     mode_group.add_argument("--score-only", action="store_true",
         help="Recompute score fields from existing library.json only")
     mode_group.add_argument("--serve", action="store_true",

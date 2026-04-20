@@ -204,45 +204,69 @@ class FolderEnabledCompatibilityTest(unittest.TestCase):
         self.assertNotIn("visible", cfg["folders"][0])
 
 
-class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
+class SeerrApiKeyPersistenceTest(unittest.TestCase):
     def test_payload_without_apikey_preserves_existing_secret(self):
-        payload = {"jellyseerr": {"enabled": True, "url": "https://example.test"}}
-        secrets = {"jellyseerr_apikey": "existing-secret"}
+        payload = {"seerr": {"enabled": True, "url": "https://example.test"}}
+        secrets = {"seerr_apikey": "existing-secret"}
 
-        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+        action = scanner._apply_seerr_secret_update(payload, secrets)
 
         self.assertEqual(action, "not modified")
-        self.assertEqual(secrets["jellyseerr_apikey"], "existing-secret")
-        self.assertNotIn("apikey", payload["jellyseerr"])
+        self.assertEqual(secrets["seerr_apikey"], "existing-secret")
+        self.assertNotIn("apikey", payload["seerr"])
 
     def test_payload_with_new_apikey_updates_secret(self):
-        payload = {"jellyseerr": {"apikey": "  new-secret  "}}
-        secrets = {"jellyseerr_apikey": "old-secret"}
+        payload = {"seerr": {"apikey": "  new-secret  "}}
+        secrets = {"seerr_apikey": "old-secret"}
 
-        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+        action = scanner._apply_seerr_secret_update(payload, secrets)
 
         self.assertEqual(action, "updated")
-        self.assertEqual(secrets["jellyseerr_apikey"], "new-secret")
-        self.assertNotIn("jellyseerr", payload)
+        self.assertEqual(secrets["seerr_apikey"], "new-secret")
+        self.assertNotIn("seerr", payload)
 
     def test_payload_with_empty_apikey_does_not_overwrite_secret(self):
-        payload = {"jellyseerr": {"apikey": "   "}}
-        secrets = {"jellyseerr_apikey": "existing-secret"}
+        payload = {"seerr": {"apikey": "   "}}
+        secrets = {"seerr_apikey": "existing-secret"}
 
-        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+        action = scanner._apply_seerr_secret_update(payload, secrets)
 
         self.assertEqual(action, "preserved")
-        self.assertEqual(secrets["jellyseerr_apikey"], "existing-secret")
+        self.assertEqual(secrets["seerr_apikey"], "existing-secret")
 
     def test_payload_with_explicit_clear_flag_removes_secret(self):
-        payload = {"jellyseerr": {"clear_apikey": True}}
-        secrets = {"jellyseerr_apikey": "existing-secret"}
+        payload = {"seerr": {"clear_apikey": True}}
+        secrets = {"seerr_apikey": "existing-secret"}
 
-        action = scanner._apply_jellyseerr_secret_update(payload, secrets)
+        action = scanner._apply_seerr_secret_update(payload, secrets)
 
         self.assertEqual(action, "cleared")
-        self.assertNotIn("jellyseerr_apikey", secrets)
-        self.assertNotIn("jellyseerr", payload)
+        self.assertNotIn("seerr_apikey", secrets)
+        self.assertNotIn("seerr", payload)
+
+
+class SeerrConfigMigrationTest(unittest.TestCase):
+    def test_normalize_seerr_config_migrates_legacy_block(self):
+        cfg = {
+            "jellyseerr": {"enabled": True, "url": "https://legacy.example"},
+            "other": {"keep": True},
+        }
+        normalized, changed = scanner.normalize_seerr_config(cfg)
+
+        self.assertTrue(changed)
+        self.assertIn("seerr", normalized)
+        self.assertNotIn("jellyseerr", normalized)
+        self.assertEqual(normalized["seerr"]["enabled"], True)
+        self.assertEqual(normalized["seerr"]["url"], "https://legacy.example")
+        self.assertEqual(normalized["other"], {"keep": True})
+
+    def test_normalize_seerr_secret_keys_migrates_legacy_secret_name(self):
+        secrets = {"jellyseerr_apikey": "legacy-key"}
+        normalized, changed = scanner._normalize_seerr_secret_keys(secrets)
+
+        self.assertTrue(changed)
+        self.assertEqual(normalized.get("seerr_apikey"), "legacy-key")
+        self.assertNotIn("jellyseerr_apikey", normalized)
 
 
 class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
@@ -294,8 +318,8 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
             )
 
     def test_jsr_cfg_uses_preserved_secret_for_scan_config(self):
-        cfg = {"jellyseerr": {"enabled": True, "url": "https://example.test/"}}
-        secrets = {"jellyseerr_apikey": "kept-secret"}
+        cfg = {"seerr": {"enabled": True, "url": "https://example.test/"}}
+        secrets = {"seerr_apikey": "kept-secret"}
 
         with patch.object(scanner, "load_config", return_value=cfg), patch.object(scanner, "_load_secrets", return_value=secrets):
             jsr = scanner._jsr_cfg()
@@ -305,9 +329,9 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(jsr["apikey"], "kept-secret")
 
 
-class JellyseerrEnvBootstrapTest(unittest.TestCase):
-    def test_bootstrap_url_when_config_empty_uses_jellyseer_alias_and_trims(self):
-        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+class SeerrEnvBootstrapTest(unittest.TestCase):
+    def test_bootstrap_url_when_config_empty_uses_legacy_alias_and_trims(self):
+        cfg = {"seerr": {"enabled": False, "url": ""}}
         secrets = {}
 
         with patch.dict(os.environ, {"JELLYSEER_URL": " https://bootstrap.example/ "}, clear=True), \
@@ -319,11 +343,11 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
 
         save_config.assert_called_once()
         saved_cfg = save_config.call_args.args[0]
-        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://bootstrap.example")
+        self.assertEqual(saved_cfg["seerr"]["url"], "https://bootstrap.example")
         save_secrets.assert_not_called()
 
     def test_bootstrap_url_does_not_overwrite_existing_config_value(self):
-        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        cfg = {"seerr": {"enabled": True, "url": "https://existing.example"}}
         secrets = {}
 
         with patch.dict(os.environ, {"JELLYSEER_URL": "https://bootstrap.example"}, clear=True), \
@@ -335,11 +359,11 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
 
         save_config.assert_called_once()
         saved_cfg = save_config.call_args.args[0]
-        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
+        self.assertEqual(saved_cfg["seerr"]["url"], "https://existing.example")
         save_secrets.assert_not_called()
 
     def test_bootstrap_apikey_when_secret_absent_writes_only_internal_secrets(self):
-        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        cfg = {"seerr": {"enabled": True, "url": "https://existing.example"}}
         secrets = {}
 
         with patch.dict(os.environ, {"JELLYSEER_APIKEY": "  boot-key  "}, clear=True), \
@@ -349,14 +373,14 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
              patch.object(scanner, "save_config") as save_config:
             scanner.migrate_env_to_config()
 
-        save_secrets.assert_called_once_with({"jellyseerr_apikey": "boot-key"})
+        save_secrets.assert_called_once_with({"seerr_apikey": "boot-key"})
         save_config.assert_called_once()
         saved_cfg = save_config.call_args.args[0]
-        self.assertNotIn("apikey", saved_cfg.get("jellyseerr", {}))
+        self.assertNotIn("apikey", saved_cfg.get("seerr", {}))
 
     def test_bootstrap_apikey_does_not_overwrite_existing_secret(self):
-        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
-        secrets = {"jellyseerr_apikey": "existing-key"}
+        cfg = {"seerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"seerr_apikey": "existing-key"}
 
         with patch.dict(os.environ, {"JELLYSEER_APIKEY": "boot-key"}, clear=True), \
              patch.object(scanner, "load_config", return_value=cfg), \
@@ -369,7 +393,7 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
         save_config.assert_called_once()
 
     def test_bootstrap_ignores_blank_values(self):
-        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+        cfg = {"seerr": {"enabled": False, "url": ""}}
         secrets = {}
 
         with patch.dict(os.environ, {"JELLYSEER_URL": "   ", "JELLYSEER_APIKEY": "   "}, clear=True), \
@@ -382,11 +406,11 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
         save_secrets.assert_not_called()
         save_config.assert_called_once()
         saved_cfg = save_config.call_args.args[0]
-        self.assertEqual(saved_cfg["jellyseerr"]["url"], "")
+        self.assertEqual(saved_cfg["seerr"]["url"], "")
 
     def test_bootstrap_no_env_vars_keeps_existing_values(self):
-        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
-        secrets = {"jellyseerr_apikey": "existing-key"}
+        cfg = {"seerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"seerr_apikey": "existing-key"}
 
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(scanner, "load_config", return_value=cfg), \
@@ -398,7 +422,7 @@ class JellyseerrEnvBootstrapTest(unittest.TestCase):
         save_secrets.assert_not_called()
         save_config.assert_called_once()
         saved_cfg = save_config.call_args.args[0]
-        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
+        self.assertEqual(saved_cfg["seerr"]["url"], "https://existing.example")
 
 
 class HdrFallbackSafetyTest(unittest.TestCase):

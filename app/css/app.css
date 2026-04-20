@@ -210,7 +210,7 @@
     .settings-collapsible[aria-expanded="false"] .settings-collapsible-icon{transform:rotate(-90deg)}
     .settings-collapsible-body{display:block;overflow:hidden;transition:opacity .2s ease;opacity:1}
     .settings-collapsible-body.is-collapsed{display:none;opacity:0}
-    #cfgJellyseerrFields{display:block}
+    #cfgSeerrFields{display:block}
     /* RESOLUTION BADGE */
     .res-badge{display:inline-block;font-size:10px;font-weight:700;font-family:var(--font-display);
       padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:4px}

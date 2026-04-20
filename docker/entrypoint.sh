@@ -12,7 +12,7 @@ echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "LOG_PATH     : ${LOG_PATH}"
 echo ""
 
-# Create /app/.secrets if missing (stores Jellyseerr API key securely)
+# Create /app/.secrets if missing (stores Seerr API key securely)
 if [ ! -f /app/.secrets ]; then
   echo '{}' > /app/.secrets
   chmod 600 /app/.secrets

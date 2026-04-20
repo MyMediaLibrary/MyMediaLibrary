@@ -25,7 +25,7 @@
 **Flux :**
 1. Le scanner Python lit les sous-dossiers de `LIBRARY_PATH`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
 2. L'interface web (vanilla JS) charge `library.json` et affiche les tuiles avec filtres, tri et statistiques.
-3. La configuration est persistée dans `data/config.json` (dossiers, Jellyseerr, préférences UI).
+3. La configuration est persistée dans `data/config.json` (dossiers, Seerr, préférences UI).
 
 ---
 
@@ -159,7 +159,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 1. **Écran d'accueil** — description de l'application, choix de la langue, bouton "Commencer".
 2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'aucun dossier media (Films ou Séries) n'est configuré.
-3. **Jellyseerr** (optionnel) — URL + clé API, bouton de test de connexion.
+3. **Seerr** (optionnel) — URL + clé API, bouton de test de connexion.
 4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin.
 
 ---
@@ -186,14 +186,14 @@ Le format détaillé de ces fichiers est décrit dans le chapitre [Modèles de d
 - Parcourt le filesystem et parse les fichiers `.nfo`
 - Écrit `library.json` de façon incrémentale, dossier par dossier
 - Conserve les données enrichies du scan précédent (providers streaming, score qualité)
-- N'appelle **pas** Jellyseerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
+- N'appelle **pas** Seerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
 
 #### Scan complet (full)
 
 Enchaîne 4 phases dans l'ordre :
 
 1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
-2. **Jellyseerr** — récupération des plateformes de streaming FR pour chaque titre
+2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
 3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
 4. **Inventaire** — mise à jour de `library_inventory.json` (si activé dans les paramètres)
 
@@ -224,7 +224,7 @@ Les logs sont disponibles dans `data/scanner.log` (chemin hôte) et consultables
 | Niveau | Contenu |
 |---|---|
 | `INFO` | Progression des phases, avancement par dossier, durées, statistiques détectées (codecs vidéo/audio, langues, résolutions) |
-| `DEBUG` | Détails techniques : résultats Jellyseerr par item, parsing NFO, items non trouvés, détails inventaire |
+| `DEBUG` | Détails techniques : résultats Seerr par item, parsing NFO, items non trouvés, détails inventaire |
 
 ### Préservation des données (scan rapide)
 
@@ -232,7 +232,7 @@ Lors d'un scan rapide, les données enrichies par les scans complets précédent
 
 | Champ | Source | Comportement |
 |---|---|---|
-| `providers` | Phase 2 (Jellyseerr) | Copié depuis le `library.json` existant |
+| `providers` | Phase 2 (Seerr) | Copié depuis le `library.json` existant |
 | `providers_fetched` | Phase 2 | Copié depuis le `library.json` existant |
 | `quality` | Phase 3 (scoring) | Copié depuis le `library.json` existant |
 
@@ -322,7 +322,7 @@ Chaque tuile affiche :
 - Poster local (si disponible) ou placeholder
 - Titre + année
 - Résolution (badge coloré : 4K, 1080p, 720p…)
-- Logos des plateformes de streaming (si Jellyseerr activé)
+- Logos des plateformes de streaming (si Seerr activé)
 - Nombre de saisons/épisodes (séries)
 - Synopsis au survol (optionnel, activable dans les paramètres)
 
@@ -368,11 +368,11 @@ Fonctionnalités communes :
 
 ## 10. Plateformes de streaming
 
-L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
+L'enrichissement streaming est optionnel et repose sur **Seerr**.
 
 ### Configuration
 
-URL + clé API dans les paramètres (onglet Jellyseerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
+URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
 
 ### Modèle actuel
 
@@ -650,7 +650,7 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 - Afficher/masquer Films ou Séries
 - Tableau des dossiers détectés : type (Films/Séries/Ignorer) + visibilité individuelle
 
-### Onglet Jellyseerr
+### Onglet Seerr
 
 - Activer/désactiver l'enrichissement
 - URL + clé API + test de connexion

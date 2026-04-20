@@ -479,7 +479,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -922,10 +922,12 @@ let allItems=[], categories=[], groups=[];
         const mig = {};
         if (ls.enablePlot    !== undefined) { mig.ui = mig.ui||{}; mig.ui.synopsis_on_hover = ls.enablePlot; }
         if (ls.accentColor   !== undefined) { mig.ui = mig.ui||{}; mig.ui.accent_color = ls.accentColor; }
-        if (ls.jellyseerrUrl !== undefined || ls.enableJellyseerr !== undefined) {
-          mig.jellyseerr = {};
-          if (ls.jellyseerrUrl     !== undefined) mig.jellyseerr.url     = ls.jellyseerrUrl;
-          if (ls.enableJellyseerr  !== undefined) mig.jellyseerr.enabled = ls.enableJellyseerr;
+        const legacySeerrUrl = ls.seerrUrl ?? ls.jellyseerrUrl;
+        const legacySeerrEnabled = ls.enableSeerr ?? ls.enableJellyseerr;
+        if (legacySeerrUrl !== undefined || legacySeerrEnabled !== undefined) {
+          mig.seerr = {};
+          if (legacySeerrUrl     !== undefined) mig.seerr.url     = legacySeerrUrl;
+          if (legacySeerrEnabled !== undefined) mig.seerr.enabled = legacySeerrEnabled;
         }
         if (Object.keys(mig).length) await saveConfig(mig);
       } catch(e) {}
@@ -955,7 +957,7 @@ let allItems=[], categories=[], groups=[];
       // Type visibility
       enableMovies     = appConfig.enable_movies ?? true;
       enableSeries     = appConfig.enable_series ?? true;
-      enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
+      enableSeerr = appConfig.seerr?.enabled ?? appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
 
       // Provider visibility: explicit whitelist from config
@@ -1404,7 +1406,7 @@ let allItems=[], categories=[], groups=[];
     if (counts[PROVIDER_OTHERS_KEY] === undefined) counts[PROVIDER_OTHERS_KEY] = 0;
     ['providerSection', 'providerSectionMobile', 'providerSectionTop'].forEach(function(cid) {
       const sec = document.getElementById(cid);
-      if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
+      if (!enableSeerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
         getDisplay: k => {
@@ -1736,7 +1738,7 @@ let allItems=[], categories=[], groups=[];
       if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
-    if (enableJellyseerr && activeProviders.size > 0) {
+    if (enableSeerr && activeProviders.size > 0) {
       items = items.filter(_matchesProviderFilters);
     }
     if (activeResolutions.size > 0) {
@@ -1959,7 +1961,7 @@ let allItems=[], categories=[], groups=[];
     return '<div class="tl-poster"><div class="tl-poster-ph">🎬</div></div>';
   }
   function providersBlock(item) {
-    if (!enableJellyseerr) return '';
+    if (!enableSeerr) return '';
     const visP = _itemVisProviders(item);
     const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!visP.length) {
@@ -2014,7 +2016,7 @@ let allItems=[], categories=[], groups=[];
   function th(col,label){ const s=tSortCol===col,i=s?(tSortDir===1?' &uarr;':' &darr;'):' &updownarrow;'; return '<th class="'+(s?'sorted':'')+'" onclick="sortByCol(\''+col+'\')">'+label+'<span class="si">'+i+'</span></th>'; }
 
   function tblProvidersHTML(item) {
-    if (!enableJellyseerr) return '-';
+    if (!enableSeerr) return '-';
     const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
