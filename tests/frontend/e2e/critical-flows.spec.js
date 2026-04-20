@@ -52,6 +52,7 @@ function scoreSettingsPayload() {
       languages: { profile: { multi: 15, default: 3 } },
       size: { points: { coherent: 15, default: 5 }, profiles: { movie: { default: { default: { min_gb: 1, max_gb: 10 } } }, series: { default: { default: { min_gb: 0.2, max_gb: 4 } } } } },
       penalties: { max_total: 20, rules: { good_video_few_languages: -5 } },
+      custom_unknown_key: 42,
     },
     ui_schema: {
       weights: { field_type: 'integer', min: 0, max: 100, sum_must_equal: 100 },
@@ -378,7 +379,13 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   });
 
   await expect(page.locator('#stab-score')).toBeVisible();
-  await expect(page.locator('#scoreSettingsContainer')).toContainText('vp9');
+  const scoreSections = page.locator('#scoreSettingsContainer .settings-collapsible');
+  const sectionCount = await scoreSections.count();
+  for (let i = 0; i < sectionCount; i += 1) {
+    await scoreSections.nth(i).click();
+  }
+  await expect(page.locator('#scoreSettingsContainer')).toContainText(/vp9|VP9/i);
+  await expect(page.locator('#scoreSettingsContainer')).toContainText('Custom Unknown Key');
 
   const videoWeightInput = page.locator('input[data-score-path="weights.video"]');
   await videoWeightInput.fill('40');

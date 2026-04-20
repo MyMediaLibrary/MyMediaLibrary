@@ -82,10 +82,6 @@
     return JSON.parse(JSON.stringify(value));
   }
 
-  function _scorePathLabel(path) {
-    return path.split('.').join('.');
-  }
-
   function _scoreGetAtPath(root, path) {
     return path.split('.').reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), root);
   }
@@ -99,6 +95,98 @@
       cur = cur[part];
     });
     cur[last] = value;
+  }
+
+  function _tMaybe(key) {
+    const value = t(key);
+    return value === key ? null : value;
+  }
+
+  function _scoreKeyTokenLabel(token) {
+    const map = {
+      av1: 'AV1',
+      h264: 'H.264',
+      h265: 'H.265',
+      hevc: 'HEVC',
+      avc: 'AVC',
+      hdr: 'HDR',
+      hdr10: 'HDR10',
+      hdr10plus: 'HDR10+',
+      hlg: 'HLG',
+      sd: 'SD',
+      vo: 'VO',
+      vf: 'VF',
+      dts: 'DTS',
+      dtsx: 'DTS:X',
+      ac3: 'AC-3',
+      eac3: 'E-AC-3',
+      aac: 'AAC',
+      mp3: 'MP3',
+      mp2: 'MP2',
+      truehd: 'TrueHD',
+      atmos: 'Atmos',
+      gb: 'GB',
+    };
+    if (!token) return '';
+    const normalized = String(token).trim().toLowerCase();
+    if (map[normalized]) return map[normalized];
+    if (/^\d+p$/i.test(normalized)) return normalized.toLowerCase();
+    if (/^\d+$/.test(normalized)) return normalized;
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  function _humanizeScoreKey(key) {
+    if (!key) return '';
+    const chunks = String(key)
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[._-]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return chunks.map(_scoreKeyTokenLabel).join(' ');
+  }
+
+  function _scoreLabel(path, key) {
+    const sectionLabel = _tMaybe(`settings.score.sections.${key}`);
+    if (sectionLabel) return sectionLabel;
+
+    const pathKey = String(path || '')
+      .replace(/^score\./, '')
+      .replace(/\./g, '_');
+    const pathLabel = _tMaybe(`settings.score.labels.${pathKey}`);
+    if (pathLabel) return pathLabel;
+
+    const keyLabel = _tMaybe(`settings.score.labels.${key}`);
+    if (keyLabel) return keyLabel;
+
+    return _humanizeScoreKey(key);
+  }
+
+  function _scoreSectionBodyId(sectionKey, idx) {
+    const safe = String(sectionKey).replace(/[^a-zA-Z0-9_-]+/g, '_');
+    return `scoreSectionBody-${idx}-${safe}`;
+  }
+
+  function _isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function _hasSingleObjectChild(value) {
+    if (!_isPlainObject(value)) return false;
+    const entries = Object.entries(value);
+    if (entries.length !== 1) return false;
+    return _isPlainObject(entries[0][1]);
+  }
+
+  function _flattenSingleObjectLayer(path, value) {
+    let currentPath = path;
+    let currentValue = value;
+    while (_hasSingleObjectChild(currentValue)) {
+      const [childKey, childValue] = Object.entries(currentValue)[0];
+      currentPath = `${currentPath}.${childKey}`;
+      currentValue = childValue;
+    }
+    return { path: currentPath, value: currentValue };
   }
 
   async function _buildApiError(res, fallbackLabel) {
@@ -126,40 +214,63 @@
   }
 
   function _renderScoreInput(path, key, value) {
+    const label = _scoreLabel(path, key);
     if (typeof value === 'number') {
       const isInt = Number.isInteger(value);
       const step = isInt ? '1' : '0.01';
       const attrs = path.startsWith('weights.') ? ' min="0" max="100"' : '';
       const title = key === 'default' ? ` title="${escH(t('settings.score.default_help'))}"` : '';
       return '<div class="settings-row score-config-row">'
-        + `<label class="settings-label"${title}>${escH(key)}</label>`
+        + `<label class="settings-label"${title}>${escH(label)}</label>`
         + `<input class="settings-input score-config-input" type="number" step="${step}"${attrs} data-score-path="${escH(path)}" value="${String(value)}"/>`
         + '</div>';
     }
     if (typeof value === 'boolean') {
       return '<div class="settings-row score-config-row">'
-        + `<label class="settings-label">${escH(key)}</label>`
+        + `<label class="settings-label">${escH(label)}</label>`
         + `<label class="toggle-switch"><input type="checkbox" data-score-path="${escH(path)}"${value ? ' checked' : ''}/><span class="toggle-switch-slider"></span></label>`
         + '</div>';
     }
     return '<div class="settings-row score-config-row">'
-      + `<label class="settings-label">${escH(key)}</label>`
+      + `<label class="settings-label">${escH(label)}</label>`
       + `<input class="settings-input score-config-input" type="text" data-score-path="${escH(path)}" value="${escH(String(value ?? ''))}"/>`
       + '</div>';
   }
 
-  function _renderScoreObject(obj, parentPath) {
+  function _renderScoreObject(obj, parentPath, options = {}) {
+    const { noHeader = false } = options;
     let html = '';
-    Object.entries(obj || {}).forEach(([key, value]) => {
+    const orderedEntries = Object.entries(obj || {});
+    const workingEntries = orderedEntries;
+
+    if (!noHeader && workingEntries.length > 1) {
+      const simpleKeys = workingEntries
+        .filter(([, value]) => !_isPlainObject(value))
+        .map(([key]) => key);
+      if (simpleKeys.length > 1) {
+        html += '<div class="score-subgroup score-subgroup-inline">';
+        simpleKeys.forEach((key) => {
+          const value = obj[key];
+          const path = `${parentPath}.${key}`;
+          html += _renderScoreInput(path, key, value);
+        });
+        html += '</div>';
+      }
+    }
+
+    workingEntries.forEach(([key, value]) => {
       const path = parentPath ? `${parentPath}.${key}` : key;
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        const title = key === 'default' ? ` title="${escH(t('settings.score.default_help'))}"` : '';
-        html += '<details class="score-config-group">';
-        html += `<summary class="score-config-summary"${title}>${escH(key)}</summary>`;
-        html += '<div class="score-config-group-body">';
-        html += _renderScoreObject(value, path);
-        html += '</div></details>';
-      } else {
+      if (_isPlainObject(value)) {
+        const flattened = _flattenSingleObjectLayer(path, value);
+        const flattenedEntries = Object.entries(flattened.value || {});
+        const showTitle = flattenedEntries.some(([, childValue]) => _isPlainObject(childValue)) || flattenedEntries.length > 1;
+        html += '<div class="score-subgroup">';
+        if (showTitle) {
+          html += `<div class="score-subgroup-title">${escH(_scoreLabel(path, key))}</div>`;
+        }
+        html += _renderScoreObject(flattened.value, flattened.path, { noHeader: !showTitle });
+        html += '</div>';
+      } else if (!(workingEntries.length > 1 && orderedEntries.filter(([, v]) => !_isPlainObject(v)).length > 1 && !noHeader)) {
         html += _renderScoreInput(path, key, value);
       }
     });
@@ -178,7 +289,7 @@
     Object.entries(weights).forEach(([key, value]) => {
       total += Number.isFinite(Number(value)) ? Number(value) : 0;
       html += '</div><div class="settings-row score-config-row">'
-        + `<label class="settings-label">${escH(key)}</label>`
+        + `<label class="settings-label">${escH(_scoreLabel(`weights.${key}`, key))}</label>`
         + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`;
     });
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
@@ -190,6 +301,50 @@
     return { html, valid, total, expected };
   }
 
+  function _renderScorePenalties(obj, parentPath) {
+    if (!_isPlainObject(obj)) return _renderScoreInput(parentPath, 'penalties', obj);
+    const maxPath = `${parentPath}.max_total`;
+    const maxValue = obj.max_total;
+    const rules = _isPlainObject(obj.rules) ? obj.rules : {};
+    let html = '<div class="score-penalties">';
+    if (maxValue !== undefined) html += _renderScoreInput(maxPath, 'max_total', maxValue);
+    Object.entries(rules).forEach(([ruleKey, ruleValue]) => {
+      const rulePath = `${parentPath}.rules.${ruleKey}`;
+      if (_isPlainObject(ruleValue)) {
+        html += '<div class="score-subgroup score-penalty-rule">'
+          + `<div class="score-subgroup-title">${escH(_scoreLabel(rulePath, ruleKey))}</div>`
+          + _renderScoreObject(ruleValue, rulePath, { noHeader: true })
+          + '</div>';
+      } else {
+        html += _renderScoreInput(rulePath, ruleKey, ruleValue);
+      }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function _renderScoreSection(sectionKey, sectionValue, idx) {
+    const bodyId = _scoreSectionBodyId(sectionKey, idx);
+    let bodyHtml = '';
+    if (_isPlainObject(sectionValue)) {
+      if (sectionKey === 'penalties') bodyHtml = _renderScorePenalties(sectionValue, sectionKey);
+      else {
+        const flattened = _flattenSingleObjectLayer(sectionKey, sectionValue);
+        bodyHtml = _renderScoreObject(flattened.value, flattened.path, { noHeader: false });
+      }
+    } else {
+      bodyHtml = _renderScoreInput(sectionKey, sectionKey, sectionValue);
+    }
+    return '<div class="settings-group settings-subgroup score-settings-section">'
+      + `<button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(bodyId)}" aria-expanded="false">`
+      + `<span class="settings-collapsible-title">${escH(_scoreLabel(sectionKey, sectionKey))}</span>`
+      + '<span class="settings-collapsible-icon">▾</span>'
+      + '</button>'
+      + `<div class="settings-collapsible-body is-collapsed" id="${escH(bodyId)}">`
+      + `<div class="score-section-body">${bodyHtml}</div>`
+      + '</div></div>';
+  }
+
   function _renderScoreSettings() {
     const container = document.getElementById('scoreSettingsContainer');
     const saveBtn = document.getElementById('scoreSaveBtn');
@@ -197,15 +352,11 @@
 
     const { html: weightsHtml, valid, expected } = _renderScoreWeights();
     let html = weightsHtml;
+    let sectionIdx = 0;
     Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
       if (key === 'weights') return;
-      html += '<details class="score-config-group root">'
-        + `<summary class="score-config-summary">${escH(key)}</summary>`
-        + '<div class="score-config-group-body">'
-        + (value && typeof value === 'object' && !Array.isArray(value)
-          ? _renderScoreObject(value, key)
-          : _renderScoreInput(key, key, value))
-        + '</div></details>';
+      html += _renderScoreSection(key, value, sectionIdx);
+      sectionIdx += 1;
     });
     container.innerHTML = html;
 

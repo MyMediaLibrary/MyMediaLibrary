@@ -153,6 +153,19 @@ test('score settings save/reset call score-only endpoints', () => {
   assert.match(settingsSource, /fetch\('\/api\/settings\/score\/reset', \{[\s\S]*method: 'POST'/, 'score reset should use POST endpoint');
 });
 
+test('score settings use shared collapsible style and dynamic label fallback', () => {
+  assert.match(settingsSource, /function _scoreLabel\(/, 'score label resolver should exist');
+  assert.match(settingsSource, /settings\.score\.labels\./, 'score label resolver should use i18n mappings');
+  assert.match(settingsSource, /function _humanizeScoreKey\(/, 'score label resolver should support humanized fallback');
+  assert.match(settingsSource, /class=\"settings-collapsible\"/, 'score sections should reuse shared settings collapsible style');
+});
+
+test('penalties section renders max_total first then rules', () => {
+  assert.match(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should exist');
+  assert.match(settingsSource, /const maxPath = `\$\{parentPath\}\.max_total`;/, 'penalties renderer should show max_total at top');
+  assert.match(settingsSource, /Object\.entries\(rules\)\.forEach/, 'penalties renderer should render all rule entries');
+});
+
 test('settings trigger scan only when folders changed', () => {
   const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');
