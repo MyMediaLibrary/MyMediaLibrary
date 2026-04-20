@@ -34,13 +34,10 @@ function libraryPayload() {
 
 function scoreSettingsPayload() {
   return {
-    schema_version: 1,
     defaults: {
-      schema_version: 1,
       weights: { video: 50, audio: 20, languages: 15, size: 15 },
     },
     effective: {
-      schema_version: 1,
       enabled: true,
       weights: { video: 50, audio: 20, languages: 15, size: 15 },
       video: {

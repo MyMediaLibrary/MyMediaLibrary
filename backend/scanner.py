@@ -149,7 +149,6 @@ except Exception:
 
         def get_builtin_score_defaults() -> dict:
             return {
-                "schema_version": 1,
                 "enabled": True,
                 "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
             }
@@ -1210,6 +1209,10 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
     base_defaults = defaults if isinstance(defaults, dict) else get_builtin_score_defaults()
     cfg = merge_score_config(base_defaults, score_config)
     notes: list[dict] = []
+
+    if "schema_version" in cfg:
+        cfg.pop("schema_version", None)
+        notes.append({"path": "schema_version", "reason": "removed_deprecated"})
 
     weights = cfg.setdefault("weights", {})
     for key in ("video", "audio", "languages", "size"):
@@ -2345,7 +2348,6 @@ def _score_ui_schema() -> dict:
 def _score_settings_payload(cfg: dict | None = None) -> dict:
     defaults, effective, status = get_effective_score_config(cfg)
     return {
-        "schema_version": int(_as_int(effective.get("schema_version"), 1)),
         "defaults": defaults,
         "effective": effective,
         "ui_schema": _score_ui_schema(),

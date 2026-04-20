@@ -498,6 +498,9 @@
     .score-config-input{max-width:180px}
     .score-weights-head{margin-bottom:6px}
     .score-weights-title{font-weight:700}
+    .score-weights-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+    .score-weight-cell{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .score-weight-cell .score-config-input{width:92px;max-width:92px}
     .score-weights-total{margin-top:8px}
     .score-weights-total-value{font-family:var(--font-display);font-size:12px;color:var(--text)}
     .score-weights-total-value.is-invalid{color:#ef4444}
@@ -562,6 +565,8 @@
       .settings-modal{height:90dvh;min-height:0;resize:none}
       .settings-subgroup{margin-left:8px;padding-left:8px}
       .settings-library-folders-group{margin-top:10px}
+      .score-weights-grid{grid-template-columns:1fr}
+      .score-weight-cell .score-config-input{width:100%;max-width:140px}
       .mobile-backtop{display:flex}
     }
     /* Mobile table: 2-column layout */

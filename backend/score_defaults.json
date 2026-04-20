@@ -1,5 +1,4 @@
 {
-  "schema_version": 1,
   "enabled": true,
   "weights": {
     "video": 50,

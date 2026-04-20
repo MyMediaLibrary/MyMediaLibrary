@@ -161,7 +161,6 @@
         "default": "Fallback par défaut",
         "unknown": "Inconnu",
         "enabled": "Activé",
-        "schema_version": "Version du schéma",
         "max_total": "Max penalty",
         "min_gb": "Taille min (GB)",
         "max_gb": "Taille max (GB)",

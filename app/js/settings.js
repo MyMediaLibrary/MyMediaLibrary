@@ -285,12 +285,14 @@
 
     let total = 0;
     let html = '<div class="settings-group"><div class="settings-row score-weights-head">'
-      + `<div class="settings-label score-weights-title">${escH(t('settings.score.weights'))}</div>`;
+      + `<div class="settings-label score-weights-title">${escH(t('settings.score.weights'))}</div>`
+      + '</div><div class="score-weights-grid">';
     Object.entries(weights).forEach(([key, value]) => {
       total += Number.isFinite(Number(value)) ? Number(value) : 0;
-      html += '</div><div class="settings-row score-config-row">'
+      html += '<div class="score-weight-cell">'
         + `<label class="settings-label">${escH(_scoreLabel(`weights.${key}`, key))}</label>`
-        + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`;
+        + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`
+        + '</div>';
     });
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
     const valid = total === expected;

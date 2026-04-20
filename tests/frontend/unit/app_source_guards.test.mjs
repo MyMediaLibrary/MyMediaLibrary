@@ -166,6 +166,11 @@ test('penalties section renders max_total first then rules', () => {
   assert.match(settingsSource, /Object\.entries\(rules\)\.forEach/, 'penalties renderer should render all rule entries');
 });
 
+test('score weights renderer outputs dedicated grid container', () => {
+  const block = functionBlock(settingsSource, '_renderScoreWeights', '_renderScorePenalties');
+  assert.match(block, /class=\"score-weights-grid\"/, 'weights block should render a dedicated grid container');
+});
+
 test('settings trigger scan only when folders changed', () => {
   const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');

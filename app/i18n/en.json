@@ -161,7 +161,6 @@
         "default": "Default fallback",
         "unknown": "Unknown",
         "enabled": "Enabled",
-        "schema_version": "Schema version",
         "max_total": "Max penalty",
         "min_gb": "Min size (GB)",
         "max_gb": "Max size (GB)",
