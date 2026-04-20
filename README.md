@@ -19,10 +19,10 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 
 - **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques (résolution, codec vidéo/audio, HDR)
 - **Filtres avancés** : système cohérent de dropdowns multi-sélection (dossiers, résolution, langues, codecs, plateformes) avec mode inclure/exclure, bouton "Tout sélectionner", tri dynamique par volume et persistance
-- **Disponibilités streaming** : enrichissement via Jellyseerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
+- **Disponibilités streaming** : enrichissement via Seerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
-- **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Jellyseerr), planifiable via cron, configurable depuis l'interface
-- **Scoring qualité (optionnel)** : fonctionnalité activable via `system.enable_score` (désactivée par défaut) avec score (0–100), badge coloré, filtre par slider min/max et gestion des éléments sans score
+- **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Seerr), planifiable via cron, configurable depuis l'interface
+- **Score qualité (optionnel)** : activez un système de scoring configurable (poids, règles, pénalités) directement depuis les paramètres, avec des valeurs par défaut prêtes à l’emploi
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, responsive
 
 ### Démarrage rapide
@@ -41,6 +41,8 @@ services:
     environment:
       LIBRARY_PATH: /library
       TZ: Europe/Paris
+      # SEERR_URL: "http://seerr:5055"
+      # SEERR_API_KEY: "your-seerr-api-key"
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -87,10 +89,10 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 
 - **Unified library**: browse your movies and TV shows in grid or table view, with posters, metadata, and technical details (resolution, video/audio codec, HDR)
 - **Advanced filters**: consistent multi-select dropdown system (folders, resolution, languages, codecs, providers) with include/exclude mode, "Select all", dynamic count sorting, and persistence
-- **Streaming availability**: Jellyseerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
+- **Streaming availability**: Seerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
-- **Configurable scan**: quick scan (local only) or full scan (with Jellyseerr), schedulable via cron, configurable from the UI
-- **Quality scoring (optional)**: feature controlled by `system.enable_score` (disabled by default), with quality score (0–100), color badge, min/max slider filtering, and support for items without score
+- **Configurable scan**: quick scan (local only) or full scan (with Seerr), schedulable via cron, configurable from the UI
+- **Quality score (optional)**: enable a fully configurable scoring system from settings (weights and rules for video/audio/languages/size), with ready-to-use default values
 - **Bilingual interface**: fully available in French and English, light/dark theme, responsive
 
 ### Quick start
@@ -109,6 +111,8 @@ services:
     environment:
       LIBRARY_PATH: /library
       TZ: Europe/Paris
+      # SEERR_URL: "http://seerr:5055"
+      # SEERR_API_KEY: "your-seerr-api-key"
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```

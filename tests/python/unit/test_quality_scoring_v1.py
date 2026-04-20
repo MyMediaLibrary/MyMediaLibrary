@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+import copy
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -55,31 +56,6 @@ class QualityScoringV1Test(unittest.TestCase):
         )
         self.assertEqual(scoring.compute_size_quality_score({}), 5)
 
-    def test_penalties_and_cap(self):
-        penalties = scoring.compute_quality_penalties(
-            {},
-            {
-                "video": 45,
-                "audio": 6,
-                "languages": 5,
-                "size": 5,
-                "video_details": {"resolution_score": 20, "video_codec_family": "legacy"},
-            },
-        )
-        self.assertEqual(sum(p["value"] for p in penalties), 28)
-
-        quality = scoring.compute_quality(
-            {
-                "resolution": "4K",
-                "codec": "H.264",
-                "hdr_type": "Dolby Vision",
-                "audio_codec": "AAC",
-                "audio_languages_simple": "VO",
-                "size_b": _gb(4),
-            }
-        )
-        self.assertEqual(quality["penalty_total"], 20)
-
     def test_quality_level_boundaries(self):
         self.assertEqual(scoring.get_quality_level(0), 1)
         self.assertEqual(scoring.get_quality_level(20), 1)
@@ -108,12 +84,10 @@ class QualityScoringV1Test(unittest.TestCase):
         expected_keys = {
             "score",
             "base_score",
-            "penalty_total",
             "video",
             "audio",
             "languages",
             "size",
-            "penalties",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
         self.assertNotIn("level", quality)
@@ -130,6 +104,49 @@ class QualityScoringV1Test(unittest.TestCase):
         )
         self.assertGreaterEqual(low_quality["score"], 0)
         self.assertLessEqual(low_quality["score"], 100)
+
+    def test_weights_change_score_when_only_weights_change(self):
+        item = {
+            "resolution": "1080p",
+            "codec": "H.264",
+            "hdr": False,
+            "audio_codec": "Dolby Digital",
+            "audio_languages_simple": "VF",
+            "size_b": _gb(8),
+        }
+        defaults = scoring.get_builtin_score_defaults()
+        baseline = scoring.compute_quality(item, defaults)["score"]
+
+        reweighted = copy.deepcopy(defaults)
+        reweighted["weights"] = {
+            "video": 10,
+            "audio": 10,
+            "languages": 10,
+            "size": 70,
+        }
+        shifted = scoring.compute_quality(item, reweighted)["score"]
+
+        self.assertNotEqual(baseline, shifted)
+
+    def test_weighted_score_stays_bounded_even_with_invalid_weight_values(self):
+        item = {
+            "resolution": "2160p",
+            "codec": "H.265",
+            "hdr_type": "Dolby Vision",
+            "audio_codec_raw": "TRUEHD ATMOS",
+            "audio_languages_simple": "MULTI",
+            "size_b": _gb(20),
+        }
+        cfg = scoring.get_builtin_score_defaults()
+        cfg["weights"] = {
+            "video": 200,
+            "audio": 200,
+            "languages": 200,
+            "size": 200,
+        }
+        quality = scoring.compute_quality(item, cfg)
+        self.assertGreaterEqual(quality["score"], 0)
+        self.assertLessEqual(quality["score"], 100)
 
 
 if __name__ == "__main__":

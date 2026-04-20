@@ -14,7 +14,7 @@
     "folder_ignore": "Ignorer",
     "step_jsr_title": "Enrichissement streaming",
     "step_jsr_desc": "Optionnel — affiche les providers FR (Netflix, Canal+…) sur chaque titre.",
-    "jsr_enable": "Activer Jellyseerr",
+    "jsr_enable": "Activer Seerr",
     "jsr_url": "URL",
     "jsr_apikey": "API Key",
     "jsr_test": "Tester la connexion",
@@ -122,13 +122,76 @@
     "tabs": {
       "library": "Bibliothèque",
       "configuration": "Configuration",
+      "score": "Score",
       "connections": "Connexions",
       "system": "Système"
     },
+    "score": {
+      "save": "Enregistrer le score",
+      "reset": "Réinitialiser",
+      "weights": "Poids",
+      "weights_total": "Total",
+      "summary_pattern": "Vidéo {video}% • Audio {audio}% • Langues {languages}% • Taille {size}%",
+      "validation_ok": "Configuration valide",
+      "validation_bad": "Le total des poids doit être égal à 100",
+      "badges": {
+        "default": "Par défaut"
+      },
+      "help": {
+        "weights": "Définit l’importance de chaque composante dans le score final.",
+        "video": "Ajuste les points liés à la résolution, au codec vidéo et au HDR.",
+        "audio": "Ajuste les points attribués selon le codec audio.",
+        "languages": "Définit la valeur des profils linguistiques détectés.",
+        "size": "Évalue la cohérence de la taille selon le type, la résolution et parfois le codec."
+      },
+      "default_help": "Valeur par défaut utilisée si aucune clé spécifique ne correspond",
+      "load_error": "Impossible de charger la configuration du score",
+      "save_error": "Impossible d'enregistrer la configuration du score",
+      "reset_error": "Impossible de réinitialiser la configuration du score",
+      "saved": "Configuration du score enregistrée ({count} items recalculés)",
+      "reset_done": "Score réinitialisé ({count} items recalculés)",
+      "disabled_in_configuration": "Le score qualité est actuellement désactivé dans Configuration.",
+      "sections": {
+        "video": "Vidéo",
+        "audio": "Audio",
+        "languages": "Langues",
+        "size": "Taille"
+      },
+      "labels": {
+        "video": "Vidéo",
+        "audio": "Audio",
+        "languages": "Langues",
+        "size": "Taille",
+        "resolution": "Résolution",
+        "codec": "Codec",
+        "hdr": "HDR",
+        "profile": "Profil",
+        "points": "Points",
+        "profiles": "Profils",
+        "rules": "Règles",
+        "default": "Valeur par défaut",
+        "unknown": "Inconnu",
+        "enabled": "Activé",
+        "min_gb": "Min (Go)",
+        "max_gb": "Max (Go)",
+        "min_short": "Min (Go)",
+        "max_short": "Max (Go)",
+        "movie": "Films",
+        "series": "Séries",
+        "coherent": "Cohérent",
+        "too_large": "Trop volumineux",
+        "too_small": "Trop léger",
+        "multi": "Multi",
+        "french_only": "Français uniquement",
+        "vo": "VO",
+        "sdr": "SDR",
+        "dolby_vision": "Dolby Vision"
+      }
+    },
     "connections": {
-      "jellyseerr_block": "Jellyseerr",
+      "seerr_block": "Seerr",
       "providers_block": "Fournisseurs",
-      "enable_jellyseerr": "Activer Jellyseerr"
+      "enable_seerr": "Activer Seerr"
     },
     "library": {
       "path": "Chemin bibliothèque",
@@ -150,7 +213,7 @@
       "no_folders": "Aucun dossier détecté. Lancez un scan pour détecter les dossiers.",
       "env_defined": "Défini via compose.yaml"
     },
-    "jellyseerr": {
+    "seerr": {
       "enable": "Activer",
       "url": "URL",
       "apikey": "Clé API",
@@ -348,15 +411,6 @@
     "video": "Vidéo",
     "audio": "Audio",
     "languages": "Langues",
-    "size": "Taille",
-    "penalties": {
-      "title": "Pénalités",
-      "audio_video_mismatch": "Audio/vidéo incohérent",
-      "audio_video_imbalance": "Audio/vidéo déséquilibré",
-      "legacy_codec_high_res": "Codec legacy en haute résolution",
-      "legacy_codec_mid_res": "Codec legacy en résolution moyenne",
-      "premium_video_weak_languages": "Langues limitées",
-      "size_video_mismatch": "Taille incohérente avec la vidéo"
-    }
+    "size": "Taille"
   }
 }

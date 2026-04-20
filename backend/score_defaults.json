@@ -1,0 +1,119 @@
+{
+  "weights": {
+    "video": 50,
+    "audio": 20,
+    "languages": 15,
+    "size": 15
+  },
+  "video": {
+    "resolution": {
+      "2160p": 25,
+      "1080p": 20,
+      "720p": 10,
+      "sd": 5,
+      "unknown": 8,
+      "default": 8
+    },
+    "codec": {
+      "av1": 15,
+      "hevc": 15,
+      "h265": 15,
+      "h264": 10,
+      "avc": 10,
+      "mpeg2": 3,
+      "vc1": 3,
+      "xvid": 3,
+      "divx": 3,
+      "unknown": 6,
+      "default": 6
+    },
+    "hdr": {
+      "dolby_vision": 10,
+      "hdr10plus": 8,
+      "hdr10": 5,
+      "hlg": 5,
+      "sdr": 0,
+      "unknown": 0,
+      "default": 0
+    }
+  },
+  "audio": {
+    "codec": {
+      "truehd_atmos": 20,
+      "dts_hd": 18,
+      "dts": 15,
+      "eac3": 12,
+      "ac3": 10,
+      "aac": 6,
+      "mp3_mp2": 3,
+      "unknown": 8,
+      "default": 8
+    }
+  },
+  "languages": {
+    "profile": {
+      "multi": 15,
+      "french_only": 10,
+      "vo": 5,
+      "unknown": 3,
+      "default": 3
+    }
+  },
+  "size": {
+    "points": {
+      "coherent": 15,
+      "too_large": 8,
+      "too_small": 5,
+      "unknown": 5,
+      "default": 5
+    },
+    "profiles": {
+      "movie": {
+        "2160p": {
+          "hevc": { "min_gb": 8, "max_gb": 25 },
+          "default": { "min_gb": 8, "max_gb": 25 }
+        },
+        "1080p": {
+          "hevc": { "min_gb": 2, "max_gb": 10 },
+          "h264": { "min_gb": 4, "max_gb": 15 },
+          "default": { "min_gb": 2, "max_gb": 15 }
+        },
+        "720p": {
+          "default": { "min_gb": 2, "max_gb": 6 }
+        },
+        "sd": {
+          "default": { "min_gb": 0.5, "max_gb": 2 }
+        },
+        "unknown": {
+          "default": { "min_gb": 0.5, "max_gb": 15 }
+        },
+        "default": {
+          "default": { "min_gb": 1, "max_gb": 15 }
+        }
+      },
+      "series": {
+        "2160p": {
+          "hevc": { "min_gb": 2, "max_gb": 8 },
+          "default": { "min_gb": 2, "max_gb": 8 }
+        },
+        "1080p": {
+          "hevc": { "min_gb": 0.35, "max_gb": 3 },
+          "h264": { "min_gb": 0.5, "max_gb": 4 },
+          "default": { "min_gb": 0.35, "max_gb": 4 }
+        },
+        "720p": {
+          "default": { "min_gb": 0.2, "max_gb": 1.5 }
+        },
+        "sd": {
+          "default": { "min_gb": 0.15, "max_gb": 1 }
+        },
+        "unknown": {
+          "default": { "min_gb": 0.15, "max_gb": 4 }
+        },
+        "default": {
+          "default": { "min_gb": 0.15, "max_gb": 4 }
+        }
+      }
+    }
+  }
+}

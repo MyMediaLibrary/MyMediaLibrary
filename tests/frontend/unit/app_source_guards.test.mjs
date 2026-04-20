@@ -140,6 +140,75 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('score settings tab loads schema dynamically from dedicated API', () => {
+  assert.match(settingsSource, /async function loadScoreSettings\(\)/, 'loadScoreSettings should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score'\)/, 'score settings should be fetched from dedicated score API');
+  assert.match(settingsSource, /_scoreSettingsDraft = _cloneJson\(_scoreSettingsMeta\.effective \|\| \{\}\);/, 'score settings should render from effective backend payload');
+});
+
+test('score settings save/reset call score-only endpoints', () => {
+  assert.match(settingsSource, /async function _persistScoreSettings\(\)/, 'global score persistence helper should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score', \{[\s\S]*method: 'PUT'/, 'score save should use PUT score endpoint');
+  assert.match(settingsSource, /async function resetScoreSettings\(\)/, 'resetScoreSettings should be defined');
+  assert.match(settingsSource, /fetch\('\/api\/settings\/score\/reset', \{[\s\S]*method: 'POST'/, 'score reset should use POST endpoint');
+});
+
+test('score tab uses global settings save and no dedicated score save button', () => {
+  assert.match(settingsSource, /_isScoreTabActive\(\)/, 'settings should detect active score tab');
+  assert.match(settingsSource, /await _persistScoreSettings\(\);/, 'global save should persist score configuration from score tab');
+  assert.doesNotMatch(settingsSource, /window\.saveScoreSettings\s*=/, 'legacy dedicated score save export should be removed');
+});
+
+test('score settings use shared collapsible style and dynamic label fallback', () => {
+  assert.match(settingsSource, /function _scoreLabel\(/, 'score label resolver should exist');
+  assert.match(settingsSource, /settings\.score\.labels\./, 'score label resolver should use i18n mappings');
+  assert.match(settingsSource, /function _humanizeScoreKey\(/, 'score label resolver should support humanized fallback');
+  assert.match(settingsSource, /class=\"settings-collapsible\"/, 'score sections should reuse shared settings collapsible style');
+});
+
+test('score settings do not render a penalties section anymore', () => {
+  assert.doesNotMatch(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should be removed');
+  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties'\) return;/, 'legacy penalties key should be ignored when rendering sections');
+});
+
+test('score weights renderer outputs dedicated grid container', () => {
+  const block = functionBlock(settingsSource, '_renderScoreWeights', '_scoreSectionHelp');
+  assert.match(block, /class=\"score-weights-grid\"/, 'weights block should render a dedicated grid container');
+  assert.match(block, /settings\.score\.summary_pattern/, 'weights block should render score summary line');
+  assert.match(block, /score-validation-status/, 'weights block should render a validation status');
+  assert.match(block, /score-weights-total[\s\S]*score-validation-status/s, 'validation status should render just below total in the weights card');
+  assert.match(settingsSource, /const _WEIGHT_KEYS = \['video', 'audio', 'languages', 'size'\];/, 'weights should use canonical keys');
+  assert.match(settingsSource, /function _sumCanonicalWeights\(/, 'weights total should be centralized with canonical keys');
+});
+
+test('score weights invalid state should not use top status banner', () => {
+  const renderBlock = functionBlock(settingsSource, '_renderScoreSettings', '_refreshScoreWeightStatusOnly');
+  const refreshMatch = settingsSource.match(/function _refreshScoreWeightStatusOnly\(\)[\s\S]*?async function loadScoreSettings\(\)/);
+  const refreshBlock = refreshMatch ? refreshMatch[0] : '';
+  assert.doesNotMatch(renderBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'weights validation should not be rendered in top score status banner');
+  assert.ok(refreshBlock.length > 0, 'refresh weights block should be found');
+  assert.doesNotMatch(refreshBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'live weights validation should stay inside weights card');
+  assert.doesNotMatch(settingsSource, /Object\.values\(weights\)\.reduce/, 'weights total must not sum unknown extra keys');
+});
+
+test('score enabled toggle updates score tab immediately without modal reopen', () => {
+  assert.match(settingsSource, /const _scoreEnableEl = document\.getElementById\('cfgEnableScore'\);/, 'settings should bind a change listener on cfgEnableScore');
+  assert.match(settingsSource, /_scoreEnableEl\.addEventListener\('change', function \(\) \{[\s\S]*_renderScoreSettings\(\);/s, 'score toggle change should immediately rerender score tab');
+  const switchStabBlock = functionBlock(settingsSource, 'switchStab', 'applySettingsMobileLayout');
+  assert.match(switchStabBlock, /else _renderScoreSettings\(\);/, 'switching back to score tab should refresh according to current local toggle state');
+});
+
+test('score settings render guided help and size min\/max layout', () => {
+  assert.match(settingsSource, /function _scoreSectionHelp\(/, 'score section help resolver should exist');
+  assert.match(settingsSource, /score-section-help/, 'score sections should render short help text');
+  assert.match(settingsSource, /function _renderSizeProfiles\(/, 'size section should use dedicated renderer');
+  assert.match(settingsSource, /function _renderMinMaxRange\(/, 'size renderer should support min\/max range rows');
+  assert.match(settingsSource, /settings\.score\.labels\.min_short/, 'min\/max labels should use i18n keys');
+  assert.match(settingsSource, /sectionKey === 'video'/, 'video section should have dedicated rendering');
+  assert.match(settingsSource, /score-nested-collapsible/, 'video sub-sections should reuse collapsible UI');
+  assert.match(appCss, /\.score-size-layout\{display:grid;grid-template-columns:1fr;gap:10px\}/, 'size section should be single-column to avoid overlap');
+});
+
 test('settings trigger scan only when folders changed', () => {
   const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
   assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');

@@ -8,7 +8,8 @@ function configuredPayload() {
   return {
     needs_onboarding: false,
     ui: { language: 'fr' },
-    jellyseerr: { enabled: true },
+    score: { enabled: true },
+    seerr: { enabled: true },
     folders: [{ name: 'Cinema', type: 'movie', enabled: true, missing: false }],
   };
 }
@@ -17,7 +18,7 @@ function onboardingPayload() {
   return {
     needs_onboarding: true,
     ui: { language: 'fr' },
-    jellyseerr: { enabled: false },
+    seerr: { enabled: false },
     folders: [{ name: 'Cinema', type: '', enabled: true, missing: false }],
   };
 }
@@ -32,7 +33,44 @@ function libraryPayload() {
   };
 }
 
+function scoreSettingsPayload() {
+  return {
+    enabled: true,
+    defaults: {
+      weights: { video: 50, audio: 20, languages: 15, size: 15 },
+    },
+    effective: {
+      weights: { video: 50, audio: 20, languages: 15, size: 15 },
+      video: {
+        codec: { hevc: 15, vp9: 9, default: 6 },
+        resolution: { '1080p': 20, default: 8 },
+        hdr: { hdr10: 5, default: 0 },
+      },
+      audio: { codec: { dts: 15, default: 8 } },
+      languages: { profile: { multi: 15, default: 3 } },
+      size: { points: { coherent: 15, default: 5 }, profiles: { movie: { default: { default: { min_gb: 1, max_gb: 10 } } }, series: { default: { default: { min_gb: 0.2, max_gb: 4 } } } } },
+      custom_unknown_key: 42,
+    },
+    ui_schema: {
+      weights: { field_type: 'integer', min: 0, max: 100, sum_must_equal: 100 },
+      numeric_default: { field_type: 'number' },
+    },
+    status: { weights_total: 100, weights_valid: true },
+  };
+}
+
 async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false } = {}) {
+  await page.route('**/api/settings/score', async (route) => {
+    const method = route.request().method();
+    if (method === 'GET') {
+      await route.fulfill({ json: scoreSettingsPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 3, mode: 'score_only' } } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 3, mode: 'score_only' } } });
+  });
   await page.route('**/api/config', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: onboarding ? onboardingPayload() : configuredPayload() });
@@ -293,4 +331,228 @@ test('resetting persisted config makes onboarding visible again', async ({ page 
   onboarding = true;
   await page.reload();
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
+});
+
+test('score settings tab renders dynamic keys and blocks save when weights total is invalid', async ({ page }) => {
+  let capturedScorePayload = null;
+
+  await page.route('**/api/settings/score', async (route) => {
+    const method = route.request().method();
+    if (method === 'GET') {
+      await route.fulfill({ json: scoreSettingsPayload() });
+      return;
+    }
+    capturedScorePayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true, effective: capturedScorePayload.score, status: { weights_total: 100, weights_valid: true, recalculated_items: 2, mode: 'score_only' } } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true, effective: scoreSettingsPayload().effective, status: { weights_total: 100, weights_valid: true, recalculated_items: 2, mode: 'score_only' } } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#stab-score')).toBeVisible();
+  const scoreSections = page.locator('#scoreSettingsContainer .settings-collapsible');
+  const sectionCount = await scoreSections.count();
+  for (let i = 0; i < sectionCount; i += 1) {
+    await scoreSections.nth(i).click();
+  }
+  await expect(page.locator('#scoreSettingsContainer')).toContainText(/vp9|VP9/i);
+  await expect(page.locator('#scoreSettingsContainer')).toContainText('Custom Unknown Key');
+
+  const videoWeightInput = page.locator('input[data-score-path="weights.video"]');
+  await videoWeightInput.fill('40');
+  await videoWeightInput.dispatchEvent('input');
+  await expect(page.locator('#settingsSaveBtn')).toBeDisabled();
+  await expect(page.locator('.score-weights-card .score-validation-status')).toContainText('Le total des poids doit être égal à 100');
+  await expect(page.locator('.score-weights-card .score-validation-status')).not.toContainText('Configuration valide');
+  await expect(page.locator('#scoreSettingsStatus')).toBeHidden();
+
+  await videoWeightInput.fill('50');
+  await videoWeightInput.dispatchEvent('input');
+  await expect(page.locator('#settingsSaveBtn')).toBeEnabled();
+  await expect(page.locator('.score-weights-card .score-validation-status')).toContainText('Configuration valide');
+  await expect(page.locator('.score-weights-card .score-validation-status')).not.toContainText('Le total des poids doit être égal à 100');
+  await expect(page.locator('#scoreSettingsStatus')).toBeHidden();
+
+  await page.click('#settingsSaveBtn');
+  await expect.poll(() => capturedScorePayload).not.toBeNull();
+  expect(capturedScorePayload.score.video.codec.vp9).toBe(9);
+});
+
+test('score tab remains visible and shows disabled state when score feature is off', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ json: { ...scoreSettingsPayload(), enabled: false } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      const cfg = configuredPayload();
+      cfg.score = { enabled: false };
+      await route.fulfill({ json: cfg });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#stab-score')).toBeVisible();
+  await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
+  await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeHidden();
+});
+
+test('score tab updates immediately when score quality toggle changes in configuration tab', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ json: { ...scoreSettingsPayload(), enabled: true } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      const cfg = configuredPayload();
+      cfg.score = { enabled: true };
+      await route.fulfill({ json: cfg });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
+  await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
+
+  await page.evaluate(() => {
+    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
+    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
+    const toggle = document.getElementById('cfgEnableScore');
+    if (toggle) {
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  await page.evaluate(() => {
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
+  await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeHidden();
+
+  await page.evaluate(() => {
+    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
+    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
+    const toggle = document.getElementById('cfgEnableScore');
+    if (toggle) {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  await page.evaluate(() => {
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
+  await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeVisible();
+});
+
+test('score settings displays friendly error when API load fails', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'SCORE_SETTINGS_LOAD_FAILED' } }) });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false }) });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#scoreSettingsStatus')).toBeVisible();
+  await expect(page.locator('#scoreSettingsStatus')).toContainText('Impossible de charger la configuration du score');
 });

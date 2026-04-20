@@ -244,45 +244,26 @@ let allItems=[], categories=[], groups=[];
     return 'quality-lvl-unknown';
   }
 
-  const QUALITY_PENALTY_LABELS = {
-    audio_video_mismatch: 'quality_tooltip.penalties.audio_video_mismatch',
-    audio_video_imbalance: 'quality_tooltip.penalties.audio_video_imbalance',
-    legacy_codec_high_res: 'quality_tooltip.penalties.legacy_codec_high_res',
-    legacy_codec_mid_res: 'quality_tooltip.penalties.legacy_codec_mid_res',
-    premium_video_weak_languages: 'quality_tooltip.penalties.premium_video_weak_languages',
-    size_video_mismatch: 'quality_tooltip.penalties.size_video_mismatch'
-  };
-
-  function getQualityPenaltyLabel(code) {
-    const key = QUALITY_PENALTY_LABELS[code];
-    return key ? t(key) : code;
-  }
-
   function getQualityTooltipText(item) {
     if (!isScoreEnabled()) return '';
     const quality = item?.quality;
     const score = Number(quality?.score);
     if (!Number.isFinite(score)) return '';
 
+    const details = quality?.score_details || {};
+    const video = Number.isFinite(Number(details?.video)) ? Number(details.video) : Number(quality?.video);
+    const audio = Number.isFinite(Number(details?.audio)) ? Number(details.audio) : Number(quality?.audio);
+    const languages = Number.isFinite(Number(details?.languages)) ? Number(details.languages) : Number(quality?.languages);
+    const size = Number.isFinite(Number(details?.size)) ? Number(details.size) : Number(quality?.size);
+
     const lines = [
       `${t('quality_tooltip.score')}: ${Math.round(score)}`,
       '',
-      `${t('quality_tooltip.video')}: ${Number.isFinite(Number(quality?.video)) ? Math.round(Number(quality.video)) : 0}`,
-      `${t('quality_tooltip.audio')}: ${Number.isFinite(Number(quality?.audio)) ? Math.round(Number(quality.audio)) : 0}`,
-      `${t('quality_tooltip.languages')}: ${Number.isFinite(Number(quality?.languages)) ? Math.round(Number(quality.languages)) : 0}`,
-      `${t('quality_tooltip.size')}: ${Number.isFinite(Number(quality?.size)) ? Math.round(Number(quality.size)) : 0}`
+      `${t('quality_tooltip.video')}: ${Number.isFinite(video) ? Math.round(video) : 0}`,
+      `${t('quality_tooltip.audio')}: ${Number.isFinite(audio) ? Math.round(audio) : 0}`,
+      `${t('quality_tooltip.languages')}: ${Number.isFinite(languages) ? Math.round(languages) : 0}`,
+      `${t('quality_tooltip.size')}: ${Number.isFinite(size) ? Math.round(size) : 0}`
     ];
-
-    const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];
-    if (penalties.length) {
-      lines.push('', `${t('quality_tooltip.penalties.title')}:`);
-      penalties.forEach(penalty => {
-        const label = getQualityPenaltyLabel(String(penalty?.code || '').trim());
-        const value = Number(penalty?.value);
-        const valueLabel = Number.isFinite(value) ? ` (-${Math.abs(Math.round(value))})` : '';
-        lines.push(`- ${label}${valueLabel}`);
-      });
-    }
 
     return lines.join('\n');
   }
@@ -473,7 +454,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -516,9 +497,13 @@ let allItems=[], categories=[], groups=[];
   let appVersionInfo = null;     // loaded from /version.json
 
   function resolveScoreEnabled() {
-    const configScoreEnabled = appConfig?.system?.enable_score;
+    const configScoreEnabled = appConfig?.score?.enabled;
     if (typeof configScoreEnabled === 'boolean') {
       return configScoreEnabled;
+    }
+    const legacyScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof legacyScoreEnabled === 'boolean') {
+      return legacyScoreEnabled;
     }
     return false;
   }
@@ -912,10 +897,12 @@ let allItems=[], categories=[], groups=[];
         const mig = {};
         if (ls.enablePlot    !== undefined) { mig.ui = mig.ui||{}; mig.ui.synopsis_on_hover = ls.enablePlot; }
         if (ls.accentColor   !== undefined) { mig.ui = mig.ui||{}; mig.ui.accent_color = ls.accentColor; }
-        if (ls.jellyseerrUrl !== undefined || ls.enableJellyseerr !== undefined) {
-          mig.jellyseerr = {};
-          if (ls.jellyseerrUrl     !== undefined) mig.jellyseerr.url     = ls.jellyseerrUrl;
-          if (ls.enableJellyseerr  !== undefined) mig.jellyseerr.enabled = ls.enableJellyseerr;
+        const legacySeerrUrl = ls.seerrUrl ?? ls.jellyseerrUrl;
+        const legacySeerrEnabled = ls.enableSeerr ?? ls.enableJellyseerr;
+        if (legacySeerrUrl !== undefined || legacySeerrEnabled !== undefined) {
+          mig.seerr = {};
+          if (legacySeerrUrl     !== undefined) mig.seerr.url     = legacySeerrUrl;
+          if (legacySeerrEnabled !== undefined) mig.seerr.enabled = legacySeerrEnabled;
         }
         if (Object.keys(mig).length) await saveConfig(mig);
       } catch(e) {}
@@ -945,7 +932,7 @@ let allItems=[], categories=[], groups=[];
       // Type visibility
       enableMovies     = appConfig.enable_movies ?? true;
       enableSeries     = appConfig.enable_series ?? true;
-      enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
+      enableSeerr = appConfig.seerr?.enabled ?? appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
 
       // Provider visibility: explicit whitelist from config
@@ -1394,7 +1381,7 @@ let allItems=[], categories=[], groups=[];
     if (counts[PROVIDER_OTHERS_KEY] === undefined) counts[PROVIDER_OTHERS_KEY] = 0;
     ['providerSection', 'providerSectionMobile', 'providerSectionTop'].forEach(function(cid) {
       const sec = document.getElementById(cid);
-      if (!enableJellyseerr) { if (sec) sec.style.display = 'none'; return; }
+      if (!enableSeerr) { if (sec) sec.style.display = 'none'; return; }
       renderFilterDropdown({ containerId: cid, counts, label: t('filters.streaming_fr'),
         activeSet: activeProviders, toggleFn: 'toggleProviderFilter', clearFn: 'clearProviderFilter',
         getDisplay: k => {
@@ -1726,7 +1713,7 @@ let allItems=[], categories=[], groups=[];
       if (folderExclude) items = items.filter(i => !activeFolders.has(i.category || FILTER_NONE_KEY));
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
-    if (enableJellyseerr && activeProviders.size > 0) {
+    if (enableSeerr && activeProviders.size > 0) {
       items = items.filter(_matchesProviderFilters);
     }
     if (activeResolutions.size > 0) {
@@ -1949,7 +1936,7 @@ let allItems=[], categories=[], groups=[];
     return '<div class="tl-poster"><div class="tl-poster-ph">🎬</div></div>';
   }
   function providersBlock(item) {
-    if (!enableJellyseerr) return '';
+    if (!enableSeerr) return '';
     const visP = _itemVisProviders(item);
     const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!visP.length) {
@@ -2004,7 +1991,7 @@ let allItems=[], categories=[], groups=[];
   function th(col,label){ const s=tSortCol===col,i=s?(tSortDir===1?' &uarr;':' &darr;'):' &updownarrow;'; return '<th class="'+(s?'sorted':'')+'" onclick="sortByCol(\''+col+'\')">'+label+'<span class="si">'+i+'</span></th>'; }
 
   function tblProvidersHTML(item) {
-    if (!enableJellyseerr) return '-';
+    if (!enableSeerr) return '-';
     const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
@@ -2084,7 +2071,6 @@ let allItems=[], categories=[], groups=[];
       includeScore ? 'quality_audio' : null,
       includeScore ? 'quality_languages' : null,
       includeScore ? 'quality_size' : null,
-      includeScore ? 'quality_penalty_total' : null,
       t('table.resolution'), 'HDR', t('table.codec'), t('table.audio_codec'),
       t('table.audio_languages')+' (simple)', t('table.audio_languages')+' (raw)', 'Runtime (min)',
       t('table.size'), 'Size (B)', t('table.files'), t('table.added'), t('table.streaming')
@@ -2099,7 +2085,6 @@ let allItems=[], categories=[], groups=[];
       includeScore ? (i.quality?.audio ?? '') : null,
       includeScore ? (i.quality?.languages ?? '') : null,
       includeScore ? (i.quality?.size ?? '') : null,
-      includeScore ? (i.quality?.penalty_total ?? '') : null,
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),

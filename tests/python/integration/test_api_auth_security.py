@@ -68,12 +68,16 @@ class TestApiAuthSecurity(unittest.TestCase):
             return err.code, err.read().decode("utf-8"), err.headers
 
     def test_protected_get_endpoints_require_auth(self):
-        for path in ("/api/config", "/api/scan/log", "/api/scan/status"):
+        for path in ("/api/config", "/api/scan/log", "/api/scan/status", "/api/settings/score"):
             status, _, _ = self._request(path)
             self.assertEqual(status, 401, path)
 
     def test_protected_post_endpoint_requires_auth(self):
         status, _, _ = self._request("/api/scan/start", method="POST", payload={"mode": "quick"})
+        self.assertEqual(status, 401)
+
+    def test_protected_put_endpoint_requires_auth(self):
+        status, _, _ = self._request("/api/settings/score", method="PUT", payload={"score": {}})
         self.assertEqual(status, 401)
 
     def test_auth_validate_requires_session_cookie(self):

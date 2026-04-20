@@ -257,6 +257,7 @@
       <div class="settings-tabs">
         <button class="stab active" onclick="switchStab(this,'stab-library')" data-i18n="settings.tabs.library">Bibliothèque</button>
         <button class="stab" onclick="switchStab(this,'stab-configuration')" data-i18n="settings.tabs.configuration">Configuration</button>
+        <button class="stab" onclick="switchStab(this,'stab-score')" data-i18n="settings.tabs.score">Score</button>
         <button class="stab" onclick="switchStab(this,'stab-connections')" data-i18n="settings.tabs.connections">Connexions</button>
         <button class="stab" onclick="switchStab(this,'stab-system')" data-i18n="settings.tabs.system">Système</button>
       </div>
@@ -325,6 +326,24 @@
           </div>
         </div>
 
+        <!-- TAB: SCORE -->
+        <div id="stab-score" class="stab-panel" style="display:none" data-mobile-panel="score">
+          <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
+            <span class="settings-collapsible-title" data-i18n="settings.tabs.score">Score</span>
+            <span class="settings-collapsible-icon">▾</span>
+          </button>
+          <div class="settings-mobile-section-body is-collapsed">
+          <div class="settings-group">
+            <div id="scoreSettingsStatus" class="settings-note" style="display:none;margin-bottom:10px"></div>
+            <div id="scoreSettingsDisabled" class="settings-note" style="display:none;margin-bottom:10px" data-i18n="settings.score.disabled_in_configuration">Le score qualité est actuellement désactivé dans Configuration.</div>
+            <div id="scoreSettingsContainer"></div>
+            <div id="scoreResetRow" class="settings-row" style="justify-content:flex-end;gap:8px;margin-top:10px;display:none">
+              <button id="scoreResetBtn" class="scan-btn" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" onclick="resetScoreSettings()" data-i18n="settings.score.reset">Réinitialiser</button>
+            </div>
+          </div>
+          </div>
+        </div>
+
         <!-- TAB: CONNEXIONS -->
         <div id="stab-connections" class="stab-panel" style="display:none" data-mobile-panel="connections">
           <button type="button" class="settings-collapsible settings-mobile-section-btn" onclick="toggleMobileSettingsSection(this)" aria-expanded="false">
@@ -334,27 +353,27 @@
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group settings-subgroup">
             <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.connections.enable_jellyseerr">Activer Jellyseerr</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgEnableJellyseerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
+              <label class="settings-label" data-i18n="settings.connections.enable_seerr">Activer Seerr</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgEnableSeerr" onchange="toggleJsrFields()"/><span class="toggle-switch-slider"></span></label>
             </div>
           </div>
-          <div class="settings-group settings-subgroup" id="cfgJellyseerrBlock">
-            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsJellyseerrBody" aria-expanded="false">
-              <span class="settings-collapsible-title" data-i18n="settings.connections.jellyseerr_block">Jellyseerr</span>
+          <div class="settings-group settings-subgroup" id="cfgSeerrBlock">
+            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsSeerrBody" aria-expanded="false">
+              <span class="settings-collapsible-title" data-i18n="settings.connections.seerr_block">Seerr</span>
               <span class="settings-collapsible-icon">▾</span>
             </button>
-            <div class="settings-collapsible-body is-collapsed" id="settingsJellyseerrBody">
-              <div id="cfgJellyseerrFields">
+            <div class="settings-collapsible-body is-collapsed" id="settingsSeerrBody">
+              <div id="cfgSeerrFields">
                 <div class="settings-row" style="margin-bottom:8px">
-                  <label class="settings-label" data-i18n="settings.jellyseerr.url">URL</label>
-                  <input type="text" id="cfgJellyseerrUrl" class="settings-input" placeholder="http://jellyseerr:5055"/>
+                  <label class="settings-label" data-i18n="settings.seerr.url">URL</label>
+                  <input type="text" id="cfgSeerrUrl" class="settings-input" placeholder="http://seerr:5055"/>
                 </div>
                 <div class="settings-row" style="margin-bottom:8px">
-                  <label class="settings-label" data-i18n="settings.jellyseerr.apikey">Clé API</label>
-                  <input type="password" id="cfgJellyseerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"/>
+                  <label class="settings-label" data-i18n="settings.seerr.apikey">Clé API</label>
+                  <input type="password" id="cfgSeerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"/>
                 </div>
                 <div class="settings-row">
-                  <button class="scan-btn" id="cfgJsrTestBtn" onclick="testJellyseerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.jellyseerr.test">Tester la connexion</button>
+                  <button class="scan-btn" id="cfgJsrTestBtn" onclick="testSeerr()" style="padding:5px 14px;font-size:12px" data-i18n="settings.seerr.test">Tester la connexion</button>
                   <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
                 </div>
               </div>

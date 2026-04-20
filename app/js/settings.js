@@ -2,7 +2,7 @@
  * MyMediaLibrary — Settings & Onboarding Module
  *
  * Handles all settings panel logic (open/close/save, folders, providers,
- * Jellyseerr, cron hints, mobile layout) and the first-run onboarding flow.
+ * Seerr, cron hints, mobile layout) and the first-run onboarding flow.
  *
  * Depends on globals populated by app.js at runtime:
  *   appConfig, libraryPathLabel, allItems, enablePlot, enableScore,
@@ -26,6 +26,9 @@
   // ── Settings private state ────────────────────────────────────────────────
   let _settingsJsrTestOk = false;
   let _settingsLayoutMode = null;
+  let _scoreSettingsMeta = null;
+  let _scoreSettingsDraft = null;
+  let _scoreEnabledLocalOverride = null;
 
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
@@ -76,6 +79,662 @@
     panel.style.display = collapsed ? 'none' : 'block';
   }
 
+  function _cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function _scoreGetAtPath(root, path) {
+    return path.split('.').reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), root);
+  }
+
+  function _scoreSetAtPath(root, path, value) {
+    const parts = path.split('.');
+    const last = parts.pop();
+    let cur = root;
+    parts.forEach((part) => {
+      if (!cur[part] || typeof cur[part] !== 'object') cur[part] = {};
+      cur = cur[part];
+    });
+    cur[last] = value;
+  }
+
+  function _tMaybe(key) {
+    const value = t(key);
+    return value === key ? null : value;
+  }
+
+  function _scoreT(key, vars = {}, fallbackFr = '', fallbackEn = '') {
+    let translated = t(key, vars);
+    if (translated === key) {
+      translated = CURRENT_LANG === 'fr'
+        ? (fallbackFr || fallbackEn || key)
+        : (fallbackEn || fallbackFr || key);
+      Object.entries(vars).forEach(([k, v]) => {
+        translated = translated.split(`{${k}}`).join(String(v));
+      });
+      console.warn('Using score i18n fallback for key:', key);
+    }
+    return translated;
+  }
+
+  function _scoreKeyTokenLabel(token) {
+    const map = {
+      av1: 'AV1',
+      h264: 'H.264',
+      h265: 'H.265',
+      hevc: 'HEVC',
+      avc: 'AVC',
+      hdr: 'HDR',
+      hdr10: 'HDR10',
+      hdr10plus: 'HDR10+',
+      hlg: 'HLG',
+      sd: 'SD',
+      vo: 'VO',
+      vf: 'VF',
+      dts: 'DTS',
+      dtsx: 'DTS:X',
+      ac3: 'AC-3',
+      eac3: 'E-AC-3',
+      aac: 'AAC',
+      mp3: 'MP3',
+      mp2: 'MP2',
+      truehd: 'TrueHD',
+      atmos: 'Atmos',
+      gb: 'GB',
+    };
+    if (!token) return '';
+    const normalized = String(token).trim().toLowerCase();
+    if (map[normalized]) return map[normalized];
+    if (/^\d+p$/i.test(normalized)) return normalized.toLowerCase();
+    if (/^\d+$/.test(normalized)) return normalized;
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  function _humanizeScoreKey(key) {
+    if (!key) return '';
+    const chunks = String(key)
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[._-]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return chunks.map(_scoreKeyTokenLabel).join(' ');
+  }
+
+  function _scoreLabel(path, key) {
+    const sectionLabel = _tMaybe(`settings.score.sections.${key}`);
+    if (sectionLabel) return sectionLabel;
+
+    const pathKey = String(path || '')
+      .replace(/^score\./, '')
+      .replace(/\./g, '_');
+    const pathLabel = _tMaybe(`settings.score.labels.${pathKey}`);
+    if (pathLabel) return pathLabel;
+
+    const keyLabel = _tMaybe(`settings.score.labels.${key}`);
+    if (keyLabel) return keyLabel;
+
+    return _humanizeScoreKey(key);
+  }
+
+  function _scoreSectionBodyId(sectionKey, idx) {
+    const safe = String(sectionKey).replace(/[^a-zA-Z0-9_-]+/g, '_');
+    return `scoreSectionBody-${idx}-${safe}`;
+  }
+
+  function _isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  const _WEIGHT_KEYS = ['video', 'audio', 'languages', 'size'];
+
+  function _sumCanonicalWeights(weights) {
+    const source = _isPlainObject(weights) ? weights : {};
+    return _WEIGHT_KEYS.reduce((sum, key) => {
+      const value = source[key];
+      return sum + (Number.isFinite(Number(value)) ? Number(value) : 0);
+    }, 0);
+  }
+
+  function _hasSingleObjectChild(value) {
+    if (!_isPlainObject(value)) return false;
+    const entries = Object.entries(value);
+    if (entries.length !== 1) return false;
+    return _isPlainObject(entries[0][1]);
+  }
+
+  function _flattenSingleObjectLayer(path, value) {
+    let currentPath = path;
+    let currentValue = value;
+    while (_hasSingleObjectChild(currentValue)) {
+      const [childKey, childValue] = Object.entries(currentValue)[0];
+      currentPath = `${currentPath}.${childKey}`;
+      currentValue = childValue;
+    }
+    return { path: currentPath, value: currentValue };
+  }
+
+  async function _buildApiError(res, fallbackLabel) {
+    let details = '';
+    try {
+      const text = await res.text();
+      if (text) details = text.slice(0, 400);
+    } catch (_) {}
+    const base = `${fallbackLabel} (HTTP ${res.status})`;
+    return details ? `${base} — ${details}` : base;
+  }
+
+  function _setScoreStatus(message, isError = false) {
+    const status = document.getElementById('scoreSettingsStatus');
+    if (!status) return;
+    if (!message) {
+      status.style.display = 'none';
+      status.textContent = '';
+      status.style.color = 'var(--muted)';
+      return;
+    }
+    status.style.display = '';
+    status.textContent = message;
+    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+  }
+
+  function _renderScoreInput(path, key, value) {
+    const label = _scoreLabel(path, key);
+    const isDefaultField = key === 'default';
+    const isKeyField = path.startsWith('weights.');
+    const rowClasses = ['settings-row', 'score-config-row'];
+    if (isDefaultField) rowClasses.push('is-default-field');
+    if (isKeyField) rowClasses.push('is-key-field');
+    const defaultBadge = isDefaultField
+      ? ` <span class="score-key-badge">${escH(_scoreT('settings.score.badges.default', {}, 'Par défaut', 'Default'))}</span>`
+      : '';
+    if (typeof value === 'number') {
+      const isInt = Number.isInteger(value);
+      const step = isInt ? '1' : '0.01';
+      const attrs = path.startsWith('weights.') ? ' min="0" max="100"' : '';
+      const title = key === 'default'
+        ? ` title="${escH(_scoreT('settings.score.default_help', {}, 'Valeur par défaut', 'Default value'))}"`
+        : '';
+      return `<div class="${rowClasses.join(' ')}">`
+        + `<label class="settings-label"${title}>${escH(label)}${defaultBadge}</label>`
+        + `<input class="settings-input score-config-input" type="number" step="${step}"${attrs} data-score-path="${escH(path)}" value="${String(value)}"/>`
+        + '</div>';
+    }
+    if (typeof value === 'boolean') {
+      return `<div class="${rowClasses.join(' ')}">`
+        + `<label class="settings-label">${escH(label)}${defaultBadge}</label>`
+        + `<label class="toggle-switch"><input type="checkbox" data-score-path="${escH(path)}"${value ? ' checked' : ''}/><span class="toggle-switch-slider"></span></label>`
+        + '</div>';
+    }
+    return `<div class="${rowClasses.join(' ')}">`
+      + `<label class="settings-label">${escH(label)}${defaultBadge}</label>`
+      + `<input class="settings-input score-config-input" type="text" data-score-path="${escH(path)}" value="${escH(String(value ?? ''))}"/>`
+      + '</div>';
+  }
+
+  function _hasMinMaxRange(value) {
+    return _isPlainObject(value)
+      && value.min_gb !== undefined
+      && value.max_gb !== undefined
+      && !Object.entries(value).some(([, v]) => _isPlainObject(v));
+  }
+
+  function _renderMinMaxRange(parentPath, value, options = {}) {
+    const { codecLabel = null } = options;
+    const labelPrefix = codecLabel ? `${escH(codecLabel)} ` : '';
+    return '<div class="score-minmax-range">'
+      + `<div class="score-minmax-cell"><label class="settings-label">${labelPrefix}${escH(_scoreT('settings.score.labels.min_short', {}, 'Min (Go)', 'Min (GB)'))}</label>`
+      + `<input class="settings-input score-config-input" type="number" step="0.01" data-score-path="${escH(`${parentPath}.min_gb`)}" value="${String(value.min_gb)}"/></div>`
+      + `<div class="score-minmax-cell"><label class="settings-label">${escH(_scoreT('settings.score.labels.max_short', {}, 'Max (Go)', 'Max (GB)'))}</label>`
+      + `<input class="settings-input score-config-input" type="number" step="0.01" data-score-path="${escH(`${parentPath}.max_gb`)}" value="${String(value.max_gb)}"/></div>`
+      + '</div>';
+  }
+
+  function _orderedSizeProfileKeys(obj, preferred = []) {
+    const entries = Object.entries(obj || {});
+    const pref = new Map(preferred.map((key, idx) => [String(key).toLowerCase(), idx]));
+    return [...entries].sort(([aKey], [bKey]) => {
+      const a = String(aKey).toLowerCase();
+      const b = String(bKey).toLowerCase();
+      const aPref = pref.has(a) ? pref.get(a) : Number.POSITIVE_INFINITY;
+      const bPref = pref.has(b) ? pref.get(b) : Number.POSITIVE_INFINITY;
+      if (aPref !== bPref) return aPref - bPref;
+      if (a === 'unknown') return 1;
+      if (b === 'unknown') return -1;
+      if (a === 'default') return 1;
+      if (b === 'default') return -1;
+      return 0;
+    });
+  }
+
+  function _renderSizeProfiles(profiles, parentPath) {
+    if (!_isPlainObject(profiles)) return _renderScoreObject(profiles, parentPath, { noHeader: false });
+    const mediaEntries = _orderedSizeProfileKeys(profiles, ['movie', 'series']);
+    let html = '<div class="score-size-layout">';
+    mediaEntries.forEach(([mediaTypeKey, mediaTypeValue]) => {
+      const mediaPath = `${parentPath}.${mediaTypeKey}`;
+      if (!_isPlainObject(mediaTypeValue)) {
+        html += _renderScoreInput(mediaPath, mediaTypeKey, mediaTypeValue);
+        return;
+      }
+      html += '<div class="score-size-media-block">'
+        + `<div class="score-subgroup-title">${escH(_scoreLabel(mediaPath, mediaTypeKey))}</div>`;
+      const resolutionEntries = _orderedSizeProfileKeys(mediaTypeValue, ['2160p', '1080p', '720p', 'sd']);
+      resolutionEntries.forEach(([resolutionKey, resolutionValue]) => {
+        const resolutionPath = `${mediaPath}.${resolutionKey}`;
+        if (!_isPlainObject(resolutionValue)) {
+          html += _renderScoreInput(resolutionPath, resolutionKey, resolutionValue);
+          return;
+        }
+        html += '<div class="score-size-resolution-block">'
+          + `<div class="score-size-resolution-title">${escH(_scoreLabel(resolutionPath, resolutionKey))}</div>`;
+        const codecEntries = _orderedSizeProfileKeys(resolutionValue, []);
+        codecEntries.forEach(([codecKey, codecValue]) => {
+          const codecPath = `${resolutionPath}.${codecKey}`;
+          if (_hasMinMaxRange(codecValue)) {
+            html += _renderMinMaxRange(codecPath, codecValue, {
+              codecLabel: _scoreLabel(codecPath, codecKey),
+            });
+            return;
+          }
+          if (_isPlainObject(codecValue)) {
+            html += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(codecPath, codecKey))}</div>`
+              + _renderScoreObject(codecValue, codecPath, { noHeader: true })
+              + '</div>';
+            return;
+          }
+          html += _renderScoreInput(codecPath, codecKey, codecValue);
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function _renderScoreObject(obj, parentPath, options = {}) {
+    const { noHeader = false } = options;
+    let html = '';
+    if (_hasMinMaxRange(obj)) return _renderMinMaxRange(parentPath, obj);
+    const orderedEntries = Object.entries(obj || {});
+    const workingEntries = orderedEntries;
+
+    if (!noHeader && workingEntries.length > 1) {
+      const simpleKeys = workingEntries
+        .filter(([, value]) => !_isPlainObject(value))
+        .map(([key]) => key);
+      if (simpleKeys.length > 1) {
+        html += '<div class="score-subgroup score-subgroup-inline">';
+        simpleKeys.forEach((key) => {
+          const value = obj[key];
+          const path = `${parentPath}.${key}`;
+          html += _renderScoreInput(path, key, value);
+        });
+        html += '</div>';
+      }
+    }
+
+    workingEntries.forEach(([key, value]) => {
+      const path = parentPath ? `${parentPath}.${key}` : key;
+      if (_isPlainObject(value)) {
+        const flattened = _flattenSingleObjectLayer(path, value);
+        const flattenedEntries = Object.entries(flattened.value || {});
+        const showTitle = flattenedEntries.some(([, childValue]) => _isPlainObject(childValue)) || flattenedEntries.length > 1;
+        html += '<div class="score-subgroup">';
+        if (showTitle) {
+          html += `<div class="score-subgroup-title">${escH(_scoreLabel(path, key))}</div>`;
+        }
+        html += _renderScoreObject(flattened.value, flattened.path, { noHeader: !showTitle });
+        html += '</div>';
+      } else if (!(workingEntries.length > 1 && orderedEntries.filter(([, v]) => !_isPlainObject(v)).length > 1 && !noHeader)) {
+        html += _renderScoreInput(path, key, value);
+      }
+    });
+    return html;
+  }
+
+  function _renderScoreWeights() {
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const min = Number.isFinite(Number(ui.min)) ? Number(ui.min) : 0;
+    const max = Number.isFinite(Number(ui.max)) ? Number(ui.max) : 100;
+
+    const total = _sumCanonicalWeights(weights);
+    let html = '<div class="settings-group score-weights-card"><div class="settings-row score-weights-head">'
+      + `<div class="settings-label score-weights-title">${escH(_scoreT('settings.score.weights', {}, 'Poids', 'Weights'))}</div>`
+      + '</div>'
+      + `<div class="score-section-help">${escH(_scoreSectionHelp('weights'))}</div>`
+      + '<div class="score-weights-grid">';
+    Object.entries(weights).forEach(([key, value]) => {
+      html += '<div class="score-weight-cell">'
+        + `<label class="settings-label">${escH(_scoreLabel(`weights.${key}`, key))}</label>`
+        + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`
+        + '</div>';
+    });
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const valid = total === expected;
+    const summaryLine = _scoreT(
+      'settings.score.summary_pattern',
+      {
+        video: Number(weights.video || 0),
+        audio: Number(weights.audio || 0),
+        languages: Number(weights.languages || 0),
+        size: Number(weights.size || 0),
+      },
+      `Vidéo ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Langues ${Number(weights.languages || 0)}% • Taille ${Number(weights.size || 0)}%`,
+      `Video ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Languages ${Number(weights.languages || 0)}% • Size ${Number(weights.size || 0)}%`,
+    );
+    const validationText = valid
+      ? _scoreT('settings.score.validation_ok', {}, 'Configuration valide', 'Configuration is valid')
+      : _scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100');
+    const validationClass = valid ? 'is-valid' : 'is-invalid';
+    html += '</div><div class="settings-row score-weights-total">'
+      + `<span class="settings-label">${escH(_scoreT('settings.score.weights_total', {}, 'Total', 'Total'))}</span>`
+      + `<span class="score-weights-total-value${valid ? '' : ' is-invalid'}">${total}</span>`
+      + '</div>'
+      + `<div class="score-validation-status ${validationClass}" id="scoreWeightsValidationStatus">${escH(validationText)}</div>`
+      + `<div class="score-weights-summary" id="scoreWeightsSummary">${escH(summaryLine)}</div>`
+      + '</div>';
+    return { html, valid, total, expected };
+  }
+
+  function _scoreSectionHelp(sectionKey) {
+    const defaults = {
+      weights: {
+        fr: 'Définit l’importance de chaque composante dans le score final.',
+        en: 'Defines how much each component contributes to the final score.',
+      },
+      video: {
+        fr: 'Ajuste les points liés à la résolution, au codec vidéo et au HDR.',
+        en: 'Adjusts points related to resolution, video codec, and HDR.',
+      },
+      audio: {
+        fr: 'Ajuste les points attribués selon le codec audio.',
+        en: 'Adjusts the points assigned to each audio codec.',
+      },
+      languages: {
+        fr: 'Définit la valeur des profils linguistiques détectés.',
+        en: 'Defines the value of detected language profiles.',
+      },
+      size: {
+        fr: 'Évalue la cohérence de la taille selon le type, la résolution et parfois le codec.',
+        en: 'Evaluates size consistency depending on type, resolution, and sometimes codec.',
+      },
+    };
+    const fallback = defaults[sectionKey] || { fr: '', en: '' };
+    return _scoreT(
+      `settings.score.help.${sectionKey}`,
+      {},
+      fallback.fr,
+      fallback.en,
+    );
+  }
+
+  function _renderScoreSection(sectionKey, sectionValue, idx) {
+    const bodyId = _scoreSectionBodyId(sectionKey, idx);
+    let bodyHtml = '';
+    if (_isPlainObject(sectionValue)) {
+      if (sectionKey === 'video') {
+        let videoHtml = '';
+        let nestedIdx = 0;
+        Object.entries(sectionValue).forEach(([videoKey, videoValue]) => {
+          const videoPath = `${sectionKey}.${videoKey}`;
+          if (_isPlainObject(videoValue)) {
+            const nestedBodyId = _scoreSectionBodyId(videoPath, `${idx}-${nestedIdx}`);
+            nestedIdx += 1;
+            videoHtml += '<div class="score-nested-section">'
+              + `<button type="button" class="settings-collapsible score-nested-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
+              + `<span class="settings-collapsible-title">${escH(_scoreLabel(videoPath, videoKey))}</span>`
+              + '<span class="settings-collapsible-icon">▾</span>'
+              + '</button>'
+              + `<div class="settings-collapsible-body is-collapsed score-nested-body" id="${escH(nestedBodyId)}">`
+              + _renderScoreObject(videoValue, videoPath, { noHeader: false })
+              + '</div></div>';
+            return;
+          }
+          videoHtml += _renderScoreInput(videoPath, videoKey, videoValue);
+        });
+        bodyHtml = videoHtml;
+      }
+      else if (sectionKey === 'size' && _isPlainObject(sectionValue.profiles)) {
+        const sizeEntries = Object.entries(sectionValue);
+        let sizeHtml = '';
+        sizeEntries.forEach(([sizeKey, sizeValue]) => {
+          const sizePath = `${sectionKey}.${sizeKey}`;
+          if (sizeKey === 'profiles') {
+            sizeHtml += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(sizePath, sizeKey))}</div>`
+              + _renderSizeProfiles(sizeValue, sizePath)
+              + '</div>';
+            return;
+          }
+          if (_isPlainObject(sizeValue)) {
+            sizeHtml += '<div class="score-subgroup">'
+              + `<div class="score-subgroup-title">${escH(_scoreLabel(sizePath, sizeKey))}</div>`
+              + _renderScoreObject(sizeValue, sizePath, { noHeader: false })
+              + '</div>';
+            return;
+          }
+          sizeHtml += _renderScoreInput(sizePath, sizeKey, sizeValue);
+        });
+        bodyHtml = sizeHtml;
+      }
+      else {
+        const flattened = _flattenSingleObjectLayer(sectionKey, sectionValue);
+        bodyHtml = _renderScoreObject(flattened.value, flattened.path, { noHeader: false });
+      }
+    } else {
+      bodyHtml = _renderScoreInput(sectionKey, sectionKey, sectionValue);
+    }
+    return '<div class="settings-group settings-subgroup score-settings-section">'
+      + `<button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(bodyId)}" aria-expanded="false">`
+      + `<span class="settings-collapsible-title">${escH(_scoreLabel(sectionKey, sectionKey))}</span>`
+      + '<span class="settings-collapsible-icon">▾</span>'
+      + '</button>'
+      + `<div class="settings-collapsible-body is-collapsed" id="${escH(bodyId)}">`
+      + `<div class="score-section-body"><div class="score-section-help">${escH(_scoreSectionHelp(sectionKey))}</div>${bodyHtml}</div>`
+      + '</div></div>';
+  }
+
+  function _isScoreSettingsEnabled() {
+    if (typeof _scoreEnabledLocalOverride === 'boolean') return _scoreEnabledLocalOverride;
+    if (typeof _scoreSettingsMeta?.enabled === 'boolean') return _scoreSettingsMeta.enabled;
+    const configScoreEnabled = appConfig?.score?.enabled;
+    if (typeof configScoreEnabled === 'boolean') return configScoreEnabled;
+    const legacyScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof legacyScoreEnabled === 'boolean') return legacyScoreEnabled;
+    return _scoreSettingsMeta?.enabled === true;
+  }
+
+  function _scoreWeightsValidation() {
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const total = _sumCanonicalWeights(weights);
+    return { expected, total, valid: total === expected };
+  }
+
+  function _isScoreTabActive() {
+    const panel = document.getElementById('stab-score');
+    if (!panel) return false;
+    if (!isMobile()) return panel.style.display !== 'none';
+    const btn = panel.querySelector('.settings-mobile-section-btn');
+    return btn?.getAttribute('aria-expanded') === 'true';
+  }
+
+  function _syncGlobalSaveAvailability() {
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    if (!saveBtn) return;
+    if (_isScoreTabActive() && _isScoreSettingsEnabled() && _scoreSettingsDraft) {
+      saveBtn.disabled = !_scoreWeightsValidation().valid;
+      return;
+    }
+    saveBtn.disabled = false;
+  }
+
+  function _renderScoreDisabledState() {
+    const container = document.getElementById('scoreSettingsContainer');
+    const disabled = document.getElementById('scoreSettingsDisabled');
+    const resetRow = document.getElementById('scoreResetRow');
+    if (disabled) disabled.style.display = '';
+    if (resetRow) resetRow.style.display = 'none';
+    if (container) container.innerHTML = '';
+    _setScoreStatus('');
+    _syncGlobalSaveAvailability();
+  }
+
+  function _renderScoreSettings() {
+    const container = document.getElementById('scoreSettingsContainer');
+    const disabled = document.getElementById('scoreSettingsDisabled');
+    const resetRow = document.getElementById('scoreResetRow');
+    if (!container) return;
+
+    if (!_isScoreSettingsEnabled()) {
+      _renderScoreDisabledState();
+      return;
+    }
+    if (disabled) disabled.style.display = 'none';
+    if (resetRow) resetRow.style.display = '';
+    if (!_scoreSettingsDraft) return;
+
+    const { html: weightsHtml } = _renderScoreWeights();
+    let html = weightsHtml;
+    let sectionIdx = 0;
+    Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
+      if (key === 'weights' || key === 'penalties') return;
+      html += _renderScoreSection(key, value, sectionIdx);
+      sectionIdx += 1;
+    });
+    container.innerHTML = `<div class="score-settings-shell">${html}</div>`;
+
+    _syncGlobalSaveAvailability();
+  }
+
+  function _refreshScoreWeightStatusOnly() {
+    if (!_isScoreSettingsEnabled()) {
+      _syncGlobalSaveAvailability();
+      return;
+    }
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const total = _sumCanonicalWeights(weights);
+    const valid = total === expected;
+    const totalEl = document.querySelector('.score-weights-total-value');
+    if (totalEl) {
+      totalEl.textContent = String(total);
+      totalEl.classList.toggle('is-invalid', !valid);
+    }
+    const validationEl = document.getElementById('scoreWeightsValidationStatus');
+    if (validationEl) {
+      validationEl.classList.toggle('is-valid', valid);
+      validationEl.classList.toggle('is-invalid', !valid);
+      validationEl.textContent = valid
+        ? _scoreT('settings.score.validation_ok', {}, 'Configuration valide', 'Configuration is valid')
+        : _scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100').replace('100', String(expected));
+    }
+    const summaryEl = document.getElementById('scoreWeightsSummary');
+    if (summaryEl) {
+      summaryEl.textContent = _scoreT(
+        'settings.score.summary_pattern',
+        {
+          video: Number(weights.video || 0),
+          audio: Number(weights.audio || 0),
+          languages: Number(weights.languages || 0),
+          size: Number(weights.size || 0),
+        },
+        `Vidéo ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Langues ${Number(weights.languages || 0)}% • Taille ${Number(weights.size || 0)}%`,
+        `Video ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Languages ${Number(weights.languages || 0)}% • Size ${Number(weights.size || 0)}%`,
+      );
+    }
+    _syncGlobalSaveAvailability();
+  }
+
+  async function loadScoreSettings() {
+    _scoreSettingsMeta = null;
+    _scoreSettingsDraft = null;
+    try {
+      const res = await fetch('/api/settings/score');
+      if (!res.ok) throw new Error(await _buildApiError(res, 'GET /api/settings/score failed'));
+      _scoreSettingsMeta = await res.json();
+      if (!_scoreSettingsMeta || typeof _scoreSettingsMeta !== 'object' || !_scoreSettingsMeta.effective) {
+        throw new Error('Invalid score payload: missing effective');
+      }
+      if (typeof _scoreEnabledLocalOverride === 'boolean') {
+        _scoreSettingsMeta.enabled = _scoreEnabledLocalOverride;
+      }
+      _scoreSettingsDraft = _cloneJson(_scoreSettingsMeta.effective || {});
+      _renderScoreSettings();
+    } catch (e) {
+      _setScoreStatus(_scoreT('settings.score.load_error', {}, 'Impossible de charger la configuration du score', 'Unable to load score configuration'), true);
+      const container = document.getElementById('scoreSettingsContainer');
+      if (container) container.innerHTML = '';
+      const disabled = document.getElementById('scoreSettingsDisabled');
+      const resetRow = document.getElementById('scoreResetRow');
+      if (disabled) disabled.style.display = 'none';
+      if (resetRow) resetRow.style.display = 'none';
+      _syncGlobalSaveAvailability();
+      console.error('loadScoreSettings error:', e);
+    }
+  }
+
+  async function _persistScoreSettings() {
+    if (!_scoreSettingsDraft) return;
+    const res = await fetch('/api/settings/score', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ score: _scoreSettingsDraft })
+    });
+    if (!res.ok) throw new Error(await _buildApiError(res, 'PUT /api/settings/score failed'));
+    const payload = await res.json();
+    if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+    if (typeof payload?.enabled === 'boolean') {
+      _scoreSettingsMeta = _scoreSettingsMeta || {};
+      _scoreSettingsMeta.enabled = payload.enabled;
+    }
+    _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
+    _setScoreStatus(_scoreT(
+      'settings.score.saved',
+      { count: payload?.status?.recalculated_items ?? 0 },
+      'Configuration du score enregistrée ({count} items recalculés)',
+      'Score configuration saved ({count} items recalculated)',
+    ), false);
+    _renderScoreSettings();
+    if (typeof window.loadLibrary === 'function') window.loadLibrary();
+  }
+
+  async function resetScoreSettings() {
+    if (!_isScoreSettingsEnabled()) return;
+    try {
+      const res = await fetch('/api/settings/score/reset', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}'
+      });
+      if (!res.ok) throw new Error(await _buildApiError(res, 'POST /api/settings/score/reset failed'));
+      const payload = await res.json();
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+      if (typeof payload?.enabled === 'boolean') {
+        _scoreSettingsMeta = _scoreSettingsMeta || {};
+        _scoreSettingsMeta.enabled = payload.enabled;
+      }
+      _scoreSettingsDraft = _cloneJson(payload.effective || {});
+      _setScoreStatus(_scoreT(
+        'settings.score.reset_done',
+        { count: payload?.status?.recalculated_items ?? 0 },
+        'Score réinitialisé ({count} items recalculés)',
+        'Score reset ({count} items recalculated)',
+      ), false);
+      _renderScoreSettings();
+      if (typeof window.loadLibrary === 'function') window.loadLibrary();
+    } catch (e) {
+      _setScoreStatus(`${_scoreT('settings.score.reset_error', {}, 'Impossible de réinitialiser la configuration du score', 'Unable to reset score configuration')}: ${e.message}`, true);
+      console.error('resetScoreSettings error:', e);
+    }
+  }
+
   // ── Settings: folder helpers (private to this module) ────────────────────
   function _setFolderEnabled(folder, enabled) {
     if (!folder) return;
@@ -96,6 +755,14 @@
       const el = document.getElementById(id);
       if (el) el.style.display = show ? '' : 'none';
     });
+  }
+
+  function _getSeerrConfig() {
+    const seerr = appConfig?.seerr;
+    if (seerr && typeof seerr === 'object') return seerr;
+    const legacy = appConfig?.jellyseerr;
+    if (legacy && typeof legacy === 'object') return legacy;
+    return {};
   }
 
   // ── Settings: load / save ─────────────────────────────────────────────────
@@ -128,19 +795,22 @@
     _rw('cfgEnableScore', isScoreEnabled());
     updateCronHint();
 
-    // Jellyseerr — editable from appConfig
-    _rw('cfgEnableJellyseerr', appConfig.jellyseerr?.enabled ?? false);
-    _rw('cfgJellyseerrUrl',    appConfig.jellyseerr?.url    || '');
-    _rw('cfgJellyseerrKey',    '');   // never pre-fill the key
-    const jsrKeyInput = _field('cfgJellyseerrKey');
+    // Seerr — editable from appConfig
+    const seerrCfg = _getSeerrConfig();
+    _rw('cfgEnableSeerr', seerrCfg.enabled ?? false);
+    _rw('cfgSeerrUrl',    seerrCfg.url || '');
+    _rw('cfgSeerrKey',    '');   // never pre-fill the key
+    const jsrKeyInput = _field('cfgSeerrKey');
     if (jsrKeyInput) {
-      const hasStoredKey = appConfig.jellyseerr?.apikey === '***';
-      jsrKeyInput.placeholder = hasStoredKey ? t('settings.jellyseerr.apikey_saved') : '••••••••••••';
+      const hasStoredKey = seerrCfg.apikey === '***';
+      jsrKeyInput.placeholder = hasStoredKey ? t('settings.seerr.apikey_saved') : '••••••••••••';
     }
     toggleJsrFields();
 
     renderFoldersUI();
     renderProviderToggles();
+    loadScoreSettings();
+    _syncGlobalSaveAvailability();
   }
 
   function saveSettings() {
@@ -175,16 +845,16 @@
     const es = get('cfgEnableSeries');
     if (es !== null) partial.enable_series = es;
 
-    const jEnabled = get('cfgEnableJellyseerr');
-    const jUrl     = get('cfgJellyseerrUrl');
-    const jKeyRaw  = get('cfgJellyseerrKey');
+    const jEnabled = get('cfgEnableSeerr');
+    const jUrl     = get('cfgSeerrUrl');
+    const jKeyRaw  = get('cfgSeerrKey');
     const jKey     = (typeof jKeyRaw === 'string') ? jKeyRaw.trim() : '';
-    const hasNewJellyseerrKey = !!jKey && jKey !== '***';
-    if (jEnabled !== null || jUrl !== null || hasNewJellyseerrKey) {
-      partial.jellyseerr = partial.jellyseerr || {};
-      if (jEnabled !== null)           partial.jellyseerr.enabled = jEnabled;
-      if (jUrl     !== null)           partial.jellyseerr.url     = jUrl;
-      if (hasNewJellyseerrKey)         partial.jellyseerr.apikey  = jKey;
+    const hasNewSeerrKey = !!jKey && jKey !== '***';
+    if (jEnabled !== null || jUrl !== null || hasNewSeerrKey) {
+      partial.seerr = partial.seerr || {};
+      if (jEnabled !== null)           partial.seerr.enabled = jEnabled;
+      if (jUrl     !== null)           partial.seerr.url     = jUrl;
+      if (hasNewSeerrKey)         partial.seerr.apikey  = jKey;
     }
 
     // Gather folder type/activation — always include current state
@@ -209,11 +879,25 @@
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
       if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
-      if (enableScoreCfg !== null) partial.system.enable_score = enableScoreCfg;
+      if (enableScoreCfg !== null) {
+        partial.score = partial.score || {};
+        partial.score.enabled = enableScoreCfg;
+      }
+      if (!Object.keys(partial.system).length) delete partial.system;
     }
 
     try {
       await saveConfig(partial);
+      const shouldPersistScoreSettings = _isScoreTabActive() && _isScoreSettingsEnabled() && !!_scoreSettingsDraft;
+      if (shouldPersistScoreSettings) {
+        const validation = _scoreWeightsValidation();
+        if (!validation.valid) {
+          _setScoreStatus(_scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100').replace('100', String(validation.expected)), true);
+          _syncGlobalSaveAvailability();
+          return;
+        }
+        await _persistScoreSettings();
+      }
       window.location.reload();
     } catch(e) {
       alert(t('settings.save_error', {msg: e.message}));
@@ -344,7 +1028,7 @@
       })
     );
     if (!provs.length && !hasHidden) {
-      container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>';
+      container.innerHTML = '<div class="settings-note">' + t('settings.seerr.no_provider_available') + '</div>';
       return;
     }
     let html = '';
@@ -385,21 +1069,21 @@
     });
   }
 
-  // ── Settings: Jellyseerr ──────────────────────────────────────────────────
+  // ── Settings: Seerr ──────────────────────────────────────────────────
   function toggleJsrFields() {
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked;
-    const jellyFields = document.getElementById('cfgJellyseerrFields');
-    const jellyBlock = document.getElementById('cfgJellyseerrBlock');
+    const enabled = document.getElementById('cfgEnableSeerr')?.checked;
+    const seerrFields = document.getElementById('cfgSeerrFields');
+    const seerrBlock = document.getElementById('cfgSeerrBlock');
     const providersBlock = document.getElementById('cfgProvidersBlock');
-    ['cfgJellyseerrUrl', 'cfgJellyseerrKey', 'cfgJsrTestBtn'].forEach(id => {
+    ['cfgSeerrUrl', 'cfgSeerrKey', 'cfgJsrTestBtn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
     });
-    if (jellyFields) jellyFields.style.display = enabled ? '' : 'none';
-    if (jellyBlock) jellyBlock.style.display = enabled ? '' : 'none';
+    if (seerrFields) seerrFields.style.display = enabled ? '' : 'none';
+    if (seerrBlock) seerrBlock.style.display = enabled ? '' : 'none';
     if (providersBlock) providersBlock.style.display = enabled ? '' : 'none';
     if (enabled) {
-      _setSettingsCollapsed('settingsJellyseerrBody', true);
+      _setSettingsCollapsed('settingsSeerrBody', true);
       _setSettingsCollapsed('settingsProvidersBody', true);
     }
     if (!enabled) {
@@ -409,13 +1093,13 @@
     }
   }
 
-  async function _runJellyseerrConnectionTest(btn, res, onSuccess) {
+  async function _runSeerrConnectionTest(btn, res, onSuccess) {
     if (!res) return false;
     res.textContent = '…';
     res.style.color = 'var(--muted)';
     if (btn) btn.disabled = true;
     try {
-      const r = await fetch('/api/jellyseerr/test');
+      const r = await fetch('/api/seerr/test');
       const d = await r.json();
       if (d.ok) {
         res.textContent = '✓ ' + t('onboarding.jsr_ok');
@@ -435,24 +1119,24 @@
     }
   }
 
-  async function testJellyseerr() {
+  async function testSeerr() {
     const btn = document.getElementById('cfgJsrTestBtn');
     const res = document.getElementById('cfgJsrTestResult');
     if (!res) return;
 
-    const enabled = document.getElementById('cfgEnableJellyseerr')?.checked ?? false;
-    const url = (document.getElementById('cfgJellyseerrUrl')?.value || '').trim();
-    const key = (document.getElementById('cfgJellyseerrKey')?.value || '').trim();
+    const enabled = document.getElementById('cfgEnableSeerr')?.checked ?? false;
+    const url = (document.getElementById('cfgSeerrUrl')?.value || '').trim();
+    const key = (document.getElementById('cfgSeerrKey')?.value || '').trim();
 
     try {
       await saveConfig({
-        jellyseerr: {
+        seerr: {
           enabled,
           url,
           ...(key ? { apikey: key } : {}),
         },
       });
-      _settingsJsrTestOk = await _runJellyseerrConnectionTest(btn, res);
+      _settingsJsrTestOk = await _runSeerrConnectionTest(btn, res);
     } catch (e) {
       _settingsJsrTestOk = false;
       res.textContent = '✗ ' + (e?.message || t('onboarding.jsr_fail'));
@@ -548,6 +1232,11 @@
     btn.classList.add('active');
     document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';
+    if (tabId === 'stab-score') {
+      if (!_scoreSettingsMeta) loadScoreSettings();
+      else _renderScoreSettings();
+    }
+    _syncGlobalSaveAvailability();
   }
 
   function applySettingsMobileLayout(options = {}) {
@@ -621,6 +1310,11 @@
       pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
       pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
     });
+    if (willOpen && panel?.id === 'stab-score') {
+      if (!_scoreSettingsMeta) loadScoreSettings();
+      else _renderScoreSettings();
+    }
+    _syncGlobalSaveAvailability();
   }
 
   function openMobileScanFromSettings() {
@@ -631,6 +1325,7 @@
   function openSettings() {
     closeMobileScanSheet();
     _settingsJsrTestOk = false;
+    _scoreEnabledLocalOverride = null;
     loadSettings();
     loadVersion();
     renderProviderToggles();
@@ -768,9 +1463,10 @@
     _onbStep = 0;
     _onbLang = null;
     _onbTheme = appConfig.ui?.theme || 'dark';
+    const seerrCfg = _getSeerrConfig();
     _onbJsr = {
-      enabled: appConfig.jellyseerr?.enabled ?? false,
-      url:     appConfig.jellyseerr?.url     || '',
+      enabled: seerrCfg.enabled ?? false,
+      url:     seerrCfg.url || '',
       key:     '',
     };
     _onbLogSeen = 0;
@@ -817,7 +1513,7 @@
       if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
-      // Step 2: disable next until Jellyseerr test passes
+      // Step 2: disable next until Seerr test passes
       if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
       else if (_onbStep === 2) { next.disabled = true; }
       else next.disabled = false;
@@ -920,12 +1616,12 @@
     if (!btn) return;
     const enabled = document.getElementById('onbJsrEnabled')?.checked ?? _onbJsr.enabled;
     if (enabled) {
-      // Jellyseerr on → Skip grayed (but clickable)
+      // Seerr on → Skip grayed (but clickable)
       btn.style.background  = 'transparent';
       btn.style.borderColor = 'var(--border)';
       btn.style.color       = 'var(--muted)';
     } else {
-      // Jellyseerr off → Skip highlighted (violet)
+      // Seerr off → Skip highlighted (violet)
       btn.style.background  = 'var(--accent)';
       btn.style.borderColor = 'var(--accent)';
       btn.style.color       = '#fff';
@@ -958,7 +1654,7 @@
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
-        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://jellyseerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
+        + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://seerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
         + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row">'
@@ -983,7 +1679,7 @@
       + '</div>'
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
-      + '<div>🔍 Jellyseerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
       + '</div>';
   }
 
@@ -993,8 +1689,8 @@
     if (!res) return;
     _captureOnbJsr();
     const onbKey = (_onbJsr.key || '').trim();
-    await saveConfig({ jellyseerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
-    await _runJellyseerrConnectionTest(btn, res, () => {
+    await saveConfig({ seerr: { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) } });
+    await _runSeerrConnectionTest(btn, res, () => {
       const next = document.getElementById('onbNextBtn');
       if (next) next.disabled = false;
     });
@@ -1011,7 +1707,7 @@
   }
 
   function onbSkip() {
-    // Only shown on step 2 — Skip means disable Jellyseerr
+    // Only shown on step 2 — Skip means disable Seerr
     if (_onbStep === 2) {
       _captureOnbJsr();
       _onbJsr.enabled = false;
@@ -1036,7 +1732,7 @@
       folders,
       enable_movies: folders.some(f => f.type === 'movie'),
       enable_series: folders.some(f => f.type === 'tv'),
-      jellyseerr: (() => {
+      seerr: (() => {
         const onbKey = (_onbJsr.key || '').trim();
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
@@ -1113,16 +1809,53 @@
   const _epEl = document.getElementById('cfgEnablePlot');
   if (_epEl) _epEl.addEventListener('change', saveSettings);
 
-  // Jellyseerr URL/key: reset connection test state on any edit
+  // cfgEnableScore: update score tab state immediately (without closing modal)
+  const _scoreEnableEl = document.getElementById('cfgEnableScore');
+  if (_scoreEnableEl) {
+    _scoreEnableEl.addEventListener('change', function () {
+      _scoreEnabledLocalOverride = _scoreEnableEl.checked === true;
+      if (_scoreSettingsMeta && typeof _scoreSettingsMeta === 'object') {
+        _scoreSettingsMeta.enabled = _scoreEnabledLocalOverride;
+      }
+      _renderScoreSettings();
+      _syncGlobalSaveAvailability();
+    });
+  }
+
+  // Seerr URL/key: reset connection test state on any edit
   function _resetJsrTestState() {
     _settingsJsrTestOk = false;
     const res = document.getElementById('cfgJsrTestResult');
     if (res) res.textContent = '';
   }
-  ['cfgJellyseerrUrl', 'cfgJellyseerrKey'].forEach(function (id) {
+  ['cfgSeerrUrl', 'cfgSeerrKey'].forEach(function (id) {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', _resetJsrTestState);
   });
+
+  const _scoreContainer = document.getElementById('scoreSettingsContainer');
+  if (_scoreContainer) {
+    _scoreContainer.addEventListener('input', function (event) {
+      const target = event.target;
+      const path = target?.dataset?.scorePath;
+      if (!path || !_scoreSettingsDraft) return;
+      if (target.type === 'checkbox') {
+        _scoreSetAtPath(_scoreSettingsDraft, path, !!target.checked);
+      } else if (target.type === 'number') {
+        const next = target.value === '' ? 0 : Number(target.value);
+        _scoreSetAtPath(_scoreSettingsDraft, path, Number.isFinite(next) ? next : 0);
+      } else {
+        _scoreSetAtPath(_scoreSettingsDraft, path, String(target.value ?? ''));
+      }
+      if (path.startsWith('weights.')) _refreshScoreWeightStatusOnly();
+    });
+    _scoreContainer.addEventListener('change', function (event) {
+      const target = event.target;
+      if (target?.type === 'number' && target.dataset?.scorePath?.startsWith('weights.')) {
+        target.value = String(Math.round(Number(target.value || 0)));
+      }
+    });
+  }
 
   // ── Public API ────────────────────────────────────────────────────────────
   window.MMLSettings = {
@@ -1144,8 +1877,9 @@
   window.toggleMobileSettingsSection = toggleMobileSettingsSection;
   window.openMobileScanFromSettings = openMobileScanFromSettings;
   window.switchStab                = switchStab;
+  window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
-  window.testJellyseerr            = testJellyseerr;
+  window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;
   window.showOnboarding            = showOnboarding;

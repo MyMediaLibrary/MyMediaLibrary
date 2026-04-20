@@ -3,7 +3,7 @@ NFO parsing, codec normalisation and audio language helpers.
 
 All functions are pure or depend only on static data and the local filesystem
 (audiocodec_mapping.json, poster files). They have no dependency on scanner
-runtime state (config, library.json, Jellyseerr, etc.) and can be tested in
+runtime state (config, library.json, Seerr, etc.) and can be tested in
 isolation.
 
 Imported by scanner.py at runtime.

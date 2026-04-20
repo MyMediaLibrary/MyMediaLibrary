@@ -25,7 +25,7 @@
 **Flux :**
 1. Le scanner Python lit les sous-dossiers de `LIBRARY_PATH`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
 2. L'interface web (vanilla JS) charge `library.json` et affiche les tuiles avec filtres, tri et statistiques.
-3. La configuration est persistée dans `data/config.json` (dossiers, Jellyseerr, préférences UI).
+3. La configuration est persistée dans `data/config.json` (dossiers, Seerr, préférences UI).
 
 ---
 
@@ -159,7 +159,7 @@ L'assistant de configuration s'affiche au premier démarrage (ou si `config.json
 
 1. **Écran d'accueil** — description de l'application, choix de la langue, bouton "Commencer".
 2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'aucun dossier media (Films ou Séries) n'est configuré.
-3. **Jellyseerr** (optionnel) — URL + clé API, bouton de test de connexion.
+3. **Seerr** (optionnel) — URL + clé API, bouton de test de connexion.
 4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin.
 
 ---
@@ -186,14 +186,14 @@ Le format détaillé de ces fichiers est décrit dans le chapitre [Modèles de d
 - Parcourt le filesystem et parse les fichiers `.nfo`
 - Écrit `library.json` de façon incrémentale, dossier par dossier
 - Conserve les données enrichies du scan précédent (providers streaming, score qualité)
-- N'appelle **pas** Jellyseerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
+- N'appelle **pas** Seerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
 
 #### Scan complet (full)
 
 Enchaîne 4 phases dans l'ordre :
 
 1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
-2. **Jellyseerr** — récupération des plateformes de streaming FR pour chaque titre
+2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
 3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
 4. **Inventaire** — mise à jour de `library_inventory.json` (si activé dans les paramètres)
 
@@ -224,7 +224,7 @@ Les logs sont disponibles dans `data/scanner.log` (chemin hôte) et consultables
 | Niveau | Contenu |
 |---|---|
 | `INFO` | Progression des phases, avancement par dossier, durées, statistiques détectées (codecs vidéo/audio, langues, résolutions) |
-| `DEBUG` | Détails techniques : résultats Jellyseerr par item, parsing NFO, items non trouvés, détails inventaire |
+| `DEBUG` | Détails techniques : résultats Seerr par item, parsing NFO, items non trouvés, détails inventaire |
 
 ### Préservation des données (scan rapide)
 
@@ -232,7 +232,7 @@ Lors d'un scan rapide, les données enrichies par les scans complets précédent
 
 | Champ | Source | Comportement |
 |---|---|---|
-| `providers` | Phase 2 (Jellyseerr) | Copié depuis le `library.json` existant |
+| `providers` | Phase 2 (Seerr) | Copié depuis le `library.json` existant |
 | `providers_fetched` | Phase 2 | Copié depuis le `library.json` existant |
 | `quality` | Phase 3 (scoring) | Copié depuis le `library.json` existant |
 
@@ -322,7 +322,7 @@ Chaque tuile affiche :
 - Poster local (si disponible) ou placeholder
 - Titre + année
 - Résolution (badge coloré : 4K, 1080p, 720p…)
-- Logos des plateformes de streaming (si Jellyseerr activé)
+- Logos des plateformes de streaming (si Seerr activé)
 - Nombre de saisons/épisodes (séries)
 - Synopsis au survol (optionnel, activable dans les paramètres)
 
@@ -368,11 +368,11 @@ Fonctionnalités communes :
 
 ## 10. Plateformes de streaming
 
-L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
+L'enrichissement streaming est optionnel et repose sur **Seerr**.
 
 ### Configuration
 
-URL + clé API dans les paramètres (onglet Jellyseerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
+URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
 
 ### Modèle actuel
 
@@ -437,8 +437,44 @@ Résultat :
 
 ## 11. Score de qualité
 
-Le score de qualité est une fonctionnalité **optionnelle** pilotée par `system.enable_score` (valeur par défaut : `false`).
-Quand il est activé, chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
+### Principe
+
+Le score de qualité est un score global **de 0 à 100**.
+Il combine 4 composantes : **vidéo**, **audio**, **langues** et **taille**.
+
+### Fonctionnalité optionnelle
+
+Le score qualité est une fonctionnalité **bonus**, **désactivée par défaut**.
+Vous pouvez l’activer à tout moment si vous souhaitez une analyse plus fine de votre bibliothèque.
+
+### Activation
+
+Activez le score dans **Paramètres > Configuration** avec le toggle **Activer le score qualité**.
+
+### Configuration
+
+La configuration détaillée se fait dans **Paramètres > Score** :
+- poids
+- règles vidéo
+- règles audio
+- langues
+- taille (films / séries)
+
+### Valeurs par défaut
+
+Des valeurs par défaut sont fournies et utilisables immédiatement.
+Vous pouvez tout modifier puis revenir à la base via le bouton **Réinitialiser**.
+
+### Fonctionnement
+
+Le score est calculé pendant les scans quand la fonctionnalité est activée.
+Après modification des paramètres de score, un **recalcul ciblé** est lancé, sans rescanner toute la bibliothèque.
+
+### Philosophie
+
+Le système est volontairement flexible et personnalisable.
+Vous pouvez l’adapter à vos priorités, tout en conservant un comportement robuste même avec des données incomplètes (valeurs par défaut de repli).
+Les incohérences techniques ne sont plus gérées par des malus et pourront être traitées séparément par de futures recommandations.
 
 ### Filtre score (slider 0–100, si activé)
 
@@ -548,23 +584,10 @@ Ce dégradé est utilisé pour :
 | 720p | Tous | 2–6 GB |
 | SD | Tous | 500 MB – 2 GB |
 
-### Pénalités
-
-Des pénalités sont appliquées pour corriger les incohérences et éviter qu'un profil technique faible conserve un score trop élevé.
-
-| Situation | Pénalité | Explication |
-|---|---|---|
-| Vidéo excellente + audio faible | -10 / -5 | Un très bon rendu visuel avec un son faible crée un déséquilibre perceptible à l'usage. |
-| Haute résolution + codec ancien | -8 / -4 | Une vidéo HD/4K encodée avec un codec ancien indique souvent une compression moins efficace. |
-| Bonne vidéo + peu de langues | -5 | Le fichier est de bonne qualité, mais reste moins accessible pour plusieurs profils d'utilisateurs. |
-| Taille incohérente | -5 | Une taille trop faible ou trop élevée pour le profil attendu peut signaler une qualité irrégulière. |
-
-> Pénalité maximale appliquée : 20 points.
-
 ### Score final
 
 ```text
-Score final = Score de base - Pénalités
+Score final = Somme des composantes
 Borné entre 0 et 100
 ```
 
@@ -590,11 +613,10 @@ Le score qualité est visible dans toute l'interface :
 
 Au survol du badge, une infobulle détaillée est affichée :
 - détail complet par catégorie
-- pénalités appliquées
 
-### Désactivation complète du score (`enable_score`)
+### Désactivation complète du score (`score.enabled`)
 
-Le paramètre système `enable_score` permet de couper totalement la fonctionnalité.
+Le paramètre `score.enabled` dans `config.json` permet de couper totalement la fonctionnalité.
 
 Si désactivé :
 - le backend bypass complètement le calcul de score pendant le scan
@@ -614,7 +636,7 @@ Si réactivé :
 - options à 0 masquées (sauf options actives)
 - sections de filtres vides masquées automatiquement
 - tri dynamique des options selon les counts
-- UI réactive immédiatement aux changements de configuration (ex: `enable_score` OFF)
+- UI réactive immédiatement aux changements de configuration (ex: `score.enabled = false`)
 
 ### Statistiques
 
@@ -650,7 +672,7 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 - Afficher/masquer Films ou Séries
 - Tableau des dossiers détectés : type (Films/Séries/Ignorer) + visibilité individuelle
 
-### Onglet Jellyseerr
+### Onglet Seerr
 
 - Activer/désactiver l'enrichissement
 - URL + clé API + test de connexion

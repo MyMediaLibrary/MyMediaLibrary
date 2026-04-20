@@ -14,7 +14,7 @@
     "folder_ignore": "Ignore",
     "step_jsr_title": "Streaming enrichment",
     "step_jsr_desc": "Optional — shows FR streaming providers (Netflix, Canal+…) on each title.",
-    "jsr_enable": "Enable Jellyseerr",
+    "jsr_enable": "Enable Seerr",
     "jsr_url": "URL",
     "jsr_apikey": "API Key",
     "jsr_test": "Test connection",
@@ -122,13 +122,76 @@
     "tabs": {
       "library": "Library",
       "configuration": "Configuration",
+      "score": "Score",
       "connections": "Connections",
       "system": "System"
     },
+    "score": {
+      "save": "Save score",
+      "reset": "Reset",
+      "weights": "Weights",
+      "weights_total": "Total",
+      "summary_pattern": "Video {video}% • Audio {audio}% • Languages {languages}% • Size {size}%",
+      "validation_ok": "Configuration is valid",
+      "validation_bad": "Weight total must be equal to 100",
+      "badges": {
+        "default": "Default"
+      },
+      "help": {
+        "weights": "Defines how much each component contributes to the final score.",
+        "video": "Adjusts points related to resolution, video codec, and HDR.",
+        "audio": "Adjusts the points assigned to each audio codec.",
+        "languages": "Defines the value of detected language profiles.",
+        "size": "Evaluates size consistency depending on type, resolution, and sometimes codec."
+      },
+      "default_help": "Default value used when no specific key matches",
+      "load_error": "Unable to load score configuration",
+      "save_error": "Unable to save score configuration",
+      "reset_error": "Unable to reset score configuration",
+      "saved": "Score configuration saved ({count} items recalculated)",
+      "reset_done": "Score reset ({count} items recalculated)",
+      "disabled_in_configuration": "Quality score is currently disabled in Configuration.",
+      "sections": {
+        "video": "Video",
+        "audio": "Audio",
+        "languages": "Languages",
+        "size": "Size"
+      },
+      "labels": {
+        "video": "Video",
+        "audio": "Audio",
+        "languages": "Languages",
+        "size": "Size",
+        "resolution": "Resolution",
+        "codec": "Codec",
+        "hdr": "HDR",
+        "profile": "Profile",
+        "points": "Points",
+        "profiles": "Profiles",
+        "rules": "Rules",
+        "default": "Default value",
+        "unknown": "Unknown",
+        "enabled": "Enabled",
+        "min_gb": "Min (GB)",
+        "max_gb": "Max (GB)",
+        "min_short": "Min (GB)",
+        "max_short": "Max (GB)",
+        "movie": "Movies",
+        "series": "Series",
+        "coherent": "Coherent",
+        "too_large": "Too large",
+        "too_small": "Too small",
+        "multi": "Multi",
+        "french_only": "French only",
+        "vo": "VO",
+        "sdr": "SDR",
+        "dolby_vision": "Dolby Vision"
+      }
+    },
     "connections": {
-      "jellyseerr_block": "Jellyseerr",
+      "seerr_block": "Seerr",
       "providers_block": "Providers",
-      "enable_jellyseerr": "Enable Jellyseerr"
+      "enable_seerr": "Enable Seerr"
     },
     "library": {
       "path": "Library path",
@@ -150,7 +213,7 @@
       "no_folders": "No folders detected. Run a scan to detect folders.",
       "env_defined": "Defined via compose.yaml"
     },
-    "jellyseerr": {
+    "seerr": {
       "enable": "Enable",
       "url": "URL",
       "apikey": "API Key",
@@ -348,15 +411,6 @@
     "video": "Video",
     "audio": "Audio",
     "languages": "Languages",
-    "size": "Size",
-    "penalties": {
-      "title": "Penalties",
-      "audio_video_mismatch": "Inconsistent audio/video",
-      "audio_video_imbalance": "Unbalanced audio/video",
-      "legacy_codec_high_res": "Legacy codec at high resolution",
-      "legacy_codec_mid_res": "Legacy codec at medium resolution",
-      "premium_video_weak_languages": "Limited languages",
-      "size_video_mismatch": "Size inconsistent with video"
-    }
+    "size": "Size"
   }
 }

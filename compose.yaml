@@ -10,5 +10,7 @@ services:
     environment:
       LIBRARY_PATH: /library   # fixé à /library dans le conteneur — adapter le volume ci-dessus
       TZ: Europe/Paris
+      # SEERR_URL: "http://seerr:5055"
+      # SEERR_API_KEY: "your-seerr-api-key"
       # APP_PASSWORD: ""
     restart: unless-stopped

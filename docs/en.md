@@ -25,7 +25,7 @@
 **Flow:**
 1. The Python scanner reads subdirectories of `LIBRARY_PATH`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
 2. The web interface (vanilla JS) loads `library.json` and renders cards with filters, sorting, and statistics.
-3. Configuration is persisted in `data/config.json` (folders, Jellyseerr, UI preferences).
+3. Configuration is persisted in `data/config.json` (folders, Seerr, UI preferences).
 
 ---
 
@@ -158,7 +158,7 @@ The setup wizard appears on first launch (or when `config.json` is missing/empty
 
 1. **Welcome screen** — app description, language selection, "Get started" button
 2. **Folders** — lists subdirectories of `LIBRARY_PATH`, assign a type to each (Movies / Series / Ignore). Unconfigured folders are skipped during scan. The "Next" button is disabled until at least 1 folder is configured.
-3. **Jellyseerr** (optional) — URL + API key, connection test button
+3. **Seerr** (optional) — URL + API key, connection test button
 4. **Summary + Scan** — shows the configuration, "Launch scan" button that starts the initial scan and redirects to the library when done
 
 ---
@@ -185,14 +185,14 @@ The detailed format of these files is described in the [Data models](#7-data-mod
 - Walks the filesystem and parses `.nfo` files
 - Writes `library.json` incrementally, folder by folder
 - Preserves enriched data from the previous scan (streaming providers, quality score)
-- Does **not** call Jellyseerr, does **not** recompute scores, does **not** update the inventory
+- Does **not** call Seerr, does **not** recompute scores, does **not** update the inventory
 
 #### Full scan (default)
 
 Runs 4 phases in sequence:
 
 1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
-2. **Jellyseerr** — fetch FR streaming providers for each title
+2. **Seerr** — fetch FR streaming providers for each title
 3. **Scoring** — compute quality score (if enabled in settings)
 4. **Inventory** — update `library_inventory.json` (if enabled in settings)
 
@@ -223,7 +223,7 @@ Logs are available in `data/scanner.log` (host path) and viewable in Settings > 
 | Level | Content |
 |---|---|
 | `INFO` | Phase progression, per-folder progress, durations, detected statistics (video/audio codecs, languages, resolutions) |
-| `DEBUG` | Technical details: Jellyseerr results per item, NFO parsing, not-found items, inventory details |
+| `DEBUG` | Technical details: Seerr results per item, NFO parsing, not-found items, inventory details |
 
 ### Data preservation (quick scan)
 
@@ -231,7 +231,7 @@ During a quick scan, enriched data accumulated by previous full scans is carried
 
 | Field | Source | Behavior |
 |---|---|---|
-| `providers` | Phase 2 (Jellyseerr) | Copied from the existing `library.json` |
+| `providers` | Phase 2 (Seerr) | Copied from the existing `library.json` |
 | `providers_fetched` | Phase 2 | Copied from the existing `library.json` |
 | `quality` | Phase 3 (scoring) | Copied from the existing `library.json` |
 
@@ -321,7 +321,7 @@ Each card displays:
 - Local poster (if available) or placeholder
 - Title + year
 - Resolution (colored badge: 4K, 1080p, 720p…)
-- Streaming provider logos (if Jellyseerr is enabled)
+- Streaming provider logos (if Seerr is enabled)
 - Season/episode count (series)
 - Synopsis on hover (optional, configurable in settings)
 
@@ -367,11 +367,11 @@ Shared capabilities:
 
 ## 10. Streaming providers
 
-Streaming enrichment is optional and relies on **Jellyseerr**.
+Streaming enrichment is optional and relies on **Seerr**.
 
 ### Configuration
 
-URL + API key in settings (Jellyseerr tab) or during onboarding. A "Test connection" button validates the credentials.
+URL + API key in settings (Seerr tab) or during onboarding. A "Test connection" button validates the credentials.
 
 ### Current model
 
@@ -436,8 +436,44 @@ Result:
 
 ## 11. Quality Scoring
 
-Quality scoring is an **optional** feature controlled by `system.enable_score` (default: `false`).
-When enabled, media items receive a global **quality score out of 100**. The score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+### Principle
+
+Quality scoring is a global score **from 0 to 100**.
+It combines 4 components: **video**, **audio**, **languages**, and **size**.
+
+### Optional feature
+
+The quality score is a **bonus feature**, **disabled by default**.
+You can enable it anytime if you want a more advanced analysis of your library.
+
+### Activation
+
+Enable it in **Settings > Configuration** using the **Enable quality score** toggle.
+
+### Configuration
+
+Detailed configuration is available in **Settings > Score**:
+- weights
+- video rules
+- audio rules
+- language rules
+- size rules (movies / series)
+
+### Default values
+
+Ready-to-use default values are provided out of the box.
+You can customize everything and go back to defaults anytime using **Reset**.
+
+### Runtime behavior
+
+Scores are computed during scans when the feature is enabled.
+After changing score settings, the backend runs a **targeted score recomputation** without a full library rescan.
+
+### Philosophy
+
+The scoring system is designed to stay flexible and fully customizable.
+You can adapt it to your preferences while keeping robust behavior with incomplete metadata (default fallback values are used).
+Technical inconsistencies are no longer handled with score malus and can be surfaced later through dedicated recommendations.
 
 ### Score filter (0–100 slider, when enabled)
 
@@ -547,23 +583,10 @@ Used for:
 | 720p | All | 2–6 GB |
 | SD | All | 500 MB – 2 GB |
 
-### Penalties
-
-Penalties are applied to correct incoherent combinations and avoid inflated scores in weak technical profiles.
-
-| Situation | Penalty | Explanation |
-|---|---|---|
-| High video quality + weak audio | -10 / -5 | A very sharp image with poor sound creates an unbalanced viewing experience. |
-| High resolution + legacy codec | -8 / -4 | HD/4K video encoded with an older codec often indicates less efficient compression quality. |
-| Good video + limited languages | -5 | The file quality is good, but usability is lower for users needing more language options. |
-| Inconsistent size | -5 | A file that is too small or too large for its profile can indicate uneven quality. |
-
-> Maximum applied penalty: 20 points.
-
 ### Final score
 
 ```text
-Final Score = Base Score - Penalties
+Final Score = Component sum
 Clamped between 0 and 100
 ```
 
@@ -589,11 +612,10 @@ Quality scoring is visible throughout the interface:
 
 Hovering the quality badge shows a complete detailed tooltip:
 - full breakdown by category
-- applied penalties
 
-### Full score disable (`enable_score`)
+### Full score disable (`score.enabled`)
 
-The `enable_score` system setting can disable the feature entirely.
+The `score.enabled` setting in `config.json` can disable the feature entirely.
 
 When disabled:
 - backend scan fully bypasses quality score computation
@@ -649,7 +671,7 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 - Show/hide Movies or Series
 - Table of detected folders: type (Movies/Series/Ignore) + individual visibility
 
-### Jellyseerr tab
+### Seerr tab
 
 - Enable/disable enrichment
 - URL + API key + connection test
