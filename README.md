@@ -41,6 +41,8 @@ services:
     environment:
       LIBRARY_PATH: /library
       TZ: Europe/Paris
+      # SEERR_URL: "http://seerr:5055"
+      # SEERR_API_KEY: "your-seerr-api-key"
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -109,6 +111,8 @@ services:
     environment:
       LIBRARY_PATH: /library
       TZ: Europe/Paris
+      # SEERR_URL: "http://seerr:5055"
+      # SEERR_API_KEY: "your-seerr-api-key"
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
