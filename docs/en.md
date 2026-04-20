@@ -436,8 +436,44 @@ Result:
 
 ## 11. Quality Scoring
 
-Quality scoring is an **optional** feature controlled by `system.enable_score` (default: `false`).
-When enabled, media items receive a global **quality score out of 100**. The score is calculated from multiple technical criteria to help identify higher-quality files, detect weak points, and prioritize upgrades in your library.
+### Principle
+
+Quality scoring is a global score **from 0 to 100**.
+It combines 4 components: **video**, **audio**, **languages**, and **size**, then applies **penalties** when needed.
+
+### Optional feature
+
+The quality score is a **bonus feature**, **disabled by default**.
+You can enable it anytime if you want a more advanced analysis of your library.
+
+### Activation
+
+Enable it in **Settings > Configuration** using the **Enable quality score** toggle.
+
+### Configuration
+
+Detailed configuration is available in **Settings > Score**:
+- weights
+- video rules
+- audio rules
+- language rules
+- size rules (movies / series)
+- penalties
+
+### Default values
+
+Ready-to-use default values are provided out of the box.
+You can customize everything and go back to defaults anytime using **Reset**.
+
+### Runtime behavior
+
+Scores are computed during scans when the feature is enabled.
+After changing score settings, the backend runs a **targeted score recomputation** without a full library rescan.
+
+### Philosophy
+
+The scoring system is designed to stay flexible and fully customizable.
+You can adapt it to your preferences while keeping robust behavior with incomplete metadata (default fallback values are used).
 
 ### Score filter (0–100 slider, when enabled)
 

@@ -437,8 +437,44 @@ Résultat :
 
 ## 11. Score de qualité
 
-Le score de qualité est une fonctionnalité **optionnelle** pilotée par `system.enable_score` (valeur par défaut : `false`).
-Quand il est activé, chaque média reçoit un **score global de qualité sur 100**. Ce score est calculé à partir de plusieurs critères techniques pour aider à identifier les meilleurs fichiers, repérer les points faibles et prioriser les améliorations de la bibliothèque.
+### Principe
+
+Le score de qualité est un score global **de 0 à 100**.
+Il combine 4 composantes : **vidéo**, **audio**, **langues** et **taille**, puis applique des **pénalités** si nécessaire.
+
+### Fonctionnalité optionnelle
+
+Le score qualité est une fonctionnalité **bonus**, **désactivée par défaut**.
+Vous pouvez l’activer à tout moment si vous souhaitez une analyse plus fine de votre bibliothèque.
+
+### Activation
+
+Activez le score dans **Paramètres > Configuration** avec le toggle **Activer le score qualité**.
+
+### Configuration
+
+La configuration détaillée se fait dans **Paramètres > Score** :
+- poids
+- règles vidéo
+- règles audio
+- langues
+- taille (films / séries)
+- pénalités
+
+### Valeurs par défaut
+
+Des valeurs par défaut sont fournies et utilisables immédiatement.
+Vous pouvez tout modifier puis revenir à la base via le bouton **Réinitialiser**.
+
+### Fonctionnement
+
+Le score est calculé pendant les scans quand la fonctionnalité est activée.
+Après modification des paramètres de score, un **recalcul ciblé** est lancé, sans rescanner toute la bibliothèque.
+
+### Philosophie
+
+Le système est volontairement flexible et personnalisable.
+Vous pouvez l’adapter à vos priorités, tout en conservant un comportement robuste même avec des données incomplètes (valeurs par défaut de repli).
 
 ### Filtre score (slider 0–100, si activé)
 

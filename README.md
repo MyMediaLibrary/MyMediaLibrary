@@ -22,7 +22,7 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 - **Disponibilités streaming** : enrichissement via Seerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Seerr), planifiable via cron, configurable depuis l'interface
-- **Scoring qualité (optionnel)** : fonctionnalité activable via `system.enable_score` (désactivée par défaut) avec score (0–100), badge coloré, filtre par slider min/max et gestion des éléments sans score
+- **Score qualité (optionnel)** : activez un système de scoring configurable (poids, règles, pénalités) directement depuis les paramètres, avec des valeurs par défaut prêtes à l’emploi
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, responsive
 
 ### Démarrage rapide
@@ -92,7 +92,7 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 - **Streaming availability**: Seerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Seerr), schedulable via cron, configurable from the UI
-- **Quality scoring (optional)**: feature controlled by `system.enable_score` (disabled by default), with quality score (0–100), color badge, min/max slider filtering, and support for items without score
+- **Quality score (optional)**: enable a fully configurable scoring system (weights, rules, penalties) from settings, with ready-to-use default values
 - **Bilingual interface**: fully available in French and English, light/dark theme, responsive
 
 ### Quick start
