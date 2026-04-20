@@ -149,7 +149,6 @@ except Exception:
 
         def get_builtin_score_defaults() -> dict:
             return {
-                "enabled": True,
                 "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
             }
 
@@ -744,24 +743,14 @@ def migrate_env_to_config() -> None:
     if "inventory_enabled" not in sys_cfg:
         sys_cfg["inventory_enabled"] = False
         changed = True
-    if "enable_score" not in sys_cfg:
-        sys_cfg["enable_score"] = False
-        changed = True
 
     ui_cfg = cfg.setdefault("ui", {})
     if "synopsis_on_hover" not in ui_cfg:
         ui_cfg["synopsis_on_hover"] = False
         changed = True
 
-    defaults = load_score_defaults()
-    current_score = cfg.get("score")
-    effective_score, score_status = validate_score_config(
-        merge_score_config(defaults, current_score if isinstance(current_score, dict) else {}),
-        defaults=defaults,
-    )
-    if (not isinstance(current_score, dict)) or current_score != effective_score:
-        cfg["score"] = effective_score
-        changed = True
+    cfg, score_changed, score_status = normalize_score_configuration_sections(cfg)
+    changed = changed or score_changed
     if not score_status.get("weights_valid", False):
         log.warning(
             "[score] Weight total is %s (expected 100) in effective score config",
@@ -1010,7 +999,6 @@ _DEFAULT_CONFIG: dict = {
         "log_level": "INFO",
         "needs_onboarding": True,
         "inventory_enabled": False,
-        "enable_score": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -1027,16 +1015,24 @@ _DEFAULT_CONFIG: dict = {
         "theme": "dark",
         "accent_color": "#7c6aff",
     },
-    "score": get_builtin_score_defaults(),
+    "score": {
+        "enabled": False,
+    },
+    "score_configuration": get_builtin_score_defaults(),
 }
 
 
 def load_config() -> dict:
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            cfg = json.load(f)
     except Exception:
-        return copy.deepcopy(_DEFAULT_CONFIG)
+        cfg = copy.deepcopy(_DEFAULT_CONFIG)
+    if isinstance(cfg, dict):
+        cfg, changed, _ = normalize_score_configuration_sections(cfg)
+        if changed:
+            save_config(cfg)
+    return cfg
 
 
 def _config_file_exists() -> bool:
@@ -1080,6 +1076,9 @@ def _is_inventory_enabled(cfg: dict | None) -> bool:
 
 
 def _is_score_enabled(cfg: dict | None) -> bool:
+    score = (cfg or {}).get("score")
+    if isinstance(score, dict) and isinstance(score.get("enabled"), bool):
+        return score.get("enabled") is True
     system = (cfg or {}).get("system") or {}
     return system.get("enable_score") is True
 
@@ -1123,6 +1122,65 @@ def deep_merge(base: dict, update: dict) -> dict:
         else:
             result[k] = v
     return result
+
+
+def _extract_legacy_score_configuration(score_block: dict | None) -> dict:
+    if not isinstance(score_block, dict):
+        return {}
+    return {k: v for k, v in score_block.items() if k != "enabled"}
+
+
+def _migrate_score_enabled_flag(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    score_block = cfg.get("score")
+    system = cfg.setdefault("system", {})
+
+    enabled_value = None
+    if isinstance(score_block, dict) and isinstance(score_block.get("enabled"), bool):
+        enabled_value = score_block.get("enabled")
+    elif isinstance(system.get("enable_score"), bool):
+        enabled_value = system.get("enable_score")
+
+    if enabled_value is None:
+        enabled_value = False
+
+    normalized_score = {"enabled": bool(enabled_value)}
+    if score_block != normalized_score:
+        cfg["score"] = normalized_score
+        changed = True
+
+    if "enable_score" in system:
+        system.pop("enable_score", None)
+        changed = True
+    return cfg, changed
+
+
+def normalize_score_configuration_sections(cfg: dict) -> tuple[dict, bool, dict]:
+    defaults = load_score_defaults()
+    changed = False
+
+    legacy_score = cfg.get("score")
+    legacy_details = _extract_legacy_score_configuration(legacy_score)
+
+    cfg, flag_changed = _migrate_score_enabled_flag(cfg)
+    changed = changed or flag_changed
+
+    current_detailed = cfg.get("score_configuration")
+    if legacy_details:
+        merged_legacy = deep_merge(copy.deepcopy(legacy_details), current_detailed if isinstance(current_detailed, dict) else {})
+        if current_detailed != merged_legacy:
+            cfg["score_configuration"] = merged_legacy
+            current_detailed = merged_legacy
+            changed = True
+
+    effective_score, status = validate_score_config(
+        merge_score_config(defaults, current_detailed if isinstance(current_detailed, dict) else {}),
+        defaults=defaults,
+    )
+    if (not isinstance(current_detailed, dict)) or current_detailed != effective_score:
+        cfg["score_configuration"] = effective_score
+        changed = True
+    return cfg, changed, status
 
 
 _SCORE_REQUIRED_DEFAULT_PATHS = (
@@ -1213,6 +1271,9 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
     if "schema_version" in cfg:
         cfg.pop("schema_version", None)
         notes.append({"path": "schema_version", "reason": "removed_deprecated"})
+    if "enabled" in cfg:
+        cfg.pop("enabled", None)
+        notes.append({"path": "enabled", "reason": "moved_to_score_flag"})
 
     weights = cfg.setdefault("weights", {})
     for key in ("video", "audio", "languages", "size"):
@@ -1333,7 +1394,7 @@ def compute_score_status(score_config: dict) -> dict:
 def get_effective_score_config(cfg: dict | None = None) -> tuple[dict, dict, dict]:
     defaults = load_score_defaults()
     base_cfg = cfg if isinstance(cfg, dict) else load_config()
-    user_score = base_cfg.get("score") if isinstance(base_cfg, dict) else None
+    user_score = base_cfg.get("score_configuration") if isinstance(base_cfg, dict) else None
     effective, status = validate_score_config(merge_score_config(defaults, user_score), defaults=defaults)
     return defaults, effective, status
 
@@ -1996,7 +2057,7 @@ def run_scoring(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("[SCAN] Scoring disabled (system.enable_score=false) — skipping phase 3")
+        log.info("[SCAN] Scoring disabled (score.enabled=false) — skipping phase 3")
         return
 
     log.info("[SCAN] ── Phase 3 : scoring ──────────────────────────────")
@@ -2346,8 +2407,10 @@ def _score_ui_schema() -> dict:
 
 
 def _score_settings_payload(cfg: dict | None = None) -> dict:
-    defaults, effective, status = get_effective_score_config(cfg)
+    current_cfg = cfg if isinstance(cfg, dict) else load_config()
+    defaults, effective, status = get_effective_score_config(current_cfg)
     return {
+        "enabled": _is_score_enabled(current_cfg),
         "defaults": defaults,
         "effective": effective,
         "ui_schema": _score_ui_schema(),
@@ -2528,9 +2591,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             try:
                 cfg = load_config()
                 cfg, changed = _ensure_needs_onboarding(cfg)
-                if "score" not in cfg:
-                    cfg["score"] = load_score_defaults()
-                    changed = True
+                cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
+                changed = changed or score_changed
                 if changed:
                     save_config(cfg)
                 self._json(200, _score_settings_payload(cfg))
@@ -2574,22 +2636,30 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             cfg = load_config()
             merged = merge_score_config(defaults, payload.get("score"))
             effective, _ = validate_score_config(merged, defaults=defaults)
-            cfg["score"] = effective
+            cfg["score_configuration"] = effective
+            cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
+            if score_changed:
+                log.info("[score] Score configuration normalized during PUT /api/settings/score")
             save_config(cfg)
 
-            try:
-                recalculated = run_score_only()
-            except BlockingIOError:
-                self._json(409, self._scan_running_error_payload())
-                return
+            recalculated = 0
+            mode = "config_only"
+            if _is_score_enabled(cfg):
+                try:
+                    recalculated = run_score_only()
+                    mode = "score_only"
+                except BlockingIOError:
+                    self._json(409, self._scan_running_error_payload())
+                    return
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
-                "mode": "score_only",
+                "mode": mode,
             })
             self._json(200, {
                 "ok": True,
+                "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
             })
@@ -2612,22 +2682,30 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             defaults = load_score_defaults()
             cfg = load_config()
-            cfg["score"] = copy.deepcopy(defaults)
+            cfg["score_configuration"] = copy.deepcopy(defaults)
+            cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
+            if score_changed:
+                log.info("[score] Score configuration normalized during POST /api/settings/score/reset")
             save_config(cfg)
 
-            try:
-                recalculated = run_score_only()
-            except BlockingIOError:
-                self._json(409, self._scan_running_error_payload())
-                return
+            recalculated = 0
+            mode = "config_only"
+            if _is_score_enabled(cfg):
+                try:
+                    recalculated = run_score_only()
+                    mode = "score_only"
+                except BlockingIOError:
+                    self._json(409, self._scan_running_error_payload())
+                    return
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
-                "mode": "score_only",
+                "mode": mode,
             })
             self._json(200, {
                 "ok": True,
+                "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
             })
@@ -2734,6 +2812,14 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/config":
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
+            system_payload = payload.get("system")
+            if isinstance(system_payload, dict) and "enable_score" in system_payload:
+                score_payload = payload.setdefault("score", {})
+                if isinstance(score_payload, dict):
+                    score_payload["enabled"] = system_payload.get("enable_score") is True
+                system_payload.pop("enable_score", None)
+                if not system_payload:
+                    payload.pop("system", None)
             cfg = load_config()
             safe_payload = _redact_config_payload(payload)
             log.info("[config] Received: %s", json.dumps(safe_payload))
@@ -2745,6 +2831,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             merged = deep_merge(cfg, payload)
             merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
             normalize_folder_enabled_flags(merged, drop_visible=True)
+            merged, _, _ = normalize_score_configuration_sections(merged)
             # Ensure apikey never persists in config.json
             if "jellyseerr" in merged:
                 merged["jellyseerr"].pop("apikey", None)

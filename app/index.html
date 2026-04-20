@@ -335,11 +335,11 @@
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
             <div id="scoreSettingsStatus" class="settings-note" style="display:none;margin-bottom:10px"></div>
-            <div class="settings-row" style="justify-content:flex-end;gap:8px;margin-bottom:10px">
-              <button id="scoreResetBtn" class="scan-btn" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" onclick="resetScoreSettings()" data-i18n="settings.score.reset">Réinitialiser</button>
-              <button id="scoreSaveBtn" class="scan-btn" style="padding:5px 12px;font-size:12px" onclick="saveScoreSettings()" data-i18n="settings.score.save">Enregistrer le score</button>
-            </div>
+            <div id="scoreSettingsDisabled" class="settings-note" style="display:none;margin-bottom:10px" data-i18n="settings.score.disabled_in_configuration">Le score qualité est actuellement désactivé dans Configuration.</div>
             <div id="scoreSettingsContainer"></div>
+            <div id="scoreResetRow" class="settings-row" style="justify-content:flex-end;gap:8px;margin-top:10px;display:none">
+              <button id="scoreResetBtn" class="scan-btn" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" onclick="resetScoreSettings()" data-i18n="settings.score.reset">Réinitialiser</button>
+            </div>
           </div>
           </div>
         </div>

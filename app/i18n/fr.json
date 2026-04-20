@@ -138,6 +138,7 @@
       "reset_error": "Impossible de réinitialiser la configuration du score",
       "saved": "Configuration du score enregistrée ({count} items recalculés)",
       "reset_done": "Score réinitialisé ({count} items recalculés)",
+      "disabled_in_configuration": "Le score qualité est actuellement désactivé dans Configuration.",
       "sections": {
         "video": "Vidéo",
         "audio": "Audio",

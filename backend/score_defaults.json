@@ -1,5 +1,4 @@
 {
-  "enabled": true,
   "weights": {
     "video": 50,
     "audio": 20,

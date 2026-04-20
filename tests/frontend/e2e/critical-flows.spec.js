@@ -8,6 +8,7 @@ function configuredPayload() {
   return {
     needs_onboarding: false,
     ui: { language: 'fr' },
+    score: { enabled: true },
     jellyseerr: { enabled: true },
     folders: [{ name: 'Cinema', type: 'movie', enabled: true, missing: false }],
   };
@@ -34,11 +35,11 @@ function libraryPayload() {
 
 function scoreSettingsPayload() {
   return {
+    enabled: true,
     defaults: {
       weights: { video: 50, audio: 20, languages: 15, size: 15 },
     },
     effective: {
-      enabled: true,
       weights: { video: 50, audio: 20, languages: 15, size: 15 },
       video: {
         codec: { hevc: 15, vp9: 9, default: 6 },
@@ -387,15 +388,57 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   const videoWeightInput = page.locator('input[data-score-path="weights.video"]');
   await videoWeightInput.fill('40');
   await videoWeightInput.dispatchEvent('input');
-  await expect(page.locator('#scoreSaveBtn')).toBeDisabled();
+  await expect(page.locator('#settingsSaveBtn')).toBeDisabled();
 
   await videoWeightInput.fill('50');
   await videoWeightInput.dispatchEvent('input');
-  await expect(page.locator('#scoreSaveBtn')).toBeEnabled();
+  await expect(page.locator('#settingsSaveBtn')).toBeEnabled();
 
-  await page.click('#scoreSaveBtn');
+  await page.click('#settingsSaveBtn');
   await expect.poll(() => capturedScorePayload).not.toBeNull();
   expect(capturedScorePayload.score.video.codec.vp9).toBe(9);
+});
+
+test('score tab remains visible and shows disabled state when score feature is off', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ json: { ...scoreSettingsPayload(), enabled: false } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      const cfg = configuredPayload();
+      cfg.score = { enabled: false };
+      await route.fulfill({ json: cfg });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (btn) switchStab(btn, 'stab-score');
+  });
+
+  await expect(page.locator('#stab-score')).toBeVisible();
+  await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
+  await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeHidden();
 });
 
 test('score settings displays friendly error when API load fails', async ({ page }) => {

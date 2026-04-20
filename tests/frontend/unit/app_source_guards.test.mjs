@@ -147,10 +147,16 @@ test('score settings tab loads schema dynamically from dedicated API', () => {
 });
 
 test('score settings save/reset call score-only endpoints', () => {
-  assert.match(settingsSource, /async function saveScoreSettings\(\)/, 'saveScoreSettings should be defined');
+  assert.match(settingsSource, /async function _persistScoreSettings\(\)/, 'global score persistence helper should be defined');
   assert.match(settingsSource, /fetch\('\/api\/settings\/score', \{[\s\S]*method: 'PUT'/, 'score save should use PUT score endpoint');
   assert.match(settingsSource, /async function resetScoreSettings\(\)/, 'resetScoreSettings should be defined');
   assert.match(settingsSource, /fetch\('\/api\/settings\/score\/reset', \{[\s\S]*method: 'POST'/, 'score reset should use POST endpoint');
+});
+
+test('score tab uses global settings save and no dedicated score save button', () => {
+  assert.match(settingsSource, /_isScoreTabActive\(\)/, 'settings should detect active score tab');
+  assert.match(settingsSource, /await _persistScoreSettings\(\);/, 'global save should persist score configuration from score tab');
+  assert.doesNotMatch(settingsSource, /window\.saveScoreSettings\s*=/, 'legacy dedicated score save export should be removed');
 });
 
 test('score settings use shared collapsible style and dynamic label fallback', () => {

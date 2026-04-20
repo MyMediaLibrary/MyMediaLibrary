@@ -522,9 +522,13 @@ let allItems=[], categories=[], groups=[];
   let appVersionInfo = null;     // loaded from /version.json
 
   function resolveScoreEnabled() {
-    const configScoreEnabled = appConfig?.system?.enable_score;
+    const configScoreEnabled = appConfig?.score?.enabled;
     if (typeof configScoreEnabled === 'boolean') {
       return configScoreEnabled;
+    }
+    const legacyScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof legacyScoreEnabled === 'boolean') {
+      return legacyScoreEnabled;
     }
     return false;
   }

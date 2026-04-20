@@ -35,7 +35,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
         self.assertEqual(err["error"]["code"], "INVALID_SCORE_CONFIG")
 
     def test_get_effective_score_config_merges_partial_score_config(self):
-        cfg = {"score": {"weights": {"video": 49, "audio": 21, "languages": 15, "size": 15}}}
+        cfg = {"score_configuration": {"weights": {"video": 49, "audio": 21, "languages": 15, "size": 15}}}
         defaults, effective, status = scanner.get_effective_score_config(cfg)
         self.assertNotIn("schema_version", defaults)
         self.assertNotIn("schema_version", effective)

@@ -11,7 +11,6 @@ AVC_VIDEO_CODECS = {"H.264", "AVC", "X264"}
 
 
 DEFAULT_SCORE_CONFIG: dict[str, Any] = {
-    "enabled": True,
     "weights": {
         "video": 50,
         "audio": 20,

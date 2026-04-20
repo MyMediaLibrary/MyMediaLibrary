@@ -138,6 +138,7 @@
       "reset_error": "Unable to reset score configuration",
       "saved": "Score configuration saved ({count} items recalculated)",
       "reset_done": "Score reset ({count} items recalculated)",
+      "disabled_in_configuration": "Quality score is currently disabled in Configuration.",
       "sections": {
         "video": "Video",
         "audio": "Audio",

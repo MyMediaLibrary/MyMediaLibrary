@@ -347,10 +347,60 @@
       + '</div></div>';
   }
 
+  function _isScoreSettingsEnabled() {
+    return _scoreSettingsMeta?.enabled === true;
+  }
+
+  function _scoreWeightsValidation() {
+    const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
+    const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
+    const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
+    const total = Object.values(weights).reduce((sum, v) => sum + (Number.isFinite(Number(v)) ? Number(v) : 0), 0);
+    return { expected, total, valid: total === expected };
+  }
+
+  function _isScoreTabActive() {
+    const panel = document.getElementById('stab-score');
+    if (!panel) return false;
+    if (!isMobile()) return panel.style.display !== 'none';
+    const btn = panel.querySelector('.settings-mobile-section-btn');
+    return btn?.getAttribute('aria-expanded') === 'true';
+  }
+
+  function _syncGlobalSaveAvailability() {
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    if (!saveBtn) return;
+    if (_isScoreTabActive() && _isScoreSettingsEnabled() && _scoreSettingsDraft) {
+      saveBtn.disabled = !_scoreWeightsValidation().valid;
+      return;
+    }
+    saveBtn.disabled = false;
+  }
+
+  function _renderScoreDisabledState() {
+    const container = document.getElementById('scoreSettingsContainer');
+    const disabled = document.getElementById('scoreSettingsDisabled');
+    const resetRow = document.getElementById('scoreResetRow');
+    if (disabled) disabled.style.display = '';
+    if (resetRow) resetRow.style.display = 'none';
+    if (container) container.innerHTML = '';
+    _setScoreStatus('');
+    _syncGlobalSaveAvailability();
+  }
+
   function _renderScoreSettings() {
     const container = document.getElementById('scoreSettingsContainer');
-    const saveBtn = document.getElementById('scoreSaveBtn');
-    if (!container || !_scoreSettingsDraft) return;
+    const disabled = document.getElementById('scoreSettingsDisabled');
+    const resetRow = document.getElementById('scoreResetRow');
+    if (!container) return;
+
+    if (!_isScoreSettingsEnabled()) {
+      _renderScoreDisabledState();
+      return;
+    }
+    if (disabled) disabled.style.display = 'none';
+    if (resetRow) resetRow.style.display = '';
+    if (!_scoreSettingsDraft) return;
 
     const { html: weightsHtml, valid, expected } = _renderScoreWeights();
     let html = weightsHtml;
@@ -362,13 +412,16 @@
     });
     container.innerHTML = html;
 
-    if (saveBtn) saveBtn.disabled = !valid;
     if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
     else _setScoreStatus('');
+    _syncGlobalSaveAvailability();
   }
 
   function _refreshScoreWeightStatusOnly() {
-    const saveBtn = document.getElementById('scoreSaveBtn');
+    if (!_isScoreSettingsEnabled()) {
+      _syncGlobalSaveAvailability();
+      return;
+    }
     const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
     const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
@@ -379,12 +432,14 @@
       totalEl.textContent = String(total);
       totalEl.classList.toggle('is-invalid', !valid);
     }
-    if (saveBtn) saveBtn.disabled = !valid;
     if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
     else _setScoreStatus('');
+    _syncGlobalSaveAvailability();
   }
 
   async function loadScoreSettings() {
+    _scoreSettingsMeta = null;
+    _scoreSettingsDraft = null;
     try {
       const res = await fetch('/api/settings/score');
       if (!res.ok) throw new Error(await _buildApiError(res, 'GET /api/settings/score failed'));
@@ -398,32 +453,37 @@
       _setScoreStatus(t('settings.score.load_error'), true);
       const container = document.getElementById('scoreSettingsContainer');
       if (container) container.innerHTML = '';
+      const disabled = document.getElementById('scoreSettingsDisabled');
+      const resetRow = document.getElementById('scoreResetRow');
+      if (disabled) disabled.style.display = 'none';
+      if (resetRow) resetRow.style.display = 'none';
+      _syncGlobalSaveAvailability();
       console.error('loadScoreSettings error:', e);
     }
   }
 
-  async function saveScoreSettings() {
+  async function _persistScoreSettings() {
     if (!_scoreSettingsDraft) return;
-    try {
-      const res = await fetch('/api/settings/score', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ score: _scoreSettingsDraft })
-      });
-      if (!res.ok) throw new Error(await _buildApiError(res, 'PUT /api/settings/score failed'));
-      const payload = await res.json();
-      if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
-      _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
-      _setScoreStatus(t('settings.score.saved', { count: payload?.status?.recalculated_items ?? 0 }), false);
-      _renderScoreSettings();
-      if (typeof window.loadLibrary === 'function') window.loadLibrary();
-    } catch (e) {
-      _setScoreStatus(`${t('settings.score.save_error')}: ${e.message}`, true);
-      console.error('saveScoreSettings error:', e);
+    const res = await fetch('/api/settings/score', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ score: _scoreSettingsDraft })
+    });
+    if (!res.ok) throw new Error(await _buildApiError(res, 'PUT /api/settings/score failed'));
+    const payload = await res.json();
+    if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+    if (typeof payload?.enabled === 'boolean') {
+      _scoreSettingsMeta = _scoreSettingsMeta || {};
+      _scoreSettingsMeta.enabled = payload.enabled;
     }
+    _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
+    _setScoreStatus(t('settings.score.saved', { count: payload?.status?.recalculated_items ?? 0 }), false);
+    _renderScoreSettings();
+    if (typeof window.loadLibrary === 'function') window.loadLibrary();
   }
 
   async function resetScoreSettings() {
+    if (!_isScoreSettingsEnabled()) return;
     try {
       const res = await fetch('/api/settings/score/reset', {
         method: 'POST',
@@ -433,6 +493,10 @@
       if (!res.ok) throw new Error(await _buildApiError(res, 'POST /api/settings/score/reset failed'));
       const payload = await res.json();
       if (!res.ok || payload?.ok === false) throw new Error(payload?.error?.message || `HTTP ${res.status}`);
+      if (typeof payload?.enabled === 'boolean') {
+        _scoreSettingsMeta = _scoreSettingsMeta || {};
+        _scoreSettingsMeta.enabled = payload.enabled;
+      }
       _scoreSettingsDraft = _cloneJson(payload.effective || {});
       _setScoreStatus(t('settings.score.reset_done', { count: payload?.status?.recalculated_items ?? 0 }), false);
       _renderScoreSettings();
@@ -509,6 +573,7 @@
     renderFoldersUI();
     renderProviderToggles();
     loadScoreSettings();
+    _syncGlobalSaveAvailability();
   }
 
   function saveSettings() {
@@ -577,11 +642,25 @@
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
       if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
-      if (enableScoreCfg !== null) partial.system.enable_score = enableScoreCfg;
+      if (enableScoreCfg !== null) {
+        partial.score = partial.score || {};
+        partial.score.enabled = enableScoreCfg;
+      }
+      if (!Object.keys(partial.system).length) delete partial.system;
     }
 
     try {
       await saveConfig(partial);
+      const shouldPersistScoreSettings = _isScoreTabActive() && _isScoreSettingsEnabled() && !!_scoreSettingsDraft;
+      if (shouldPersistScoreSettings) {
+        const validation = _scoreWeightsValidation();
+        if (!validation.valid) {
+          _setScoreStatus(t('settings.score.invalid_total').replace('100', String(validation.expected)), true);
+          _syncGlobalSaveAvailability();
+          return;
+        }
+        await _persistScoreSettings();
+      }
       window.location.reload();
     } catch(e) {
       alert(t('settings.save_error', {msg: e.message}));
@@ -916,6 +995,8 @@
     btn.classList.add('active');
     document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';
+    if (tabId === 'stab-score' && !_scoreSettingsMeta) loadScoreSettings();
+    _syncGlobalSaveAvailability();
   }
 
   function applySettingsMobileLayout(options = {}) {
@@ -989,6 +1070,8 @@
       pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
       pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
     });
+    if (willOpen && panel?.id === 'stab-score' && !_scoreSettingsMeta) loadScoreSettings();
+    _syncGlobalSaveAvailability();
   }
 
   function openMobileScanFromSettings() {
@@ -1536,7 +1619,6 @@
   window.toggleMobileSettingsSection = toggleMobileSettingsSection;
   window.openMobileScanFromSettings = openMobileScanFromSettings;
   window.switchStab                = switchStab;
-  window.saveScoreSettings         = saveScoreSettings;
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
   window.testJellyseerr            = testJellyseerr;

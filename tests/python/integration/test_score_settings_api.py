@@ -23,12 +23,8 @@ class TestScoreSettingsApi(unittest.TestCase):
         cls.scan_lock_path = cls._tmp_path / ".scan.lock"
 
         cls.config_path.write_text(json.dumps({
-            "system": {
-                "enable_score": True,
-                "scan_cron": "0 3 * * *",
-                "log_level": "INFO",
-                "inventory_enabled": False,
-            },
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "score": {"enabled": True},
             "folders": [],
             "enable_movies": True,
             "enable_series": True,
@@ -96,6 +92,7 @@ class TestScoreSettingsApi(unittest.TestCase):
     def test_get_score_settings_returns_effective_payload(self):
         status, payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
+        self.assertIs(payload.get("enabled"), True)
         self.assertIn("defaults", payload)
         self.assertIn("effective", payload)
         self.assertIn("ui_schema", payload)
@@ -107,6 +104,8 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertTrue(payload["status"]["weights_valid"])
         cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertIn("score", cfg)
+        self.assertIn("score_configuration", cfg)
+        self.assertNotIn("enabled", cfg.get("score_configuration", {}))
 
     def test_put_score_settings_recomputes_scores_only(self):
         status, get_payload = self._request("/api/settings/score")
@@ -137,9 +136,47 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertEqual(put_payload["error"]["code"], "INVALID_SCORE_CONFIG")
 
     def test_reset_score_settings_only_touches_score_block(self):
+        before_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        enabled_before = before_cfg.get("score", {}).get("enabled")
         status, _ = self._request("/api/settings/score/reset", method="POST", payload={})
         self.assertEqual(status, 200)
 
         cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertIn("score", cfg)
+        self.assertIn("score_configuration", cfg)
+        self.assertEqual(cfg["score"]["enabled"], enabled_before)
         self.assertEqual(cfg.get("custom_flag"), "keep-me")
+
+    def test_put_when_score_disabled_does_not_recompute(self):
+        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg["score"]["enabled"] = False
+        self.config_path.write_text(json.dumps(cfg), encoding="utf-8")
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+
+        put_status, put_payload = self._request(
+            "/api/settings/score",
+            method="PUT",
+            payload={"score": get_payload["effective"]},
+        )
+        self.assertEqual(put_status, 200)
+        self.assertEqual(put_payload["status"]["mode"], "config_only")
+        self.assertEqual(put_payload["status"]["recalculated_items"], 0)
+
+    def test_legacy_score_block_migrates_to_score_configuration(self):
+        legacy_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        legacy_cfg["score"] = {
+            "enabled": True,
+            "weights": {"video": 48, "audio": 22, "languages": 15, "size": 15},
+            "audio": {"codec": {"aac": 7, "default": 8}},
+        }
+        legacy_cfg.pop("score_configuration", None)
+        self.config_path.write_text(json.dumps(legacy_cfg), encoding="utf-8")
+
+        status, payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["score"], {"enabled": True})
+        self.assertIn("score_configuration", cfg)
+        self.assertEqual(cfg["score_configuration"]["weights"]["video"], 48)
+        self.assertEqual(payload["effective"]["weights"]["audio"], 22)

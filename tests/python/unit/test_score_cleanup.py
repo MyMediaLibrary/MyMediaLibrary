@@ -47,7 +47,8 @@ class ScoreCleanupTest(unittest.TestCase):
             out_path.write_text(json.dumps(existing), encoding="utf-8")
 
             cfg = {
-                "system": {"enable_score": False, "inventory_enabled": False},
+                "score": {"enabled": False},
+                "system": {"inventory_enabled": False},
                 "folders": [
                     {"name": "Movies", "folder": "Movies", "type": "movie", "enabled": True},
                     {"name": "Series", "folder": "Series", "type": "tv", "enabled": True},
@@ -100,7 +101,8 @@ class ScoreCleanupTest(unittest.TestCase):
             out_path.write_text(json.dumps(existing), encoding="utf-8")
 
             cfg = {
-                "system": {"enable_score": True, "inventory_enabled": False},
+                "score": {"enabled": True},
+                "system": {"inventory_enabled": False},
                 "folders": [
                     {"name": "Movies", "folder": "Movies", "type": "movie", "enabled": True},
                     {"name": "Series", "folder": "Series", "type": "tv", "enabled": True},
