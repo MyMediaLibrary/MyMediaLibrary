@@ -142,8 +142,7 @@
         "video": "Ajuste les points liés à la résolution, au codec vidéo et au HDR.",
         "audio": "Ajuste les points attribués selon le codec audio.",
         "languages": "Définit la valeur des profils linguistiques détectés.",
-        "size": "Évalue la cohérence de la taille selon le type, la résolution et parfois le codec.",
-        "penalties": "Réduit le score en cas d’incohérence technique."
+        "size": "Évalue la cohérence de la taille selon le type, la résolution et parfois le codec."
       },
       "default_help": "Valeur par défaut utilisée si aucune clé spécifique ne correspond",
       "invalid_total": "Le total des poids doit être égal à 100",
@@ -157,15 +156,13 @@
         "video": "Vidéo",
         "audio": "Audio",
         "languages": "Langues",
-        "size": "Taille",
-        "penalties": "Pénalités"
+        "size": "Taille"
       },
       "labels": {
         "video": "Vidéo",
         "audio": "Audio",
         "languages": "Langues",
         "size": "Taille",
-        "penalties": "Pénalités",
         "resolution": "Résolution",
         "codec": "Codec",
         "hdr": "HDR",
@@ -176,7 +173,6 @@
         "default": "Valeur par défaut",
         "unknown": "Inconnu",
         "enabled": "Activé",
-        "max_total": "Pénalité maximale",
         "min_gb": "Min (Go)",
         "max_gb": "Max (Go)",
         "min_short": "Min (Go)",
@@ -190,13 +186,7 @@
         "french_only": "Français uniquement",
         "vo": "VO",
         "sdr": "SDR",
-        "dolby_vision": "Dolby Vision",
-        "good_video_few_languages": "Bonne vidéo + peu de langues",
-        "high_resolution_legacy_codec": "Haute résolution + codec ancien",
-        "video_excellent_audio_low": "Excellente vidéo + audio faible",
-        "size_incoherent": "Incohérence de taille",
-        "strong": "Fort",
-        "medium": "Moyen"
+        "dolby_vision": "Dolby Vision"
       }
     },
     "connections": {
@@ -422,15 +412,6 @@
     "video": "Vidéo",
     "audio": "Audio",
     "languages": "Langues",
-    "size": "Taille",
-    "penalties": {
-      "title": "Pénalités",
-      "audio_video_mismatch": "Audio/vidéo incohérent",
-      "audio_video_imbalance": "Audio/vidéo déséquilibré",
-      "legacy_codec_high_res": "Codec legacy en haute résolution",
-      "legacy_codec_mid_res": "Codec legacy en résolution moyenne",
-      "premium_video_weak_languages": "Langues limitées",
-      "size_video_mismatch": "Taille incohérente avec la vidéo"
-    }
+    "size": "Taille"
   }
 }

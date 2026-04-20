@@ -495,10 +495,6 @@
     .score-subgroup{margin:10px 0;padding:8px 10px;border:1px solid color-mix(in srgb, var(--border) 75%, transparent);border-radius:10px;background:color-mix(in srgb, var(--surface) 75%, var(--bg))}
     .score-subgroup-title{font-size:12px;font-weight:700;color:var(--text);margin:0 0 8px 0}
     .score-subgroup-inline .score-config-row{margin-bottom:8px}
-    .score-penalty-rule{padding:8px 0;border-top:1px dashed var(--border)}
-    .score-penalty-rule:first-of-type{border-top:none;padding-top:2px}
-    .score-penalty-rule-title{font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px}
-    .score-penalty-rule-body{padding-left:8px}
     .score-config-row{margin-bottom:8px;padding:4px 0}
     .score-config-row.is-key-field .settings-label{font-weight:700}
     .score-config-row.is-default-field{padding:8px 10px;border:1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));border-radius:8px;background:color-mix(in srgb, var(--accent) 8%, var(--surface))}

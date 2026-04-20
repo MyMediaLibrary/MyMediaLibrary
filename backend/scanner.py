@@ -139,12 +139,10 @@ except Exception:
             return {
                 "score": 0,
                 "base_score": 0,
-                "penalty_total": 0,
                 "video": 0,
                 "audio": 0,
                 "languages": 0,
                 "size": 0,
-                "penalties": [{"code": "scoring_unavailable", "value": 0}],
             }
 
         def get_builtin_score_defaults() -> dict:
@@ -1258,7 +1256,6 @@ _SCORE_NUMERIC_FIELDS = (
     "weights.audio",
     "weights.languages",
     "weights.size",
-    "penalties.max_total",
 )
 
 
@@ -1331,6 +1328,9 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
     if "enabled" in cfg:
         cfg.pop("enabled", None)
         notes.append({"path": "enabled", "reason": "moved_to_score_flag"})
+    if "penalties" in cfg:
+        cfg.pop("penalties", None)
+        notes.append({"path": "penalties", "reason": "removed_deprecated"})
 
     weights = cfg.setdefault("weights", {})
     for key in ("video", "audio", "languages", "size"):
@@ -1339,13 +1339,6 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
         if raw != normalized:
             notes.append({"path": f"weights.{key}", "reason": "clamped_or_defaulted"})
         weights[key] = normalized
-
-    penalties = cfg.setdefault("penalties", {})
-    max_total = penalties.get("max_total")
-    normalized_max = _clamp_int(_as_int(max_total, _score_get_path(base_defaults, "penalties.max_total") or 20), 0, 100)
-    if max_total != normalized_max:
-        notes.append({"path": "penalties.max_total", "reason": "clamped_or_defaulted"})
-    penalties["max_total"] = normalized_max
 
     for path in _SCORE_REQUIRED_DEFAULT_PATHS:
         if _score_get_path(cfg, path) is None:

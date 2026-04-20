@@ -244,20 +244,6 @@ let allItems=[], categories=[], groups=[];
     return 'quality-lvl-unknown';
   }
 
-  const QUALITY_PENALTY_LABELS = {
-    audio_video_mismatch: 'quality_tooltip.penalties.audio_video_mismatch',
-    audio_video_imbalance: 'quality_tooltip.penalties.audio_video_imbalance',
-    legacy_codec_high_res: 'quality_tooltip.penalties.legacy_codec_high_res',
-    legacy_codec_mid_res: 'quality_tooltip.penalties.legacy_codec_mid_res',
-    premium_video_weak_languages: 'quality_tooltip.penalties.premium_video_weak_languages',
-    size_video_mismatch: 'quality_tooltip.penalties.size_video_mismatch'
-  };
-
-  function getQualityPenaltyLabel(code) {
-    const key = QUALITY_PENALTY_LABELS[code];
-    return key ? t(key) : code;
-  }
-
   function getQualityTooltipText(item) {
     if (!isScoreEnabled()) return '';
     const quality = item?.quality;
@@ -278,17 +264,6 @@ let allItems=[], categories=[], groups=[];
       `${t('quality_tooltip.languages')}: ${Number.isFinite(languages) ? Math.round(languages) : 0}`,
       `${t('quality_tooltip.size')}: ${Number.isFinite(size) ? Math.round(size) : 0}`
     ];
-
-    const penalties = Array.isArray(quality?.penalties) ? quality.penalties : [];
-    if (penalties.length) {
-      lines.push('', `${t('quality_tooltip.penalties.title')}:`);
-      penalties.forEach(penalty => {
-        const label = getQualityPenaltyLabel(String(penalty?.code || '').trim());
-        const value = Number(penalty?.value);
-        const valueLabel = Number.isFinite(value) ? ` (-${Math.abs(Math.round(value))})` : '';
-        lines.push(`- ${label}${valueLabel}`);
-      });
-    }
 
     return lines.join('\n');
   }
@@ -2096,7 +2071,6 @@ let allItems=[], categories=[], groups=[];
       includeScore ? 'quality_audio' : null,
       includeScore ? 'quality_languages' : null,
       includeScore ? 'quality_size' : null,
-      includeScore ? 'quality_penalty_total' : null,
       t('table.resolution'), 'HDR', t('table.codec'), t('table.audio_codec'),
       t('table.audio_languages')+' (simple)', t('table.audio_languages')+' (raw)', 'Runtime (min)',
       t('table.size'), 'Size (B)', t('table.files'), t('table.added'), t('table.streaming')
@@ -2111,7 +2085,6 @@ let allItems=[], categories=[], groups=[];
       includeScore ? (i.quality?.audio ?? '') : null,
       includeScore ? (i.quality?.languages ?? '') : null,
       includeScore ? (i.quality?.size ?? '') : null,
-      includeScore ? (i.quality?.penalty_total ?? '') : null,
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),

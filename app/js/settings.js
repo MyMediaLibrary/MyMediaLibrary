@@ -231,7 +231,7 @@
   function _renderScoreInput(path, key, value) {
     const label = _scoreLabel(path, key);
     const isDefaultField = key === 'default';
-    const isKeyField = key === 'max_total' || path.startsWith('weights.');
+    const isKeyField = path.startsWith('weights.');
     const rowClasses = ['settings-row', 'score-config-row'];
     if (isDefaultField) rowClasses.push('is-default-field');
     if (isKeyField) rowClasses.push('is-key-field');
@@ -431,28 +431,6 @@
     return { html, valid, total, expected };
   }
 
-  function _renderScorePenalties(obj, parentPath) {
-    if (!_isPlainObject(obj)) return _renderScoreInput(parentPath, 'penalties', obj);
-    const maxPath = `${parentPath}.max_total`;
-    const maxValue = obj.max_total;
-    const rules = _isPlainObject(obj.rules) ? obj.rules : {};
-    let html = '<div class="score-penalties">';
-    if (maxValue !== undefined) html += _renderScoreInput(maxPath, 'max_total', maxValue);
-    Object.entries(rules).forEach(([ruleKey, ruleValue]) => {
-      const rulePath = `${parentPath}.rules.${ruleKey}`;
-      if (_isPlainObject(ruleValue)) {
-        html += '<div class="score-penalty-rule">'
-          + `<div class="score-penalty-rule-title">${escH(_scoreLabel(rulePath, ruleKey))}</div>`
-          + `<div class="score-penalty-rule-body">${_renderScoreObject(ruleValue, rulePath, { noHeader: true })}</div>`
-          + '</div>';
-      } else {
-        html += _renderScoreInput(rulePath, ruleKey, ruleValue);
-      }
-    });
-    html += '</div>';
-    return html;
-  }
-
   function _scoreSectionHelp(sectionKey) {
     const defaults = {
       weights: {
@@ -475,10 +453,6 @@
         fr: 'Évalue la cohérence de la taille selon le type, la résolution et parfois le codec.',
         en: 'Evaluates size consistency depending on type, resolution, and sometimes codec.',
       },
-      penalties: {
-        fr: 'Réduit le score en cas d’incohérence technique.',
-        en: 'Reduces the score when technical inconsistencies are detected.',
-      },
     };
     const fallback = defaults[sectionKey] || { fr: '', en: '' };
     return _scoreT(
@@ -493,8 +467,7 @@
     const bodyId = _scoreSectionBodyId(sectionKey, idx);
     let bodyHtml = '';
     if (_isPlainObject(sectionValue)) {
-      if (sectionKey === 'penalties') bodyHtml = _renderScorePenalties(sectionValue, sectionKey);
-      else if (sectionKey === 'video') {
+      if (sectionKey === 'video') {
         let videoHtml = '';
         let nestedIdx = 0;
         Object.entries(sectionValue).forEach(([videoKey, videoValue]) => {
@@ -621,7 +594,7 @@
     let html = weightsHtml;
     let sectionIdx = 0;
     Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
-      if (key === 'weights') return;
+      if (key === 'weights' || key === 'penalties') return;
       html += _renderScoreSection(key, value, sectionIdx);
       sectionIdx += 1;
     });

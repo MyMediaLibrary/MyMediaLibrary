@@ -100,6 +100,8 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertNotIn("schema_version", payload)
         self.assertNotIn("schema_version", payload["defaults"])
         self.assertNotIn("schema_version", payload["effective"])
+        self.assertNotIn("penalties", payload["defaults"])
+        self.assertNotIn("penalties", payload["effective"])
         self.assertEqual(payload["status"]["weights_total"], 100)
         self.assertTrue(payload["status"]["weights_valid"])
         cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -134,6 +136,20 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertEqual(put_status, 400)
         self.assertFalse(put_payload["ok"])
         self.assertEqual(put_payload["error"]["code"], "INVALID_SCORE_CONFIG")
+
+    def test_put_legacy_penalties_payload_is_ignored(self):
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        mutated = get_payload["effective"]
+        mutated["penalties"] = {"max_total": 20, "rules": {"size_incoherent": -5}}
+
+        put_status, put_payload = self._request("/api/settings/score", method="PUT", payload={"score": mutated})
+        self.assertEqual(put_status, 200)
+        self.assertTrue(put_payload["ok"])
+        self.assertNotIn("penalties", put_payload["effective"])
+
+        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("penalties", cfg.get("score_configuration", {}))
 
     def test_reset_score_settings_only_touches_score_block(self):
         before_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))

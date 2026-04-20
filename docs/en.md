@@ -439,7 +439,7 @@ Result:
 ### Principle
 
 Quality scoring is a global score **from 0 to 100**.
-It combines 4 components: **video**, **audio**, **languages**, and **size**, then applies **penalties** when needed.
+It combines 4 components: **video**, **audio**, **languages**, and **size**.
 
 ### Optional feature
 
@@ -458,7 +458,6 @@ Detailed configuration is available in **Settings > Score**:
 - audio rules
 - language rules
 - size rules (movies / series)
-- penalties
 
 ### Default values
 
@@ -474,6 +473,7 @@ After changing score settings, the backend runs a **targeted score recomputation
 
 The scoring system is designed to stay flexible and fully customizable.
 You can adapt it to your preferences while keeping robust behavior with incomplete metadata (default fallback values are used).
+Technical inconsistencies are no longer handled with score malus and can be surfaced later through dedicated recommendations.
 
 ### Score filter (0–100 slider, when enabled)
 
@@ -583,23 +583,10 @@ Used for:
 | 720p | All | 2–6 GB |
 | SD | All | 500 MB – 2 GB |
 
-### Penalties
-
-Penalties are applied to correct incoherent combinations and avoid inflated scores in weak technical profiles.
-
-| Situation | Penalty | Explanation |
-|---|---|---|
-| High video quality + weak audio | -10 / -5 | A very sharp image with poor sound creates an unbalanced viewing experience. |
-| High resolution + legacy codec | -8 / -4 | HD/4K video encoded with an older codec often indicates less efficient compression quality. |
-| Good video + limited languages | -5 | The file quality is good, but usability is lower for users needing more language options. |
-| Inconsistent size | -5 | A file that is too small or too large for its profile can indicate uneven quality. |
-
-> Maximum applied penalty: 20 points.
-
 ### Final score
 
 ```text
-Final Score = Base Score - Penalties
+Final Score = Component sum
 Clamped between 0 and 100
 ```
 
@@ -625,7 +612,6 @@ Quality scoring is visible throughout the interface:
 
 Hovering the quality badge shows a complete detailed tooltip:
 - full breakdown by category
-- applied penalties
 
 ### Full score disable (`enable_score`)
 

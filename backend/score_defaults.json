@@ -115,20 +115,5 @@
         }
       }
     }
-  },
-  "penalties": {
-    "max_total": 20,
-    "rules": {
-      "video_excellent_audio_low": {
-        "strong": -10,
-        "medium": -5
-      },
-      "high_resolution_legacy_codec": {
-        "strong": -8,
-        "medium": -4
-      },
-      "good_video_few_languages": -5,
-      "size_incoherent": -5
-    }
   }
 }

@@ -49,7 +49,6 @@ function scoreSettingsPayload() {
       audio: { codec: { dts: 15, default: 8 } },
       languages: { profile: { multi: 15, default: 3 } },
       size: { points: { coherent: 15, default: 5 }, profiles: { movie: { default: { default: { min_gb: 1, max_gb: 10 } } }, series: { default: { default: { min_gb: 0.2, max_gb: 4 } } } } },
-      penalties: { max_total: 20, rules: { good_video_few_languages: -5 } },
       custom_unknown_key: 42,
     },
     ui_schema: {

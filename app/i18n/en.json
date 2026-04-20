@@ -142,8 +142,7 @@
         "video": "Adjusts points related to resolution, video codec, and HDR.",
         "audio": "Adjusts the points assigned to each audio codec.",
         "languages": "Defines the value of detected language profiles.",
-        "size": "Evaluates size consistency depending on type, resolution, and sometimes codec.",
-        "penalties": "Reduces the score when technical inconsistencies are detected."
+        "size": "Evaluates size consistency depending on type, resolution, and sometimes codec."
       },
       "default_help": "Default value used when no specific key matches",
       "invalid_total": "Weights total must equal 100",
@@ -157,15 +156,13 @@
         "video": "Video",
         "audio": "Audio",
         "languages": "Languages",
-        "size": "Size",
-        "penalties": "Penalties"
+        "size": "Size"
       },
       "labels": {
         "video": "Video",
         "audio": "Audio",
         "languages": "Languages",
         "size": "Size",
-        "penalties": "Penalties",
         "resolution": "Resolution",
         "codec": "Codec",
         "hdr": "HDR",
@@ -176,7 +173,6 @@
         "default": "Default value",
         "unknown": "Unknown",
         "enabled": "Enabled",
-        "max_total": "Maximum penalty",
         "min_gb": "Min (GB)",
         "max_gb": "Max (GB)",
         "min_short": "Min (GB)",
@@ -190,13 +186,7 @@
         "french_only": "French only",
         "vo": "VO",
         "sdr": "SDR",
-        "dolby_vision": "Dolby Vision",
-        "good_video_few_languages": "Good video + few languages",
-        "high_resolution_legacy_codec": "High resolution + legacy codec",
-        "video_excellent_audio_low": "Excellent video + weak audio",
-        "size_incoherent": "Incoherent size",
-        "strong": "Strong",
-        "medium": "Medium"
+        "dolby_vision": "Dolby Vision"
       }
     },
     "connections": {
@@ -422,15 +412,6 @@
     "video": "Video",
     "audio": "Audio",
     "languages": "Languages",
-    "size": "Size",
-    "penalties": {
-      "title": "Penalties",
-      "audio_video_mismatch": "Inconsistent audio/video",
-      "audio_video_imbalance": "Unbalanced audio/video",
-      "legacy_codec_high_res": "Legacy codec at high resolution",
-      "legacy_codec_mid_res": "Legacy codec at medium resolution",
-      "premium_video_weak_languages": "Limited languages",
-      "size_video_mismatch": "Size inconsistent with video"
-    }
+    "size": "Size"
   }
 }

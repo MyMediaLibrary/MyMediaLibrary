@@ -166,14 +166,13 @@ test('score settings use shared collapsible style and dynamic label fallback', (
   assert.match(settingsSource, /class=\"settings-collapsible\"/, 'score sections should reuse shared settings collapsible style');
 });
 
-test('penalties section renders max_total first then rules', () => {
-  assert.match(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should exist');
-  assert.match(settingsSource, /const maxPath = `\$\{parentPath\}\.max_total`;/, 'penalties renderer should show max_total at top');
-  assert.match(settingsSource, /Object\.entries\(rules\)\.forEach/, 'penalties renderer should render all rule entries');
+test('score settings do not render a penalties section anymore', () => {
+  assert.doesNotMatch(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should be removed');
+  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties'\) return;/, 'legacy penalties key should be ignored when rendering sections');
 });
 
 test('score weights renderer outputs dedicated grid container', () => {
-  const block = functionBlock(settingsSource, '_renderScoreWeights', '_renderScorePenalties');
+  const block = functionBlock(settingsSource, '_renderScoreWeights', '_scoreSectionHelp');
   assert.match(block, /class=\"score-weights-grid\"/, 'weights block should render a dedicated grid container');
   assert.match(block, /settings\.score\.summary_pattern/, 'weights block should render score summary line');
   assert.match(block, /score-validation-status/, 'weights block should render a validation status');

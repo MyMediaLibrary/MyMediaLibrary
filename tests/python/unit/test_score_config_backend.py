@@ -43,6 +43,17 @@ class ScoreConfigBackendTest(unittest.TestCase):
         self.assertEqual(status["weights_total"], 100)
         self.assertTrue(status["weights_valid"])
 
+    def test_validate_score_config_removes_legacy_penalties_block(self):
+        defaults = scanner.load_score_defaults()
+        cfg = scanner.merge_score_config(defaults, {})
+        cfg["penalties"] = {"max_total": 20, "rules": {"size_incoherent": -5}}
+
+        effective, status = scanner.validate_score_config(cfg, defaults=defaults)
+
+        self.assertNotIn("penalties", effective)
+        reasons = [note.get("reason") for note in status.get("normalization_notes", [])]
+        self.assertIn("removed_deprecated", reasons)
+
     def test_recompute_scores_only_updates_library_quality_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_path = pathlib.Path(tmp) / "library.json"

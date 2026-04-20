@@ -92,7 +92,7 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 - **Streaming availability**: Seerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Seerr), schedulable via cron, configurable from the UI
-- **Quality score (optional)**: enable a fully configurable scoring system (weights, rules, penalties) from settings, with ready-to-use default values
+- **Quality score (optional)**: enable a fully configurable scoring system from settings (weights and rules for video/audio/languages/size), with ready-to-use default values
 - **Bilingual interface**: fully available in French and English, light/dark theme, responsive
 
 ### Quick start

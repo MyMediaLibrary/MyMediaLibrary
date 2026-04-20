@@ -440,7 +440,7 @@ Résultat :
 ### Principe
 
 Le score de qualité est un score global **de 0 à 100**.
-Il combine 4 composantes : **vidéo**, **audio**, **langues** et **taille**, puis applique des **pénalités** si nécessaire.
+Il combine 4 composantes : **vidéo**, **audio**, **langues** et **taille**.
 
 ### Fonctionnalité optionnelle
 
@@ -459,7 +459,6 @@ La configuration détaillée se fait dans **Paramètres > Score** :
 - règles audio
 - langues
 - taille (films / séries)
-- pénalités
 
 ### Valeurs par défaut
 
@@ -475,6 +474,7 @@ Après modification des paramètres de score, un **recalcul ciblé** est lancé,
 
 Le système est volontairement flexible et personnalisable.
 Vous pouvez l’adapter à vos priorités, tout en conservant un comportement robuste même avec des données incomplètes (valeurs par défaut de repli).
+Les incohérences techniques ne sont plus gérées par des malus et pourront être traitées séparément par de futures recommandations.
 
 ### Filtre score (slider 0–100, si activé)
 
@@ -584,23 +584,10 @@ Ce dégradé est utilisé pour :
 | 720p | Tous | 2–6 GB |
 | SD | Tous | 500 MB – 2 GB |
 
-### Pénalités
-
-Des pénalités sont appliquées pour corriger les incohérences et éviter qu'un profil technique faible conserve un score trop élevé.
-
-| Situation | Pénalité | Explication |
-|---|---|---|
-| Vidéo excellente + audio faible | -10 / -5 | Un très bon rendu visuel avec un son faible crée un déséquilibre perceptible à l'usage. |
-| Haute résolution + codec ancien | -8 / -4 | Une vidéo HD/4K encodée avec un codec ancien indique souvent une compression moins efficace. |
-| Bonne vidéo + peu de langues | -5 | Le fichier est de bonne qualité, mais reste moins accessible pour plusieurs profils d'utilisateurs. |
-| Taille incohérente | -5 | Une taille trop faible ou trop élevée pour le profil attendu peut signaler une qualité irrégulière. |
-
-> Pénalité maximale appliquée : 20 points.
-
 ### Score final
 
 ```text
-Score final = Score de base - Pénalités
+Score final = Somme des composantes
 Borné entre 0 et 100
 ```
 
@@ -626,7 +613,6 @@ Le score qualité est visible dans toute l'interface :
 
 Au survol du badge, une infobulle détaillée est affichée :
 - détail complet par catégorie
-- pénalités appliquées
 
 ### Désactivation complète du score (`enable_score`)
 

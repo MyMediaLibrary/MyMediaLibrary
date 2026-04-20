@@ -128,21 +128,6 @@ DEFAULT_SCORE_CONFIG: dict[str, Any] = {
             },
         },
     },
-    "penalties": {
-        "max_total": 20,
-        "rules": {
-            "video_excellent_audio_low": {
-                "strong": -10,
-                "medium": -5,
-            },
-            "high_resolution_legacy_codec": {
-                "strong": -8,
-                "medium": -4,
-            },
-            "good_video_few_languages": -5,
-            "size_incoherent": -5,
-        },
-    },
 }
 
 
@@ -378,18 +363,6 @@ def _compute_size_quality_details(item: dict, score_config: dict[str, Any] | Non
     }
 
 
-def _resolve_penalty_value(rule_config: Any, severity: str | None = None) -> int:
-    value = 0.0
-    if isinstance(rule_config, dict):
-        if severity and severity in rule_config:
-            value = _as_float(rule_config.get(severity), 0.0)
-        elif "default" in rule_config:
-            value = _as_float(rule_config.get("default"), 0.0)
-    elif isinstance(rule_config, (int, float)):
-        value = float(rule_config)
-    return abs(_as_int(value, 0))
-
-
 def compute_video_quality_score(item: dict, score_config: dict[str, Any] | None = None) -> dict:
     cfg = _resolve_score_config(score_config)
     video_cfg = cfg.get("video") if isinstance(cfg.get("video"), dict) else {}
@@ -432,56 +405,6 @@ def compute_size_quality_score(item: dict, score_config: dict[str, Any] | None =
     return int(_compute_size_quality_details(item, score_config).get("score", 0))
 
 
-def compute_quality_penalties(item: dict, partial_scores: dict, score_config: dict[str, Any] | None = None) -> list[dict]:
-    del item  # reserved for future rules requiring raw item context
-
-    cfg = _resolve_score_config(score_config)
-    penalties_cfg = cfg.get("penalties") if isinstance(cfg.get("penalties"), dict) else {}
-    rules = penalties_cfg.get("rules") if isinstance(penalties_cfg.get("rules"), dict) else {}
-
-    penalties: list[dict[str, int | str]] = []
-
-    video_score = int(partial_scores.get("video", 0))
-    audio_score = int(partial_scores.get("audio", 0))
-    language_score = int(partial_scores.get("languages", 0))
-    size_status = str(partial_scores.get("size_status") or "")
-    size_score = int(partial_scores.get("size", 0))
-    resolution_score = int(partial_scores.get("video_details", {}).get("resolution_score", 0))
-    video_codec_family = str(partial_scores.get("video_details", {}).get("video_codec_family") or "")
-
-    r = rules.get("video_excellent_audio_low")
-    if video_score >= 40 and audio_score <= 6:
-        v = _resolve_penalty_value(r, "strong")
-        if v:
-            penalties.append({"code": "video_excellent_audio_low", "value": v})
-    elif video_score >= 35 and audio_score < 10:
-        v = _resolve_penalty_value(r, "medium")
-        if v:
-            penalties.append({"code": "video_excellent_audio_low", "value": v})
-
-    r = rules.get("high_resolution_legacy_codec")
-    if resolution_score >= 20 and video_codec_family == "legacy":
-        v = _resolve_penalty_value(r, "strong")
-        if v:
-            penalties.append({"code": "high_resolution_legacy_codec", "value": v})
-    elif resolution_score == 10 and video_codec_family == "legacy":
-        v = _resolve_penalty_value(r, "medium")
-        if v:
-            penalties.append({"code": "high_resolution_legacy_codec", "value": v})
-
-    if video_score >= 40 and language_score <= 5:
-        v = _resolve_penalty_value(rules.get("good_video_few_languages"), None)
-        if v:
-            penalties.append({"code": "good_video_few_languages", "value": v})
-
-    if (size_status in {"too_small", "too_large"} or (not size_status and size_score <= 5)) and video_score >= 35:
-        v = _resolve_penalty_value(rules.get("size_incoherent"), None)
-        if v:
-            penalties.append({"code": "size_incoherent", "value": v})
-
-    return penalties
-
-
 def get_quality_level(score: int) -> int:
     if score <= 20:
         return 1
@@ -505,33 +428,16 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     size_score = int(size_details.get("score", 0))
 
     base_score = video_score + audio_score + language_score + size_score
-
-    partial_scores = {
-        "video": video_score,
-        "audio": audio_score,
-        "languages": language_score,
-        "size": size_score,
-        "size_status": size_details.get("status"),
-        "video_details": video_details,
-    }
-    penalties = compute_quality_penalties(item, partial_scores, cfg)
-
-    penalties_cfg = cfg.get("penalties") if isinstance(cfg.get("penalties"), dict) else {}
-    max_total = abs(_as_int(penalties_cfg.get("max_total"), 20))
-    penalty_total = min(sum(abs(_as_int(p.get("value"), 0)) for p in penalties), max_total)
-
-    final_score = _as_int(base_score - penalty_total, 0)
+    final_score = _as_int(base_score, 0)
     final_score = max(0, min(100, final_score))
 
     return {
         "score": final_score,
         "base_score": _as_int(base_score, 0),
-        "penalty_total": _as_int(penalty_total, 0),
         "video": _as_int(video_score, 0),
         "audio": _as_int(audio_score, 0),
         "languages": _as_int(language_score, 0),
         "size": _as_int(size_score, 0),
-        "penalties": penalties,
         "score_details": {
             "video": _as_int(video_score, 0),
             "audio": _as_int(audio_score, 0),

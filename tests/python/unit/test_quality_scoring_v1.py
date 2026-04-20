@@ -55,31 +55,6 @@ class QualityScoringV1Test(unittest.TestCase):
         )
         self.assertEqual(scoring.compute_size_quality_score({}), 5)
 
-    def test_penalties_and_cap(self):
-        penalties = scoring.compute_quality_penalties(
-            {},
-            {
-                "video": 45,
-                "audio": 6,
-                "languages": 5,
-                "size": 5,
-                "video_details": {"resolution_score": 20, "video_codec_family": "legacy"},
-            },
-        )
-        self.assertEqual(sum(p["value"] for p in penalties), 28)
-
-        quality = scoring.compute_quality(
-            {
-                "resolution": "4K",
-                "codec": "H.264",
-                "hdr_type": "Dolby Vision",
-                "audio_codec": "AAC",
-                "audio_languages_simple": "VO",
-                "size_b": _gb(4),
-            }
-        )
-        self.assertEqual(quality["penalty_total"], 20)
-
     def test_quality_level_boundaries(self):
         self.assertEqual(scoring.get_quality_level(0), 1)
         self.assertEqual(scoring.get_quality_level(20), 1)
@@ -108,12 +83,10 @@ class QualityScoringV1Test(unittest.TestCase):
         expected_keys = {
             "score",
             "base_score",
-            "penalty_total",
             "video",
             "audio",
             "languages",
             "size",
-            "penalties",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
         self.assertNotIn("level", quality)
