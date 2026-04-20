@@ -493,6 +493,28 @@
     let bodyHtml = '';
     if (_isPlainObject(sectionValue)) {
       if (sectionKey === 'penalties') bodyHtml = _renderScorePenalties(sectionValue, sectionKey);
+      else if (sectionKey === 'video') {
+        let videoHtml = '';
+        let nestedIdx = 0;
+        Object.entries(sectionValue).forEach(([videoKey, videoValue]) => {
+          const videoPath = `${sectionKey}.${videoKey}`;
+          if (_isPlainObject(videoValue)) {
+            const nestedBodyId = _scoreSectionBodyId(videoPath, `${idx}-${nestedIdx}`);
+            nestedIdx += 1;
+            videoHtml += '<div class="score-nested-section">'
+              + `<button type="button" class="settings-collapsible score-nested-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
+              + `<span class="settings-collapsible-title">${escH(_scoreLabel(videoPath, videoKey))}</span>`
+              + '<span class="settings-collapsible-icon">▾</span>'
+              + '</button>'
+              + `<div class="settings-collapsible-body is-collapsed score-nested-body" id="${escH(nestedBodyId)}">`
+              + _renderScoreObject(videoValue, videoPath, { noHeader: false })
+              + '</div></div>';
+            return;
+          }
+          videoHtml += _renderScoreInput(videoPath, videoKey, videoValue);
+        });
+        bodyHtml = videoHtml;
+      }
       else if (sectionKey === 'size' && _isPlainObject(sectionValue.profiles)) {
         const sizeEntries = Object.entries(sectionValue);
         let sizeHtml = '';

@@ -185,6 +185,9 @@ test('score settings render guided help and size min\/max layout', () => {
   assert.match(settingsSource, /function _renderSizeProfiles\(/, 'size section should use dedicated renderer');
   assert.match(settingsSource, /function _renderMinMaxRange\(/, 'size renderer should support min\/max range rows');
   assert.match(settingsSource, /settings\.score\.labels\.min_short/, 'min\/max labels should use i18n keys');
+  assert.match(settingsSource, /sectionKey === 'video'/, 'video section should have dedicated rendering');
+  assert.match(settingsSource, /score-nested-collapsible/, 'video sub-sections should reuse collapsible UI');
+  assert.match(appCss, /\.score-size-layout\{display:grid;grid-template-columns:1fr;gap:10px\}/, 'size section should be single-column to avoid overlap');
 });
 
 test('settings trigger scan only when folders changed', () => {
