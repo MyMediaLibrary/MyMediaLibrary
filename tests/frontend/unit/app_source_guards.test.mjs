@@ -177,6 +177,8 @@ test('score weights renderer outputs dedicated grid container', () => {
   assert.match(block, /settings\.score\.summary_pattern/, 'weights block should render score summary line');
   assert.match(block, /score-validation-status/, 'weights block should render a validation status');
   assert.match(block, /score-weights-total[\s\S]*score-validation-status/s, 'validation status should render just below total in the weights card');
+  assert.match(settingsSource, /const _WEIGHT_KEYS = \['video', 'audio', 'languages', 'size'\];/, 'weights should use canonical keys');
+  assert.match(settingsSource, /function _sumCanonicalWeights\(/, 'weights total should be centralized with canonical keys');
 });
 
 test('score weights invalid state should not use top status banner', () => {
@@ -186,6 +188,7 @@ test('score weights invalid state should not use top status banner', () => {
   assert.doesNotMatch(renderBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'weights validation should not be rendered in top score status banner');
   assert.ok(refreshBlock.length > 0, 'refresh weights block should be found');
   assert.doesNotMatch(refreshBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'live weights validation should stay inside weights card');
+  assert.doesNotMatch(settingsSource, /Object\.values\(weights\)\.reduce/, 'weights total must not sum unknown extra keys');
 });
 
 test('score enabled toggle updates score tab immediately without modal reopen', () => {

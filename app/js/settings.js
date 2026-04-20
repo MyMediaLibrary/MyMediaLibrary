@@ -186,6 +186,16 @@
     return !!value && typeof value === 'object' && !Array.isArray(value);
   }
 
+  const _WEIGHT_KEYS = ['video', 'audio', 'languages', 'size'];
+
+  function _sumCanonicalWeights(weights) {
+    const source = _isPlainObject(weights) ? weights : {};
+    return _WEIGHT_KEYS.reduce((sum, key) => {
+      const value = source[key];
+      return sum + (Number.isFinite(Number(value)) ? Number(value) : 0);
+    }, 0);
+  }
+
   function _hasSingleObjectChild(value) {
     if (!_isPlainObject(value)) return false;
     const entries = Object.entries(value);
@@ -391,14 +401,13 @@
     const min = Number.isFinite(Number(ui.min)) ? Number(ui.min) : 0;
     const max = Number.isFinite(Number(ui.max)) ? Number(ui.max) : 100;
 
-    let total = 0;
+    const total = _sumCanonicalWeights(weights);
     let html = '<div class="settings-group score-weights-card"><div class="settings-row score-weights-head">'
       + `<div class="settings-label score-weights-title">${escH(_scoreT('settings.score.weights', {}, 'Poids', 'Weights'))}</div>`
       + '</div>'
       + `<div class="score-section-help">${escH(_scoreSectionHelp('weights'))}</div>`
       + '<div class="score-weights-grid">';
     Object.entries(weights).forEach(([key, value]) => {
-      total += Number.isFinite(Number(value)) ? Number(value) : 0;
       html += '<div class="score-weight-cell">'
         + `<label class="settings-label">${escH(_scoreLabel(`weights.${key}`, key))}</label>`
         + `<input class="settings-input score-config-input" type="number" step="1" min="${min}" max="${max}" data-score-path="weights.${escH(key)}" value="${String(value)}"/>`
@@ -543,7 +552,7 @@
     const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
     const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
-    const total = Object.values(weights).reduce((sum, v) => sum + (Number.isFinite(Number(v)) ? Number(v) : 0), 0);
+    const total = _sumCanonicalWeights(weights);
     return { expected, total, valid: total === expected };
   }
 
@@ -611,7 +620,7 @@
     const weights = (_scoreSettingsDraft && typeof _scoreSettingsDraft.weights === 'object') ? _scoreSettingsDraft.weights : {};
     const ui = _scoreSettingsMeta?.ui_schema?.weights || {};
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
-    const total = Object.values(weights).reduce((sum, v) => sum + (Number.isFinite(Number(v)) ? Number(v) : 0), 0);
+    const total = _sumCanonicalWeights(weights);
     const valid = total === expected;
     const totalEl = document.querySelector('.score-weights-total-value');
     if (totalEl) {
@@ -883,7 +892,7 @@
       if (shouldPersistScoreSettings) {
         const validation = _scoreWeightsValidation();
         if (!validation.valid) {
-          _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(validation.expected)), true);
+          _setScoreStatus(_scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100').replace('100', String(validation.expected)), true);
           _syncGlobalSaveAvailability();
           return;
         }

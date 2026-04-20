@@ -145,7 +145,6 @@
         "size": "Évalue la cohérence de la taille selon le type, la résolution et parfois le codec."
       },
       "default_help": "Valeur par défaut utilisée si aucune clé spécifique ne correspond",
-      "invalid_total": "Le total des poids doit être égal à 100",
       "load_error": "Impossible de charger la configuration du score",
       "save_error": "Impossible d'enregistrer la configuration du score",
       "reset_error": "Impossible de réinitialiser la configuration du score",

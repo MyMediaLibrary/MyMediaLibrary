@@ -1,4 +1,5 @@
 import http.server
+import copy
 import json
 import pathlib
 import tempfile
@@ -112,11 +113,24 @@ class TestScoreSettingsApi(unittest.TestCase):
     def test_put_score_settings_recomputes_scores_only(self):
         status, get_payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
-        effective = get_payload["effective"]
-        effective["weights"]["video"] = 48
-        effective["weights"]["audio"] = 22
+        baseline_cfg = copy.deepcopy(get_payload["effective"])
+        baseline_status, baseline_payload = self._request(
+            "/api/settings/score",
+            method="PUT",
+            payload={"score": baseline_cfg},
+        )
+        self.assertEqual(baseline_status, 200)
+        self.assertTrue(baseline_payload["ok"])
+        baseline_data = json.loads(self.output_path.read_text(encoding="utf-8"))
+        score_before = baseline_data["items"][0]["quality"]["score"]
 
-        put_status, put_payload = self._request("/api/settings/score", method="PUT", payload={"score": effective})
+        weighted_cfg = copy.deepcopy(get_payload["effective"])
+        weighted_cfg["weights"]["video"] = 10
+        weighted_cfg["weights"]["audio"] = 10
+        weighted_cfg["weights"]["languages"] = 10
+        weighted_cfg["weights"]["size"] = 70
+
+        put_status, put_payload = self._request("/api/settings/score", method="PUT", payload={"score": weighted_cfg})
         self.assertEqual(put_status, 200)
         self.assertTrue(put_payload["ok"])
         self.assertEqual(put_payload["status"]["mode"], "score_only")
@@ -125,6 +139,8 @@ class TestScoreSettingsApi(unittest.TestCase):
         data = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertIn("quality", data["items"][0])
         self.assertIn("score", data["items"][0]["quality"])
+        score_after = data["items"][0]["quality"]["score"]
+        self.assertNotEqual(score_before, score_after)
 
     def test_put_invalid_weights_returns_structured_error(self):
         status, get_payload = self._request("/api/settings/score")

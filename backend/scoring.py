@@ -283,6 +283,39 @@ def _lookup_number(table: Any, key: str, *, fallback: float = 0.0) -> float:
     return fallback
 
 
+def _max_table_value(table: Any, *, fallback: float = 0.0) -> float:
+    if not isinstance(table, dict):
+        return fallback
+    best = None
+    for value in table.values():
+        if isinstance(value, (int, float)):
+            numeric = _as_float(value, fallback)
+            if best is None or numeric > best:
+                best = numeric
+    if best is None:
+        return fallback
+    return best
+
+
+def _score_component_maxima(score_config: dict[str, Any]) -> dict[str, float]:
+    video_cfg = score_config.get("video") if isinstance(score_config.get("video"), dict) else {}
+    audio_cfg = score_config.get("audio") if isinstance(score_config.get("audio"), dict) else {}
+    langs_cfg = score_config.get("languages") if isinstance(score_config.get("languages"), dict) else {}
+    size_cfg = score_config.get("size") if isinstance(score_config.get("size"), dict) else {}
+
+    video_max = (
+        _max_table_value(video_cfg.get("resolution"), fallback=0.0)
+        + _max_table_value(video_cfg.get("codec"), fallback=0.0)
+        + _max_table_value(video_cfg.get("hdr"), fallback=0.0)
+    )
+    return {
+        "video": max(0.0, video_max),
+        "audio": max(0.0, _max_table_value(audio_cfg.get("codec"), fallback=0.0)),
+        "languages": max(0.0, _max_table_value(langs_cfg.get("profile"), fallback=0.0)),
+        "size": max(0.0, _max_table_value(size_cfg.get("points"), fallback=0.0)),
+    }
+
+
 def _size_profile_type_key(item: dict) -> str:
     return "series" if str(item.get("type") or "").strip().lower() == "tv" else "movie"
 
@@ -419,6 +452,7 @@ def get_quality_level(score: int) -> int:
 
 def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> dict:
     cfg = _resolve_score_config(score_config)
+    weights = cfg.get("weights") if isinstance(cfg.get("weights"), dict) else {}
 
     video_details = compute_video_quality_score(item, cfg)
     video_score = int(video_details["score"])
@@ -428,7 +462,23 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     size_score = int(size_details.get("score", 0))
 
     base_score = video_score + audio_score + language_score + size_score
-    final_score = _as_int(base_score, 0)
+
+    maxima = _score_component_maxima(cfg)
+    weighted_total = 0.0
+    for component, raw_score in (
+        ("video", video_score),
+        ("audio", audio_score),
+        ("languages", language_score),
+        ("size", size_score),
+    ):
+        max_component = _as_float(maxima.get(component), 0.0)
+        weight = _as_float(weights.get(component), 0.0)
+        if max_component <= 0 or weight <= 0:
+            continue
+        ratio = max(0.0, min(1.0, _as_float(raw_score, 0.0) / max_component))
+        weighted_total += ratio * weight
+
+    final_score = _as_int(weighted_total, 0)
     final_score = max(0, min(100, final_score))
 
     return {

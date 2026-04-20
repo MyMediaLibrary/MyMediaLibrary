@@ -3,6 +3,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import copy
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -80,6 +81,41 @@ class ScoreConfigBackendTest(unittest.TestCase):
             self.assertIn("quality", payload["items"][0])
             self.assertGreaterEqual(payload["items"][0]["quality"]["score"], 0)
             self.assertLessEqual(payload["items"][0]["quality"]["score"], 100)
+
+    def test_recompute_scores_only_applies_weight_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = pathlib.Path(tmp) / "library.json"
+            output_path.write_text(json.dumps({
+                "items": [{
+                    "title": "Movie",
+                    "type": "movie",
+                    "resolution": "1080p",
+                    "codec": "H.264",
+                    "audio_codec": "Dolby Digital",
+                    "audio_languages_simple": "VF",
+                    "size_b": int(8 * (1024 ** 3)),
+                }]
+            }), encoding="utf-8")
+
+            defaults = scanner.load_score_defaults()
+            score_cfg = copy.deepcopy(defaults)
+            score_cfg["weights"] = {
+                "video": 10,
+                "audio": 10,
+                "languages": 10,
+                "size": 70,
+            }
+
+            with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+                scanner.recompute_scores_only(defaults)
+                baseline_payload = json.loads(output_path.read_text(encoding="utf-8"))
+                baseline_score = baseline_payload["items"][0]["quality"]["score"]
+
+                scanner.recompute_scores_only(score_cfg)
+                shifted_payload = json.loads(output_path.read_text(encoding="utf-8"))
+                shifted_score = shifted_payload["items"][0]["quality"]["score"]
+
+            self.assertNotEqual(baseline_score, shifted_score)
 
     def test_run_score_only_does_not_trigger_scan_phases(self):
         with patch("scanner.run_quick") as run_quick, \
