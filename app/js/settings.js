@@ -102,6 +102,20 @@
     return value === key ? null : value;
   }
 
+  function _scoreT(key, vars = {}, fallbackFr = '', fallbackEn = '') {
+    let translated = t(key, vars);
+    if (translated === key) {
+      translated = CURRENT_LANG === 'fr'
+        ? (fallbackFr || fallbackEn || key)
+        : (fallbackEn || fallbackFr || key);
+      Object.entries(vars).forEach(([k, v]) => {
+        translated = translated.split(`{${k}}`).join(String(v));
+      });
+      console.warn('Using score i18n fallback for key:', key);
+    }
+    return translated;
+  }
+
   function _scoreKeyTokenLabel(token) {
     const map = {
       av1: 'AV1',
@@ -219,7 +233,9 @@
       const isInt = Number.isInteger(value);
       const step = isInt ? '1' : '0.01';
       const attrs = path.startsWith('weights.') ? ' min="0" max="100"' : '';
-      const title = key === 'default' ? ` title="${escH(t('settings.score.default_help'))}"` : '';
+      const title = key === 'default'
+        ? ` title="${escH(_scoreT('settings.score.default_help', {}, 'Valeur par défaut', 'Default value'))}"`
+        : '';
       return '<div class="settings-row score-config-row">'
         + `<label class="settings-label"${title}>${escH(label)}</label>`
         + `<input class="settings-input score-config-input" type="number" step="${step}"${attrs} data-score-path="${escH(path)}" value="${String(value)}"/>`
@@ -285,7 +301,7 @@
 
     let total = 0;
     let html = '<div class="settings-group"><div class="settings-row score-weights-head">'
-      + `<div class="settings-label score-weights-title">${escH(t('settings.score.weights'))}</div>`
+      + `<div class="settings-label score-weights-title">${escH(_scoreT('settings.score.weights', {}, 'Poids', 'Weights'))}</div>`
       + '</div><div class="score-weights-grid">';
     Object.entries(weights).forEach(([key, value]) => {
       total += Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -297,7 +313,7 @@
     const expected = Number.isFinite(Number(ui.sum_must_equal)) ? Number(ui.sum_must_equal) : 100;
     const valid = total === expected;
     html += '</div><div class="settings-row score-weights-total">'
-      + `<span class="settings-label">${escH(t('settings.score.weights_total'))}</span>`
+      + `<span class="settings-label">${escH(_scoreT('settings.score.weights_total', {}, 'Total', 'Total'))}</span>`
       + `<span class="score-weights-total-value${valid ? '' : ' is-invalid'}">${total}</span>`
       + '</div></div>';
     return { html, valid, total, expected };
@@ -412,7 +428,7 @@
     });
     container.innerHTML = html;
 
-    if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
+    if (!valid) _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(expected)), true);
     else _setScoreStatus('');
     _syncGlobalSaveAvailability();
   }
@@ -432,7 +448,7 @@
       totalEl.textContent = String(total);
       totalEl.classList.toggle('is-invalid', !valid);
     }
-    if (!valid) _setScoreStatus(t('settings.score.invalid_total').replace('100', String(expected)), true);
+    if (!valid) _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(expected)), true);
     else _setScoreStatus('');
     _syncGlobalSaveAvailability();
   }
@@ -450,7 +466,7 @@
       _scoreSettingsDraft = _cloneJson(_scoreSettingsMeta.effective || {});
       _renderScoreSettings();
     } catch (e) {
-      _setScoreStatus(t('settings.score.load_error'), true);
+      _setScoreStatus(_scoreT('settings.score.load_error', {}, 'Impossible de charger la configuration du score', 'Unable to load score configuration'), true);
       const container = document.getElementById('scoreSettingsContainer');
       if (container) container.innerHTML = '';
       const disabled = document.getElementById('scoreSettingsDisabled');
@@ -477,7 +493,12 @@
       _scoreSettingsMeta.enabled = payload.enabled;
     }
     _scoreSettingsDraft = _cloneJson(payload.effective || _scoreSettingsDraft);
-    _setScoreStatus(t('settings.score.saved', { count: payload?.status?.recalculated_items ?? 0 }), false);
+    _setScoreStatus(_scoreT(
+      'settings.score.saved',
+      { count: payload?.status?.recalculated_items ?? 0 },
+      'Configuration du score enregistrée ({count} items recalculés)',
+      'Score configuration saved ({count} items recalculated)',
+    ), false);
     _renderScoreSettings();
     if (typeof window.loadLibrary === 'function') window.loadLibrary();
   }
@@ -498,11 +519,16 @@
         _scoreSettingsMeta.enabled = payload.enabled;
       }
       _scoreSettingsDraft = _cloneJson(payload.effective || {});
-      _setScoreStatus(t('settings.score.reset_done', { count: payload?.status?.recalculated_items ?? 0 }), false);
+      _setScoreStatus(_scoreT(
+        'settings.score.reset_done',
+        { count: payload?.status?.recalculated_items ?? 0 },
+        'Score réinitialisé ({count} items recalculés)',
+        'Score reset ({count} items recalculated)',
+      ), false);
       _renderScoreSettings();
       if (typeof window.loadLibrary === 'function') window.loadLibrary();
     } catch (e) {
-      _setScoreStatus(`${t('settings.score.reset_error')}: ${e.message}`, true);
+      _setScoreStatus(`${_scoreT('settings.score.reset_error', {}, 'Impossible de réinitialiser la configuration du score', 'Unable to reset score configuration')}: ${e.message}`, true);
       console.error('resetScoreSettings error:', e);
     }
   }
@@ -655,7 +681,7 @@
       if (shouldPersistScoreSettings) {
         const validation = _scoreWeightsValidation();
         if (!validation.valid) {
-          _setScoreStatus(t('settings.score.invalid_total').replace('100', String(validation.expected)), true);
+          _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(validation.expected)), true);
           _syncGlobalSaveAvailability();
           return;
         }
