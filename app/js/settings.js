@@ -28,6 +28,7 @@
   let _settingsLayoutMode = null;
   let _scoreSettingsMeta = null;
   let _scoreSettingsDraft = null;
+  let _scoreEnabledLocalOverride = null;
 
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
@@ -556,8 +557,12 @@
   }
 
   function _isScoreSettingsEnabled() {
-    const localToggle = document.getElementById('cfgEnableScore');
-    if (localToggle && !localToggle.disabled) return localToggle.checked === true;
+    if (typeof _scoreEnabledLocalOverride === 'boolean') return _scoreEnabledLocalOverride;
+    if (typeof _scoreSettingsMeta?.enabled === 'boolean') return _scoreSettingsMeta.enabled;
+    const configScoreEnabled = appConfig?.score?.enabled;
+    if (typeof configScoreEnabled === 'boolean') return configScoreEnabled;
+    const legacyScoreEnabled = appConfig?.system?.enable_score;
+    if (typeof legacyScoreEnabled === 'boolean') return legacyScoreEnabled;
     return _scoreSettingsMeta?.enabled === true;
   }
 
@@ -674,6 +679,9 @@
       _scoreSettingsMeta = await res.json();
       if (!_scoreSettingsMeta || typeof _scoreSettingsMeta !== 'object' || !_scoreSettingsMeta.effective) {
         throw new Error('Invalid score payload: missing effective');
+      }
+      if (typeof _scoreEnabledLocalOverride === 'boolean') {
+        _scoreSettingsMeta.enabled = _scoreEnabledLocalOverride;
       }
       _scoreSettingsDraft = _cloneJson(_scoreSettingsMeta.effective || {});
       _renderScoreSettings();
@@ -1335,6 +1343,7 @@
   function openSettings() {
     closeMobileScanSheet();
     _settingsJsrTestOk = false;
+    _scoreEnabledLocalOverride = null;
     loadSettings();
     loadVersion();
     renderProviderToggles();
@@ -1822,8 +1831,9 @@
   const _scoreEnableEl = document.getElementById('cfgEnableScore');
   if (_scoreEnableEl) {
     _scoreEnableEl.addEventListener('change', function () {
+      _scoreEnabledLocalOverride = _scoreEnableEl.checked === true;
       if (_scoreSettingsMeta && typeof _scoreSettingsMeta === 'object') {
-        _scoreSettingsMeta.enabled = _scoreEnableEl.checked === true;
+        _scoreSettingsMeta.enabled = _scoreEnabledLocalOverride;
       }
       _renderScoreSettings();
       _syncGlobalSaveAvailability();
