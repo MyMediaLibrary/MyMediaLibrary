@@ -424,8 +424,8 @@
       + `<span class="settings-label">${escH(_scoreT('settings.score.weights_total', {}, 'Total', 'Total'))}</span>`
       + `<span class="score-weights-total-value${valid ? '' : ' is-invalid'}">${total}</span>`
       + '</div>'
-      + `<div class="score-weights-summary">${escH(summaryLine)}</div>`
-      + `<div class="score-validation-status ${validationClass}">${escH(validationText)}</div>`
+      + `<div class="score-validation-status ${validationClass}" id="scoreWeightsValidationStatus">${escH(validationText)}</div>`
+      + `<div class="score-weights-summary" id="scoreWeightsSummary">${escH(summaryLine)}</div>`
       + '</div>';
     return { html, valid, total, expected };
   }
@@ -556,6 +556,8 @@
   }
 
   function _isScoreSettingsEnabled() {
+    const localToggle = document.getElementById('cfgEnableScore');
+    if (localToggle && !localToggle.disabled) return localToggle.checked === true;
     return _scoreSettingsMeta?.enabled === true;
   }
 
@@ -610,7 +612,7 @@
     if (resetRow) resetRow.style.display = '';
     if (!_scoreSettingsDraft) return;
 
-    const { html: weightsHtml, valid, expected } = _renderScoreWeights();
+    const { html: weightsHtml } = _renderScoreWeights();
     let html = weightsHtml;
     let sectionIdx = 0;
     Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
@@ -620,8 +622,6 @@
     });
     container.innerHTML = `<div class="score-settings-shell">${html}</div>`;
 
-    if (!valid) _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(expected)), true);
-    else _setScoreStatus('');
     _syncGlobalSaveAvailability();
   }
 
@@ -640,8 +640,28 @@
       totalEl.textContent = String(total);
       totalEl.classList.toggle('is-invalid', !valid);
     }
-    if (!valid) _setScoreStatus(_scoreT('settings.score.invalid_total', {}, 'Le total des poids doit être égal à 100', 'Weights total must equal 100').replace('100', String(expected)), true);
-    else _setScoreStatus('');
+    const validationEl = document.getElementById('scoreWeightsValidationStatus');
+    if (validationEl) {
+      validationEl.classList.toggle('is-valid', valid);
+      validationEl.classList.toggle('is-invalid', !valid);
+      validationEl.textContent = valid
+        ? _scoreT('settings.score.validation_ok', {}, 'Configuration valide', 'Configuration is valid')
+        : _scoreT('settings.score.validation_bad', {}, 'Le total des poids doit être égal à 100', 'Weight total must be equal to 100').replace('100', String(expected));
+    }
+    const summaryEl = document.getElementById('scoreWeightsSummary');
+    if (summaryEl) {
+      summaryEl.textContent = _scoreT(
+        'settings.score.summary_pattern',
+        {
+          video: Number(weights.video || 0),
+          audio: Number(weights.audio || 0),
+          languages: Number(weights.languages || 0),
+          size: Number(weights.size || 0),
+        },
+        `Vidéo ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Langues ${Number(weights.languages || 0)}% • Taille ${Number(weights.size || 0)}%`,
+        `Video ${Number(weights.video || 0)}% • Audio ${Number(weights.audio || 0)}% • Languages ${Number(weights.languages || 0)}% • Size ${Number(weights.size || 0)}%`,
+      );
+    }
     _syncGlobalSaveAvailability();
   }
 
@@ -1222,7 +1242,10 @@
     btn.classList.add('active');
     document.querySelectorAll('.stab-panel').forEach(p => p.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';
-    if (tabId === 'stab-score' && !_scoreSettingsMeta) loadScoreSettings();
+    if (tabId === 'stab-score') {
+      if (!_scoreSettingsMeta) loadScoreSettings();
+      else _renderScoreSettings();
+    }
     _syncGlobalSaveAvailability();
   }
 
@@ -1297,7 +1320,10 @@
       pBtn.setAttribute('aria-expanded', isCurrent && willOpen ? 'true' : 'false');
       pBody.classList.toggle('is-collapsed', !(isCurrent && willOpen));
     });
-    if (willOpen && panel?.id === 'stab-score' && !_scoreSettingsMeta) loadScoreSettings();
+    if (willOpen && panel?.id === 'stab-score') {
+      if (!_scoreSettingsMeta) loadScoreSettings();
+      else _renderScoreSettings();
+    }
     _syncGlobalSaveAvailability();
   }
 
@@ -1791,6 +1817,18 @@
   // cfgEnablePlot: real-time enablePlot sync while settings panel is open
   const _epEl = document.getElementById('cfgEnablePlot');
   if (_epEl) _epEl.addEventListener('change', saveSettings);
+
+  // cfgEnableScore: update score tab state immediately (without closing modal)
+  const _scoreEnableEl = document.getElementById('cfgEnableScore');
+  if (_scoreEnableEl) {
+    _scoreEnableEl.addEventListener('change', function () {
+      if (_scoreSettingsMeta && typeof _scoreSettingsMeta === 'object') {
+        _scoreSettingsMeta.enabled = _scoreEnableEl.checked === true;
+      }
+      _renderScoreSettings();
+      _syncGlobalSaveAvailability();
+    });
+  }
 
   // Seerr URL/key: reset connection test state on any edit
   function _resetJsrTestState() {

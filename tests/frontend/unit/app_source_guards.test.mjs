@@ -177,6 +177,23 @@ test('score weights renderer outputs dedicated grid container', () => {
   assert.match(block, /class=\"score-weights-grid\"/, 'weights block should render a dedicated grid container');
   assert.match(block, /settings\.score\.summary_pattern/, 'weights block should render score summary line');
   assert.match(block, /score-validation-status/, 'weights block should render a validation status');
+  assert.match(block, /score-weights-total[\s\S]*score-validation-status/s, 'validation status should render just below total in the weights card');
+});
+
+test('score weights invalid state should not use top status banner', () => {
+  const renderBlock = functionBlock(settingsSource, '_renderScoreSettings', '_refreshScoreWeightStatusOnly');
+  const refreshMatch = settingsSource.match(/function _refreshScoreWeightStatusOnly\(\)[\s\S]*?async function loadScoreSettings\(\)/);
+  const refreshBlock = refreshMatch ? refreshMatch[0] : '';
+  assert.doesNotMatch(renderBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'weights validation should not be rendered in top score status banner');
+  assert.ok(refreshBlock.length > 0, 'refresh weights block should be found');
+  assert.doesNotMatch(refreshBlock, /_setScoreStatus\(_scoreT\('settings\.score\.invalid_total'/, 'live weights validation should stay inside weights card');
+});
+
+test('score enabled toggle updates score tab immediately without modal reopen', () => {
+  assert.match(settingsSource, /const _scoreEnableEl = document\.getElementById\('cfgEnableScore'\);/, 'settings should bind a change listener on cfgEnableScore');
+  assert.match(settingsSource, /_scoreEnableEl\.addEventListener\('change', function \(\) \{[\s\S]*_renderScoreSettings\(\);/s, 'score toggle change should immediately rerender score tab');
+  const switchStabBlock = functionBlock(settingsSource, 'switchStab', 'applySettingsMobileLayout');
+  assert.match(switchStabBlock, /else _renderScoreSettings\(\);/, 'switching back to score tab should refresh according to current local toggle state');
 });
 
 test('score settings render guided help and size min\/max layout', () => {

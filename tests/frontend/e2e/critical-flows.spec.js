@@ -389,10 +389,16 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   await videoWeightInput.fill('40');
   await videoWeightInput.dispatchEvent('input');
   await expect(page.locator('#settingsSaveBtn')).toBeDisabled();
+  await expect(page.locator('.score-weights-card .score-validation-status')).toContainText('Le total des poids doit être égal à 100');
+  await expect(page.locator('.score-weights-card .score-validation-status')).not.toContainText('Configuration valide');
+  await expect(page.locator('#scoreSettingsStatus')).toBeHidden();
 
   await videoWeightInput.fill('50');
   await videoWeightInput.dispatchEvent('input');
   await expect(page.locator('#settingsSaveBtn')).toBeEnabled();
+  await expect(page.locator('.score-weights-card .score-validation-status')).toContainText('Configuration valide');
+  await expect(page.locator('.score-weights-card .score-validation-status')).not.toContainText('Le total des poids doit être égal à 100');
+  await expect(page.locator('#scoreSettingsStatus')).toBeHidden();
 
   await page.click('#settingsSaveBtn');
   await expect.poll(() => capturedScorePayload).not.toBeNull();
@@ -439,6 +445,79 @@ test('score tab remains visible and shows disabled state when score feature is o
   await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
   await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
   await expect(page.locator('#scoreResetRow')).toBeHidden();
+});
+
+test('score tab updates immediately when score quality toggle changes in configuration tab', async ({ page }) => {
+  await page.route('**/api/settings/score', async (route) => {
+    await route.fulfill({ json: { ...scoreSettingsPayload(), enabled: true } });
+  });
+  await page.route('**/api/settings/score/reset', async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      const cfg = configuredPayload();
+      cfg.score = { enabled: true };
+      await route.fulfill({ json: cfg });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({ json: {} });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({ json: { Autres: 'other_play.webp' } });
+  });
+
+  await page.goto('/index.html');
+  await page.evaluate(() => {
+    openSettings();
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
+  await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
+
+  await page.evaluate(() => {
+    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
+    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
+    const toggle = document.getElementById('cfgEnableScore');
+    if (toggle) {
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  await page.evaluate(() => {
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
+  await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeHidden();
+
+  await page.evaluate(() => {
+    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
+    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
+    const toggle = document.getElementById('cfgEnableScore');
+    if (toggle) {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  await page.evaluate(() => {
+    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
+    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
+  });
+  await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
+  await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
+  await expect(page.locator('#scoreResetRow')).toBeVisible();
 });
 
 test('score settings displays friendly error when API load fails', async ({ page }) => {
