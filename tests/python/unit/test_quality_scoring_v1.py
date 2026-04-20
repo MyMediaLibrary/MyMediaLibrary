@@ -104,11 +104,9 @@ class QualityScoringV1Test(unittest.TestCase):
             }
         )
         self.assertEqual(quality["score"], 65)
-        self.assertEqual(quality["level"], 4)
 
         expected_keys = {
             "score",
-            "level",
             "base_score",
             "penalty_total",
             "video",
@@ -118,6 +116,7 @@ class QualityScoringV1Test(unittest.TestCase):
             "penalties",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
+        self.assertNotIn("level", quality)
 
         low_quality = scoring.compute_quality(
             {

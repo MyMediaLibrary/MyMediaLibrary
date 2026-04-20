@@ -20,7 +20,7 @@ class ScoreCleanupTest(unittest.TestCase):
             "type": cat["type"],
         }
         if enable_score:
-            item["quality"] = {"score": 80, "level": 4}
+            item["quality"] = {"score": 80}
         return item
 
     def test_category_only_scan_strips_score_fields_from_preserved_items_when_disabled(self):
@@ -39,7 +39,7 @@ class ScoreCleanupTest(unittest.TestCase):
                         "title": "ShowA",
                         "category": "Series",
                         "type": "tv",
-                        "quality": {"score": 45, "level": 2},
+                        "quality": {"score": 45},
                         "score": 45,
                     }
                 ]
@@ -69,10 +69,13 @@ class ScoreCleanupTest(unittest.TestCase):
                 scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
-            self.assertFalse(payload["meta"]["score_enabled"])
+            for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
+                self.assertNotIn(root_key, payload)
             for item in payload["items"]:
                 self.assertNotIn("quality", item)
                 self.assertNotIn("score", item)
+                self.assertNotIn("runtime", item)
+                self.assertNotIn("audio_codec_display", item)
 
     def test_category_only_scan_keeps_score_fields_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,7 +93,7 @@ class ScoreCleanupTest(unittest.TestCase):
                         "title": "ShowA",
                         "category": "Series",
                         "type": "tv",
-                        "quality": {"score": 61, "level": 4},
+                        "quality": {"score": 61},
                     }
                 ]
             }
@@ -119,10 +122,13 @@ class ScoreCleanupTest(unittest.TestCase):
                 scanner.run_quick(only_category="Movies")
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
-            self.assertTrue(payload["meta"]["score_enabled"])
+            for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
+                self.assertNotIn(root_key, payload)
             by_path = {item["path"]: item for item in payload["items"]}
             self.assertIn("quality", by_path["Movies/MovieA"])
             self.assertIn("quality", by_path["Series/ShowA"])
+            self.assertIn("score", by_path["Movies/MovieA"]["quality"])
+            self.assertNotIn("level", by_path["Movies/MovieA"]["quality"])
 
 
 if __name__ == "__main__":

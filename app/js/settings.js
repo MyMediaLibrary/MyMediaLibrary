@@ -5,12 +5,12 @@
  * Jellyseerr, cron hints, mobile layout) and the first-run onboarding flow.
  *
  * Depends on globals populated by app.js at runtime:
- *   appConfig, serverConfig, allItems, enablePlot, enableScore,
+ *   appConfig, libraryPathLabel, allItems, enablePlot, enableScore,
  *   CURRENT_LANG, PROVIDER_OTHERS_KEY,
  *   t(), escH(), isMobile(), isScoreEnabled(),
  *   saveConfig(), loadVersion(), loadTranslations(), applyTranslations(),
  *   _isFolderEnabled(), _isOthersProviderName(), _provVisible(),
- *   _hasHiddenProviders(), openMobileScanSheet(), closeMobileScanSheet()
+ *   openMobileScanSheet(), closeMobileScanSheet()
  *
  * Exposed on window for HTML onclick compatibility and cross-module use:
  *   window.MMLSettings — { showOnboarding, openSettings, closeSettings,
@@ -101,7 +101,6 @@
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
     if (!_field('cfgLibraryPath')) return;
-    const sc = serverConfig;
 
     // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
@@ -113,8 +112,8 @@
     const epEl = _field('cfgEnablePlot');
     if (epEl) { epEl.checked = enablePlot; epEl.disabled = false; }
 
-    // Library path — readonly, from serverConfig (set in library.json config block)
-    _ro('cfgLibraryPath', sc.library_path || '');
+    // Library path — readonly, from library.json root field.
+    _ro('cfgLibraryPath', libraryPathLabel || '');
 
     // Enable flags — editable, from appConfig
     _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);
@@ -190,7 +189,9 @@
 
     // Gather folder type/activation — always include current state
     const folderUpdates = gatherFolderEdits();
-    if (folderUpdates) partial.folders = folderUpdates;
+    if (folderUpdates && shouldTriggerScan(appConfig, { folders: folderUpdates })) {
+      partial.folders = folderUpdates;
+    }
 
     // Gather provider visibility
     const provVis = gatherProviderVisibility();
@@ -286,8 +287,8 @@
   function gatherFolderEdits() {
     const folders = JSON.parse(JSON.stringify(appConfig.folders || []));
     if (!folders.length) return null;
-    // Always read current DOM state — appConfig.folders may have been mutated by
-    // onFolderTypeChange() so we can't rely on a "changed" diff; always return full state.
+    // Always read current DOM state, then compare against previous scan-relevant
+    // folder configuration to decide if we need to persist/trigger a scan.
     document.querySelectorAll('[data-folder-idx][data-folder-key]').forEach(el => {
       const idx = parseInt(el.dataset.folderIdx);
       const key = el.dataset.folderKey;
@@ -306,22 +307,53 @@
     });
   }
 
+  function _normalizeFolderForScan(folder) {
+    return {
+      name: String(folder?.name || ''),
+      type: folder?.type ?? null,
+      enabled: folder?.enabled === true,
+    };
+  }
+
+  function _foldersScanSignature(folders) {
+    if (!Array.isArray(folders)) return '[]';
+    const normalized = folders
+      .map(_normalizeFolderForScan)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return JSON.stringify(normalized);
+  }
+
+  function shouldTriggerScan(oldConfig, newConfig) {
+    if (!newConfig || !Array.isArray(newConfig.folders)) return false;
+    const prevSig = _foldersScanSignature(oldConfig?.folders || []);
+    const nextSig = _foldersScanSignature(newConfig.folders);
+    return prevSig !== nextSig;
+  }
+
   // ── Settings: provider toggles ────────────────────────────────────────────
   function renderProviderToggles() {
     const container = document.getElementById('cfgProviderToggles');
     if (!container) return;
-    const provs = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
-      .filter(p => !_isOthersProviderName(p))
+    const provs = [...new Set(allItems.flatMap((i) => _getItemProvidersForSettings(i).map((p) => window._pname ? window._pname(p) : (p.name || p)).filter(Boolean)))]
+      .filter((p) => !_isOthersProviderName(p))
       .sort();
-    const hasHidden = _hasHiddenProviders();
-    if (!provs.length && !hasHidden) { container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>'; return; }
+    const hasHidden = allItems.some((i) =>
+      _getItemProvidersForSettings(i).some((entry) => {
+        const name = window._pname ? window._pname(entry) : (entry?.name || entry);
+        return !!name && !_isOthersProviderName(name) && !_provVisible(name);
+      })
+    );
+    if (!provs.length && !hasHidden) {
+      container.innerHTML = '<div class="settings-note">' + t('settings.jellyseerr.no_provider_available') + '</div>';
+      return;
+    }
     let html = '';
-    provs.forEach(prov => {
+    provs.forEach((prov) => {
       const checked = _provVisible(prov);
       html += '<div class="settings-row" style="margin-bottom:6px">'
         + '<label class="settings-label">'+escH(prov)+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" class="prov-visibility-toggle" data-prov="'+escH(prov)+'"'
-        + (checked?' checked':'') + '/><span class="toggle-switch-slider"></span></label>'
+        + (checked ? ' checked' : '') + '/><span class="toggle-switch-slider"></span></label>'
         + '</div>';
     });
     if (hasHidden) {
@@ -335,19 +367,22 @@
   }
 
   function gatherProviderVisibility() {
-    const all = [...new Set(allItems.flatMap(i=>(i.providers||[]).map(p=>p.name||p).filter(Boolean)))]
-      .filter(p => !_isOthersProviderName(p))
-      .sort();
-    const checked = [];
-    document.querySelectorAll('.prov-visibility-toggle').forEach(el => {
-      if (el.checked) checked.push(el.dataset.prov);
+    const toggles = [...document.querySelectorAll('.prov-visibility-toggle')];
+    if (!toggles.length) return [];
+    return toggles.filter((el) => el.checked).map((el) => el.dataset.prov);
+  }
+
+  function _getItemProvidersForSettings(item) {
+    if (typeof window.getDisplayedProviders === 'function') {
+      return window.getDisplayedProviders(item, { mappedOnly: true });
+    }
+    const entries = (typeof window.getEnabledProvidersForItem === 'function')
+      ? window.getEnabledProvidersForItem(item)
+      : [];
+    return entries.filter((entry) => {
+      const name = window._pname ? window._pname(entry) : (entry?.name || entry);
+      return !!name && !_isOthersProviderName(name);
     });
-    // [] = all visible (matches config.json schema); non-empty = whitelist
-    if (checked.length === all.length) return [];
-    // Special case: no explicit provider selected => keep explicit providers hidden,
-    // aggregate them under Others instead of falling back to "all visible".
-    if (all.length > 0 && checked.length === 0) return [PROVIDER_OTHERS_KEY];
-    return checked;
   }
 
   // ── Settings: Jellyseerr ──────────────────────────────────────────────────

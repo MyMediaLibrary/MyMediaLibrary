@@ -37,6 +37,9 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+  function safeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
   const FILTER_NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
   const FILTER_ORDER = [
     'type',
@@ -60,20 +63,26 @@ let allItems=[], categories=[], groups=[];
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
   let libraryExportSource = null; // raw library.json payload used for export
-  let providerCatalog={};          // legacy fallback (old library.json without providers_meta)
-  let PROVIDERS_META = {};         // {name: {logo, logo_url}} — canonical source since v2
-  let PROVIDERS_LOGOS = {};        // {name: filename} — logos section from /providers.json
+  let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
+  let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /providers_logo.json
   let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
   let audioLanguages = {};         // loaded from /audio_languages.json
 
-  async function loadProvidersLogos() {
+  async function loadProvidersCatalog() {
     try {
-      const res = await fetch('/providers.json?_=' + Date.now());
-      if (res.ok) {
-        const data = await res.json();
-        PROVIDERS_LOGOS = (data && data.logos) ? data.logos : {};
+      const [mapRes, logosRes] = await Promise.all([
+        fetch('/api/providers-map?_=' + Date.now()),
+        fetch('/providers_logo.json?_=' + Date.now()),
+      ]);
+      if (mapRes.ok) {
+        const data = await mapRes.json();
+        PROVIDERS_MAP = (data && typeof data === 'object') ? data : {};
       }
-    } catch(e) { console.warn('providers.json load error:', e); }
+      if (logosRes.ok) {
+        const data = await logosRes.json();
+        PROVIDERS_LOGOS = (data && typeof data === 'object') ? data : {};
+      }
+    } catch(e) { console.warn('providers catalog load error:', e); }
   }
 
   async function loadAudioCodecMapping() {
@@ -154,7 +163,19 @@ let allItems=[], categories=[], groups=[];
   }
 
   function getAudioCodecLabel(item) {
-    return item?.audio_codec_display ?? getAudioCodecDisplay(getNormalizedAudioCodec(item));
+    const normalized = getNormalizedAudioCodec(item);
+    if (normalized && normalized !== FILTER_NONE_KEY) {
+      return getAudioCodecDisplay(normalized);
+    }
+
+    // Transitional legacy fallback: remove when backend stops emitting audio_codec_display.
+    const legacyDisplay = typeof item?.audio_codec_display === 'string' ? item.audio_codec_display.trim() : '';
+    if (legacyDisplay) return legacyDisplay;
+
+    const raw = typeof item?.audio_codec_raw === 'string' ? item.audio_codec_raw.trim() : '';
+    if (raw) return raw;
+
+    return getFilterDisplayValue(FILTER_NONE_KEY);
   }
 
   function getNormalizedResolution(item) {
@@ -202,8 +223,6 @@ let allItems=[], categories=[], groups=[];
     if (window.MMLLogic?.getItemQualityLevel) {
       return window.MMLLogic.getItemQualityLevel(item);
     }
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
@@ -213,8 +232,6 @@ let allItems=[], categories=[], groups=[];
     }
     const score = Number(item?.quality?.score);
     if (!Number.isFinite(score)) return null;
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(score);
   }
 
@@ -293,22 +310,64 @@ let allItems=[], categories=[], groups=[];
     return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
+  function _providerRawName(entry) {
+    if (entry && typeof entry === 'object') {
+      return String(entry.rawName || entry.raw_name || entry.name || '').trim();
+    }
+    return String(entry || '').trim();
+  }
+
+  function resolveProvider(entry) {
+    const rawName = _providerRawName(entry);
+    if (!rawName) return { rawName: '', name: '', logoUrl: '' };
+    const hasMapping = Object.prototype.hasOwnProperty.call(PROVIDERS_MAP, rawName);
+    const mappedValue = hasMapping ? PROVIDERS_MAP[rawName] : null;
+    const normalizedName = (typeof mappedValue === 'string' && mappedValue.trim())
+      ? mappedValue.trim()
+      : 'Autres';
+    const logoFile = PROVIDERS_LOGOS[normalizedName] || PROVIDERS_LOGOS['Autres'];
+    const logoFromCatalog = logoFile ? `/assets/providers/${logoFile}` : '';
+    return {
+      rawName,
+      name: normalizedName,
+      logoUrl: logoFromCatalog || '',
+    };
+  }
+
   function getProviderNames(item) {
-    return (item?.providers || []).map(_pname).filter(Boolean);
+    return getEnabledProviderNames(item);
   }
 
-  function getProviderLogo(name) {
-    const logo = PROVIDERS_LOGOS[name];
-    return logo ? `/assets/providers/${logo}` : null;
+  function getItemProviders(item) {
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Object.values(providers)
+        .filter((values) => Array.isArray(values))
+        .flat();
+    }
+    return Array.isArray(providers) ? providers : [];
   }
 
-  // Helpers: handle both string providers (new) and {name,logo} objects (legacy)
-  function _pname(p){ return (p && typeof p==='object') ? (p.name||'') : (p||''); }
+  function getEnabledProvidersForItem(item) {
+    const providers = getDisplayedProviders(item);
+    if (!(providerExclude && activeProviders.size > 0)) return providers;
+    if (providers.length === 0) return [];
+    return providers.filter((entry) => {
+      const key = _providerGroupKey(_pname(entry));
+      return key && !activeProviders.has(key);
+    });
+  }
+
+  function getEnabledProviderNames(item) {
+    return getEnabledProvidersForItem(item).map((entry) => _pname(entry)).filter(Boolean);
+  }
+
+  // Helpers: canonicalize provider entries from library items.
+  function _pname(p){ return resolveProvider(p).name; }
   function _plogo(p){
-    const name = _pname(p);
-    const logo = getProviderLogo(name) || PROVIDERS_META[name]?.logo_url || (p && typeof p==='object' ? p.logo : null) || providerCatalog[name] || '';
-    if (!logo) console.warn('Unmapped provider:', name);
-    return logo;
+    const resolved = resolveProvider(p);
+    if (!resolved.logoUrl) console.warn('Unmapped provider:', resolved.rawName || resolved.name);
+    return resolved.logoUrl;
   }
 
   // Active category prefs (null = all active; Set = specific active names)
@@ -316,6 +375,7 @@ let allItems=[], categories=[], groups=[];
   let visibleProviders  = null;
   const PROVIDER_OTHERS_KEY     = window.MMLConstants.PROVIDER_OTHERS_KEY;
   const PROVIDER_OTHERS_ALIASES = new Set(window.MMLConstants.PROVIDER_OTHERS_ALIASES);
+  const DISPLAY_OTHERS_NAME = 'Autres';
   function _catVisible(cat)  { return !enabledCategories || enabledCategories.has(cat); }
   function _isOthersProviderName(prov) {
     if (!prov) return false;
@@ -324,6 +384,31 @@ let allItems=[], categories=[], groups=[];
   function _provVisible(prov){
     if (_isOthersProviderName(prov) || prov === PROVIDER_OTHERS_KEY) return true;
     return !visibleProviders  || visibleProviders.has(prov);
+  }
+  function getDisplayedProviders(item, options = {}) {
+    const visibleOnly = options.visibleOnly === true;
+    const mappedOnly = options.mappedOnly === true;
+    const grouped = new Map();
+    getItemProviders(item).forEach((entry) => {
+      const resolved = resolveProvider(entry);
+      const displayName = resolved.name;
+      if (!displayName) return;
+      if (mappedOnly && _isOthersProviderName(displayName)) return;
+      if (visibleOnly && !_provVisible(displayName)) return;
+      if (!grouped.has(displayName)) grouped.set(displayName, resolved);
+    });
+    return [...grouped.values()]
+      .sort((a, b) => {
+        const aIsOthers = _isOthersProviderName(a.name);
+        const bIsOthers = _isOthersProviderName(b.name);
+        if (aIsOthers && !bIsOthers) return 1;
+        if (!aIsOthers && bIsOthers) return -1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      })
+      .map((entry) => ({
+        ...entry,
+        name: _isOthersProviderName(entry.name) ? DISPLAY_OTHERS_NAME : entry.name,
+      }));
   }
   function _providerGroupKey(prov) {
     if (!prov) return null;
@@ -335,34 +420,58 @@ let allItems=[], categories=[], groups=[];
   }
   function _itemProviderGroups(item) {
     const grouped = new Set();
-    (item.providers || []).forEach(p => {
+    getEnabledProvidersForItem(item).forEach(p => {
       const n = _pname(p);
       const key = _providerGroupKey(n);
       if (key) grouped.add(key);
     });
     return grouped;
   }
-  function _canonicalProviderFilterKey(raw) {
-    if (window.MMLLogic?.canonicalProviderFilterKey) {
-      return window.MMLLogic.canonicalProviderFilterKey(raw);
+  function _getProviderGroupsBeforeFilter(item) {
+    const grouped = new Set();
+    getDisplayedProviders(item).forEach((p) => {
+      const n = _pname(p);
+      const key = _providerGroupKey(n);
+      if (key) grouped.add(key);
+    });
+    return grouped;
+  }
+  function _matchesProviderFilters(item) {
+    if (activeProviders.size === 0) return true;
+    const groupedProv = [..._getProviderGroupsBeforeFilter(item)];
+    const hasNoProvider = groupedProv.length === 0;
+    if (!providerExclude) {
+      if (activeProviders.has(FILTER_NONE_KEY) && hasNoProvider) return true;
+      return groupedProv.some((p) => activeProviders.has(p));
     }
+    if (activeProviders.has(FILTER_NONE_KEY) && hasNoProvider) return false;
+    if (hasNoProvider) return true;
+    const remaining = groupedProv.filter((p) => !activeProviders.has(p));
+    return remaining.some((p) => p !== PROVIDER_OTHERS_KEY);
+  }
+  function _canonicalProviderFilterKey(raw) {
     if (typeof raw !== 'string') return null;
     const key = raw.trim();
     if (!key) return null;
     const lower = key.toLowerCase();
     if (key === PROVIDER_OTHERS_KEY || PROVIDER_OTHERS_ALIASES.has(lower)) return PROVIDER_OTHERS_KEY;
     if (key === FILTER_NONE_KEY) return FILTER_NONE_KEY;
+    const mapped = Object.prototype.hasOwnProperty.call(PROVIDERS_MAP, key)
+      ? PROVIDERS_MAP[key]
+      : undefined;
+    if (typeof mapped === 'string' && mapped.trim()) return mapped.trim();
+    if (mapped === null || mapped === undefined) return PROVIDER_OTHERS_KEY;
     return key;
   }
   function _hasHiddenProviders(items = allItems) {
     if (!visibleProviders) return false;
-    return items.some(i => (i.providers || []).some(p => {
+    return items.some(i => getDisplayedProviders(i, { mappedOnly: true }).some(p => {
       const name = _pname(p);
       return name && !_provVisible(name);
     }));
   }
   // Returns only the providers of an item that are currently visible
-  function _itemVisProviders(item){ return (item.providers||[]).filter(p=>_provVisible(_pname(p))); }
+  function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
   let enablePlot=false, enableMovies=true, enableSeries=true, enableJellyseerr=true, enableScore=false;
   let activeGroup='all', activeType='all';
@@ -403,16 +512,13 @@ let allItems=[], categories=[], groups=[];
     else console.info('[filters]', message);
   }
   let appConfig = {};            // loaded from /api/config
-  let serverConfig = {};         // from library.json config block
+  let libraryPathLabel = '';     // from library.json root field: library_path
   let appVersionInfo = null;     // loaded from /version.json
 
-  function resolveScoreEnabled(libraryMetaScoreEnabled = null) {
+  function resolveScoreEnabled() {
     const configScoreEnabled = appConfig?.system?.enable_score;
     if (typeof configScoreEnabled === 'boolean') {
       return configScoreEnabled;
-    }
-    if (typeof libraryMetaScoreEnabled === 'boolean') {
-      return libraryMetaScoreEnabled;
     }
     return false;
   }
@@ -544,7 +650,9 @@ let allItems=[], categories=[], groups=[];
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
-      if (s.currentTab && s.currentTab === 'stats') switchTab(s.currentTab);
+      if (s.currentTab === 'library' || s.currentTab === 'stats') {
+        currentTab = s.currentTab;
+      }
       updateGlobalResetButtons();
     } catch(e) {}
   }
@@ -584,7 +692,8 @@ let allItems=[], categories=[], groups=[];
     window.MMLState.isLoading = true;
     window.MMLState.isLoaded  = false;
     window.MMLState.hasError  = false;
-    await Promise.all([loadConfig(), loadProvidersLogos(), loadAudioCodecMapping(), loadAudioLanguages()]);
+    window.MMLState.isLibraryMissing = false;
+    await Promise.all([loadConfig(), loadProvidersCatalog(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
     const lang = appConfig.system?.language || 'fr';
@@ -596,39 +705,80 @@ let allItems=[], categories=[], groups=[];
     const explicitNeedsOnboarding = (typeof appConfig.needs_onboarding === 'boolean')
       ? appConfig.needs_onboarding
       : null;
-    if (explicitNeedsOnboarding === true) {
+    const hasUsableFolders = Array.isArray(appConfig?.folders) && appConfig.folders.some((folder) => {
+      if (!folder || typeof folder !== 'object') return false;
+      const type = String(folder.type || '').trim().toLowerCase();
+      if (!['movie', 'tv'].includes(type)) return false;
+      const enabled = folder.enabled !== undefined ? folder.enabled : (folder.visible !== undefined ? folder.visible : true);
+      return enabled !== false && !folder.missing;
+    });
+    const finishWithOnboarding = () => {
+      window.MMLState.isLoading = false;
+      window.MMLState.isLoaded = false;
+      window.MMLState.hasError = false;
+      window.MMLState.isLibraryMissing = false;
       libraryExportSource = null;
       updateExportJsonButtonState();
       showOnboarding();
+    };
+    const finishWithEmptyLibrary = () => {
+      allItems = [];
+      categories = [];
+      groups = [];
+      window.MMLState.items = allItems;
+      window.MMLState.isLoading = false;
+      window.MMLState.isLoaded = true;
+      window.MMLState.hasError = false;
+      window.MMLState.isLibraryMissing = true;
+      libraryExportSource = null;
+      document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
+      document.getElementById('scanInfo').textContent=t('library.run_scan');
+      renderStorageBar();
+      renderProviderFilter();
+      renderResolutionFilter();
+      renderCodecFilter();
+      renderStats(filterItems());
+      switchTab(currentTab);
+      updateExportJsonButtonState();
+    };
+    if (explicitNeedsOnboarding === true) {
+      finishWithOnboarding();
       return;
     }
 
     try {
-      const r = await fetch('/library.json?_='+Date.now());
-      if (r.status === 404 && explicitNeedsOnboarding === null) {
-        // Legacy backend compatibility: if the explicit flag is absent, fallback
-        // to first-run behavior when library.json has not been generated yet.
-        libraryExportSource = null;
-        updateExportJsonButtonState();
-        showOnboarding();
+      const libraryUrl = '/library.json?_=' + Date.now();
+      const r = await fetch(libraryUrl);
+      if (r.status === 404) {
+        // Missing library.json is expected before the first scan.
+        // If onboarding is still required (explicitly or legacy missing flag + no usable folders),
+        // keep onboarding flow. Otherwise show an empty-library state with scan prompt.
+        if (explicitNeedsOnboarding === true || (explicitNeedsOnboarding === null && !hasUsableFolders)) {
+          finishWithOnboarding();
+        } else {
+          finishWithEmptyLibrary();
+        }
         return;
       }
-      if (!r.ok) throw new Error('HTTP '+r.status);
-      const data = await r.json();
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
+      let data = null;
+      try {
+        data = await r.json();
+      } catch (_) {
+        throw new Error('Invalid JSON in /library.json');
+      }
       libraryExportSource = data;
-      allItems=data.items||[]; categories=data.categories||[]; groups=data.groups||[];
+      allItems = safeArray(data.items);
+      categories = safeArray(data.categories);
+      groups = safeArray(data.groups);
+      if (visibleProviders === null) {
+        const bootVisible = [...new Set(allItems.flatMap((item) => getEnabledProviderNames(item)).filter(Boolean))].sort();
+        visibleProviders = new Set(bootVisible);
+      }
       window.MMLState.items = allItems;
       allItems.forEach(i => {
         if (!i.audio_languages_simple) i.audio_languages_simple = getAudioLanguageSimple(i);
       });
-      // providers_meta: canonical logo source (new format)
-      PROVIDERS_META = data.providers_meta || {};
-      // Legacy fallback: old library.json used providers_catalog or embedded {name,logo} objects
-      if (data.providers_catalog) providerCatalog = data.providers_catalog;
-      allItems.forEach(i=>(i.providers||[]).forEach(p=>{
-        if (p && typeof p==='object' && p.name && p.logo && !providerCatalog[p.name])
-          providerCatalog[p.name] = p.logo;
-      }));
       groups.forEach((g,i)=>{ groupColorMap[g]=PALETTE[i%PALETTE.length]; });
       categories.forEach((c,i)=>{ catColorMap[c]=PALETTE[i%PALETTE.length]; });
 
@@ -637,8 +787,6 @@ let allItems=[], categories=[], groups=[];
         filterItems,
         allItems,
         PALETTE,
-        PROVIDERS_META,
-        providerCatalog,
         PROVIDER_OTHERS_KEY,
         getNormalizedVideoCodec,
         getNormalizedAudioCodec,
@@ -647,6 +795,8 @@ let allItems=[], categories=[], groups=[];
         getAudioLanguageSimpleDisplay,
         getAudioCodecDisplay,
         getFilterDisplayValue,
+        getItemProviders,
+        getEnabledProvidersForItem,
         _itemProviderGroups,
         _providerGroupKey,
         _providerGroupLabel,
@@ -663,12 +813,9 @@ let allItems=[], categories=[], groups=[];
       document.getElementById('scanInfo').innerHTML=
         t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
-      if (data.library_path) document.getElementById('brandSub').textContent=data.library_path;
-      if (data.config) serverConfig = data.config;
-      const libraryMetaScoreEnabled = typeof data?.meta?.score_enabled === 'boolean'
-        ? data.meta.score_enabled
-        : null;
-      enableScore = resolveScoreEnabled(libraryMetaScoreEnabled);
+      libraryPathLabel = typeof data.library_path === 'string' ? data.library_path : '';
+      if (libraryPathLabel) document.getElementById('brandSub').textContent = libraryPathLabel;
+      enableScore = resolveScoreEnabled();
       applyScoreFeatureVisibility();
       renderStorageBar();
       renderProviderFilter();
@@ -678,7 +825,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded  = true;
       window.MMLState.isLoading = false;
       renderStats(filterItems());
-      render();
+      switchTab(currentTab);
       updateExportJsonButtonState();
     } catch(e) {
       const _is401 = String(e).includes('401');
@@ -686,6 +833,7 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
       window.MMLState.hasError = true;
+      window.MMLState.isLibraryMissing = false;
       libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
@@ -800,9 +948,9 @@ let allItems=[], categories=[], groups=[];
       enableJellyseerr = appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
 
-      // Provider visibility: [] = all visible; non-empty array = whitelist
+      // Provider visibility: explicit whitelist from config
       const pv = appConfig.providers_visible;
-      visibleProviders = Array.isArray(pv) && pv.length > 0 ? new Set(pv) : null;
+      visibleProviders = Array.isArray(pv) ? new Set(pv) : null;
 
       // Active categories: derived from folders with enabled=false
       const folders = appConfig.folders || [];
@@ -1236,7 +1384,7 @@ let allItems=[], categories=[], groups=[];
   function renderProviderFilter() {
     const base = baseItems('provider');
     const counts = {};
-    const noneCount = base.filter(i => !i.providers || !i.providers.length).length;
+    const noneCount = base.filter(i => getEnabledProvidersForItem(i).length === 0).length;
     if (noneCount > 0) counts[FILTER_NONE_KEY] = noneCount;
     base.forEach(i => {
       _itemProviderGroups(i).forEach(name => {
@@ -1579,20 +1727,7 @@ let allItems=[], categories=[], groups=[];
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
     if (enableJellyseerr && activeProviders.size > 0) {
-      if (providerExclude) {
-        items=items.filter(i=>{
-          const hasNone = !i.providers || !i.providers.length;
-          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
-          const groupedProv = _itemProviderGroups(i);
-          return ![...groupedProv].some(p=>activeProviders.has(p));
-        });
-      } else {
-        items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
-          const groupedProv = _itemProviderGroups(i);
-          return [...groupedProv].some(p=>activeProviders.has(p));
-        });
-      }
+      items = items.filter(_matchesProviderFilters);
     }
     if (activeResolutions.size > 0) {
       if (resolutionExclude) {
@@ -1649,20 +1784,7 @@ let allItems=[], categories=[], groups=[];
       else items = items.filter(i => activeFolders.has(i.category || FILTER_NONE_KEY));
     }
     if (except!=='provider' && activeProviders.size > 0) {
-      if (providerExclude) {
-        items=items.filter(i=>{
-          const hasNone = !i.providers || !i.providers.length;
-          if (activeProviders.has(FILTER_NONE_KEY) && hasNone) return false;
-          const groupedProv = _itemProviderGroups(i);
-          return ![...groupedProv].some(p=>activeProviders.has(p));
-        });
-      } else {
-        items=items.filter(i=>{
-          if (activeProviders.has(FILTER_NONE_KEY) && (!i.providers || !i.providers.length)) return true;
-          const groupedProv = _itemProviderGroups(i);
-          return [...groupedProv].some(p=>activeProviders.has(p));
-        });
-      }
+      items = items.filter(_matchesProviderFilters);
     }
     if (except!=='resolution' && activeResolutions.size > 0) {
       if (resolutionExclude) {
@@ -1733,7 +1855,15 @@ let allItems=[], categories=[], groups=[];
     let items=filterItems();
     renderStats(items);
     const c=document.getElementById('library');
-    if (!items.length) { c.className=''; c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>'; return; }
+    if (!items.length) {
+      c.className='';
+      if (window.MMLState?.isLibraryMissing) {
+        c.innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
+      } else {
+        c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>';
+      }
+      return;
+    }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
   }
@@ -1821,7 +1951,7 @@ let allItems=[], categories=[], groups=[];
   function providersBlock(item) {
     if (!enableJellyseerr) return '';
     const visP = _itemVisProviders(item);
-    const hasProv = item.providers && item.providers.length > 0;
+    const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!visP.length) {
       if (!hasProv) {
         if (item.providers_fetched !== true) return '';
@@ -1875,7 +2005,7 @@ let allItems=[], categories=[], groups=[];
 
   function tblProvidersHTML(item) {
     if (!enableJellyseerr) return '-';
-    const hasProv = item.providers && item.providers.length > 0;
+    const hasProv = getEnabledProvidersForItem(item).length > 0;
     if (!hasProv) {
       if (item.providers_fetched !== true) return '-';
       return '<span title="'+t('library.no_provider')+'" style="font-size:14px">🚫</span>';
@@ -1890,7 +2020,7 @@ let allItems=[], categories=[], groups=[];
   }
   function tableHTML(items) {
     const hg=items.some(i=>i.group);
-    const hp=items.some(i=>i.poster||(i.providers&&i.providers.length));
+    const hp=items.some(i=>i.poster||getEnabledProvidersForItem(i).length);
     const rows=items.map(item=>{
       // Mobile info cell: title + meta badges
       const mobileInfo = '<td class="col-mobile-info">'
@@ -1920,7 +2050,7 @@ let allItems=[], categories=[], groups=[];
         +(isScoreEnabled() ? '<td>'+(qualityBadgeHTML(item, 'quality-badge-inline') || '-')+'</td>' : '')
         +'<td>'+(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'-')+(item.hdr?' <span class="badge badge-hdr">HDR</span>':'')+'</td>'
         +'<td>'+(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'-')+'</td>'
-        +'<td>'+(item.audio_codec_display?escH(item.audio_codec_display):'-')+'</td>'
+        +'<td>'+escH(getAudioCodecLabel(item))+'</td>'
         +'<td>'+escH(getAudioLanguageSimpleDisplay(getAudioLanguageSimple(item)))+'</td>'
         +'<td class="col-size">'+escH(item.size)+'</td>'
         +'<td class="col-files">'+(item.type==='tv'?(item.season_count||'-')+' S / '+(item.episode_count||'-')+' Ep':item.file_count!==undefined?(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count})):'-')+'</td>'
@@ -1964,7 +2094,7 @@ let allItems=[], categories=[], groups=[];
       hg?csvC(i.group||''):null,
       csvC(i.category),
       includeScore ? (Number.isFinite(Number(i.quality?.score)) ? Math.round(Number(i.quality.score)) : '') : null,
-      includeScore ? (Number.isFinite(Number(i.quality?.level)) ? Number(i.quality.level) : (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '')) : null,
+      includeScore ? (Number.isFinite(Number(i.quality?.score)) ? getItemQualityLevel(i) : '') : null,
       includeScore ? (i.quality?.video ?? '') : null,
       includeScore ? (i.quality?.audio ?? '') : null,
       includeScore ? (i.quality?.languages ?? '') : null,
@@ -1973,14 +2103,14 @@ let allItems=[], categories=[], groups=[];
       csvC(i.resolution||''),
       i.hdr?'Oui':'Non',
       csvC(i.codec||''),
-      csvC(i.audio_codec_display??i.audio_codec??''),
+      csvC(getAudioCodecLabel(i)),
       csvC(getAudioLanguageSimple(i)),
       csvC((i.audio_languages??[]).join(', ')),
       i.runtime_min||'',
       csvC(i.size),i.size_b||0,
       i.type==='tv'?((i.season_count||'')+' S / '+(i.episode_count||'')+' Ep'):(i.file_count!==undefined?i.file_count:''),
       i.added_at?fmtDate(i.added_at):'',
-      csvC((i.providers||[]).join(', '))
+      csvC(getEnabledProviderNames(i).join(', '))
     ].filter(v=>v!==null));
     const csv=[headers.join(';'),...rows.map(r=>r.join(';'))].join('\n');
     const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
@@ -2186,7 +2316,7 @@ let allItems=[], categories=[], groups=[];
       .then(r => r.json())
       .then(data => {
         // Append new log lines
-        const lines = data.log || [];
+        const lines = safeArray(data.log);
         const newLines = lines.slice(_logOffset);
         _logOffset = lines.length;
         newLines.forEach(l => {

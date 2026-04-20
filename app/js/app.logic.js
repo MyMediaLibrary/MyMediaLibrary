@@ -8,6 +8,11 @@
   const PROVIDER_OTHERS_KEY = '__others__';
   const PROVIDER_NONE_KEY = '__none__';
   const PROVIDER_OTHERS_ALIASES = new Set(['autres', 'others', 'other']);
+  function isOthersProvider(value) {
+    if (value === PROVIDER_OTHERS_KEY) return true;
+    if (typeof value !== 'string') return false;
+    return PROVIDER_OTHERS_ALIASES.has(value.trim().toLowerCase());
+  }
   const SCORE_FILTER_RANGES = [
     { key: '0_20', level: 1 },
     { key: '20_40', level: 2 },
@@ -53,8 +58,9 @@
   }
 
   function getItemSearchFields(item) {
-    const providers = (item.providers || []).join(' ');
+    const providers = getItemProviders(item).join(' ');
     const audioSimple = item.audio_languages_simple || simplifyAudioLanguages(item.audio_languages || []);
+    const audioCodecDisplay = item.audio_codec || item.audio_codec_display || item.audio_codec_raw || '';
     const audioSimpleAliases = audioSimple === 'VF'
       ? 'vf french francais fr'
       : (audioSimple === 'VO'
@@ -66,7 +72,7 @@
       item.title,
       item.year,
       item.audio_codec,
-      item.audio_codec_display,
+      audioCodecDisplay,
       item.audio_codec_raw,
       item.codec,
       videoCodecAliases,
@@ -75,6 +81,17 @@
       audioSimpleAliases,
       providers
     ];
+  }
+
+  function getItemProviders(item) {
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Object.values(providers)
+        .filter((values) => Array.isArray(values))
+        .flat();
+    }
+    if (Array.isArray(providers)) return providers;
+    return [];
   }
 
   function applySearch(items, query) {
@@ -159,13 +176,26 @@
       state.audioLanguageExclude,
       (i) => (i.audio_languages_simple === 'UNKNOWN' ? PROVIDER_NONE_KEY : (i.audio_languages_simple || simplifyAudioLanguages(i.audio_languages)))
     );
-    out = applySelectionFilter(
-      out,
-      state.activeProviders,
-      state.providerExclude,
-      (i) => i.providers || [],
-      { matchNoneWhenSelected: true, withNoneExclusion: true }
-    );
+    if (state.activeProviders && state.activeProviders.size > 0) {
+      if (state.providerExclude) {
+        out = out.filter((i) => {
+          const providers = [...new Set(getItemProviders(i))];
+          const hasNone = providers.length === 0;
+          if (state.activeProviders.has(PROVIDER_NONE_KEY) && hasNone) return false;
+          if (hasNone) return true;
+          const remaining = providers.filter((name) => !state.activeProviders.has(name));
+          return remaining.some((name) => !isOthersProvider(name));
+        });
+      } else {
+        out = applySelectionFilter(
+          out,
+          state.activeProviders,
+          false,
+          (i) => getItemProviders(i),
+          { matchNoneWhenSelected: true, withNoneExclusion: true }
+        );
+      }
+    }
     const scoreMin = Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0;
     const scoreMax = Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100;
     const includeNoScore = state.includeNoScore !== undefined ? !!state.includeNoScore : true;
@@ -205,7 +235,7 @@
     }
     scoped.forEach((item) => {
       if (field === 'provider') {
-        const providers = item.providers || [];
+        const providers = getItemProviders(item);
         if (!providers.length) counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
         providers.forEach((name) => { counts[name] = (counts[name] || 0) + 1; });
       } else if (field === 'resolution') {
@@ -306,7 +336,7 @@
     const groupFor = providerGroupForName || ((name) => name);
     (items || []).forEach((item) => {
       const grouped = new Set();
-      (item.providers || []).forEach((entry) => {
+      getItemProviders(item).forEach((entry) => {
         const key = groupFor(readName(entry));
         if (key) grouped.add(key);
       });
@@ -327,16 +357,12 @@
   }
 
   function getItemQualityLevel(item) {
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(item?.quality?.score);
   }
 
   function getScoredQualityLevel(item) {
     const score = Number(item?.quality?.score);
     if (!Number.isFinite(score)) return null;
-    const rawLevel = Number(item?.quality?.level);
-    if (Number.isFinite(rawLevel) && rawLevel >= 1 && rawLevel <= 5) return rawLevel;
     return getQualityLevelFromScore(score);
   }
 

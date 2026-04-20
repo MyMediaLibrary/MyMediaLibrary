@@ -32,6 +32,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -93,6 +94,9 @@ INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_i
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
+PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
+PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
+PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -132,7 +136,6 @@ except Exception:
         def compute_quality(item: dict) -> dict:
             return {
                 "score": 0,
-                "level": 1,
                 "base_score": 0,
                 "penalty_total": 0,
                 "video": 0,
@@ -292,44 +295,73 @@ def _jsr_get(path: str, jsr: dict | None = None):
         return _JSR_ERROR
 
 
-PROVIDERS_JSON_PATH = "/usr/share/nginx/html/providers.json"
+def _ensure_runtime_provider_mapping() -> None:
+    """Bootstrap /data providers mapping once: copy bundled file only if runtime file is absent."""
+    runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
+    if runtime_path.exists():
+        return
+    try:
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path = Path(PROVIDERS_MAPPING_SOURCE_PATH)
+        if source_path.exists():
+            shutil.copyfile(source_path, runtime_path)
+        else:
+            runtime_path.write_text("{}", encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
 
 
-def load_provider_map() -> dict:
-    if os.path.exists(PROVIDERS_JSON_PATH):
-        with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("mapping", {}) if isinstance(data, dict) else {}
-    log.warning("[providers] providers.json not found, no normalization applied")
+def _load_runtime_provider_mapping() -> dict:
+    _ensure_runtime_provider_mapping()
+    try:
+        with open(PROVIDERS_MAPPING_RUNTIME_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return payload
+    except Exception as e:
+        log.warning(f"[providers] Could not read runtime mapping file: {e}")
     return {}
 
 
-def clean_provider_name(name: str) -> str:
-    """Defensive cleaning before provider map lookup."""
-    s = name.strip()
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'\s*Amazon Channel$', '', s, flags=re.IGNORECASE).strip()
-    s = re.sub(r'\s*Apple TV Channel$', '', s, flags=re.IGNORECASE).strip()
-    return s
+def _save_runtime_provider_mapping(mapping: dict) -> None:
+    try:
+        path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning(f"[providers] Could not write runtime mapping file: {e}")
 
 
-def normalize_provider(name: str, provider_map: dict) -> str:
-    """Return normalized name from map, or raw name if not found."""
-    # Exact match
-    if name in provider_map:
-        return provider_map[name]
-    # Defensive cleaning fallback (double spaces, trailing suffixes)
-    cleaned = clean_provider_name(name)
-    if cleaned != name:
-        if cleaned in provider_map:
-            return provider_map[cleaned]
-        # Case-insensitive fallback
-        cleaned_l = cleaned.lower()
-        for k, v in provider_map.items():
-            if k.lower() == cleaned_l:
-                return v
-    log.warning(f"[providers] Unmapped provider: {name!r}")
-    return name
+def _extract_raw_providers_from_item(item: dict) -> list[str]:
+    providers = item.get("providers")
+    if isinstance(providers, list):
+        return _normalize_provider_entries(providers)
+    if isinstance(providers, dict):
+        merged = []
+        for values in providers.values():
+            if isinstance(values, list):
+                merged.extend(values)
+        return _normalize_provider_entries(merged)
+    return []
+
+
+def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
+    """Add missing raw providers to runtime mapping with null values; never overwrite existing keys."""
+    mapping = _load_runtime_provider_mapping()
+    if not isinstance(mapping, dict):
+        mapping = {}
+    added = 0
+    for item in (items or []):
+        if not isinstance(item, dict):
+            continue
+        for raw_name in _extract_raw_providers_from_item(item):
+            if raw_name not in mapping:
+                mapping[raw_name] = None
+                added += 1
+    if added:
+        _save_runtime_provider_mapping(mapping)
+    return added
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -337,22 +369,139 @@ _fetch_providers_sampled = False  # log raw response once per run
 # Sentinel returned when Jellyseerr call fails (vs [] = success with no FR providers)
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Jellyseerr enrichment
+_PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
+_PROVIDER_ENRICH_GROUP = "flatrate"
 
-def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, provider_map: dict | None = None):
+def _normalize_lookup_title(value: str | None) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _resolve_ids_from_search(title: str | None, year: str | int | None, is_tv: bool, jsr: dict | None = None):
+    """
+    Resolve TMDB id via Jellyseerr search when direct /tv/{id} fetch fails.
+    Returns:
+      dict        — {"tmdb_id": str|int|None, "tvdb_id": str|int|None}
+      None        — nothing matched
+      _FETCH_ERROR — Jellyseerr request failure
+    """
+    if not isinstance(title, str) or not title.strip():
+        return None
+    query = urllib.parse.quote(title.strip())
+    resp = _jsr_get(f"/search?query={query}", jsr)
+    if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND):
+        return None
+    if resp is _JSR_ERROR:
+        return _FETCH_ERROR
+
+    results = resp.get("results") if isinstance(resp, dict) else None
+    if not isinstance(results, list):
+        return None
+
+    target_media = "tv" if is_tv else "movie"
+    expected_year = str(year).strip() if year is not None and str(year).strip() else None
+    wanted_title = _normalize_lookup_title(title)
+
+    scored: list[tuple[int, dict]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("mediaType") or item.get("media_type") or "").strip().lower()
+        if media_type and media_type != target_media:
+            continue
+        tmdb_id = item.get("id") or item.get("tmdbId") or item.get("tmdb_id")
+        tvdb_id = item.get("tvdbId") or item.get("tvdb_id")
+        if tmdb_id in (None, "") and tvdb_id in (None, ""):
+            continue
+        candidate_title = (
+            item.get("title")
+            or item.get("name")
+            or item.get("originalTitle")
+            or item.get("originalName")
+            or ""
+        )
+        candidate_norm = _normalize_lookup_title(candidate_title)
+        candidate_date = item.get("releaseDate") or item.get("firstAirDate") or ""
+        candidate_year = str(candidate_date)[:4] if isinstance(candidate_date, str) and len(candidate_date) >= 4 else None
+
+        score = 0
+        if candidate_norm == wanted_title:
+            score += 4
+        elif wanted_title and candidate_norm and (wanted_title in candidate_norm or candidate_norm in wanted_title):
+            score += 2
+        if expected_year and candidate_year == expected_year:
+            score += 2
+        if score > 0:
+            scored.append((score, {"tmdb_id": tmdb_id, "tvdb_id": tvdb_id}))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda entry: entry[0], reverse=True)
+    return scored[0][1]
+
+def _extract_watch_provider_regions(watch_providers) -> list[tuple[str, dict]]:
+    """
+    Normalize Jellyseerr/TMDB watch providers payload to a list of region payloads.
+
+    Supported shapes:
+      - {"FR": {...}, "US": {...}}
+      - {"results": {"FR": {...}, "US": {...}}} (TMDB style)
+      - [{"iso_3166_1": "FR", ...}, {"iso_3166_1": "US", ...}]
+      - {"flatrate": [...], ...} (single region-like object)
+    """
+    regions: list[tuple[str, dict]] = []
+
+    if isinstance(watch_providers, list):
+        for entry in watch_providers:
+            if not isinstance(entry, dict):
+                continue
+            region = str(entry.get("iso_3166_1") or "").strip().upper() or "UNKNOWN"
+            regions.append((region, entry))
+        return regions
+
+    if not isinstance(watch_providers, dict):
+        return regions
+
+    # TMDB-compatible wrapper.
+    nested_results = watch_providers.get("results")
+    if isinstance(nested_results, dict):
+        for region, payload in nested_results.items():
+            if isinstance(payload, dict):
+                regions.append((str(region).strip().upper() or "UNKNOWN", payload))
+        return regions
+
+    # Region map: {"FR": {...}, "US": {...}}
+    has_region_map = any(
+        isinstance(v, dict) and len(str(k)) in (2, 3)
+        for k, v in watch_providers.items()
+    )
+    if has_region_map:
+        for region, payload in watch_providers.items():
+            if isinstance(payload, dict):
+                regions.append((str(region).strip().upper() or "UNKNOWN", payload))
+        return regions
+
+    # Last resort: treat payload as a single region-like object.
+    if any(k in watch_providers for k in _PROVIDER_TYPES):
+        regions.append(("UNKNOWN", watch_providers))
+
+    return regions
+
+def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     """
     Fetch FR streaming providers from Jellyseerr.
     Returns:
-      list[dict]   — success (may be empty if no FR providers)
-                     each dict: {raw_name, name (normalized), logo, logo_url}
+      list[dict]   — success as flat raw provider entries
+                     each dict entry: {raw_name, logo, logo_url}
       _FETCH_ERROR — Jellyseerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
-    if provider_map is None:
-        provider_map = {}
-    if not tmdb_id:
+    media_id = tmdb_id
+    if not media_id:
         return []
     media = "tv" if is_tv else "movie"
-    resp = _jsr_get(f"/{media}/{tmdb_id}", jsr)
+    resp = _jsr_get(f"/{media}/{media_id}", jsr)
 
     if resp is _JSR_NOT_CONFIGURED:
         return []
@@ -367,44 +516,51 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None, pr
     if not _fetch_providers_sampled:
         _fetch_providers_sampled = True
         top_keys = list(data.keys())
-        log.debug(f"[providers] Jellyseerr response keys for {media}/{tmdb_id}: {top_keys}")
+        log.debug(f"[providers] Jellyseerr response keys for {media}/{media_id}: {top_keys}")
         wp_raw = data.get("watchProviders")
         log.debug(f"[providers] watchProviders sample: {json.dumps(wp_raw)[:600] if wp_raw is not None else 'KEY ABSENT'}")
 
-    watch_providers = data.get("watchProviders") or []
-    # Jellyseerr can return either a list [{iso_3166_1, flatrate}] or a dict {"FR": {...}}
-    if isinstance(watch_providers, dict):
-        fr = watch_providers.get("FR") or watch_providers.get("fr") or {}
-    else:
-        fr = next((p for p in watch_providers if p.get("iso_3166_1") == "FR"), {})
+    watch_providers = data.get("watchProviders")
+    if watch_providers is None:
+        watch_providers = data.get("watch_providers")
+    regions = _extract_watch_provider_regions(watch_providers or {})
 
-    flatrate = fr.get("flatrate") or []
-    if not flatrate and watch_providers:
-        log.debug(f"[providers] {media}/{tmdb_id}: no FR flatrate (fr keys: {list(fr.keys()) if fr else 'no FR entry'})")
+    providers_by_type_raw: dict[str, list[dict]] = {_PROVIDER_ENRICH_GROUP: []}
+    for _, region_payload in regions:
+        values = region_payload.get(_PROVIDER_ENRICH_GROUP)
+        if isinstance(values, list):
+            providers_by_type_raw[_PROVIDER_ENRICH_GROUP].extend(values)
 
-    seen_canonical, result = set(), []
-    for p in flatrate:
-        raw_name = p.get("name") or p.get("provider_name") or ""
-        if not raw_name:
-            continue
-        log.debug(f"[providers_raw] {media}/{tmdb_id}: {raw_name!r}")
-        canonical = normalize_provider(raw_name, provider_map)
-        if canonical in seen_canonical:
-            continue
-        seen_canonical.add(canonical)
-        log.debug(f"[providers] {media}/{tmdb_id}: {raw_name!r} → {canonical!r}")
-        # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
-        raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
-        if raw_logo and raw_logo.startswith("http"):
-            logo_url  = raw_logo
-            logo      = None  # relative path unknown
-        elif raw_logo:
-            logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
-            logo      = raw_logo
-        else:
-            log.warning(f"[providers] No logo field for {canonical!r} in {media}/{tmdb_id}, raw={p}")
-            logo_url = logo = None
-        result.append({"raw_name": raw_name, "name": canonical, "logo": logo, "logo_url": logo_url})
+    if not any(providers_by_type_raw.values()) and watch_providers:
+        region_keys = [region for region, _ in regions] if regions else []
+        log.debug(f"[providers] {media}/{media_id}: no providers extracted (regions: {region_keys or 'none'})")
+
+    result: list[dict] = []
+    seen_raw_names: set[str] = set()
+    for group in (_PROVIDER_ENRICH_GROUP,):
+        for p in providers_by_type_raw[group]:
+            if not isinstance(p, dict):
+                continue
+            raw_name = p.get("name") or p.get("provider_name") or p.get("providerName") or ""
+            if not raw_name:
+                continue
+            raw_name = str(raw_name)
+            if raw_name in seen_raw_names:
+                continue
+            seen_raw_names.add(raw_name)
+            log.debug(f"[providers_raw] {media}/{media_id} [{group}]: {raw_name!r}")
+            # logoPath (camelCase Jellyseerr) or logo_path (snake_case TMDB passthrough)
+            raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
+            if raw_logo and raw_logo.startswith("http"):
+                logo_url  = raw_logo
+                logo      = None  # relative path unknown
+            elif raw_logo:
+                logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
+                logo      = raw_logo
+            else:
+                log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{media_id}, raw={p}")
+                logo_url = logo = None
+            result.append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
     return result
 
 
@@ -520,9 +676,17 @@ def migrate_env_to_config() -> None:
     cfg = load_config()
     changed = False
 
-    # Jellyseerr
-    env_url    = os.environ.get("JELLYSEERR_URL",    "").rstrip("/")
-    env_apikey = os.environ.get("JELLYSEERR_APIKEY", "")
+    # Jellyseerr bootstrap (supports both JELLYSEERR_* and JELLYSEER_* spellings)
+    raw_env_url = os.environ.get("JELLYSEERR_URL")
+    if raw_env_url is None:
+        raw_env_url = os.environ.get("JELLYSEER_URL")
+    env_url = (raw_env_url or "").strip().rstrip("/")
+
+    raw_env_apikey = os.environ.get("JELLYSEERR_APIKEY")
+    if raw_env_apikey is None:
+        raw_env_apikey = os.environ.get("JELLYSEER_APIKEY")
+    env_apikey = (raw_env_apikey or "").strip()
+
     env_jsr_on = os.environ.get("ENABLE_JELLYSEERR", "")
     jsr = cfg.setdefault("jellyseerr", {})
     if env_url and not jsr.get("url"):
@@ -584,6 +748,8 @@ def migrate_env_to_config() -> None:
     if changed:
         save_config(cfg)
         log.info("[MIGRATION] Env vars migrated to config.json")
+    # Bootstrap runtime providers mapping once (non-destructive).
+    _ensure_runtime_provider_mapping()
 
 
 # ---------------------------------------------------------------------------
@@ -941,36 +1107,60 @@ def deep_merge(base: dict, update: dict) -> dict:
 
 def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: bool, output_path: str) -> None:
     """Write current library state to JSON (used for incremental per-folder writes)."""
-    all_categories = sorted({i["category"] for i in items})
+    clean_items = [_sanitize_item_for_library_json(item) for item in items]
+    all_categories = sorted({i["category"] for i in clean_items})
     data = {
         "scanned_at":          datetime.now().isoformat(),
         "library_path":        LIBRARY_PATH,
-        "total_items":         len(items),
+        "total_items":         len(clean_items),
         "categories":          all_categories,
-        "items":               items,
-        "providers_meta":      prev_data.get("providers_meta") or {},
-        "providers_raw_meta":  prev_data.get("providers_raw_meta") or {},
-        "providers_raw":       prev_data.get("providers_raw") or [],
-        "config": {
-            "library_path": LIBRARY_PATH,
-        },
-        "meta": {
-            "score_enabled": score_enabled,
-        },
+        "items":               clean_items,
     }
     write_json(data, output_path)
 
 
-def _normalize_providers(providers) -> list[str]:
-    """Normalize providers to a list of canonical name strings (new format).
-    Handles both legacy {name, logo} objects and already-normalized strings."""
+def _normalize_provider_entries(providers) -> list[str]:
+    """Normalize one provider list to cleaned raw-name strings."""
     result = []
+    seen = set()
     for p in (providers or []):
-        if isinstance(p, str) and p:
-            result.append(p)
-        elif isinstance(p, dict) and p.get("name"):
-            result.append(p["name"])
+        if isinstance(p, str):
+            raw_name = p
+        elif isinstance(p, dict):
+            raw_name = (
+                p.get("raw_name")
+                or p.get("name")
+                or p.get("provider_name")
+                or p.get("providerName")
+            )
+        else:
+            raw_name = None
+        cleaned = _clean_raw_provider_name(raw_name)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            result.append(cleaned)
     return result
+
+
+def _normalize_providers(providers) -> list[str]:
+    """Normalize providers payload to a flat cleaned raw-name list."""
+    if isinstance(providers, list):
+        return _normalize_provider_entries(providers)
+    if not isinstance(providers, dict):
+        return []
+
+    ordered_entries = []
+    for group in _PROVIDER_TYPES:
+        values = providers.get(group)
+        if isinstance(values, list):
+            ordered_entries.extend(values)
+
+    for key in sorted(k for k in providers.keys() if k not in _PROVIDER_TYPES):
+        values = providers.get(key)
+        if isinstance(values, list):
+            ordered_entries.extend(values)
+
+    return _normalize_provider_entries(ordered_entries)
 
 def _strip_score_fields(item: dict) -> dict:
     """Remove score-related fields from one item (in place) for score-disabled runs."""
@@ -980,6 +1170,69 @@ def _strip_score_fields(item: dict) -> dict:
     # Legacy compatibility: some older datasets stored top-level score payloads
     item.pop("score", None)
     return item
+
+
+def _sanitize_item_for_library_json(item: dict) -> dict:
+    """Normalize one library item to the v0.3.1 schema."""
+    if not isinstance(item, dict):
+        return item
+    clean = dict(item)
+    clean.pop("runtime", None)
+    clean.pop("audio_codec_display", None)
+    for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
+        if _is_unknown_sentinel(clean.get(field)):
+            clean[field] = None
+    clean["providers"] = _normalize_providers(clean.get("providers"))
+    clean.pop("providers_by_type", None)
+    quality = clean.get("quality")
+    if isinstance(quality, dict):
+        q = dict(quality)
+        q.pop("level", None)
+        clean["quality"] = q
+    return clean
+
+
+def _sanitize_library_document(data: dict) -> dict:
+    """Remove legacy root metadata and sanitize item payloads in-place."""
+    if not isinstance(data, dict):
+        return data
+    data.pop("config", None)
+    data.pop("meta", None)
+    data.pop("providers_meta", None)
+    data.pop("providers_raw", None)
+    data.pop("providers_raw_meta", None)
+    data.pop("enriched_at", None)
+    items = data.get("items") or []
+    if isinstance(items, list):
+        for idx, item in enumerate(items):
+            clean_item = _sanitize_item_for_library_json(item)
+            if isinstance(item, dict) and isinstance(clean_item, dict):
+                # Keep dict identity so existing references (e.g. enrich batches)
+                # remain valid across per-folder writes.
+                item.clear()
+                item.update(clean_item)
+            else:
+                items[idx] = clean_item
+    return data
+
+
+def _is_unknown_sentinel(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() == "unknown"
+
+
+def _clean_raw_provider_name(name: str | None) -> str | None:
+    if not isinstance(name, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", name.strip())
+    # Keep raw names, only strip trailing separator noise.
+    cleaned = re.sub(r"[\s\.,;:|/_-]+$", "", cleaned).strip()
+    if not cleaned:
+        return None
+    if cleaned.casefold() == "autres":
+        return None
+    return cleaned
 
 def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
     """
@@ -1026,8 +1279,18 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
     else:
         poster = prev.get("poster")
 
-    # --- tmdb_id from NFO (always fresh) ---
-    tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
+    # --- IDs from NFO (always fresh). For TV, keep tmdb_id and tvdb_id separated. ---
+    if is_tv:
+        nfo_tmdb_id = nfo_meta.get("tmdb_id")
+        nfo_tvdb_id = nfo_meta.get("tvdb_id")
+        tmdb_id = nfo_tmdb_id or (prev.get("tmdb_id") if not nfo_tvdb_id else None)
+        tvdb_id = nfo_tvdb_id or prev.get("tvdb_id")
+        # Guard: never persist tvdb-style fallback into tmdb_id when tvdb_id is explicitly known.
+        if tmdb_id and tvdb_id and str(tmdb_id).strip() == str(tvdb_id).strip():
+            tmdb_id = None
+    else:
+        tmdb_id = nfo_meta.get("tmdb_id") or prev.get("tmdb_id")
+        tvdb_id = None
     size_b = get_dir_size(media_dir)
 
     hdr_current = bool(nfo_meta.get("hdr", False))
@@ -1050,28 +1313,35 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "added_ts":          int(mtime),
         "poster":            poster,
         "tmdb_id":           tmdb_id,
+        "tvdb_id":           tvdb_id,
         "resolution":        nfo_meta.get("resolution") or prev.get("resolution"),
         "width":             nfo_meta.get("width")      or prev.get("width"),
         "height":            nfo_meta.get("height")     or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
-        "runtime":           nfo_meta.get("runtime")    or prev.get("runtime"),
         "runtime_min":       nfo_meta.get("runtime_min") or prev.get("runtime_min"),
         "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
         "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
         "codec":              nfo_meta.get("codec")              or prev.get("codec"),
         "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
-        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec")        or "UNKNOWN",
-        "audio_codec_display": nfo_meta.get("audio_codec_display") or prev.get("audio_codec_display") or "Unknown",
+        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec"),
         "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
         "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous library.json — overwritten by full scan phases
-        "providers":         _normalize_providers(prev.get("providers", [])),
+        "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
     if enable_score:
-        item["quality"] = prev.get("quality")  # preserved during quick scan; overwritten by phase 3
+        preserved_quality = prev.get("quality")
+        if isinstance(preserved_quality, dict):
+            q = dict(preserved_quality)
+            q.pop("level", None)
+            item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+    if _is_unknown_sentinel(item.get("audio_codec")):
+        item["audio_codec"] = None
+    if _is_unknown_sentinel(item.get("audio_languages_simple")):
+        item["audio_languages_simple"] = None
     return item
 
 
@@ -1144,7 +1414,7 @@ def run_quick(only_category: str | None = None) -> None:
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
-    # Preserve providers_meta / enriched_at from previous run
+    # Preserve previous file content for backward-compatible partial scans
     prev_data: dict = {}
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as _f:
@@ -1211,6 +1481,13 @@ def run_quick(only_category: str | None = None) -> None:
         size_str = f"{size_mb:.1f} MB"
     except Exception:
         size_str = "?"
+    try:
+        mapping_added = _upsert_runtime_provider_mapping(data.get("items") or [])
+        if mapping_added:
+            log.info(f"[SCAN] providers_mapping updated (+{mapping_added} raw provider(s))")
+    except Exception as e:
+        log.warning(f"[SCAN] providers_mapping update failed: {e}")
+
     elapsed = time.monotonic() - _t0
     if _nfo_stats["failed"] > 0:
         log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
@@ -1308,8 +1585,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     def needs_enrich(item: dict) -> bool:
         if only_category and item.get("category") != only_category:
             return False
-        if not item.get("tmdb_id"):
-            return False  # no tmdb_id from NFO → can't fetch
+        # Enrichment can run from IDs or fallback search (requires title).
+        # Keep this broad even in force mode to avoid skipping valid items.
+        if not item.get("title") and not item.get("tmdb_id") and not item.get("tvdb_id"):
+            return False
         if force:
             return True
         return not item.get("providers_fetched")
@@ -1336,28 +1615,55 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     except Exception:
         _cat_folder_by_name = {}
 
-    # Load provider map (file-based normalization, reloaded each scan)
-    provider_map = load_provider_map()
-    log.debug(f"[providers] providers.json mapping loaded ({len(provider_map)} entries)")
-
-    # providers_meta maps normalized name → {logo, logo_url} — stored at top level
-    # Seed from existing data (migration: items may still have {name, logo} objects)
-    providers_meta: dict = data.get("providers_meta") or {}
-    for item in items:
-        for p in (item.get("providers") or []):
-            if isinstance(p, dict) and p.get("name") and p["name"] not in providers_meta:
-                logo_url = p.get("logo")  # old format stored full URL in "logo"
-                providers_meta[p["name"]] = {"logo": None, "logo_url": logo_url}
-
-    # providers_raw_meta maps raw name → {logo, logo_url} — accumulated across scans
-    providers_raw_meta: dict = data.get("providers_raw_meta") or {}
-
     def _enrich_one(item):
         is_tv = item.get("type") == "tv"
         try:
-            providers = fetch_providers(item["tmdb_id"], is_tv, jsr, provider_map)
+            providers = _JSR_NOT_FOUND
+            if is_tv:
+                # Nominal path for TV: tvdb_id.
+                tv_lookup_id = item.get("tvdb_id")
+                if tv_lookup_id:
+                    providers = fetch_providers(tv_lookup_id, True, jsr)
+                # Compatibility fallback: some Jellyseerr instances/media still resolve with TMDB tv id.
+                if providers is _JSR_NOT_FOUND and item.get("tmdb_id"):
+                    providers = fetch_providers(item["tmdb_id"], True, jsr)
+                if providers is _JSR_NOT_FOUND:
+                    resolved_ids = _resolve_ids_from_search(item.get("title"), item.get("year"), is_tv=True, jsr=jsr)
+                    if resolved_ids is _FETCH_ERROR:
+                        providers = _FETCH_ERROR
+                    elif isinstance(resolved_ids, dict):
+                        resolved_tvdb = resolved_ids.get("tvdb_id")
+                        resolved_tmdb = resolved_ids.get("tmdb_id")
+                        if resolved_tmdb not in (None, ""):
+                            item["tmdb_id"] = str(resolved_tmdb)
+                        if resolved_tvdb not in (None, ""):
+                            log.info(
+                                f"[enrich-tv] Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                            )
+                            item["tvdb_id"] = str(resolved_tvdb)
+                            providers = fetch_providers(item["tvdb_id"], True, jsr)
+                        if providers is _JSR_NOT_FOUND and item.get("tmdb_id"):
+                            providers = fetch_providers(item["tmdb_id"], True, jsr)
+            else:
+                if item.get("tmdb_id"):
+                    providers = fetch_providers(item["tmdb_id"], False, jsr)
+                if providers is _JSR_NOT_FOUND:
+                    resolved_ids = _resolve_ids_from_search(item.get("title"), item.get("year"), is_tv=False, jsr=jsr)
+                    if resolved_ids is _FETCH_ERROR:
+                        providers = _FETCH_ERROR
+                    elif isinstance(resolved_ids, dict):
+                        resolved_tmdb = resolved_ids.get("tmdb_id")
+                        if resolved_tmdb not in (None, ""):
+                            log.info(
+                                f"[enrich-movie] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                            )
+                            item["tmdb_id"] = str(resolved_tmdb)
+                            providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
-            log.warning(f"[enrich] Unexpected exception tmdb_id={item.get('tmdb_id')} {item.get('title')!r}: {e}")
+            log.warning(
+                f"[enrich] Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{item.get('title')!r}: {e}"
+            )
             providers = _FETCH_ERROR
         time.sleep(0.05)
         return item, providers
@@ -1380,33 +1686,21 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     item["providers"]         = []
                     item["providers_fetched"] = True
                     not_found_count += 1
-                    not_found_ids.append(item.get("tmdb_id", "?"))
+                    not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 if providers is _FETCH_ERROR:
                     # Jellyseerr unreachable — leave providers_fetched False, retry next run
                     failed_count += 1
-                    failed_ids.append(item.get("tmdb_id", "?"))
+                    failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
-                for p in providers:
-                    raw  = p["raw_name"]
-                    name = p["name"]
-                    logo_entry = {"logo": p.get("logo"), "logo_url": p.get("logo_url")}
-                    # Accumulate raw providers (first logo seen wins)
-                    if raw not in providers_raw_meta or (not providers_raw_meta[raw].get("logo_url") and p.get("logo_url")):
-                        providers_raw_meta[raw] = logo_entry
-                    # Update normalized providers_meta (first seen wins)
-                    if name not in providers_meta or (not providers_meta[name].get("logo_url") and p.get("logo_url")):
-                        providers_meta[name] = logo_entry
-                # Store only normalized names in item (logos centralized in providers_meta)
-                item["providers"]         = [p["name"] for p in providers]
+                # Store cleaned raw provider names from Jellyseerr.
+                item["providers"] = _normalize_providers([p["raw_name"] for p in (providers or [])])
                 item["providers_fetched"] = True
                 enriched += 1
-                log.debug(f"  {item['title']} — {len(providers)} provider(s)")
+                total_providers = len(providers or [])
+                log.debug(f"  {item['title']} — {total_providers} provider(s)")
 
-        data["providers_meta"]     = providers_meta
-        data["providers_raw_meta"] = providers_raw_meta
-        data["providers_raw"]      = sorted(providers_raw_meta.keys())
-        data["enriched_at"]        = datetime.now().isoformat()
+        _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
 
@@ -1414,11 +1708,11 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — tmdb_ids: {ids_str}{suffix}")
+        log.info(f"[SCAN] {not_found_count} item(s) not found in Jellyseerr — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — tmdb_ids: {ids_str}{suffix}")
+        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Jellyseerr error) — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
     if not_found_count: parts.append(f"{not_found_count} not found in Jellyseerr")
     if failed_count:    parts.append(f"{failed_count} errors")
@@ -1470,6 +1764,7 @@ def run_scoring(only_category: str | None = None) -> None:
         for item in cat_items:
             item["quality"] = compute_quality(item)
             scored_total += 1
+        _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
         log.info(f"[SCAN] Folder [{cat_folder}] scored")
 
@@ -1924,15 +2219,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 out.setdefault("jellyseerr", {})["apikey"] = "***"
             self._json(200, out)
         elif path == "/api/providers-map":
-            if os.path.exists(PROVIDERS_JSON_PATH):
-                try:
-                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-                        data = json.load(f)
-                        self._json(200, data.get("mapping", {}) if isinstance(data, dict) else {})
-                except Exception as e:
-                    self._json(500, {"error": str(e)})
-            else:
-                self._json(200, {})
+            self._json(200, _load_runtime_provider_mapping())
         else:
             self._json(404, {"error": "not found"})
 
@@ -2050,13 +2337,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
             try:
-                data = {}
-                if os.path.exists(PROVIDERS_JSON_PATH):
-                    with open(PROVIDERS_JSON_PATH, encoding="utf-8") as f:
-                        data = json.load(f)
-                data["mapping"] = payload
-                with open(PROVIDERS_JSON_PATH, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                current = _load_runtime_provider_mapping()
+                # Replace full mapping payload (explicit save from editor UI)
+                # while preserving JSON object shape.
+                current = payload if isinstance(payload, dict) else {}
+                _save_runtime_provider_mapping(current)
                 self._json(200, {"ok": True})
             except Exception as e:
                 self._json(500, {"error": str(e)})

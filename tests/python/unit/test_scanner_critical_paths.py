@@ -1,3 +1,5 @@
+import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -151,6 +153,25 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             cat = {"name": "Films", "type": "movie"}
             item = scanner.scan_media_item(media_dir, root, cat, {}, enable_score=False)
             self.assertNotIn("quality", item)
+            self.assertNotIn("runtime", item)
+            self.assertNotIn("audio_codec_display", item)
+            self.assertIsNone(item["audio_codec"])
+            self.assertIsNone(item["audio_languages_simple"])
+
+    def test_scan_media_item_tv_keeps_tmdb_and_tvdb_separate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            media_dir = root / "Series" / "Andor"
+            media_dir.mkdir(parents=True)
+            (media_dir / "tvshow.nfo").write_text("<tvshow/>", encoding="utf-8")
+            cat = {"name": "Series", "type": "tv"}
+            prev = {"tmdb_id": "legacy", "tvdb_id": "legacy-tvdb"}
+            with patch.object(scanner, "parse_tvshow_nfo", return_value={"title": "Andor", "tmdb_id": "228068", "tvdb_id": "83867"}), \
+                 patch.object(scanner, "find_episode_nfo", return_value={}), \
+                 patch.object(scanner, "count_seasons_episodes", return_value=(1, 12)):
+                item = scanner.scan_media_item(media_dir, root, cat, prev, enable_score=False)
+            self.assertEqual(item["tmdb_id"], "228068")
+            self.assertEqual(item["tvdb_id"], "83867")
 
 
 class FolderEnabledCompatibilityTest(unittest.TestCase):
@@ -221,6 +242,55 @@ class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
         self.assertNotIn("jellyseerr_apikey", secrets)
         self.assertNotIn("jellyseerr", payload)
 
+
+class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
+    def test_bootstrap_runtime_mapping_copies_source_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "providers_mapping.source.json"
+            dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
+            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                scanner._ensure_runtime_provider_mapping()
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {"Netflix": "Netflix"},
+            )
+
+            dst.write_text('{"Netflix":"NFX-custom"}', encoding="utf-8")
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                scanner._ensure_runtime_provider_mapping()
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {"Netflix": "NFX-custom"},
+            )
+
+    def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "providers_mapping.source.json"
+            dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
+            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
+            dst.write_text('{"Netflix":"Netflix","Disney+":"Disney+"}', encoding="utf-8")
+            items = [
+                {"providers": ["Netflix", "Premiere Max", "Premiere Max"]},
+                {"providers": ["Disney+", "Canal VOD"]},
+                {"providers": []},
+            ]
+            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                added = scanner._upsert_runtime_provider_mapping(items)
+            self.assertEqual(added, 2)
+            self.assertEqual(
+                json.loads(dst.read_text(encoding="utf-8")),
+                {
+                    "Netflix": "Netflix",
+                    "Disney+": "Disney+",
+                    "Premiere Max": None,
+                    "Canal VOD": None,
+                },
+            )
+
     def test_jsr_cfg_uses_preserved_secret_for_scan_config(self):
         cfg = {"jellyseerr": {"enabled": True, "url": "https://example.test/"}}
         secrets = {"jellyseerr_apikey": "kept-secret"}
@@ -231,6 +301,102 @@ class JellyseerrApiKeyPersistenceTest(unittest.TestCase):
         self.assertTrue(jsr["enabled"])
         self.assertEqual(jsr["url"], "https://example.test")
         self.assertEqual(jsr["apikey"], "kept-secret")
+
+
+class JellyseerrEnvBootstrapTest(unittest.TestCase):
+    def test_bootstrap_url_when_config_empty_uses_jellyseer_alias_and_trims(self):
+        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": " https://bootstrap.example/ "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://bootstrap.example")
+        save_secrets.assert_not_called()
+
+    def test_bootstrap_url_does_not_overwrite_existing_config_value(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": "https://bootstrap.example"}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
+        save_secrets.assert_not_called()
+
+    def test_bootstrap_apikey_when_secret_absent_writes_only_internal_secrets(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_APIKEY": "  boot-key  "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_called_once_with({"jellyseerr_apikey": "boot-key"})
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertNotIn("apikey", saved_cfg.get("jellyseerr", {}))
+
+    def test_bootstrap_apikey_does_not_overwrite_existing_secret(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"jellyseerr_apikey": "existing-key"}
+
+        with patch.dict(os.environ, {"JELLYSEER_APIKEY": "boot-key"}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+
+    def test_bootstrap_ignores_blank_values(self):
+        cfg = {"jellyseerr": {"enabled": False, "url": ""}}
+        secrets = {}
+
+        with patch.dict(os.environ, {"JELLYSEER_URL": "   ", "JELLYSEER_APIKEY": "   "}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "")
+
+    def test_bootstrap_no_env_vars_keeps_existing_values(self):
+        cfg = {"jellyseerr": {"enabled": True, "url": "https://existing.example"}}
+        secrets = {"jellyseerr_apikey": "existing-key"}
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(scanner, "load_config", return_value=cfg), \
+             patch.object(scanner, "_load_secrets", return_value=secrets), \
+             patch.object(scanner, "_save_secrets") as save_secrets, \
+             patch.object(scanner, "save_config") as save_config:
+            scanner.migrate_env_to_config()
+
+        save_secrets.assert_not_called()
+        save_config.assert_called_once()
+        saved_cfg = save_config.call_args.args[0]
+        self.assertEqual(saved_cfg["jellyseerr"]["url"], "https://existing.example")
 
 
 class HdrFallbackSafetyTest(unittest.TestCase):

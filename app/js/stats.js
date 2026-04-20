@@ -19,8 +19,6 @@
     filterItems: null,
     allItems: null,
     PALETTE: null,
-    PROVIDERS_META: null,
-    providerCatalog: null,
     PROVIDER_OTHERS_KEY: null,
     getNormalizedVideoCodec: null,
     getNormalizedAudioCodec: null,
@@ -29,6 +27,7 @@
     getAudioLanguageSimpleDisplay: null,
     getAudioCodecDisplay: null,
     getFilterDisplayValue: null,
+    getEnabledProvidersForItem: null,
     _itemProviderGroups: null,
     _providerGroupKey: null,
     _providerGroupLabel: null,
@@ -78,6 +77,7 @@
 
   function buildStatsData(items) {
     const C = window.MMLConstants.CHARTS;
+    const NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
 
     // ── Category (folder) ────────────────────────────────────
     const byCategory = {}, byCategoryCount = {};
@@ -135,10 +135,17 @@
       byRes[r]      = (byRes[r]      || 0) + (i.size_b || 0);
       byResCount[r] = (byResCount[r] || 0) + 1;
     });
-    const RES_ORDER = C.RESOLUTION_ORDER;
+    const RES_ORDER = [...C.RESOLUTION_ORDER, NONE_KEY];
+    const resRemaining = Object.keys(byRes).filter((r) => !RES_ORDER.includes(r));
     const resolution = {
-      entriesSize:  RES_ORDER.filter(r => byRes[r]).map(r => [r, byRes[r]]),
-      entriesCount: RES_ORDER.filter(r => byResCount[r]).map(r => [r, byResCount[r]]),
+      entriesSize:  [
+        ...RES_ORDER.filter(r => byRes[r]).map(r => [r, byRes[r]]),
+        ...resRemaining.filter(r => byRes[r]).map(r => [r, byRes[r]])
+      ],
+      entriesCount: [
+        ...RES_ORDER.filter(r => byResCount[r]).map(r => [r, byResCount[r]]),
+        ...resRemaining.filter(r => byResCount[r]).map(r => [r, byResCount[r]])
+      ],
     };
 
     // ── Providers ────────────────────────────────────────────
@@ -156,7 +163,7 @@
     Object.entries(groupedProviderCount).forEach(([name, count]) => {
       byProv[name] = { count, logo: '' };
     });
-    items.forEach(i => (i.providers || []).forEach(p => {
+    items.forEach(i => getScopedProviders(i).forEach(p => {
       const rawName = getDep('_pname')(p);
       const name    = getDep('_providerGroupKey')(rawName);
       if (!name || !byProv[name] || name === getDep('PROVIDER_OTHERS_KEY')) return;
@@ -173,8 +180,10 @@
     const providers = {
       entries:   Object.entries(byProv).sort((a,b) => b[1].count - a[1].count),
       bySize:    byProvSize,
-      noneCount: items.filter(i => !(i.providers && i.providers.length)).length,
-      noneSize:  items.filter(i => !(i.providers && i.providers.length)).reduce((s,i) => s+(i.size_b||0), 0),
+      noneCount: items.filter(i => !getScopedProviders(i).length).length,
+      noneSize:  items.filter(i => !getScopedProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
+      referenceCount: items.length,
+      referenceSize: items.reduce((sum, i) => sum + (i.size_b || 0), 0),
     };
 
     // ── Timeline (daily + monthly buckets) ───────────────────
@@ -226,7 +235,8 @@
     let totalScore = 0, scoredCount = 0;
     items.forEach(i => {
       if (!i.quality) return;
-      const s = typeof i.quality.score === 'number' ? i.quality.score : (i.quality.level || 0) * 20;
+      const s = Number(i.quality.score);
+      if (!Number.isFinite(s)) return;
       totalScore += s; scoredCount++;
       const idx = qualityTranches.findIndex(tr => s >= tr.min && s <= tr.max);
       if (idx >= 0) qualityCounts[idx]++;
@@ -243,13 +253,34 @@
     return { category, codec, audioCodec, audioLang, resolution, providers, timeline, years, quality };
   }
 
+  function getScopedProviders(item) {
+    const enabled = getDep('getEnabledProvidersForItem');
+    if (typeof enabled === 'function') return enabled(item);
+    const fromDep = getDep('getItemProviders');
+    if (typeof fromDep === 'function') return fromDep(item);
+    const providers = item?.providers;
+    if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+      return Object.values(providers)
+        .filter((values) => Array.isArray(values))
+        .flat();
+    }
+    return Array.isArray(providers) ? providers : [];
+  }
+
   // ══════════════════════════════════════════════════════════
   //  RENDER PRIMITIVES — pure SVG/HTML generators
   // ══════════════════════════════════════════════════════════
 
-  function makePie(entries, colorFn, valFn, labelFn, fmtFn) {
+  function makePie(entries, colorFn, valFn, labelFn, fmtFn, options = {}) {
     const total = entries.reduce((s,[,v]) => s+valFn(v), 0);
     if (!total) return '';
+    const percentBase = Number.isFinite(Number(options.percentBase)) && Number(options.percentBase) > 0
+      ? Number(options.percentBase)
+      : total;
+    const formatPercent = (value) => `${((value / percentBase) * 100).toFixed(1)}%`;
+    const formatValue = typeof options.valueFormatter === 'function'
+      ? options.valueFormatter
+      : (value) => fmtFn(value);
     const R=70, CX=80, CY=80, SIZE=160;
     let angle = -Math.PI/2, slices = '';
     entries.forEach(([k,v], idx) => {
@@ -263,7 +294,7 @@
       if (frac > 0.999) {
         slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="'+col+'"/>';
       } else {
-        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+getDep('escH')(labelFn(k))+' — '+fmtFn(val)+' ('+Math.round(frac*100)+'%)</title></path>';
+        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+getDep('escH')(labelFn(k))+' — '+formatValue(val)+' ('+formatPercent(val)+')</title></path>';
       }
       angle = a2;
     });
@@ -272,12 +303,12 @@
     slices += '<text x="'+CX+'" y="'+(CY+8)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+(entries.length>1?getDep('t')('stats.entries'):getDep('t')('stats.entry'))+'</text>';
     const svg    = '<svg viewBox="0 0 '+SIZE+' '+SIZE+'" width="'+SIZE+'" height="'+SIZE+'" style="flex-shrink:0">'+slices+'</svg>';
     const legend = '<div class="pie-legend">'+entries.slice(0,12).map(([k,v],idx) => {
-      const val=valFn(v), pct=Math.round(val/total*100);
+      const val=valFn(v);
       return '<div class="pie-leg-row">'
         +'<div class="pie-leg-dot" style="background:'+colorFn(k,idx)+'"></div>'
         +'<div class="pie-leg-label" title="'+getDep('escH')(labelFn(k))+'">'+getDep('escH')(labelFn(k))+'</div>'
-        +'<div class="pie-leg-val">'+fmtFn(val)+'</div>'
-        +'<div class="pie-leg-pct">'+pct+'%</div>'
+        +'<div class="pie-leg-val">'+formatValue(val)+'</div>'
+        +'<div class="pie-leg-pct">'+formatPercent(val)+'</div>'
         +'</div>';
     }).join('')+(entries.length>12?'<div style="font-size:11px;color:var(--muted);padding-top:2px">+' + (entries.length-12) + ' '+getDep('t')('stats.others')+'</div>':'')+'</div>';
     return '<div class="pie-wrap">'+svg+legend+'</div>';
@@ -337,10 +368,10 @@
     return '<svg class="curve-svg" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">'+bars+labels+'</svg>';
   }
 
-  function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size') {
+  function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size', options = {}) {
     const showCount = defaultUnit === 'count';
-    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'));
-    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v));
+    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'), options.size || {});
+    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v), options.count || {});
     return '<div class="stats-block">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
         +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
@@ -438,13 +469,13 @@
     const codecColorFn       = (k,idx) => C.COLORS.CODEC[idx%C.COLORS.CODEC.length];
     const audioCodecColorFn  = (k,idx) => C.COLORS.AUDIO_CODEC[idx%C.COLORS.AUDIO_CODEC.length];
     const audioLangColorFn   = (k,idx) => C.COLORS.AUDIO_LANG[idx%C.COLORS.AUDIO_LANG.length];
-    const resColorFn         = (k)     => C.COLORS.RESOLUTION[k] || '#888';
+    const resColorFn         = (k)     => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : (C.COLORS.RESOLUTION[k] || '#888');
     const provColors         = C.COLORS.PROVIDER;
     const noProviderLabel    = getDep('t')('filters.no_provider');
     const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
 
     // ── Provider entries with size ───────────────────────────
-    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize } = data.providers;
+    const { entries: provEntries, bySize: byProvSize, noneCount, noneSize, referenceCount: provReferenceCount, referenceSize: provReferenceSize } = data.providers;
     const provCountEntries = [
       ...provEntries.map(([k,v]) => [k, v.count]),
       ...(noneCount > 0 ? [[noProviderLabel, noneCount]] : []),
@@ -455,8 +486,28 @@
     ];
 
     // ── Block HTML ───────────────────────────────────────────
-    const provPieHtml = provEntries.length
-      ? switchablePie('prov', getDep('t')('stats.providers'), provSizeEntries, provCountEntries, provColorFnWithNone, getDep('_providerGroupLabel'), 'count')
+    const provPieHtml = provCountEntries.length
+      ? switchablePie(
+          'prov',
+          getDep('t')('stats.providers'),
+          provSizeEntries,
+          provCountEntries,
+          provColorFnWithNone,
+          getDep('_providerGroupLabel'),
+          'count',
+          {
+            size: {
+              percentBase: Number(provReferenceSize || 0),
+            },
+            count: {
+              percentBase: Number(provReferenceCount || 0),
+              valueFormatter: (value) => String(value),
+            },
+          }
+        )
+      : '';
+    const providersNoteHtml = provCountEntries.length
+      ? '<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+getDep('t')('stats.providers_overlap_note')+'</div>'
       : '';
 
     const yearChartHtml = data.years.entriesCount.length
@@ -491,11 +542,11 @@
       // Row 1: Dossiers | Fournisseurs
       + '<div class="stats-row">'
           + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size') : '')+'</div>'
-          + '<div>'+provPieHtml+'</div>'
+          + '<div>'+provPieHtml+providersNoteHtml+'</div>'
         + '</div>'
       // Row 2: Résolution | Codec vidéo
       + '<div class="stats-row">'
-          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>k, 'count') : '')+'</div>'
+          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
           + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
         + '</div>'
       // Row 3: Codec audio | Langues

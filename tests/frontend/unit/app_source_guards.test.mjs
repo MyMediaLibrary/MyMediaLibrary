@@ -113,16 +113,47 @@ test('renderFolderFilter uses shared dropdown with include/exclude toggles', () 
   assert.match(block, /baseItems\('folder'\)/, 'folder counts should be scoped through shared baseItems logic');
 });
 
-test('loadLibrary resolves score feature from config first, then library metadata fallback', () => {
+test('loadLibrary resolves score feature from runtime config only', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
-  assert.match(block, /resolveScoreEnabled\(libraryMetaScoreEnabled\)/, 'loadLibrary should use centralized score resolution');
-  assert.doesNotMatch(block, /enableScore\s*=\s*data\.meta\.score_enabled/, 'loadLibrary should not directly trust stale library meta score flag');
+  assert.match(block, /enableScore = resolveScoreEnabled\(\);/, 'loadLibrary should resolve score from centralized config-driven helper');
+  assert.doesNotMatch(block, /data\.meta/, 'loadLibrary should not depend on library meta payload');
+  assert.doesNotMatch(block, /data\.config/, 'loadLibrary should not depend on embedded config payload');
+});
+
+test('loadLibrary restores active tab only after data is loaded', () => {
+  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(block, /window\.MMLState\.isLoaded\s*=\s*true;/, 'loadLibrary should mark state as loaded before tab switch');
+  assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
+});
+
+test('loadLibrary treats missing library.json as a first-run/empty-library state (no hard error)', () => {
+  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(block, /if \(r\.status === 404\) \{/, 'loadLibrary should branch explicitly on library.json 404');
+  assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
+  assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
+  assert.doesNotMatch(block, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'loadLibrary should not throw a generic HTTP error for expected missing library.json');
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
+});
+
+test('settings trigger scan only when folders changed', () => {
+  const shouldTriggerScanBlock = functionBlock(settingsSource, 'shouldTriggerScan', 'renderProviderToggles');
+  assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(oldConfig\?\.folders \|\| \[\]\)/, 'scan trigger helper should compare previous folder snapshot');
+  assert.match(shouldTriggerScanBlock, /_foldersScanSignature\(newConfig\.folders\)/, 'scan trigger helper should compare new folder snapshot');
+  assert.match(shouldTriggerScanBlock, /return prevSig !== nextSig;/, 'scan trigger helper should only trigger on actual folder diff');
+
+  const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveSettingsBlock, /shouldTriggerScan\(appConfig, \{ folders: folderUpdates \}\)/, 'settings save should gate folder payload behind shouldTriggerScan');
+});
+
+test('restoreState defers stats tab render until library load is complete', () => {
+  const block = functionBlock(appSource, 'restoreState');
+  assert.match(block, /currentTab = s\.currentTab;/, 'restoreState should persist desired tab');
+  assert.doesNotMatch(block, /switchTab\(s\.currentTab\)/, 'restoreState should not render stats early before data load completion');
 });
 
 test('codec filters keep UNKNOWN distinct from missing metadata', () => {
@@ -148,6 +179,58 @@ test('audio language simplified stats keep all categories without auto-grouping 
   assert.match(statsPanelBlock, /entriesSize:\s*Object\.entries\(byAudioLangSize\)\.sort\(/, 'audio language sizes should be passed through without threshold grouping');
   assert.doesNotMatch(statsPanelBlock, /audioLangThreshold/, 'audio language chart should not apply a 1% threshold');
   assert.doesNotMatch(statsPanelBlock, /audioLangOthersCount|audioLangOthersSize/, 'audio language chart should not aggregate categories into an others bucket');
+});
+
+test('settings persist only providers visibility whitelist (no provider types)', () => {
+  const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveSettingsBlock, /partial\.providers_visible = provVis;/, 'settings save should persist selected providers whitelist');
+  assert.doesNotMatch(saveSettingsBlock, /providers_visible_types/, 'settings save should not persist provider type config');
+});
+
+test('stats providers rely on flat provider lists', () => {
+  const buildStatsBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+  assert.match(buildStatsBlock, /getScopedProviders\(i\)/, 'stats should aggregate providers from selected provider types');
+  assert.doesNotMatch(buildStatsBlock, /providers\.flatrate/, 'stats should not rely on flatrate-only provider extraction');
+});
+
+test('provider count chart displays raw counts without "media" unit suffix', () => {
+  const block = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+  assert.match(block, /valueFormatter:\s*\(value\)\s*=>\s*String\(value\)/, 'provider count values should be displayed as raw numbers');
+  assert.doesNotMatch(block, /stats\.media_count/, 'provider count chart should not append "media" unit text');
+});
+
+test('provider size chart uses library-size reference base (not cumulative provider-size base)', () => {
+  const dataBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+  assert.match(dataBlock, /referenceSize:\s*items\.reduce\(\(sum, i\) => sum \+ \(i\.size_b \|\| 0\), 0\)/, 'provider stats should expose unique library-size reference base');
+
+  const renderBlock = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+  assert.match(renderBlock, /size:\s*\{\s*percentBase:\s*Number\(provReferenceSize \|\| 0\)/, 'provider size pie should compute percentages against library-size reference base');
+});
+
+test('providers catalog loads runtime mapping API and logo catalog', () => {
+  const block = functionBlock(appSource, 'loadProvidersCatalog');
+  assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
+  assert.match(block, /fetch\('\/providers_logo\.json\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from dedicated logo catalog');
+  assert.doesNotMatch(block, /\/providers\.json/, 'legacy providers.json bundle should no longer drive mapping');
+});
+
+test('provider resolution maps null-or-missing entries to Autres with logo fallback', () => {
+  const block = functionBlock(appSource, 'resolveProvider', 'getProviderNames');
+  assert.match(block, /const normalizedName =[\s\S]*\? mappedValue\.trim\(\)[\s\S]*: 'Autres';/, 'unmapped providers should resolve to Autres');
+  assert.match(block, /PROVIDERS_LOGOS\[normalizedName\] \|\| PROVIDERS_LOGOS\['Autres'\]/, 'provider logo should fallback to Autres logo');
+});
+
+test('displayed providers are deduplicated post-mapping and ordered with Autres last', () => {
+  const block = functionBlock(appSource, 'getDisplayedProviders', '_providerGroupKey');
+  assert.match(block, /if \(!grouped\.has\(displayName\)\) grouped\.set\(displayName, resolved\);/, 'displayed providers should deduplicate after mapping');
+  assert.match(block, /return a\.name\.localeCompare\(b\.name, undefined, \{ sensitivity: 'base' \}\);/, 'mapped providers should be sorted alphabetically');
+  assert.match(block, /if \(aIsOthers && !bIsOthers\) return 1;/, 'Autres should be sorted after mapped providers');
+  assert.match(block, /name: _isOthersProviderName\(entry\.name\) \? DISPLAY_OTHERS_NAME : entry\.name/, 'Autres display label should be normalized once');
+});
+
+test('provider exclude requires at least one remaining non-Autres provider', () => {
+  const block = functionBlock(appSource, '_matchesProviderFilters', '_canonicalProviderFilterKey');
+  assert.match(block, /return remaining\.some\(\(p\) => p !== PROVIDER_OTHERS_KEY\);/, 'exclude mode should keep item only when a non-Autres provider remains');
 });
 
 test('filter order is centralized and explicit for desktop and mobile', () => {

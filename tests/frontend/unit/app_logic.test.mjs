@@ -52,7 +52,8 @@ test('filters include/exclude and reset state behavior', () => {
 
   state.providerExclude = true;
   filtered = logic.filterItems(items, state);
-  assert.equal(filtered.some((i) => (i.providers || []).includes('Netflix')), false);
+  assert.equal(filtered.some((i) => i.title === 'Film VF'), false);
+  assert.equal(filtered.some((i) => i.title === 'Film Multi'), true);
 
   state.providerExclude = false;
   filtered = logic.filterItems(items, state);
@@ -62,6 +63,18 @@ test('filters include/exclude and reset state behavior', () => {
   assert.equal(logic.hasActiveFilters(reset), false);
   reset.activeAudioLanguages.add('VF');
   assert.equal(logic.hasActiveFilters(reset), true);
+});
+
+test('provider exclude keeps item only if a non-others provider remains', () => {
+  const sample = [
+    { title: 'OnlyOthers', providers: ['Autres'] },
+    { title: 'NetflixAndOthers', providers: ['Netflix', 'Autres'] },
+    { title: 'NetflixPrimeOthers', providers: ['Netflix', 'Prime Video', 'Autres'] },
+  ];
+  const state = baseState();
+  state.activeProviders = new Set(['Netflix']);
+  state.providerExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['NetflixPrimeOthers']);
 });
 
 test('score filter defaults include unscored items', () => {
@@ -160,7 +173,7 @@ test('maps quality score and quality payload to 5-level ranking', () => {
   assert.equal(logic.getQualityLevelFromScore(81), 5);
   assert.equal(logic.getQualityLevelFromScore(100), 5);
 
-  assert.equal(logic.getItemQualityLevel({ quality: { level: 4, score: 10 } }), 4);
+  assert.equal(logic.getItemQualityLevel({ quality: { level: 4, score: 10 } }), 1);
   assert.equal(logic.getItemQualityLevel({ quality: { score: 84 } }), 5);
   assert.equal(logic.getItemQualityLevel({}), 1);
   assert.equal(logic.getQualityLevelClass(3), 'quality-lvl-3');
@@ -176,7 +189,7 @@ test('score range helpers handle boundaries and missing values', () => {
   assert.equal(logic.matchesScoreRange(21, '0_20'), false);
   assert.equal(logic.matchesScoreRange(100, '80_100'), true);
   assert.equal(logic.matchesScoreRange(undefined, '80_100'), false);
-  assert.equal(logic.getScoreRangeKey({ quality: { score: 10, level: 5 } }), '80_100');
+  assert.equal(logic.getScoreRangeKey({ quality: { score: 10, level: 5 } }), '0_20');
 });
 
 test('applyFilters handles multi-filters include/exclude consistently', () => {
@@ -239,7 +252,7 @@ test('applyFilters handles multi-filters include/exclude consistently', () => {
   state.resolutionExclude = false;
 
   state.providerExclude = true;
-  assert.equal(logic.applyFilters(sample, state).length, 0);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), []);
   state.providerExclude = false;
   state.activeProviders = new Set(['__none__']);
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), [], 'other active filters still apply');

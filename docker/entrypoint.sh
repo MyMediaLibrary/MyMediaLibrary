@@ -33,7 +33,17 @@ python3 /app/scanner.py --serve &
 SCANSERVER_PID=$!
 echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
 
-# providers.json is bundled in the nginx html dir — no copy needed
+# Bootstrap editable providers mapping in /data (copy-once, never overwrite)
+PROVIDERS_MAPPING_SRC="${PROVIDERS_MAPPING_SOURCE_PATH:-/usr/share/nginx/html/providers_mapping.json}"
+PROVIDERS_MAPPING_DST="${PROVIDERS_MAPPING_RUNTIME_PATH:-/data/providers_mapping.json}"
+if [ ! -f "$PROVIDERS_MAPPING_DST" ]; then
+  if [ -f "$PROVIDERS_MAPPING_SRC" ]; then
+    cp "$PROVIDERS_MAPPING_SRC" "$PROVIDERS_MAPPING_DST"
+  else
+    echo '{}' > "$PROVIDERS_MAPPING_DST"
+  fi
+  echo "[entrypoint] Bootstrapped providers mapping: $PROVIDERS_MAPPING_DST"
+fi
 
 # Initial scan on startup — also runs migrate_env_to_config() which populates config.json
 echo "[entrypoint] Running initial scan..."

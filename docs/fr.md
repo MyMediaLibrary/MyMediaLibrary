@@ -374,13 +374,64 @@ L'enrichissement streaming est optionnel et repose sur **Jellyseerr**.
 
 URL + clé API dans les paramètres (onglet Jellyseerr) ou lors de la configuration initiale. Un bouton "Tester la connexion" valide les identifiants.
 
-### Normalisation
+### Modèle actuel
 
-Les noms des plateformes retournés par Jellyseerr sont normalisés via `app/providers.json` (ex. `"Amazon Prime Video"` → `"Prime Video"`). Ce fichier associe également un logo SVG à chaque plateforme.
+- Chaque média contient une liste plate de providers bruts dans `library.json` (`item.providers`).
+- L'application applique ensuite un mapping pour déterminer les providers affichés.
+- Si un provider brut est non mappé (ou mappé à `null`), il est regroupé sous **Autres**.
+- Si un média n'a aucun provider, l'UI affiche **Aucun provider** (comportement spécifique conservé).
 
-### Visibilité
+### `providers_mapping.json` (fichier clé)
 
-Chaque plateforme peut être masquée dans les paramètres (onglet Jellyseerr → "Visibilité des plateformes"). Les plateformes masquées n'apparaissent pas dans les tuiles ni dans le filtre.
+- Le mapping runtime utilisé par l'application est `/data/providers_mapping.json`.
+- Au premier démarrage, ce fichier est initialisé automatiquement depuis le fichier embarqué.
+- Ensuite, il n'est **jamais écrasé** automatiquement.
+- À la fin d'un enrichissement providers, les nouveaux providers bruts détectés sont ajoutés avec valeur `null`.
+
+Exemple :
+
+```json
+{
+  "Netflix": "Netflix",
+  "Netflix Standard with Ads": "Netflix",
+  "Premiere Max": null
+}
+```
+
+Interprétation :
+- mapping non `null` → provider affiché
+- mapping `null` → regroupé dans `Autres`
+
+> Point important : pour qu'un provider apparaisse dans la liste des providers activables dans les paramètres, il doit avoir un mapping **non null** dans `providers_mapping.json`.
+> Si un provider est à `null`, il est regroupé dans `Autres` et n'est pas sélectionnable individuellement.
+
+### Logos providers
+
+- Les logos sont définis dans `providers_logo.json`.
+- Résolution du logo sur le **provider affiché final** (après mapping).
+- Si aucun logo n'est trouvé, fallback vers le logo **Autres**.
+- Le cas **Aucun provider** garde son icône dédiée (rond rouge barré).
+
+### Personnaliser les providers affichés
+
+1. Ouvrir `/data/providers_mapping.json`.
+2. Modifier les mappings.
+3. Recharger l'application (ou redémarrer le conteneur si nécessaire).
+
+Exemple :
+
+```json
+{
+  "Canal VOD": "Canal+",
+  "OCS": "OCS",
+  "Rakuten TV": null
+}
+```
+
+Résultat :
+- `Canal VOD` → affiché comme `Canal+`
+- `OCS` → affiché comme `OCS`
+- `Rakuten TV` → regroupé dans `Autres`
 
 ---
 
@@ -603,7 +654,7 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 - Activer/désactiver l'enrichissement
 - URL + clé API + test de connexion
-- Visibilité de chaque plateforme (visible/masqué)
+- Visibilité des providers affichés (providers mappés ; `Autres` reste géré automatiquement)
 
 ### Onglet Système
 

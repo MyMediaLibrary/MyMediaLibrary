@@ -373,13 +373,64 @@ Streaming enrichment is optional and relies on **Jellyseerr**.
 
 URL + API key in settings (Jellyseerr tab) or during onboarding. A "Test connection" button validates the credentials.
 
-### Normalization
+### Current model
 
-Provider names returned by Jellyseerr are normalized via `app/providers.json` (e.g. `"Amazon Prime Video"` → `"Prime Video"`). This file also associates an SVG logo with each provider.
+- Each media item stores a flat list of raw providers in `library.json` (`item.providers`).
+- The app then applies a mapping to compute displayed providers.
+- If a raw provider is unmapped (or mapped to `null`), it is grouped under **Autres**.
+- If a media item has no providers, the UI shows **No provider** (dedicated behavior kept).
 
-### Visibility
+### `providers_mapping.json` (key file)
 
-Each provider can be hidden in settings (Jellyseerr tab → "Provider visibility"). Hidden providers do not appear on cards or in the filter.
+- Runtime mapping used by the app is `/data/providers_mapping.json`.
+- On first startup, it is initialized from the bundled mapping file.
+- After that, it is **never auto-overwritten**.
+- After providers enrichment, newly detected raw providers are appended with `null`.
+
+Example:
+
+```json
+{
+  "Netflix": "Netflix",
+  "Netflix Standard with Ads": "Netflix",
+  "Premiere Max": null
+}
+```
+
+Interpretation:
+- non-`null` mapping → displayed provider
+- `null` mapping → grouped into `Autres`
+
+> Important: for a provider to appear in the selectable provider list in settings, it must have a **non-null** mapping in `providers_mapping.json`.
+> If a provider is set to `null`, it is grouped into `Autres` and is not individually selectable.
+
+### Provider logos
+
+- Logos are defined in `providers_logo.json`.
+- Logo lookup is done on the **final displayed provider** (after mapping).
+- If no logo is found, fallback uses the **Autres** logo.
+- **No provider** keeps its dedicated icon (red blocked circle).
+
+### Customize displayed providers
+
+1. Open `/data/providers_mapping.json`.
+2. Edit mappings.
+3. Reload the app (or restart the container if needed).
+
+Example:
+
+```json
+{
+  "Canal VOD": "Canal+",
+  "OCS": "OCS",
+  "Rakuten TV": null
+}
+```
+
+Result:
+- `Canal VOD` → displayed as `Canal+`
+- `OCS` → displayed as `OCS`
+- `Rakuten TV` → grouped into `Autres`
 
 ---
 
@@ -602,7 +653,7 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 
 - Enable/disable enrichment
 - URL + API key + connection test
-- Per-provider visibility (visible/hidden)
+- Visibility for displayed providers (mapped providers; `Autres` is handled automatically)
 
 ### System tab
 

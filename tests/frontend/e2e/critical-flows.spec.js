@@ -32,7 +32,7 @@ function libraryPayload() {
   };
 }
 
-async function mockCoreRoutes(page, { onboarding = false } = {}) {
+async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false } = {}) {
   await page.route('**/api/config', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: onboarding ? onboardingPayload() : configuredPayload() });
@@ -41,7 +41,7 @@ async function mockCoreRoutes(page, { onboarding = false } = {}) {
     await route.fulfill({ json: { ok: true } });
   });
   await page.route('**/library.json**', async (route) => {
-    if (onboarding) {
+    if (onboarding || missingLibrary) {
       await route.fulfill({ status: 404, body: 'not-found' });
       return;
     }
@@ -49,6 +49,26 @@ async function mockCoreRoutes(page, { onboarding = false } = {}) {
   });
   await page.route('**/version.json**', async (route) => {
     await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+  await page.route('**/api/providers-map**', async (route) => {
+    await route.fulfill({
+      json: {
+        'Netflix': 'Netflix',
+        'Prime Video': 'Prime Video',
+        'Disney+': 'Disney+',
+        'Other': null,
+      },
+    });
+  });
+  await page.route('**/providers_logo.json**', async (route) => {
+    await route.fulfill({
+      json: {
+        'Netflix': 'netflix.webp',
+        'Prime Video': 'primevideo.webp',
+        'Disney+': 'disneyplus.webp',
+        'Autres': 'other_play.webp',
+      },
+    });
   });
 }
 
@@ -65,6 +85,15 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
   await expect(page.locator('#onboardingOverlay')).not.toContainText('library_inventory.json');
   await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
+});
+
+test('configured app with missing library.json shows empty-library state without onboarding', async ({ page }) => {
+  await mockCoreRoutes(page, { onboarding: false, missingLibrary: true });
+  await page.goto('/index.html');
+
+  await expect(page.locator('#onboardingOverlay')).toBeHidden();
+  await expect(page.locator('#library')).toContainText('Veuillez lancer un scan');
+  await expect(page.locator('#library')).not.toContainText('Aucun résultat');
 });
 
 test('global search keyboard interactions and filtering', async ({ page }) => {

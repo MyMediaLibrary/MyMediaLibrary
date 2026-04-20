@@ -431,13 +431,19 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
     result["plot"]    = _xml_text(root, "plot")
     result["runtime"] = _xml_text(root, "runtime")
 
-    # tmdb_id — prefer <uniqueid type="tmdb">, fallback to <id>
+    # IDs — prefer explicit uniqueid tags, then dedicated root tags, then legacy <id>.
     for uid in root.findall("uniqueid"):
-        if uid.get("type") == "tmdb" and uid.text:
-            result["tmdb_id"] = uid.text.strip()
+        uid_type = (uid.get("type") or "").strip().lower()
+        uid_val = (uid.text or "").strip()
+        if not uid_val:
+            continue
+        if uid_type in {"tmdb", "themoviedb"}:
+            result["tmdb_id"] = uid_val
             break
     if "tmdb_id" not in result:
-        result["tmdb_id"] = _xml_text(root, "id")
+        tmdb_fallback = _xml_text(root, "tmdbid", "tmdb_id", "id")
+        if tmdb_fallback:
+            result["tmdb_id"] = tmdb_fallback
 
     # Poster URL from <thumb aspect="poster">
     for thumb in root.findall("thumb"):
@@ -499,11 +505,28 @@ def parse_tvshow_nfo(nfo_path: Path) -> dict:
     result["plot"]  = _xml_text(root, "plot")
 
     for uid in root.findall("uniqueid"):
-        if uid.get("type") == "tmdb" and uid.text:
-            result["tmdb_id"] = uid.text.strip()
-            break
+        uid_type = (uid.get("type") or "").strip().lower()
+        uid_val = (uid.text or "").strip()
+        if not uid_val:
+            continue
+        if uid_type in {"tmdb", "themoviedb"} and "tmdb_id" not in result:
+            result["tmdb_id"] = uid_val
+        if uid_type in {"tvdb", "thetvdb"} and "tvdb_id" not in result:
+            result["tvdb_id"] = uid_val
+
     if "tmdb_id" not in result:
-        result["tmdb_id"] = _xml_text(root, "id")
+        tmdb_fallback = _xml_text(root, "tmdbid", "tmdb_id")
+        if tmdb_fallback:
+            result["tmdb_id"] = tmdb_fallback
+    if "tvdb_id" not in result:
+        tvdb_fallback = _xml_text(root, "tvdbid", "tvdb_id")
+        if tvdb_fallback:
+            result["tvdb_id"] = tvdb_fallback
+    # Legacy fallback for tvshow.nfo: <id> is often TVDB, never coerce into tmdb_id.
+    if "tvdb_id" not in result:
+        tvdb_legacy = _xml_text(root, "id")
+        if tvdb_legacy:
+            result["tvdb_id"] = tvdb_legacy
 
     for thumb in root.findall("thumb"):
         if thumb.get("aspect") == "poster" and thumb.text:
