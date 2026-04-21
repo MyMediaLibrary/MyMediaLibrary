@@ -1879,6 +1879,41 @@ def _clamp_int(value, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
 
 
+def _score_max_from_table(table: dict | None) -> int:
+    if not isinstance(table, dict):
+        return 0
+    best = 0.0
+    for value in table.values():
+        if isinstance(value, (int, float)):
+            best = max(best, _as_number(value, 0.0))
+    return _as_int(best, 0)
+
+
+def _compute_derived_max_score(score_config: dict) -> dict:
+    if not isinstance(score_config, dict):
+        return {
+            "max_video": 0,
+            "max_audio": 0,
+            "max_languages": 0,
+            "max_size": 0,
+        }
+    video = score_config.get("video") if isinstance(score_config.get("video"), dict) else {}
+    audio = score_config.get("audio") if isinstance(score_config.get("audio"), dict) else {}
+    languages = score_config.get("languages") if isinstance(score_config.get("languages"), dict) else {}
+    size = score_config.get("size") if isinstance(score_config.get("size"), dict) else {}
+    max_video = (
+        _score_max_from_table(video.get("resolution") if isinstance(video.get("resolution"), dict) else {})
+        + _score_max_from_table(video.get("codec") if isinstance(video.get("codec"), dict) else {})
+        + _score_max_from_table(video.get("hdr") if isinstance(video.get("hdr"), dict) else {})
+    )
+    return {
+        "max_video": _as_int(max_video, 0),
+        "max_audio": _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {}),
+        "max_languages": _score_max_from_table(languages.get("profile") if isinstance(languages.get("profile"), dict) else {}),
+        "max_size": _score_max_from_table(size.get("points") if isinstance(size.get("points"), dict) else {}),
+    }
+
+
 def load_score_defaults() -> dict:
     try:
         with open(SCORE_DEFAULTS_PATH, encoding="utf-8") as f:
@@ -1926,6 +1961,11 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
             fallback = _score_get_path(base_defaults, path)
             _score_set_path(cfg, path, fallback)
             notes.append({"path": path, "reason": "missing_default_restored"})
+
+    derived_max_score = _compute_derived_max_score(cfg)
+    if cfg.get("max_score") != derived_max_score:
+        cfg["max_score"] = derived_max_score
+        notes.append({"path": "max_score", "reason": "derived_refreshed"})
 
     status = compute_score_status(cfg)
     status["normalization_notes"] = notes

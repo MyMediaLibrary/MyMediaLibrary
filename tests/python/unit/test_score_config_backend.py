@@ -13,6 +13,20 @@ import scanner  # noqa: E402
 
 
 class ScoreConfigBackendTest(unittest.TestCase):
+    def test_validate_score_config_derives_max_score_block(self):
+        defaults = scanner.load_score_defaults()
+        effective, _status = scanner.validate_score_config(defaults, defaults=defaults)
+        self.assertIn("max_score", effective)
+        self.assertEqual(
+            effective["max_score"],
+            {
+                "max_video": 50,
+                "max_audio": 20,
+                "max_languages": 15,
+                "max_size": 15,
+            },
+        )
+
     def test_validate_score_config_restores_required_default_paths(self):
         defaults = scanner.load_score_defaults()
         broken = scanner.merge_score_config(defaults, {})
@@ -41,6 +55,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
         self.assertNotIn("schema_version", defaults)
         self.assertNotIn("schema_version", effective)
         self.assertEqual(effective["weights"]["video"], 49)
+        self.assertIn("max_score", effective)
         self.assertEqual(status["weights_total"], 100)
         self.assertTrue(status["weights_valid"])
 

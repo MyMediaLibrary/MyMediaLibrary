@@ -115,5 +115,11 @@
         }
       }
     }
+  },
+  "max_score": {
+    "max_video": 50,
+    "max_audio": 20,
+    "max_languages": 15,
+    "max_size": 15
   }
 }

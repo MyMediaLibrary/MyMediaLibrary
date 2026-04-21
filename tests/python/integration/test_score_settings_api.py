@@ -98,6 +98,16 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertIn("effective", payload)
         self.assertIn("ui_schema", payload)
         self.assertIn("status", payload)
+        self.assertIn("max_score", payload["effective"])
+        self.assertEqual(
+            payload["effective"]["max_score"],
+            {
+                "max_video": 50,
+                "max_audio": 20,
+                "max_languages": 15,
+                "max_size": 15,
+            },
+        )
         self.assertNotIn("schema_version", payload)
         self.assertNotIn("schema_version", payload["defaults"])
         self.assertNotIn("schema_version", payload["effective"])

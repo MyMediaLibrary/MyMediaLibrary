@@ -21,6 +21,19 @@ class QualityScoringV1Test(unittest.TestCase):
         self.assertEqual(scoring.get_max_languages_score(cfg), 15)
         self.assertEqual(scoring.get_max_size_score(cfg), 15)
 
+    def test_max_helpers_prefer_precomputed_max_score_block(self):
+        cfg = scoring.get_builtin_score_defaults()
+        cfg["max_score"] = {
+            "max_video": 77,
+            "max_audio": 31,
+            "max_languages": 22,
+            "max_size": 11,
+        }
+        self.assertEqual(scoring.get_max_video_score(cfg), 77)
+        self.assertEqual(scoring.get_max_audio_score(cfg), 31)
+        self.assertEqual(scoring.get_max_languages_score(cfg), 22)
+        self.assertEqual(scoring.get_max_size_score(cfg), 11)
+
     def test_video_scores(self):
         self.assertEqual(
             scoring.compute_video_quality_score({"resolution": "4K", "codec": "H.265", "hdr_type": "Dolby Vision"})["score"],

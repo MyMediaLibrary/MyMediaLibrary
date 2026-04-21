@@ -606,7 +606,7 @@
     let html = weightsHtml;
     let sectionIdx = 0;
     Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
-      if (key === 'weights' || key === 'penalties') return;
+      if (key === 'weights' || key === 'penalties' || key === 'max_score') return;
       html += _renderScoreSection(key, value, sectionIdx);
       sectionIdx += 1;
     });

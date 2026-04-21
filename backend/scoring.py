@@ -128,6 +128,12 @@ DEFAULT_SCORE_CONFIG: dict[str, Any] = {
             },
         },
     },
+    "max_score": {
+        "max_video": 50,
+        "max_audio": 20,
+        "max_languages": 15,
+        "max_size": 15,
+    },
 }
 
 
@@ -440,24 +446,36 @@ def compute_size_quality_score(item: dict, score_config: dict[str, Any] | None =
 
 def get_max_video_score(score_config: dict[str, Any] | None = None) -> int:
     cfg = _resolve_score_config(score_config)
+    max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
+    if isinstance(max_score.get("max_video"), (int, float)):
+        return _as_int(max_score.get("max_video"), 0)
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("video"), 0)
 
 
 def get_max_audio_score(score_config: dict[str, Any] | None = None) -> int:
     cfg = _resolve_score_config(score_config)
+    max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
+    if isinstance(max_score.get("max_audio"), (int, float)):
+        return _as_int(max_score.get("max_audio"), 0)
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("audio"), 0)
 
 
 def get_max_languages_score(score_config: dict[str, Any] | None = None) -> int:
     cfg = _resolve_score_config(score_config)
+    max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
+    if isinstance(max_score.get("max_languages"), (int, float)):
+        return _as_int(max_score.get("max_languages"), 0)
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("languages"), 0)
 
 
 def get_max_size_score(score_config: dict[str, Any] | None = None) -> int:
     cfg = _resolve_score_config(score_config)
+    max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
+    if isinstance(max_score.get("max_size"), (int, float)):
+        return _as_int(max_score.get("max_size"), 0)
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("size"), 0)
 
