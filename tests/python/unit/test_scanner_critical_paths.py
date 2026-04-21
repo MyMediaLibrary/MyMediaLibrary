@@ -169,11 +169,52 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             cat = {"name": "Series", "type": "tv"}
             prev = {"tmdb_id": "legacy", "tvdb_id": "legacy-tvdb"}
             with patch.object(scanner, "parse_tvshow_nfo", return_value={"title": "Andor", "tmdb_id": "228068", "tvdb_id": "83867"}), \
-                 patch.object(scanner, "find_episode_nfo", return_value={}), \
-                 patch.object(scanner, "count_seasons_episodes", return_value=(1, 12)):
+                 patch.object(scanner, "collect_series_episode_metadata", return_value=[]), \
+                 patch.object(scanner, "aggregate_series_metadata", return_value={"seasons": [], "season_count": 1, "episode_count": 12}):
                 item = scanner.scan_media_item(media_dir, root, cat, prev, enable_score=False)
             self.assertEqual(item["tmdb_id"], "228068")
             self.assertEqual(item["tvdb_id"], "83867")
+            self.assertIn("seasons", item)
+            self.assertIsNone(item.get("episodes_expected"))
+            self.assertIsNone(item.get("complete"))
+
+    def test_aggregate_audio_languages_does_not_promote_single_episode_outlier(self):
+        episodes = [
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["fra", "eng"]},
+            {"audio_languages": ["eng"]},
+            {"audio_languages": ["jpn"]},
+        ]
+        langs = scanner._aggregate_audio_languages_from_episodes(episodes)
+        self.assertEqual(langs, ["eng", "fra"])
+
+    def test_merge_series_expected_counts_from_seerr_sets_completeness(self):
+        item = {
+            "episode_count": 18,
+            "season_count": 2,
+            "seasons": [
+                {"season": 1, "episodes_found": 10},
+                {"season": 2, "episodes_found": 8},
+            ],
+        }
+        merged = scanner.merge_series_expected_counts_from_seerr(
+            item,
+            {
+                "episodes_expected": 20,
+                "season_count_expected": 2,
+                "season_episode_counts": {1: 10, 2: 10},
+            },
+        )
+        self.assertEqual(merged["episodes_expected"], 20)
+        self.assertFalse(merged["complete"])
+        self.assertEqual(merged["seasons"][0]["episodes_expected"], 10)
+        self.assertEqual(merged["seasons"][1]["episodes_expected"], 10)
 
 
 class FolderEnabledCompatibilityTest(unittest.TestCase):

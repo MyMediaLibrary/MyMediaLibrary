@@ -28,8 +28,9 @@ import hmac
 import http.server
 import json
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from logging.handlers import RotatingFileHandler
+import math
 import os
 import re
 import secrets
@@ -40,6 +41,7 @@ import threading
 import time
 import urllib.request
 import urllib.parse
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -874,6 +876,584 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
+_TV_SKIP_NFO = {"tvshow.nfo", "season.nfo"}
+_TV_SE_EP_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+_TV_SEASON_HINT_RE = re.compile(r"(?:season|saison)[\s._-]*(\d{1,2})", re.IGNORECASE)
+
+
+def _safe_int(value, default: int | None = None) -> int | None:
+    try:
+        if value is None:
+            return default
+        return int(float(str(value).strip()))
+    except Exception:
+        return default
+
+
+def _dominant_value(values: list):
+    counter = Counter(v for v in values if v not in (None, "", []))
+    if not counter:
+        return None
+    return sorted(counter.items(), key=lambda x: (-x[1], str(x[0])))[0][0]
+
+
+def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int | None]:
+    if not path_like:
+        return None, None
+    match = _TV_SE_EP_RE.search(path_like)
+    if match:
+        return _safe_int(match.group(1)), _safe_int(match.group(2))
+    season_hint = _TV_SEASON_HINT_RE.search(path_like)
+    if season_hint:
+        return _safe_int(season_hint.group(1)), None
+    return None, None
+
+
+def _build_episode_dedupe_key(season_num: int | None, episode_num: int | None, fallback: str) -> str:
+    if season_num is not None and episode_num is not None:
+        return f"s{season_num:02d}e{episode_num:03d}"
+    return fallback.casefold()
+
+
+def _episode_metadata_completeness(ep: dict) -> int:
+    score = 0
+    for key in (
+        "resolution",
+        "width",
+        "height",
+        "codec",
+        "audio_codec_raw",
+        "audio_codec",
+        "audio_languages",
+        "hdr_type",
+        "runtime_min",
+        "size_b",
+    ):
+        val = ep.get(key)
+        if val not in (None, "", [], 0):
+            score += 1
+    return score
+
+
+def _prefer_episode_metadata(current: dict | None, candidate: dict) -> dict:
+    if current is None:
+        return candidate
+    cur_score = _episode_metadata_completeness(current)
+    new_score = _episode_metadata_completeness(candidate)
+    if new_score > cur_score:
+        return candidate
+    if new_score < cur_score:
+        return current
+    if int(candidate.get("size_b") or 0) > int(current.get("size_b") or 0):
+        return candidate
+    return current
+
+
+def _parse_episode_nfo_metadata(nfo_path: Path) -> dict | None:
+    try:
+        root = ET.parse(nfo_path).getroot()
+    except Exception:
+        return None
+
+    rel_hint = str(nfo_path)
+    season_num = _safe_int((root.findtext("season") or "").strip(), None)
+    episode_num = _safe_int((root.findtext("episode") or "").strip(), None)
+    if season_num is None or episode_num is None:
+        inferred_season, inferred_episode = _extract_season_episode_from_name(rel_hint)
+        if season_num is None:
+            season_num = inferred_season
+        if episode_num is None:
+            episode_num = inferred_episode
+    if season_num is None:
+        season_num = 1
+
+    video = root.find(".//fileinfo/streamdetails/video")
+    audio = root.find(".//fileinfo/streamdetails/audio")
+
+    width = _safe_int(video.findtext("width") if video is not None else None, None)
+    height = _safe_int(video.findtext("height") if video is not None else None, None)
+    resolution = classify_resolution(width, height) if width and height else None
+
+    raw_codec = (video.findtext("codec") if video is not None else None)
+    codec = normalize_codec(raw_codec)
+    if _is_unknown_sentinel(codec):
+        codec = None
+
+    hdr_type = (video.findtext("hdrtype") if video is not None else None) or None
+    if isinstance(hdr_type, str):
+        hdr_type = hdr_type.strip() or None
+    hdr = bool(hdr_type)
+
+    runtime_min = _safe_int(
+        (video.findtext("duration") if video is not None else None)
+        or root.findtext("runtime")
+        or root.findtext("durationinseconds"),
+        None,
+    )
+
+    raw_audio = (audio.findtext("codec") if audio is not None else None) or root.findtext("audio_codec") or root.findtext("audiocodec")
+    audio_norm = normalize_audio_codec(raw_audio)
+
+    langs = parse_audio_languages(root)
+    audio_languages_simple = simplify_audio_languages(langs)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    size_b = 0
+    for ext in MEDIA_EXTENSIONS:
+        candidate = nfo_path.with_suffix(ext)
+        if candidate.exists() and candidate.is_file():
+            try:
+                size_b = int(candidate.stat().st_size)
+            except Exception:
+                size_b = 0
+            break
+
+    dedupe_key = _build_episode_dedupe_key(
+        season_num,
+        episode_num,
+        fallback=str(nfo_path.name),
+    )
+    return {
+        "season": season_num,
+        "episode": episode_num,
+        "dedupe_key": dedupe_key,
+        "size_b": max(0, int(size_b or 0)),
+        "width": width,
+        "height": height,
+        "resolution": resolution,
+        "codec": codec,
+        "audio_codec_raw": audio_norm.get("raw"),
+        "audio_codec": audio_norm.get("normalized"),
+        "audio_languages": langs,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+        "runtime_min": runtime_min,
+    }
+
+
+def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) -> list[dict]:
+    parsed: list[dict] = []
+    try:
+        files = sorted(
+            p for p in series_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in MEDIA_EXTENSIONS and not p.name.startswith("._")
+        )
+    except Exception:
+        return parsed
+
+    for video in files:
+        season_num, episode_num = _extract_season_episode_from_name(str(video))
+        if season_num is None:
+            season_num = 1
+        key = _build_episode_dedupe_key(
+            season_num,
+            episode_num,
+            fallback=str(video.relative_to(series_dir)),
+        )
+        if key in existing_keys:
+            continue
+        try:
+            size_b = int(video.stat().st_size)
+        except Exception:
+            size_b = 0
+        parsed.append({
+            "season": season_num,
+            "episode": episode_num,
+            "dedupe_key": key,
+            "size_b": max(0, size_b),
+            "width": None,
+            "height": None,
+            "resolution": None,
+            "codec": None,
+            "audio_codec_raw": None,
+            "audio_codec": None,
+            "audio_languages": [],
+            "audio_languages_simple": None,
+            "hdr": False,
+            "hdr_type": None,
+            "runtime_min": None,
+        })
+    return parsed
+
+
+def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    try:
+        nfo_candidates = sorted(
+            p for p in series_dir.rglob("*.nfo")
+            if p.is_file() and p.name.lower() not in _TV_SKIP_NFO and not p.name.startswith("._")
+        )
+    except Exception:
+        nfo_candidates = []
+
+    for nfo_path in nfo_candidates:
+        ep = _parse_episode_nfo_metadata(nfo_path)
+        if not isinstance(ep, dict):
+            continue
+        key = ep["dedupe_key"]
+        deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
+
+    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys())):
+        key = ep["dedupe_key"]
+        deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
+
+    return list(deduped.values())
+
+
+def _aggregate_audio_languages_from_episodes(episodes: list[dict]) -> list[str]:
+    total = len(episodes)
+    if total <= 0:
+        return []
+    threshold = 1 if total <= 2 else max(2, int(math.ceil(total * 0.20)))
+    lang_counter: Counter = Counter()
+    for ep in episodes:
+        langs = ep.get("audio_languages") or []
+        if not isinstance(langs, list):
+            continue
+        for lang in sorted(set(langs)):
+            if lang:
+                lang_counter[lang] += 1
+    selected = [lang for lang, count in lang_counter.items() if count >= threshold]
+    if not selected and lang_counter:
+        selected = [lang for lang, _ in sorted(lang_counter.items(), key=lambda x: (-x[1], x[0]))[:2]]
+    return sorted(selected)
+
+
+def aggregate_season_metadata(
+    season_number: int,
+    season_episodes: list[dict],
+    *,
+    episodes_expected: int | None = None,
+    score_config: dict | None = None,
+) -> dict:
+    episodes_found = len(season_episodes)
+    dominant_resolution = _dominant_value([e.get("resolution") for e in season_episodes])
+    dominant_width = _dominant_value([e.get("width") for e in season_episodes])
+    dominant_height = _dominant_value([e.get("height") for e in season_episodes])
+    dominant_codec = _dominant_value([e.get("codec") for e in season_episodes])
+    dominant_audio_raw = _dominant_value([e.get("audio_codec_raw") for e in season_episodes])
+    dominant_audio = _dominant_value([e.get("audio_codec") for e in season_episodes])
+    dominant_hdr_type = _dominant_value([e.get("hdr_type") for e in season_episodes])
+    dominant_hdr = bool(dominant_hdr_type)
+    if not dominant_hdr and any(bool(e.get("hdr")) for e in season_episodes):
+        dominant_hdr = True
+
+    known_runtimes = [int(e["runtime_min"]) for e in season_episodes if isinstance(e.get("runtime_min"), int) and e.get("runtime_min") > 0]
+    runtime_min_total = int(sum(known_runtimes)) if known_runtimes else 0
+    runtime_min_avg = int(round(runtime_min_total / len(known_runtimes))) if known_runtimes else None
+
+    size_b = int(sum(int(e.get("size_b") or 0) for e in season_episodes))
+    audio_languages = _aggregate_audio_languages_from_episodes(season_episodes)
+    audio_languages_simple = simplify_audio_languages(audio_languages)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    season_item_for_score = {
+        "type": "tv",
+        "resolution": dominant_resolution,
+        "width": dominant_width,
+        "height": dominant_height,
+        "codec": dominant_codec,
+        "audio_codec_raw": dominant_audio_raw,
+        "audio_codec": dominant_audio,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": dominant_hdr,
+        "hdr_type": dominant_hdr_type,
+        "size_b": size_b,
+    }
+    quality = compute_quality(season_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(season_item_for_score)
+
+    return {
+        "season": int(season_number),
+        "episodes_found": int(episodes_found),
+        "episodes_expected": int(episodes_expected) if isinstance(episodes_expected, int) and episodes_expected >= 0 else None,
+        "resolution": dominant_resolution,
+        "width": dominant_width,
+        "height": dominant_height,
+        "codec": dominant_codec,
+        "audio_codec_raw": dominant_audio_raw,
+        "audio_codec": dominant_audio,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": dominant_hdr,
+        "hdr_type": dominant_hdr_type,
+        "runtime_min_total": runtime_min_total,
+        "runtime_min_avg": runtime_min_avg,
+        "size_b": size_b,
+        "size": format_size(size_b),
+        "quality": quality,
+    }
+
+
+def _weighted_quality_from_seasons(seasons: list[dict]) -> dict | None:
+    weighted = [s for s in seasons if isinstance(s, dict) and isinstance(s.get("quality"), dict) and int(s.get("episodes_found") or 0) > 0]
+    if not weighted:
+        return None
+    total_weight = float(sum(int(s.get("episodes_found") or 0) for s in weighted))
+    if total_weight <= 0:
+        return None
+
+    def _wavg(key: str) -> int:
+        total = 0.0
+        for s in weighted:
+            q = s.get("quality") or {}
+            total += float(q.get(key, 0) or 0) * int(s.get("episodes_found") or 0)
+        return int(round(total / total_weight))
+
+    score = max(0, min(100, _wavg("score")))
+    base_score = max(0, _wavg("base_score"))
+    video = max(0, _wavg("video"))
+    audio = max(0, _wavg("audio"))
+    languages = max(0, _wavg("languages"))
+    size = max(0, _wavg("size"))
+    return {
+        "score": score,
+        "base_score": base_score,
+        "video": video,
+        "audio": audio,
+        "languages": languages,
+        "size": size,
+        "score_details": {
+            "video": video,
+            "audio": audio,
+            "languages": languages,
+            "size": size,
+        },
+    }
+
+
+def aggregate_series_metadata(
+    series_episodes: list[dict],
+    *,
+    score_config: dict | None = None,
+    season_expected_counts: dict[int, int] | None = None,
+) -> dict:
+    by_season: dict[int, list[dict]] = defaultdict(list)
+    for ep in series_episodes:
+        season_num = _safe_int(ep.get("season"), 1)
+        if season_num is None:
+            season_num = 1
+        by_season[int(season_num)].append(ep)
+
+    seasons: list[dict] = []
+    expected = season_expected_counts or {}
+    season_numbers = sorted(set(by_season.keys()) | set(expected.keys()))
+    for season_num in season_numbers:
+        season_eps = by_season.get(season_num, [])
+        seasons.append(
+            aggregate_season_metadata(
+                season_num,
+                season_eps,
+                episodes_expected=expected.get(season_num),
+                score_config=score_config,
+            )
+        )
+
+    all_resolution = [e.get("resolution") for e in series_episodes]
+    all_width = [e.get("width") for e in series_episodes]
+    all_height = [e.get("height") for e in series_episodes]
+    all_codec = [e.get("codec") for e in series_episodes]
+    all_audio_raw = [e.get("audio_codec_raw") for e in series_episodes]
+    all_audio = [e.get("audio_codec") for e in series_episodes]
+    all_hdr_type = [e.get("hdr_type") for e in series_episodes]
+    known_runtimes = [int(e["runtime_min"]) for e in series_episodes if isinstance(e.get("runtime_min"), int) and e.get("runtime_min") > 0]
+
+    resolution = _dominant_value(all_resolution)
+    width = _dominant_value(all_width)
+    height = _dominant_value(all_height)
+    codec = _dominant_value(all_codec)
+    audio_codec_raw = _dominant_value(all_audio_raw)
+    audio_codec = _dominant_value(all_audio)
+    hdr_type = _dominant_value(all_hdr_type)
+    hdr = bool(hdr_type) or any(bool(e.get("hdr")) for e in series_episodes)
+
+    runtime_min = int(round(sum(known_runtimes) / len(known_runtimes))) if known_runtimes else None
+    episode_count = len(series_episodes)
+    season_count = len(seasons)
+    size_b = int(sum(int(e.get("size_b") or 0) for e in series_episodes))
+
+    audio_languages = _aggregate_audio_languages_from_episodes(series_episodes)
+    audio_languages_simple = simplify_audio_languages(audio_languages)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    series_item_for_score = {
+        "type": "tv",
+        "resolution": resolution,
+        "width": width,
+        "height": height,
+        "codec": codec,
+        "audio_codec_raw": audio_codec_raw,
+        "audio_codec": audio_codec,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+        "size_b": size_b,
+    }
+    fallback_quality = compute_quality(series_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(series_item_for_score)
+    weighted_quality = _weighted_quality_from_seasons(seasons)
+    quality = weighted_quality or fallback_quality
+
+    return {
+        "seasons": seasons,
+        "season_count": season_count,
+        "episode_count": episode_count,
+        "size_b": size_b,
+        "resolution": resolution,
+        "width": width,
+        "height": height,
+        "runtime_min": runtime_min,
+        "codec": codec,
+        "audio_codec_raw": audio_codec_raw,
+        "audio_codec": audio_codec,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+        "quality": quality,
+    }
+
+
+def _extract_seerr_expected_counts(payload: dict) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    episodes_expected = _safe_int(
+        payload.get("numberOfEpisodes")
+        or payload.get("number_of_episodes")
+        or payload.get("episodeCount")
+        or payload.get("episode_count"),
+        None,
+    )
+    season_count_expected = _safe_int(
+        payload.get("numberOfSeasons")
+        or payload.get("number_of_seasons")
+        or payload.get("seasonCount")
+        or payload.get("season_count"),
+        None,
+    )
+    season_episode_counts: dict[int, int] = {}
+    seasons = payload.get("seasons")
+    if isinstance(seasons, list):
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            season_num = _safe_int(season.get("seasonNumber") or season.get("season_number"), None)
+            if season_num is None:
+                continue
+            ep_expected = _safe_int(
+                season.get("episodeCount")
+                or season.get("episode_count")
+                or season.get("episodes")
+                or season.get("episodes_count"),
+                None,
+            )
+            if isinstance(ep_expected, int) and ep_expected >= 0:
+                season_episode_counts[int(season_num)] = int(ep_expected)
+    if episodes_expected is None and season_episode_counts:
+        episodes_expected = int(sum(season_episode_counts.values()))
+    if season_count_expected is None and season_episode_counts:
+        season_count_expected = len(season_episode_counts)
+    if episodes_expected is None and season_count_expected is None and not season_episode_counts:
+        return None
+    return {
+        "episodes_expected": episodes_expected,
+        "season_count_expected": season_count_expected,
+        "season_episode_counts": season_episode_counts,
+    }
+
+
+def _fetch_tv_expected_counts_from_seerr(
+    *,
+    tvdb_id: str | int | None,
+    tmdb_id: str | int | None,
+    title: str | None,
+    year: str | int | None,
+    jsr: dict | None,
+) -> dict | None:
+    if not isinstance(jsr, dict) or not jsr.get("enabled") or not jsr.get("url") or not jsr.get("apikey"):
+        return None
+    candidate_ids = []
+    if tvdb_id not in (None, ""):
+        candidate_ids.append(str(tvdb_id))
+    if tmdb_id not in (None, "") and str(tmdb_id) not in candidate_ids:
+        candidate_ids.append(str(tmdb_id))
+    for candidate in candidate_ids:
+        resp = _jsr_get(f"/tv/{candidate}", jsr)
+        if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND, _JSR_ERROR):
+            continue
+        counts = _extract_seerr_expected_counts(resp)
+        if counts:
+            return counts
+
+    resolved = _resolve_ids_from_search(title, year, is_tv=True, jsr=jsr)
+    if resolved is _FETCH_ERROR or not isinstance(resolved, dict):
+        return None
+    resolved_tvdb = resolved.get("tvdb_id")
+    resolved_tmdb = resolved.get("tmdb_id")
+    for candidate in (resolved_tvdb, resolved_tmdb):
+        if candidate in (None, ""):
+            continue
+        resp = _jsr_get(f"/tv/{candidate}", jsr)
+        if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND, _JSR_ERROR):
+            continue
+        counts = _extract_seerr_expected_counts(resp)
+        if counts:
+            return counts
+    return None
+
+
+def merge_series_expected_counts_from_seerr(series_item: dict, expected_counts: dict | None) -> dict:
+    if not isinstance(series_item, dict):
+        return series_item
+    if not isinstance(expected_counts, dict):
+        series_item["episodes_expected"] = None
+        series_item["complete"] = None
+        return series_item
+
+    episodes_expected = expected_counts.get("episodes_expected")
+    if isinstance(episodes_expected, int) and episodes_expected >= 0:
+        series_item["episodes_expected"] = episodes_expected
+    else:
+        series_item["episodes_expected"] = None
+
+    if isinstance(series_item.get("episode_count"), int) and isinstance(series_item.get("episodes_expected"), int):
+        series_item["complete"] = bool(series_item["episode_count"] == series_item["episodes_expected"])
+    else:
+        series_item["complete"] = None
+
+    season_expected = expected_counts.get("season_episode_counts")
+    if isinstance(season_expected, dict):
+        by_season = {
+            int(s.get("season")): s
+            for s in (series_item.get("seasons") or [])
+            if isinstance(s, dict) and isinstance(s.get("season"), int)
+        }
+        for season_num, expected_ep in season_expected.items():
+            if not isinstance(expected_ep, int) or expected_ep < 0:
+                continue
+            if season_num in by_season:
+                by_season[season_num]["episodes_expected"] = expected_ep
+                continue
+            placeholder = aggregate_season_metadata(
+                int(season_num),
+                [],
+                episodes_expected=expected_ep,
+                score_config=None,
+            )
+            by_season[season_num] = placeholder
+        series_item["seasons"] = [by_season[k] for k in sorted(by_season.keys())]
+
+    season_count_expected = expected_counts.get("season_count_expected")
+    if isinstance(season_count_expected, int) and season_count_expected > 0:
+        current = _safe_int(series_item.get("season_count"), 0) or 0
+        series_item["season_count"] = max(current, int(season_count_expected))
+    return series_item
+
+
 def _inventory_item_id(media_type: str, category: str, folder_name: str) -> str:
     return f"{media_type}:{category}:{folder_name}"
 
@@ -1525,6 +2105,9 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     if not isinstance(item, dict):
         return item
     clean = dict(item)
+    clean.pop("_scan_tv_episodes_scanned", None)
+    clean.pop("_scan_tv_series_scanned", None)
+    clean.pop("_scan_tv_seerr_counts", None)
     clean.pop("runtime", None)
     clean.pop("audio_codec_display", None)
     for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
@@ -1537,6 +2120,23 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
         q = dict(quality)
         q.pop("level", None)
         clean["quality"] = q
+    seasons = clean.get("seasons")
+    if isinstance(seasons, list):
+        sanitized_seasons = []
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            s = dict(season)
+            for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
+                if _is_unknown_sentinel(s.get(field)):
+                    s[field] = None
+            sq = s.get("quality")
+            if isinstance(sq, dict):
+                sq2 = dict(sq)
+                sq2.pop("level", None)
+                s["quality"] = sq2
+            sanitized_seasons.append(s)
+        clean["seasons"] = sanitized_seasons
     return clean
 
 
@@ -1582,7 +2182,15 @@ def _clean_raw_provider_name(name: str | None) -> str | None:
         return None
     return cleaned
 
-def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
+def scan_media_item(
+    media_dir: Path,
+    root: Path,
+    cat: dict,
+    prev: dict,
+    enable_score: bool = True,
+    score_config: dict | None = None,
+    jsr_for_counts: dict | None = None,
+) -> dict:
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
@@ -1598,15 +2206,33 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
 
     # --- NFO metadata ---
     nfo_meta = {}
+    series_agg: dict = {}
+    expected_counts: dict | None = None
     if is_tv:
         tvshow_nfo = media_dir / "tvshow.nfo"
         if tvshow_nfo.exists():
             nfo_meta = parse_tvshow_nfo(tvshow_nfo)
-        res_meta = find_episode_nfo(media_dir)
-        nfo_meta.update(res_meta)
-        s_count, e_count = count_seasons_episodes(media_dir)
-        nfo_meta["season_count"]  = s_count
-        nfo_meta["episode_count"] = e_count
+        series_episodes = collect_series_episode_metadata(media_dir)
+        series_agg = aggregate_series_metadata(
+            series_episodes,
+            score_config=score_config if isinstance(score_config, dict) else None,
+        )
+        if isinstance(jsr_for_counts, dict) and jsr_for_counts.get("enabled"):
+            expected_counts = _fetch_tv_expected_counts_from_seerr(
+                tvdb_id=nfo_meta.get("tvdb_id") or prev.get("tvdb_id"),
+                tmdb_id=nfo_meta.get("tmdb_id") or prev.get("tmdb_id"),
+                title=nfo_meta.get("title") or prev.get("title") or _clean_title(raw_name),
+                year=nfo_meta.get("year") or prev.get("year") or _extract_year(raw_name),
+                jsr=jsr_for_counts,
+            )
+            if isinstance(expected_counts, dict):
+                season_expected = expected_counts.get("season_episode_counts")
+                if isinstance(season_expected, dict):
+                    series_agg = aggregate_series_metadata(
+                        series_episodes,
+                        score_config=score_config if isinstance(score_config, dict) else None,
+                        season_expected_counts=season_expected,
+                    )
     else:
         nfo_file = find_movie_nfo(media_dir)
         if nfo_file:
@@ -1641,8 +2267,9 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         tvdb_id = None
     size_b = get_dir_size(media_dir)
 
-    hdr_current = bool(nfo_meta.get("hdr", False))
-    hdr_type_current = (nfo_meta.get("hdr_type") or "").strip() or None
+    hdr_source = series_agg if is_tv else nfo_meta
+    hdr_current = bool(hdr_source.get("hdr", False))
+    hdr_type_current = (hdr_source.get("hdr_type") or "").strip() or None
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
@@ -1662,30 +2289,45 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "poster":            poster,
         "tmdb_id":           tmdb_id,
         "tvdb_id":           tvdb_id,
-        "resolution":        nfo_meta.get("resolution") or prev.get("resolution"),
-        "width":             nfo_meta.get("width")      or prev.get("width"),
-        "height":            nfo_meta.get("height")     or prev.get("height"),
+        "resolution":        (series_agg.get("resolution") if is_tv else nfo_meta.get("resolution")) or prev.get("resolution"),
+        "width":             (series_agg.get("width") if is_tv else nfo_meta.get("width")) or prev.get("width"),
+        "height":            (series_agg.get("height") if is_tv else nfo_meta.get("height")) or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
-        "runtime_min":       nfo_meta.get("runtime_min") or prev.get("runtime_min"),
-        "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
-        "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
-        "codec":              nfo_meta.get("codec")              or prev.get("codec"),
-        "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
-        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec"),
-        "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
-        "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
+        "runtime_min":       (series_agg.get("runtime_min") if is_tv else nfo_meta.get("runtime_min")) or prev.get("runtime_min"),
+        "season_count":      (series_agg.get("season_count") if is_tv else nfo_meta.get("season_count")) or prev.get("season_count"),
+        "episode_count":     (series_agg.get("episode_count") if is_tv else nfo_meta.get("episode_count")) or prev.get("episode_count"),
+        "codec":             (series_agg.get("codec") if is_tv else nfo_meta.get("codec")) or prev.get("codec"),
+        "audio_codec_raw":   (series_agg.get("audio_codec_raw") if is_tv else nfo_meta.get("audio_codec_raw")) or prev.get("audio_codec_raw"),
+        "audio_codec":       (series_agg.get("audio_codec") if is_tv else nfo_meta.get("audio_codec")) or prev.get("audio_codec"),
+        "audio_languages":   (series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or [],
+        "audio_languages_simple": (series_agg.get("audio_languages_simple") if is_tv else nfo_meta.get("audio_languages_simple")) or prev.get("audio_languages_simple") or simplify_audio_languages((series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous library.json — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
+    if is_tv:
+        item["size_b"] = int(series_agg.get("size_b") or size_b)
+        item["size"] = format_size(item["size_b"])
+        item["seasons"] = series_agg.get("seasons") or []
+        item["episodes_expected"] = None
+        item["complete"] = None
+        item = merge_series_expected_counts_from_seerr(item, expected_counts)
+        item["_scan_tv_episodes_scanned"] = int(series_agg.get("episode_count") or 0)
+        item["_scan_tv_series_scanned"] = 1
+        item["_scan_tv_seerr_counts"] = bool(isinstance(expected_counts, dict))
     if enable_score:
-        preserved_quality = prev.get("quality")
-        if isinstance(preserved_quality, dict):
-            q = dict(preserved_quality)
+        if is_tv and isinstance(series_agg.get("quality"), dict):
+            q = dict(series_agg["quality"])
             q.pop("level", None)
-            item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+            item["quality"] = q
+        else:
+            preserved_quality = prev.get("quality")
+            if isinstance(preserved_quality, dict):
+                q = dict(preserved_quality)
+                q.pop("level", None)
+                item["quality"] = q  # preserved during quick scan; overwritten by phase 3
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
@@ -1718,6 +2360,9 @@ def run_quick(only_category: str | None = None) -> None:
         save_config(cfg)
         cfg = load_config()
     score_enabled = _is_score_enabled(cfg)
+    _, effective_score_config, _ = get_effective_score_config(cfg)
+    jsr_for_counts = _jsr_cfg()
+    seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
 
     categories = build_categories_from_config(cfg)
 
@@ -1772,6 +2417,9 @@ def run_quick(only_category: str | None = None) -> None:
 
     items = []
     scanned_paths = set()
+    tv_series_scanned = 0
+    tv_episodes_scanned = 0
+    tv_series_with_seerr_counts = 0
 
     active_cats = [c for c in categories if not only_category or c["name"] == only_category]
     n_cats = len(active_cats)
@@ -1793,8 +2441,19 @@ def run_quick(only_category: str | None = None) -> None:
             prev = existing.get(item_path, {})
 
             # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
-            item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
+            item = scan_media_item(
+                media_dir,
+                root,
+                cat,
+                prev,
+                enable_score=score_enabled,
+                score_config=effective_score_config,
+                jsr_for_counts=jsr_for_counts if cat["type"] == "tv" and seerr_counts_active else None,
+            )
             items.append(item)
+            tv_series_scanned += int(item.get("_scan_tv_series_scanned") or 0)
+            tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
+            tv_series_with_seerr_counts += int(1 if item.get("_scan_tv_seerr_counts") else 0)
             scanned_paths.add(item_path)
 
         count = len(items) - cat_items_before
@@ -1878,6 +2537,13 @@ def run_quick(only_category: str | None = None) -> None:
     res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
     log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
     log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    log.info(
+        f"[SCAN] TV scan summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
+    )
+    if seerr_counts_active:
+        log.info(
+            f"[SCAN] TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
+        )
 
     log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
 
@@ -2076,7 +2742,48 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
     for item in items:
         if not isinstance(item, dict):
             continue
-        item["quality"] = compute_quality(item, score_config)
+        if str(item.get("type")).lower() == "tv" and isinstance(item.get("seasons"), list):
+            seasons = []
+            for season in item.get("seasons") or []:
+                if not isinstance(season, dict):
+                    continue
+                season_for_score = {
+                    "type": "tv",
+                    "resolution": season.get("resolution"),
+                    "width": season.get("width"),
+                    "height": season.get("height"),
+                    "codec": season.get("codec"),
+                    "audio_codec_raw": season.get("audio_codec_raw"),
+                    "audio_codec": season.get("audio_codec"),
+                    "audio_languages": season.get("audio_languages") or [],
+                    "audio_languages_simple": season.get("audio_languages_simple"),
+                    "hdr": season.get("hdr"),
+                    "hdr_type": season.get("hdr_type"),
+                    "size_b": season.get("size_b"),
+                }
+                quality = compute_quality(season_for_score, score_config)
+                season_copy = dict(season)
+                season_copy["quality"] = quality
+                seasons.append(season_copy)
+            item["seasons"] = seasons
+            weighted_quality = _weighted_quality_from_seasons(seasons)
+            item_for_score = {
+                "type": "tv",
+                "resolution": item.get("resolution"),
+                "width": item.get("width"),
+                "height": item.get("height"),
+                "codec": item.get("codec"),
+                "audio_codec_raw": item.get("audio_codec_raw"),
+                "audio_codec": item.get("audio_codec"),
+                "audio_languages": item.get("audio_languages") or [],
+                "audio_languages_simple": item.get("audio_languages_simple"),
+                "hdr": item.get("hdr"),
+                "hdr_type": item.get("hdr_type"),
+                "size_b": item.get("size_b"),
+            }
+            item["quality"] = weighted_quality or compute_quality(item_for_score, score_config)
+        else:
+            item["quality"] = compute_quality(item, score_config)
         item.pop("score", None)
         updated += 1
     return updated
