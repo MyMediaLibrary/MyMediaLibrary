@@ -176,7 +176,7 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             self.assertEqual(item["tvdb_id"], "83867")
             self.assertIn("seasons", item)
             self.assertIsNone(item.get("episodes_expected"))
-            self.assertIsNone(item.get("complete"))
+            self.assertNotIn("complete", item)
 
     def test_aggregate_audio_languages_does_not_promote_single_episode_outlier(self):
         episodes = [
@@ -194,7 +194,7 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         langs = scanner._aggregate_audio_languages_from_episodes(episodes)
         self.assertEqual(langs, ["eng", "fra"])
 
-    def test_merge_series_expected_counts_from_seerr_sets_completeness(self):
+    def test_merge_series_expected_counts_from_seerr_sets_expected_counts_only(self):
         item = {
             "episode_count": 18,
             "season_count": 2,
@@ -212,7 +212,7 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             },
         )
         self.assertEqual(merged["episodes_expected"], 20)
-        self.assertFalse(merged["complete"])
+        self.assertNotIn("complete", merged)
         self.assertEqual(merged["seasons"][0]["episodes_expected"], 10)
         self.assertEqual(merged["seasons"][1]["episodes_expected"], 10)
 

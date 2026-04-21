@@ -2,6 +2,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -98,7 +99,8 @@ class TvAggregationV033Test(unittest.TestCase):
         self.assertEqual(agg["width"], 1920)
         self.assertEqual(agg["height"], 1080)
         self.assertEqual(agg["episode_count"], 10)
-        self.assertEqual(agg["runtime_min"], 47)
+        self.assertEqual(agg["runtime_min"], 474)
+        self.assertEqual(agg["runtime_min_avg"], 47)
         self.assertIn("quality", agg)
         self.assertNotIn("base_score", agg["quality"])
         self.assertNotIn("score_details", agg["quality"])
@@ -108,6 +110,99 @@ class TvAggregationV033Test(unittest.TestCase):
             + agg["quality"]["video_details"]["codec"]
             + agg["quality"]["video_details"]["hdr"],
         )
+
+    def test_aggregate_series_metadata_uses_season_sums_for_runtime_and_size(self):
+        seasons = [
+            {
+                "season": 1,
+                "episodes_found": 10,
+                "episodes_expected": 10,
+                "resolution": "720p",
+                "width": 1280,
+                "height": 720,
+                "codec": "H.264",
+                "audio_codec_raw": "aac",
+                "audio_codec": "AAC",
+                "audio_languages": ["eng", "fra"],
+                "audio_languages_simple": "MULTI",
+                "hdr": False,
+                "hdr_type": None,
+                "runtime_min_total": 460,
+                "size_b": 30 * 1024**3,
+                "quality": scanner.compute_quality({"type": "tv", "resolution": "720p", "codec": "H.264", "size_b": 30 * 1024**3}),
+            },
+            {
+                "season": 2,
+                "episodes_found": 8,
+                "episodes_expected": 10,
+                "resolution": "1080p",
+                "width": 1920,
+                "height": 1080,
+                "codec": "H.265",
+                "audio_codec_raw": "eac3",
+                "audio_codec": "Dolby Digital Plus",
+                "audio_languages": ["eng", "fra"],
+                "audio_languages_simple": "MULTI",
+                "hdr": False,
+                "hdr_type": None,
+                "runtime_min_total": 392,
+                "size_b": 57 * 1024**3,
+                "quality": scanner.compute_quality({"type": "tv", "resolution": "1080p", "codec": "H.265", "size_b": 57 * 1024**3}),
+            },
+        ]
+        with patch.object(scanner, "aggregate_season_metadata", side_effect=seasons):
+            agg = scanner.aggregate_series_metadata([{"season": 1}, {"season": 2}])
+
+        self.assertEqual(agg["episode_count"], 18)
+        self.assertEqual(agg["episodes_expected"], 20)
+        self.assertEqual(agg["runtime_min"], 852)
+        self.assertEqual(agg["runtime_min_avg"], 47)
+        self.assertEqual(agg["size_b"], (30 + 57) * 1024**3)
+
+    def test_aggregate_series_metadata_expected_is_none_when_partial(self):
+        seasons = [
+            {
+                "season": 1,
+                "episodes_found": 10,
+                "episodes_expected": 10,
+                "runtime_min_total": 460,
+                "size_b": 1,
+                "quality": {
+                    "score": 1,
+                    "video": 1,
+                    "audio": 0,
+                    "languages": 0,
+                    "size": 0,
+                    "video_w": 1.0,
+                    "audio_w": 0.0,
+                    "languages_w": 0.0,
+                    "size_w": 0.0,
+                    "video_details": {"resolution": 1, "codec": 0, "hdr": 0},
+                },
+            },
+            {
+                "season": 2,
+                "episodes_found": 8,
+                "episodes_expected": None,
+                "runtime_min_total": 392,
+                "size_b": 1,
+                "quality": {
+                    "score": 1,
+                    "video": 1,
+                    "audio": 0,
+                    "languages": 0,
+                    "size": 0,
+                    "video_w": 1.0,
+                    "audio_w": 0.0,
+                    "languages_w": 0.0,
+                    "size_w": 0.0,
+                    "video_details": {"resolution": 1, "codec": 0, "hdr": 0},
+                },
+            },
+        ]
+        with patch.object(scanner, "aggregate_season_metadata", side_effect=seasons):
+            agg = scanner.aggregate_series_metadata([{"season": 1}, {"season": 2}])
+        self.assertIsNone(agg["episodes_expected"])
 
     def test_aggregate_season_runtime_handles_missing_values(self):
         season = scanner.aggregate_season_metadata(
