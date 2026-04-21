@@ -14,6 +14,13 @@ def _gb(value: float) -> int:
 
 
 class QualityScoringV1Test(unittest.TestCase):
+    def test_max_helpers_from_active_config(self):
+        cfg = scoring.get_builtin_score_defaults()
+        self.assertEqual(scoring.get_max_video_score(cfg), 50)
+        self.assertEqual(scoring.get_max_audio_score(cfg), 20)
+        self.assertEqual(scoring.get_max_languages_score(cfg), 15)
+        self.assertEqual(scoring.get_max_size_score(cfg), 15)
+
     def test_video_scores(self):
         self.assertEqual(
             scoring.compute_video_quality_score({"resolution": "4K", "codec": "H.265", "hdr_type": "Dolby Vision"})["score"],
@@ -113,7 +120,7 @@ class QualityScoringV1Test(unittest.TestCase):
         self.assertGreaterEqual(low_quality["score"], 0)
         self.assertLessEqual(low_quality["score"], 100)
 
-    def test_weights_do_not_change_score_when_only_weights_change(self):
+    def test_weights_change_score_when_only_weights_change(self):
         item = {
             "resolution": "1080p",
             "codec": "H.264",
@@ -134,7 +141,7 @@ class QualityScoringV1Test(unittest.TestCase):
         }
         shifted = scoring.compute_quality(item, reweighted)["score"]
 
-        self.assertEqual(baseline, shifted)
+        self.assertNotEqual(baseline, shifted)
 
     def test_score_formula_is_deterministic_even_with_invalid_weight_values(self):
         item = {
@@ -155,7 +162,11 @@ class QualityScoringV1Test(unittest.TestCase):
         quality = scoring.compute_quality(item, cfg)
         self.assertEqual(
             quality["score"],
-            quality["video"] + quality["audio"] + quality["languages"] + quality["size"],
+            quality["video_w"] + quality["audio_w"] + quality["languages_w"] + quality["size_w"],
+        )
+        self.assertEqual(
+            quality["video"],
+            quality["video_details"]["resolution"] + quality["video_details"]["codec"] + quality["video_details"]["hdr"],
         )
 
 

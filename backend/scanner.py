@@ -151,14 +151,35 @@ except Exception:
                 },
             }
 
-        def build_quality_block(*, video_resolution: int, video_codec: int, video_hdr: int, audio: int, languages: int, size: int) -> dict:
+        def build_quality_block(
+            *,
+            video_resolution: int,
+            video_codec: int,
+            video_hdr: int,
+            audio: int,
+            languages: int,
+            size: int,
+            max_video_score: int,
+            max_audio_score: int,
+            max_languages_score: int,
+            max_size_score: int,
+            weights: dict | None = None,
+        ) -> dict:
             video = int(video_resolution) + int(video_codec) + int(video_hdr)
+            video_w = int(video)
+            audio_w = int(audio)
+            languages_w = int(languages)
+            size_w = int(size)
             return {
-                "score": video + int(audio) + int(languages) + int(size),
+                "score": video_w + audio_w + languages_w + size_w,
                 "video": video,
+                "video_w": video_w,
                 "audio": int(audio),
+                "audio_w": audio_w,
                 "languages": int(languages),
+                "languages_w": languages_w,
                 "size": int(size),
+                "size_w": size_w,
                 "video_details": {
                     "resolution": int(video_resolution),
                     "codec": int(video_codec),
@@ -2110,13 +2131,22 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
             }
         else:
             vd = {"resolution": 0, "codec": 0, "hdr": 0}
-        normalized_q = build_quality_block(
-            video_resolution=vd["resolution"],
-            video_codec=vd["codec"],
-            video_hdr=vd["hdr"],
-            audio=_safe_int(q.get("audio"), 0) or 0,
-            languages=_safe_int(q.get("languages"), 0) or 0,
-            size=_safe_int(q.get("size"), 0) or 0,
+        q_audio = _safe_int(q.get("audio"), 0) or 0
+        q_languages = _safe_int(q.get("languages"), 0) or 0
+        q_size = _safe_int(q.get("size"), 0) or 0
+        normalized_q = {
+            "video_details": vd,
+            "video": int(vd["resolution"] + vd["codec"] + vd["hdr"]),
+            "audio": q_audio,
+            "languages": q_languages,
+            "size": q_size,
+            "video_w": _safe_int(q.get("video_w"), _safe_int(q.get("video"), 0) or 0) or 0,
+            "audio_w": _safe_int(q.get("audio_w"), q_audio) or 0,
+            "languages_w": _safe_int(q.get("languages_w"), q_languages) or 0,
+            "size_w": _safe_int(q.get("size_w"), q_size) or 0,
+        }
+        normalized_q["score"] = int(
+            normalized_q["video_w"] + normalized_q["audio_w"] + normalized_q["languages_w"] + normalized_q["size_w"]
         )
         if _safe_int(q.get("video"), normalized_q["video"]) != normalized_q["video"] or _safe_int(q.get("score"), normalized_q["score"]) != normalized_q["score"]:
             log.warning(
@@ -2152,13 +2182,22 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                     }
                 else:
                     vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
-                normalized_sq = build_quality_block(
-                    video_resolution=vd2["resolution"],
-                    video_codec=vd2["codec"],
-                    video_hdr=vd2["hdr"],
-                    audio=_safe_int(sq2.get("audio"), 0) or 0,
-                    languages=_safe_int(sq2.get("languages"), 0) or 0,
-                    size=_safe_int(sq2.get("size"), 0) or 0,
+                sq_audio = _safe_int(sq2.get("audio"), 0) or 0
+                sq_languages = _safe_int(sq2.get("languages"), 0) or 0
+                sq_size = _safe_int(sq2.get("size"), 0) or 0
+                normalized_sq = {
+                    "video_details": vd2,
+                    "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
+                    "audio": sq_audio,
+                    "languages": sq_languages,
+                    "size": sq_size,
+                    "video_w": _safe_int(sq2.get("video_w"), _safe_int(sq2.get("video"), 0) or 0) or 0,
+                    "audio_w": _safe_int(sq2.get("audio_w"), sq_audio) or 0,
+                    "languages_w": _safe_int(sq2.get("languages_w"), sq_languages) or 0,
+                    "size_w": _safe_int(sq2.get("size_w"), sq_size) or 0,
+                }
+                normalized_sq["score"] = int(
+                    normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]
                 )
                 if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
                     log.warning(

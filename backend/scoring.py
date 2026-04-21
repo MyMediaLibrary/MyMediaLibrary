@@ -438,6 +438,30 @@ def compute_size_quality_score(item: dict, score_config: dict[str, Any] | None =
     return int(_compute_size_quality_details(item, score_config).get("score", 0))
 
 
+def get_max_video_score(score_config: dict[str, Any] | None = None) -> int:
+    cfg = _resolve_score_config(score_config)
+    maxima = _score_component_maxima(cfg)
+    return _as_int(maxima.get("video"), 0)
+
+
+def get_max_audio_score(score_config: dict[str, Any] | None = None) -> int:
+    cfg = _resolve_score_config(score_config)
+    maxima = _score_component_maxima(cfg)
+    return _as_int(maxima.get("audio"), 0)
+
+
+def get_max_languages_score(score_config: dict[str, Any] | None = None) -> int:
+    cfg = _resolve_score_config(score_config)
+    maxima = _score_component_maxima(cfg)
+    return _as_int(maxima.get("languages"), 0)
+
+
+def get_max_size_score(score_config: dict[str, Any] | None = None) -> int:
+    cfg = _resolve_score_config(score_config)
+    maxima = _score_component_maxima(cfg)
+    return _as_int(maxima.get("size"), 0)
+
+
 def build_quality_block(
     *,
     video_resolution: int,
@@ -446,21 +470,46 @@ def build_quality_block(
     audio: int,
     languages: int,
     size: int,
+    max_video_score: int,
+    max_audio_score: int,
+    max_languages_score: int,
+    max_size_score: int,
+    weights: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     v_resolution = _as_int(video_resolution, 0)
     v_codec = _as_int(video_codec, 0)
     v_hdr = _as_int(video_hdr, 0)
+    w_video = _as_float(weights.get("video"), 0.0)
+    w_audio = _as_float(weights.get("audio"), 0.0)
+    w_languages = _as_float(weights.get("languages"), 0.0)
+    w_size = _as_float(weights.get("size"), 0.0)
+
+    max_video = max(0.0, _as_float(max_video_score, 0.0))
+    max_audio = max(0.0, _as_float(max_audio_score, 0.0))
+    max_languages = max(0.0, _as_float(max_languages_score, 0.0))
+    max_size = max(0.0, _as_float(max_size_score, 0.0))
+
     video = int(v_resolution + v_codec + v_hdr)
     a_score = _as_int(audio, 0)
     l_score = _as_int(languages, 0)
     s_score = _as_int(size, 0)
-    score = int(video + a_score + l_score + s_score)
+
+    video_w = int(round((video / max_video) * w_video)) if max_video > 0 else 0
+    audio_w = int(round((a_score / max_audio) * w_audio)) if max_audio > 0 else 0
+    languages_w = int(round((l_score / max_languages) * w_languages)) if max_languages > 0 else 0
+    size_w = int(round((s_score / max_size) * w_size)) if max_size > 0 else 0
+    score = int(round(video_w + audio_w + languages_w + size_w))
+
     return {
         "score": score,
         "video": video,
+        "video_w": video_w,
         "audio": a_score,
+        "audio_w": audio_w,
         "languages": l_score,
+        "languages_w": languages_w,
         "size": s_score,
+        "size_w": size_w,
         "video_details": {
             "resolution": v_resolution,
             "codec": v_codec,
@@ -485,7 +534,6 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     cfg = _resolve_score_config(score_config)
 
     video_details = compute_video_quality_score(item, cfg)
-    video_score = int(video_details["score"])
     audio_score = int(compute_audio_quality_score(item, cfg))
     language_score = int(compute_language_quality_score(item, cfg))
     size_details = _compute_size_quality_details(item, cfg)
@@ -494,6 +542,7 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     video_resolution = _as_int(video_details.get("resolution"), 0)
     video_codec = _as_int(video_details.get("codec"), 0)
     video_hdr = _as_int(video_details.get("hdr"), 0)
+    weights = cfg.get("weights") if isinstance(cfg.get("weights"), dict) else {}
     return build_quality_block(
         video_resolution=video_resolution,
         video_codec=video_codec,
@@ -501,4 +550,9 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
         audio=audio_score,
         languages=language_score,
         size=size_score,
+        max_video_score=get_max_video_score(cfg),
+        max_audio_score=get_max_audio_score(cfg),
+        max_languages_score=get_max_languages_score(cfg),
+        max_size_score=get_max_size_score(cfg),
+        weights=weights,
     )

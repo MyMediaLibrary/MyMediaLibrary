@@ -140,7 +140,7 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertIn("quality", data["items"][0])
         self.assertIn("score", data["items"][0]["quality"])
         score_after = data["items"][0]["quality"]["score"]
-        self.assertEqual(score_before, score_after)
+        self.assertNotEqual(score_before, score_after)
 
     def test_put_invalid_weights_returns_structured_error(self):
         status, get_payload = self._request("/api/settings/score")

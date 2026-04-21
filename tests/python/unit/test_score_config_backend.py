@@ -82,13 +82,13 @@ class ScoreConfigBackendTest(unittest.TestCase):
             self.assertGreaterEqual(payload["items"][0]["quality"]["score"], 0)
             self.assertEqual(
                 payload["items"][0]["quality"]["score"],
-                payload["items"][0]["quality"]["video"]
-                + payload["items"][0]["quality"]["audio"]
-                + payload["items"][0]["quality"]["languages"]
-                + payload["items"][0]["quality"]["size"],
+                payload["items"][0]["quality"]["video_w"]
+                + payload["items"][0]["quality"]["audio_w"]
+                + payload["items"][0]["quality"]["languages_w"]
+                + payload["items"][0]["quality"]["size_w"],
             )
 
-    def test_recompute_scores_only_ignores_weight_changes(self):
+    def test_recompute_scores_only_applies_weight_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_path = pathlib.Path(tmp) / "library.json"
             output_path.write_text(json.dumps({
@@ -121,7 +121,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
                 shifted_payload = json.loads(output_path.read_text(encoding="utf-8"))
                 shifted_score = shifted_payload["items"][0]["quality"]["score"]
 
-            self.assertEqual(baseline_score, shifted_score)
+            self.assertNotEqual(baseline_score, shifted_score)
 
     def test_run_score_only_does_not_trigger_scan_phases(self):
         with patch("scanner.run_quick") as run_quick, \
