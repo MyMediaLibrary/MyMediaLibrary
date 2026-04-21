@@ -2264,7 +2264,7 @@ let allItems=[], categories=[], groups=[];
     fetch('/api/scan/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: 'full'}),
+      body: JSON.stringify({mode: 'default'}),
     })
     .then(r => r.json())
     .then(data => {

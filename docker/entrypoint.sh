@@ -45,9 +45,9 @@ if [ ! -f "$PROVIDERS_MAPPING_DST" ]; then
   echo "[entrypoint] Bootstrapped providers mapping: $PROVIDERS_MAPPING_DST"
 fi
 
-# Initial scan on startup — also runs migrate_env_to_config() which populates config.json
+# Initial scan on startup (phases decided by scanner startup rules)
 echo "[entrypoint] Running initial scan..."
-python3 /app/scanner.py --quick --origin startup
+python3 /app/scanner.py --origin startup
 
 # Read scan_cron from config.json — sole source of truth
 SCAN_CRON=$(python3 -c "

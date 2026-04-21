@@ -2644,22 +2644,6 @@ def run_quick(only_category: str | None = None) -> None:
         else:
             # Folders exist but all are disabled — update inventory to mark them missing
             log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
-            if _is_inventory_enabled(cfg):
-                disabled_refs = {
-                    ("tv" if f.get("type") == "tv" else "movie", f["name"].replace("_", " ").replace("-", " ").title())
-                    for f in all_typed_folders
-                    if not is_folder_enabled(f)
-                }
-                if disabled_refs:
-                    try:
-                        write_inventory_json_non_blocking(
-                            [],
-                            scan_mode="quick",
-                            reconcile_missing=not bool(only_category),
-                            forced_missing_folder_refs=disabled_refs,
-                        )
-                    except Exception as e:
-                        log.warning(f"[SCAN] Inventory sidecar failed: {e}")
         return
 
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
@@ -2805,26 +2789,7 @@ def run_quick(only_category: str | None = None) -> None:
 
     log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
 
-    # Inventory sidecar — non-blocking
-    if _is_inventory_enabled(cfg):
-        inventory_entries = [
-            {"media_dir": root / item["path"], "cat": {"name": item["category"], "type": item["type"]}, "title": item["title"]}
-            for item in items
-        ]
-        disabled_refs = {
-            ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
-            for folder in cfg.get("folders", [])
-            if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
-        }
-        try:
-            write_inventory_json_non_blocking(
-                inventory_entries,
-                scan_mode="quick",
-                reconcile_missing=not bool(only_category),
-                forced_missing_folder_refs=disabled_refs,
-            )
-        except Exception as e:
-            log.warning(f"[SCAN] Inventory sidecar failed: {e}")
+    # Inventory update is handled explicitly by phase 4.
 
 
 # ---------------------------------------------------------------------------
@@ -3274,6 +3239,53 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     )
 
 
+def _prepare_startup_configuration() -> dict:
+    """Bootstrap config on startup without forcing a media scan."""
+    migrate_env_to_config()
+    cfg = load_config()
+    changed = False
+    cfg, onboarding_changed = _ensure_needs_onboarding(cfg)
+    changed = changed or onboarding_changed
+    if normalize_folder_enabled_flags(cfg, drop_visible=True):
+        changed = True
+    root = Path(LIBRARY_PATH)
+    if root.exists():
+        if sync_folders(root, cfg):
+            changed = True
+    if changed:
+        save_config(cfg)
+        cfg = load_config()
+    return cfg
+
+
+def _resolve_startup_phases(cfg: dict) -> list[int]:
+    library_exists = Path(OUTPUT_PATH).exists()
+    if library_exists:
+        return []
+    if not _has_configured_media_folders(cfg):
+        return []
+    # Startup bootstrap: lightweight initial pass only.
+    return [PHASE_SCAN]
+
+
+def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
+    ordered = _normalize_phases(phases)
+    if not ordered:
+        log.info("[SCAN] No phase selected — nothing to run")
+        return
+    log.info("[SCAN] Planned phases: %s", " -> ".join(str(p) for p in ordered))
+    for phase in ordered:
+        if phase == PHASE_SCAN:
+            run_quick(only_category=only_category)
+        elif phase == PHASE_ENRICH:
+            run_enrich(force=True, only_category=only_category)
+        elif phase == PHASE_SCORE:
+            run_scoring(only_category=only_category)
+        elif phase == PHASE_INVENTORY:
+            scan_mode = "full" if PHASE_SCAN in ordered else "partial"
+            run_inventory(scan_mode=scan_mode, only_category=only_category)
+
+
 # ---------------------------------------------------------------------------
 # RESET
 # ---------------------------------------------------------------------------
@@ -3399,15 +3411,177 @@ _srv_state = {
 }
 _srv_proc = None
 
-VALID_MODES = {"quick", "full", "default", "score_only"}
+PHASE_SCAN = 1
+PHASE_ENRICH = 2
+PHASE_SCORE = 3
+PHASE_INVENTORY = 4
+_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
+VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 
 
-def _scanner_cmd(mode: str) -> list[str]:
+def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
+    if not phases:
+        return []
+    wanted: set[int] = set()
+    for raw in phases:
+        try:
+            val = int(raw)
+        except Exception:
+            continue
+        if val in _PHASE_ORDER:
+            wanted.add(val)
+    return [p for p in _PHASE_ORDER if p in wanted]
+
+
+def _parse_phases_csv(value: str | None) -> list[int]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    out: list[int] = []
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            out.append(int(chunk))
+        except Exception:
+            continue
+    return _normalize_phases(out)
+
+
+def _phases_to_csv(phases: list[int] | None) -> str:
+    norm = _normalize_phases(phases or [])
+    return ",".join(str(p) for p in norm)
+
+
+def _configured_media_folder_count(cfg: dict | None) -> int:
+    if not isinstance(cfg, dict):
+        return 0
+    count = 0
+    for folder in cfg.get("folders") or []:
+        if not isinstance(folder, dict):
+            continue
+        if folder.get("missing"):
+            continue
+        if not is_folder_enabled(folder):
+            continue
+        if folder.get("type") in {"movie", "tv"}:
+            count += 1
+    return count
+
+
+def _has_configured_media_folders(cfg: dict | None) -> bool:
+    return _configured_media_folder_count(cfg) > 0
+
+
+def _seerr_runtime_state(cfg: dict | None, secrets: dict | None = None) -> dict:
+    if not isinstance(cfg, dict):
+        cfg = {}
+    seerr = cfg.get("seerr")
+    if not isinstance(seerr, dict):
+        seerr = cfg.get("jellyseerr")
+    if not isinstance(seerr, dict):
+        seerr = {}
+    sec = secrets if isinstance(secrets, dict) else _load_secrets()
+    sec, _ = _normalize_seerr_secret_keys(sec)
+    return {
+        "enabled": bool(seerr.get("enabled")),
+        "url": str(seerr.get("url") or "").strip(),
+        "has_key": bool(sec.get("seerr_apikey") or sec.get("jellyseerr_apikey")),
+    }
+
+
+def _is_seerr_enrichment_active(cfg: dict | None, secrets: dict | None = None) -> bool:
+    st = _seerr_runtime_state(cfg, secrets=secrets)
+    return bool(st["enabled"] and st["url"] and st["has_key"])
+
+
+def _phase_plan_from_config(
+    cfg: dict | None,
+    *,
+    include_phase1: bool = True,
+    secrets: dict | None = None,
+) -> list[int]:
+    phases: list[int] = []
+    if include_phase1 and _has_configured_media_folders(cfg):
+        phases.append(PHASE_SCAN)
+    if _is_seerr_enrichment_active(cfg, secrets=secrets):
+        phases.append(PHASE_ENRICH)
+    if _is_score_enabled(cfg):
+        phases.append(PHASE_SCORE)
+    if _is_inventory_enabled(cfg):
+        phases.append(PHASE_INVENTORY)
+    return _normalize_phases(phases)
+
+
+def _folder_scan_signature(folders: list | None) -> str:
+    if not isinstance(folders, list):
+        return "[]"
+    normalized = []
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        normalized.append({
+            "name": str(folder.get("name") or ""),
+            "type": folder.get("type"),
+            "enabled": bool(is_folder_enabled(folder)),
+            "missing": bool(folder.get("missing")),
+        })
+    normalized.sort(key=lambda f: f["name"])
+    return json.dumps(normalized, sort_keys=True)
+
+
+def _compute_phases_for_config_change(
+    previous_cfg: dict | None,
+    next_cfg: dict | None,
+    *,
+    secrets_before: dict | None = None,
+    secrets_after: dict | None = None,
+) -> list[int]:
+    prev_cfg = previous_cfg if isinstance(previous_cfg, dict) else {}
+    new_cfg = next_cfg if isinstance(next_cfg, dict) else {}
+    prev_secrets = secrets_before if isinstance(secrets_before, dict) else _load_secrets()
+    next_secrets = secrets_after if isinstance(secrets_after, dict) else _load_secrets()
+
+    folders_changed = _folder_scan_signature(prev_cfg.get("folders")) != _folder_scan_signature(new_cfg.get("folders"))
+    seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
+    score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
+    inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
+
+    phases: list[int] = []
+    if folders_changed:
+        phases.extend(_phase_plan_from_config(new_cfg, include_phase1=True, secrets=next_secrets))
+        # If folders changed but none are currently configured, still run phase 1
+        # to refresh library outputs consistently.
+        if PHASE_SCAN not in phases:
+            phases.insert(0, PHASE_SCAN)
+    else:
+        if seerr_changed:
+            phases.append(PHASE_ENRICH)
+        if score_changed:
+            phases.append(PHASE_SCORE)
+        if inventory_changed:
+            phases.append(PHASE_INVENTORY)
+    return _normalize_phases(phases)
+
+
+def _scanner_cmd(mode: str, *, phases: list[int] | None = None, category: str | None = None, origin: str | None = None) -> list[str]:
     base = [sys.executable, __file__]
-    if mode == "quick": return base + ["--quick"]
-    if mode == "full":  return base + ["--full"]
-    if mode == "score_only": return base + ["--score-only"]
-    return base + ["--full"]  # default → full
+    norm_phases = _normalize_phases(phases or [])
+    if norm_phases:
+        base += ["--phases", _phases_to_csv(norm_phases)]
+    elif mode == "quick":
+        base += ["--quick"]
+    elif mode == "score_only":
+        base += ["--score-only"]
+    elif mode == "full":
+        base += ["--full"]
+    else:
+        base += ["--full"]
+    if category:
+        base += ["--category", str(category)]
+    if origin:
+        base += ["--origin", str(origin)]
+    return base
 
 
 def _score_ui_schema() -> dict:
@@ -3436,15 +3610,19 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
-def _run_scan_bg(mode: str):
+def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
     global _srv_proc
-    cmd = _scanner_cmd(mode)
+    cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
     env = os.environ.copy()
 
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
                           started_at=datetime.now(timezone.utc).isoformat(),
                           ended_at=None, log=[f"[server] Starting: {' '.join(cmd)}"])
+        if phases:
+            _srv_state["phases"] = _normalize_phases(phases)
+        else:
+            _srv_state.pop("phases", None)
 
     try:
         proc = subprocess.Popen(cmd, env=env,
@@ -3830,8 +4008,26 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if cfg.get("system", {}).get("needs_onboarding") is True:
                 cfg["system"]["needs_onboarding"] = False
                 save_config(cfg)
-            threading.Thread(target=_run_scan_bg, args=(mode,), daemon=True).start()
-            self._json(200, {"ok": True, "mode": mode})
+            phases = []
+            if isinstance(payload, dict) and payload.get("phases"):
+                raw = payload.get("phases")
+                if isinstance(raw, str):
+                    phases = _parse_phases_csv(raw)
+                elif isinstance(raw, list):
+                    phases = _normalize_phases(raw)
+            if not phases:
+                if mode == "quick":
+                    phases = [PHASE_SCAN]
+                elif mode == "score_only":
+                    phases = [PHASE_SCORE]
+                else:
+                    phases = _phase_plan_from_config(cfg, include_phase1=True)
+            phases = _normalize_phases(phases)
+            if not phases:
+                self._json(200, {"ok": True, "mode": mode, "phases": [], "skipped": True})
+                return
+            threading.Thread(target=_run_scan_bg, args=(mode, phases, None, "manual"), daemon=True).start()
+            self._json(200, {"ok": True, "mode": mode, "phases": phases})
 
         elif path == "/api/config":
             if not isinstance(payload, dict):
@@ -3881,15 +4077,21 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if new_level:
                 _set_global_log_level(new_level)
 
-            # Trigger a quick scan when folder configuration changed (type or enabled state)
-            folders_changed = "folders" in payload
-            if folders_changed and not _is_scan_locked():
-                log.info("[config] Folder configuration changed — triggering quick scan")
-                threading.Thread(target=_run_scan_bg, args=("quick",), daemon=True).start()
-            elif folders_changed:
-                log.info("[config] Folder configuration changed — scan already running, skipping auto quick scan")
-
-            self._json(200, {"ok": True})
+            phases = _compute_phases_for_config_change(
+                cfg,
+                merged,
+                secrets_before=secrets_before,
+                secrets_after=secrets_after,
+            )
+            response = {"ok": True, "phases": phases}
+            if phases:
+                if _is_scan_locked():
+                    log.info("[config] Phase plan %s skipped — scan already running", phases)
+                    response["scan_skipped"] = "running"
+                else:
+                    log.info("[config] Triggering phased scan from config save: %s", phases)
+                    threading.Thread(target=_run_scan_bg, args=("phased", phases, None, "manual"), daemon=True).start()
+            self._json(200, response)
 
         elif path == "/api/settings/score":
             self._handle_score_settings_update(payload)
@@ -3934,7 +4136,9 @@ def main():
     mode_group.add_argument("--quick", action="store_true",
         help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
     mode_group.add_argument("--full",  action="store_true",
-        help="All 4 phases: filesystem scan + Seerr + scoring + inventory (default)")
+        help="Automatic phased scan based on current config (default)")
+    mode_group.add_argument("--phases", default=None, metavar="LIST",
+        help="Explicit phases list, comma-separated (e.g. 1,2,3,4)")
     mode_group.add_argument("--score-only", action="store_true",
         help="Recompute score fields from existing library.json only")
     mode_group.add_argument("--serve", action="store_true",
@@ -3962,8 +4166,11 @@ def main():
     elif args.score_only:
         lock_mode = "score_only"
         mode_label = "--score-only"
+    elif args.phases:
+        lock_mode = "phased"
+        mode_label = f"--phases {args.phases}"
     else:
-        lock_mode = "full"
+        lock_mode = "default"
         mode_label = "--full"
 
     try:
@@ -3974,15 +4181,20 @@ def main():
             log.info(f"[SCAN] ═══════════════════════════════════")
 
             if args.quick:
-                run_quick(only_category=args.category)
+                run_phases([PHASE_SCAN], only_category=args.category)
             elif args.score_only:
                 run_score_only()
+            elif args.phases:
+                run_phases(_parse_phases_csv(args.phases), only_category=args.category)
             else:
-                # --full or default
-                run_quick(only_category=args.category)
-                run_enrich(force=True, only_category=args.category)
-                run_scoring(only_category=args.category)
-                run_inventory(scan_mode="full", only_category=args.category)
+                cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
+                if args.origin == "startup":
+                    phases = _resolve_startup_phases(cfg_for_plan)
+                    if not phases:
+                        log.info("[SCAN] Startup: no media scan phase required")
+                else:
+                    phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
+                run_phases(phases, only_category=args.category)
 
             elapsed = time.monotonic() - _t_main
             log.info(f"[SCAN] ═══════════════════════════════════")
