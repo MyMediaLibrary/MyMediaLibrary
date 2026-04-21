@@ -4043,10 +4043,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(409, {"error": "scan already running"}); return
+                    self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running", "phases": _srv_state.get("phases", [])}); return
             if _is_scan_locked():
                 log.info("[SCAN] Scan already running — refusing new scan request")
-                self._json(409, {"error": "scan already running"}); return
+                self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running"}); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:

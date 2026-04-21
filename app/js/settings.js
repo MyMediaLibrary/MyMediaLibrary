@@ -1785,16 +1785,38 @@
       ui: { theme: _onbTheme },
     };
 
+    let savePayload = {};
     try {
-      await saveConfig(partial);
+      savePayload = await saveConfig(partial);
     } catch(e) {
       alert(t('settings.save_error', {msg: e.message}));
       if (btn) { btn.disabled = false; btn.textContent = t('nav.launch_scan'); }
       return;
     }
 
+    // If config save already triggered a phased scan (or one is already running),
+    // do not attempt to start another scan from onboarding.
+    let shouldStartScan = true;
     try {
-      await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode: 'default'})});
+      const statusResp = await fetch('/api/scan/status');
+      const statusData = await statusResp.json();
+      if (statusData?.status === 'running') shouldStartScan = false;
+    } catch(_) {}
+    if (Array.isArray(savePayload?.phases) && savePayload.phases.length > 0) {
+      shouldStartScan = false;
+    }
+    if (savePayload?.scan_skipped === 'running') {
+      shouldStartScan = false;
+    }
+
+    try {
+      if (shouldStartScan) {
+        const r = await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode: 'default'})});
+        const d = await r.json().catch(() => ({}));
+        if (d?.running || d?.skipped === 'already_running') {
+          shouldStartScan = false;
+        }
+      }
     } catch(e) {}
 
     // Switch to live scan log view
@@ -1837,11 +1859,22 @@
           logBox.scrollTop = logBox.scrollHeight;
         }
       }
-      if (d.status === 'done' || d.status === 'error') {
+      if (d.status === 'done') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
         const doneBtn = document.getElementById('onbDoneBtn');
         if (doneBtn) doneBtn.style.display = '';
+        return;
+      }
+      if (d.status === 'error') {
+        const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
+        if (spinnerRow) spinnerRow.style.display = 'none';
+        if (logBox) {
+          const div = document.createElement('div');
+          div.style.color = '#f97316';
+          div.textContent = '[onboarding] Scan failed, please retry from Scan.';
+          logBox.appendChild(div);
+        }
         return;
       }
     } catch(e) {}
