@@ -12,7 +12,7 @@ import scanner  # noqa: E402
 
 
 class ScoreCleanupTest(unittest.TestCase):
-    def _make_scan_item(self, media_dir, root, cat, prev, enable_score=True):
+    def _make_scan_item(self, media_dir, root, cat, prev, enable_score=True, **kwargs):
         item = {
             "path": str(media_dir.relative_to(root)),
             "title": media_dir.name,

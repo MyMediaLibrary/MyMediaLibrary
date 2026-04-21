@@ -461,8 +461,6 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     size_details = _compute_size_quality_details(item, cfg)
     size_score = int(size_details.get("score", 0))
 
-    base_score = video_score + audio_score + language_score + size_score
-
     maxima = _score_component_maxima(cfg)
     weighted_total = 0.0
     for component, raw_score in (
@@ -481,17 +479,20 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     final_score = _as_int(weighted_total, 0)
     final_score = max(0, min(100, final_score))
 
+    video_resolution = _as_int(video_details.get("resolution"), 0)
+    video_codec = _as_int(video_details.get("codec"), 0)
+    video_hdr = _as_int(video_details.get("hdr"), 0)
+    video_total = video_resolution + video_codec + video_hdr
+
     return {
         "score": final_score,
-        "base_score": _as_int(base_score, 0),
-        "video": _as_int(video_score, 0),
+        "video": _as_int(video_total, 0),
         "audio": _as_int(audio_score, 0),
         "languages": _as_int(language_score, 0),
         "size": _as_int(size_score, 0),
-        "score_details": {
-            "video": _as_int(video_score, 0),
-            "audio": _as_int(audio_score, 0),
-            "languages": _as_int(language_score, 0),
-            "size": _as_int(size_score, 0),
+        "video_details": {
+            "resolution": _as_int(video_resolution, 0),
+            "codec": _as_int(video_codec, 0),
+            "hdr": _as_int(video_hdr, 0),
         },
     }

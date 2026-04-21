@@ -53,6 +53,15 @@ class TvAggregationV033Test(unittest.TestCase):
         self.assertEqual(agg["height"], 1080)
         self.assertEqual(agg["episode_count"], 10)
         self.assertEqual(agg["runtime_min"], 47)
+        self.assertIn("quality", agg)
+        self.assertNotIn("base_score", agg["quality"])
+        self.assertNotIn("score_details", agg["quality"])
+        self.assertEqual(
+            agg["quality"]["video"],
+            agg["quality"]["video_details"]["resolution"]
+            + agg["quality"]["video_details"]["codec"]
+            + agg["quality"]["video_details"]["hdr"],
+        )
 
     def test_aggregate_season_runtime_handles_missing_values(self):
         season = scanner.aggregate_season_metadata(
@@ -66,6 +75,14 @@ class TvAggregationV033Test(unittest.TestCase):
         self.assertEqual(season["runtime_min_total"], 100)
         self.assertEqual(season["runtime_min_avg"], 50)
         self.assertEqual(season["size_b"], 60)
+        self.assertNotIn("base_score", season["quality"])
+        self.assertNotIn("score_details", season["quality"])
+        self.assertEqual(
+            season["quality"]["video"],
+            season["quality"]["video_details"]["resolution"]
+            + season["quality"]["video_details"]["codec"]
+            + season["quality"]["video_details"]["hdr"],
+        )
 
     def test_recompute_scores_for_items_updates_tv_seasons(self):
         items = [
@@ -115,6 +132,15 @@ class TvAggregationV033Test(unittest.TestCase):
         self.assertIn("quality", items[0]["seasons"][0])
         self.assertIn("quality", items[0]["seasons"][1])
         self.assertIn("quality", items[0])
+        for quality in (items[0]["quality"], items[0]["seasons"][0]["quality"], items[0]["seasons"][1]["quality"]):
+            self.assertNotIn("base_score", quality)
+            self.assertNotIn("score_details", quality)
+            self.assertEqual(
+                quality["video"],
+                quality["video_details"]["resolution"]
+                + quality["video_details"]["codec"]
+                + quality["video_details"]["hdr"],
+            )
 
     def test_merge_series_expected_counts_adds_missing_expected_season(self):
         item = {

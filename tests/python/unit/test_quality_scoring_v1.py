@@ -83,14 +83,22 @@ class QualityScoringV1Test(unittest.TestCase):
 
         expected_keys = {
             "score",
-            "base_score",
             "video",
             "audio",
             "languages",
             "size",
+            "video_details",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
         self.assertNotIn("level", quality)
+        self.assertNotIn("base_score", quality)
+        self.assertNotIn("score_details", quality)
+        self.assertEqual(
+            quality["video"],
+            int(quality["video_details"]["resolution"])
+            + int(quality["video_details"]["codec"])
+            + int(quality["video_details"]["hdr"]),
+        )
 
         low_quality = scoring.compute_quality(
             {

@@ -140,11 +140,15 @@ except Exception:
         def compute_quality(item: dict) -> dict:
             return {
                 "score": 0,
-                "base_score": 0,
                 "video": 0,
                 "audio": 0,
                 "languages": 0,
                 "size": 0,
+                "video_details": {
+                    "resolution": 0,
+                    "codec": 0,
+                    "hdr": 0,
+                },
             }
 
         def get_builtin_score_defaults() -> dict:
@@ -1203,24 +1207,32 @@ def _weighted_quality_from_seasons(seasons: list[dict]) -> dict | None:
             total += float(q.get(key, 0) or 0) * int(s.get("episodes_found") or 0)
         return int(round(total / total_weight))
 
+    def _wavg_video_detail(key: str) -> int:
+        total = 0.0
+        for s in weighted:
+            q = s.get("quality") or {}
+            vd = q.get("video_details") or {}
+            total += float(vd.get(key, 0) or 0) * int(s.get("episodes_found") or 0)
+        return int(round(total / total_weight))
+
     score = max(0, min(100, _wavg("score")))
-    base_score = max(0, _wavg("base_score"))
-    video = max(0, _wavg("video"))
+    video_resolution = max(0, _wavg_video_detail("resolution"))
+    video_codec = max(0, _wavg_video_detail("codec"))
+    video_hdr = max(0, _wavg_video_detail("hdr"))
+    video = int(video_resolution + video_codec + video_hdr)
     audio = max(0, _wavg("audio"))
     languages = max(0, _wavg("languages"))
     size = max(0, _wavg("size"))
     return {
         "score": score,
-        "base_score": base_score,
         "video": video,
         "audio": audio,
         "languages": languages,
         "size": size,
-        "score_details": {
-            "video": video,
-            "audio": audio,
-            "languages": languages,
-            "size": size,
+        "video_details": {
+            "resolution": video_resolution,
+            "codec": video_codec,
+            "hdr": video_hdr,
         },
     }
 
@@ -2119,6 +2131,19 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     if isinstance(quality, dict):
         q = dict(quality)
         q.pop("level", None)
+        q.pop("base_score", None)
+        q.pop("score_details", None)
+        video_details = q.get("video_details")
+        if isinstance(video_details, dict):
+            vd = {
+                "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+            }
+        else:
+            vd = {"resolution": 0, "codec": 0, "hdr": 0}
+        q["video_details"] = vd
+        q["video"] = int(vd["resolution"] + vd["codec"] + vd["hdr"])
         clean["quality"] = q
     seasons = clean.get("seasons")
     if isinstance(seasons, list):
@@ -2134,6 +2159,19 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
             if isinstance(sq, dict):
                 sq2 = dict(sq)
                 sq2.pop("level", None)
+                sq2.pop("base_score", None)
+                sq2.pop("score_details", None)
+                video_details = sq2.get("video_details")
+                if isinstance(video_details, dict):
+                    vd2 = {
+                        "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                        "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                        "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+                    }
+                else:
+                    vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
+                sq2["video_details"] = vd2
+                sq2["video"] = int(vd2["resolution"] + vd2["codec"] + vd2["hdr"])
                 s["quality"] = sq2
             sanitized_seasons.append(s)
         clean["seasons"] = sanitized_seasons
