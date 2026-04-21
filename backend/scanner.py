@@ -918,7 +918,11 @@ def format_size(size_bytes: int) -> str:
 
 _TV_SKIP_NFO = {"tvshow.nfo", "season.nfo"}
 _TV_SE_EP_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+_TV_X_SE_EP_RE = re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.IGNORECASE)
 _TV_SEASON_HINT_RE = re.compile(r"(?:season|saison)[\s._-]*(\d{1,2})", re.IGNORECASE)
+_TV_EP_TOKEN_RE = re.compile(r"(?:^|[\s._\-])(?:e|ep|episode)[\s._\-]*(\d{1,3})(?=$|[\s._\-])", re.IGNORECASE)
+_TV_TRAILING_NUM_RE = re.compile(r"(?:^|[\s._\-])(\d{2,3})$")
+_TV_COMMON_TECH_NUMBERS = {2160, 1080, 720, 576, 540, 480}
 
 
 def _safe_int(value, default: int | None = None) -> int | None:
@@ -940,12 +944,35 @@ def _dominant_value(values: list):
 def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int | None]:
     if not path_like:
         return None, None
+
+    season_hint = _TV_SEASON_HINT_RE.search(path_like)
+    hinted_season = _safe_int(season_hint.group(1), None) if season_hint else None
+
     match = _TV_SE_EP_RE.search(path_like)
     if match:
         return _safe_int(match.group(1)), _safe_int(match.group(2))
-    season_hint = _TV_SEASON_HINT_RE.search(path_like)
-    if season_hint:
-        return _safe_int(season_hint.group(1)), None
+    match = _TV_X_SE_EP_RE.search(path_like)
+    if match:
+        return _safe_int(match.group(1)), _safe_int(match.group(2))
+
+    # Episode extraction is based on basename to avoid unrelated parent folders.
+    basename = Path(path_like).name
+    stem = Path(basename).stem
+
+    match = _TV_EP_TOKEN_RE.search(stem)
+    if match:
+        return hinted_season, _safe_int(match.group(1))
+
+    # Anime-like names often use trailing numeric episodes: "Title.001", "Title - 01".
+    # Keep this fallback conservative to avoid confusing quality markers (720/1080/2160).
+    match = _TV_TRAILING_NUM_RE.search(stem)
+    if match:
+        ep_num = _safe_int(match.group(1))
+        if isinstance(ep_num, int) and ep_num > 0 and ep_num not in _TV_COMMON_TECH_NUMBERS:
+            return hinted_season, ep_num
+
+    if hinted_season is not None:
+        return hinted_season, None
     return None, None
 
 
@@ -953,6 +980,15 @@ def _build_episode_dedupe_key(season_num: int | None, episode_num: int | None, f
     if season_num is not None and episode_num is not None:
         return f"s{season_num:02d}e{episode_num:03d}"
     return fallback.casefold()
+
+
+def _episode_fallback_key(path: Path, series_dir: Path | None = None) -> str:
+    try:
+        base = path.relative_to(series_dir) if isinstance(series_dir, Path) else path
+    except Exception:
+        base = path
+    no_suffix = base.with_suffix("")
+    return str(no_suffix).replace("\\", "/").casefold()
 
 
 def _episode_metadata_completeness(ep: dict) -> int:
@@ -989,7 +1025,7 @@ def _prefer_episode_metadata(current: dict | None, candidate: dict) -> dict:
     return current
 
 
-def _parse_episode_nfo_metadata(nfo_path: Path) -> dict | None:
+def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) -> dict | None:
     try:
         root = ET.parse(nfo_path).getroot()
     except Exception:
@@ -1052,7 +1088,7 @@ def _parse_episode_nfo_metadata(nfo_path: Path) -> dict | None:
     dedupe_key = _build_episode_dedupe_key(
         season_num,
         episode_num,
-        fallback=str(nfo_path.name),
+        fallback=_episode_fallback_key(nfo_path, series_dir),
     )
     return {
         "season": season_num,
@@ -1084,13 +1120,15 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
         return parsed
 
     for video in files:
+        if video.with_suffix(".nfo").exists():
+            continue
         season_num, episode_num = _extract_season_episode_from_name(str(video))
         if season_num is None:
             season_num = 1
         key = _build_episode_dedupe_key(
             season_num,
             episode_num,
-            fallback=str(video.relative_to(series_dir)),
+            fallback=_episode_fallback_key(video, series_dir),
         )
         if key in existing_keys:
             continue
@@ -1129,7 +1167,7 @@ def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
         nfo_candidates = []
 
     for nfo_path in nfo_candidates:
-        ep = _parse_episode_nfo_metadata(nfo_path)
+        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir)
         if not isinstance(ep, dict):
             continue
         key = ep["dedupe_key"]

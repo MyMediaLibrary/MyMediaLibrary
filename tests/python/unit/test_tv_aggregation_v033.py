@@ -1,5 +1,6 @@
 import pathlib
 import sys
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -9,6 +10,51 @@ import scanner  # noqa: E402
 
 
 class TvAggregationV033Test(unittest.TestCase):
+    def test_extract_episode_from_anime_like_names(self):
+        self.assertEqual(scanner._extract_season_episode_from_name("Boruto.E01.mkv"), (None, 1))
+        self.assertEqual(scanner._extract_season_episode_from_name("Boruto - E002.mkv"), (None, 2))
+        self.assertEqual(scanner._extract_season_episode_from_name("OnePiece.001.mkv"), (None, 1))
+        self.assertEqual(scanner._extract_season_episode_from_name("Show.1x03.mkv"), (1, 3))
+        self.assertEqual(scanner._extract_season_episode_from_name("Show.1080p.mkv"), (None, None))
+
+    def test_collect_series_episode_metadata_dedupes_nfo_and_video_for_episode_token_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            series_dir = pathlib.Path(tmpdir) / "Boruto"
+            series_dir.mkdir(parents=True)
+            video = series_dir / "Boruto.E01.mkv"
+            video.write_bytes(b"0123456789")
+            (series_dir / "Boruto.E01.nfo").write_text(
+                "<episodedetails><title>Boruto</title></episodedetails>",
+                encoding="utf-8",
+            )
+
+            episodes = scanner.collect_series_episode_metadata(series_dir)
+            self.assertEqual(len(episodes), 1)
+            self.assertEqual(episodes[0]["season"], 1)
+            self.assertEqual(episodes[0]["episode"], 1)
+            self.assertEqual(episodes[0]["size_b"], 10)
+
+            agg = scanner.aggregate_series_metadata(episodes)
+            self.assertEqual(agg["episode_count"], 1)
+            self.assertEqual(agg["season_count"], 1)
+            self.assertEqual(agg["size_b"], 10)
+            self.assertEqual(agg["seasons"][0]["size_b"], 10)
+
+    def test_collect_series_episode_metadata_without_nfo_parses_anime_numeric_suffix(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            series_dir = pathlib.Path(tmpdir) / "Anime"
+            series_dir.mkdir(parents=True)
+            (series_dir / "Anime.001.mkv").write_bytes(b"a" * 3)
+            (series_dir / "Anime.002.mkv").write_bytes(b"b" * 5)
+
+            episodes = sorted(
+                scanner.collect_series_episode_metadata(series_dir),
+                key=lambda e: int(e.get("episode") or 0),
+            )
+            self.assertEqual(len(episodes), 2)
+            self.assertEqual([e.get("episode") for e in episodes], [1, 2])
+            self.assertEqual(sum(int(e.get("size_b") or 0) for e in episodes), 8)
+
     def test_aggregate_series_metadata_uses_dominant_values(self):
         episodes = []
         for _ in range(7):
