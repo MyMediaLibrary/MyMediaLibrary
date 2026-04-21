@@ -175,7 +175,7 @@ class QualityScoringV1Test(unittest.TestCase):
         quality = scoring.compute_quality(item, cfg)
         self.assertEqual(
             quality["score"],
-            quality["video_w"] + quality["audio_w"] + quality["languages_w"] + quality["size_w"],
+            int(round(quality["video_w"] + quality["audio_w"] + quality["languages_w"] + quality["size_w"])),
         )
         self.assertEqual(
             quality["video"],

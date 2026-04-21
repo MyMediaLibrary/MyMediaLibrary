@@ -2174,20 +2174,22 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
         q_audio = _safe_int(q.get("audio"), 0) or 0
         q_languages = _safe_int(q.get("languages"), 0) or 0
         q_size = _safe_int(q.get("size"), 0) or 0
+        q_video_w = _as_number(q.get("video_w"), _as_number(q.get("video"), 0.0))
+        q_audio_w = _as_number(q.get("audio_w"), _as_number(q_audio, 0.0))
+        q_languages_w = _as_number(q.get("languages_w"), _as_number(q_languages, 0.0))
+        q_size_w = _as_number(q.get("size_w"), _as_number(q_size, 0.0))
         normalized_q = {
             "video_details": vd,
             "video": int(vd["resolution"] + vd["codec"] + vd["hdr"]),
             "audio": q_audio,
             "languages": q_languages,
             "size": q_size,
-            "video_w": _safe_int(q.get("video_w"), _safe_int(q.get("video"), 0) or 0) or 0,
-            "audio_w": _safe_int(q.get("audio_w"), q_audio) or 0,
-            "languages_w": _safe_int(q.get("languages_w"), q_languages) or 0,
-            "size_w": _safe_int(q.get("size_w"), q_size) or 0,
+            "video_w": round(q_video_w, 4),
+            "audio_w": round(q_audio_w, 4),
+            "languages_w": round(q_languages_w, 4),
+            "size_w": round(q_size_w, 4),
         }
-        normalized_q["score"] = int(
-            normalized_q["video_w"] + normalized_q["audio_w"] + normalized_q["languages_w"] + normalized_q["size_w"]
-        )
+        normalized_q["score"] = int(round(normalized_q["video_w"] + normalized_q["audio_w"] + normalized_q["languages_w"] + normalized_q["size_w"]))
         if _safe_int(q.get("video"), normalized_q["video"]) != normalized_q["video"] or _safe_int(q.get("score"), normalized_q["score"]) != normalized_q["score"]:
             log.warning(
                 "[score] Normalized inconsistent quality block for item %r (%s): score=%s video=%s",
@@ -2225,20 +2227,22 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                 sq_audio = _safe_int(sq2.get("audio"), 0) or 0
                 sq_languages = _safe_int(sq2.get("languages"), 0) or 0
                 sq_size = _safe_int(sq2.get("size"), 0) or 0
+                sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
+                sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
+                sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
+                sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
                 normalized_sq = {
                     "video_details": vd2,
                     "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
                     "audio": sq_audio,
                     "languages": sq_languages,
                     "size": sq_size,
-                    "video_w": _safe_int(sq2.get("video_w"), _safe_int(sq2.get("video"), 0) or 0) or 0,
-                    "audio_w": _safe_int(sq2.get("audio_w"), sq_audio) or 0,
-                    "languages_w": _safe_int(sq2.get("languages_w"), sq_languages) or 0,
-                    "size_w": _safe_int(sq2.get("size_w"), sq_size) or 0,
+                    "video_w": round(sq_video_w, 4),
+                    "audio_w": round(sq_audio_w, 4),
+                    "languages_w": round(sq_languages_w, 4),
+                    "size_w": round(sq_size_w, 4),
                 }
-                normalized_sq["score"] = int(
-                    normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]
-                )
+                normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
                 if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
                     log.warning(
                         "[score] Normalized inconsistent season quality for item %r season=%s",

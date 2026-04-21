@@ -449,6 +449,7 @@ def get_max_video_score(score_config: dict[str, Any] | None = None) -> int:
     max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
     if isinstance(max_score.get("max_video"), (int, float)):
         return _as_int(max_score.get("max_video"), 0)
+    # Backward-compatible fallback for legacy configs without max_score.
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("video"), 0)
 
@@ -458,6 +459,7 @@ def get_max_audio_score(score_config: dict[str, Any] | None = None) -> int:
     max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
     if isinstance(max_score.get("max_audio"), (int, float)):
         return _as_int(max_score.get("max_audio"), 0)
+    # Backward-compatible fallback for legacy configs without max_score.
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("audio"), 0)
 
@@ -467,6 +469,7 @@ def get_max_languages_score(score_config: dict[str, Any] | None = None) -> int:
     max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
     if isinstance(max_score.get("max_languages"), (int, float)):
         return _as_int(max_score.get("max_languages"), 0)
+    # Backward-compatible fallback for legacy configs without max_score.
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("languages"), 0)
 
@@ -476,6 +479,7 @@ def get_max_size_score(score_config: dict[str, Any] | None = None) -> int:
     max_score = cfg.get("max_score") if isinstance(cfg.get("max_score"), dict) else {}
     if isinstance(max_score.get("max_size"), (int, float)):
         return _as_int(max_score.get("max_size"), 0)
+    # Backward-compatible fallback for legacy configs without max_score.
     maxima = _score_component_maxima(cfg)
     return _as_int(maxima.get("size"), 0)
 
@@ -497,6 +501,7 @@ def build_quality_block(
     v_resolution = _as_int(video_resolution, 0)
     v_codec = _as_int(video_codec, 0)
     v_hdr = _as_int(video_hdr, 0)
+    weights = weights if isinstance(weights, dict) else {}
     w_video = _as_float(weights.get("video"), 0.0)
     w_audio = _as_float(weights.get("audio"), 0.0)
     w_languages = _as_float(weights.get("languages"), 0.0)
@@ -512,22 +517,22 @@ def build_quality_block(
     l_score = _as_int(languages, 0)
     s_score = _as_int(size, 0)
 
-    video_w = int(round((video / max_video) * w_video)) if max_video > 0 else 0
-    audio_w = int(round((a_score / max_audio) * w_audio)) if max_audio > 0 else 0
-    languages_w = int(round((l_score / max_languages) * w_languages)) if max_languages > 0 else 0
-    size_w = int(round((s_score / max_size) * w_size)) if max_size > 0 else 0
+    video_w = float((video / max_video) * w_video) if max_video > 0 else 0.0
+    audio_w = float((a_score / max_audio) * w_audio) if max_audio > 0 else 0.0
+    languages_w = float((l_score / max_languages) * w_languages) if max_languages > 0 else 0.0
+    size_w = float((s_score / max_size) * w_size) if max_size > 0 else 0.0
     score = int(round(video_w + audio_w + languages_w + size_w))
 
     return {
         "score": score,
         "video": video,
-        "video_w": video_w,
+        "video_w": round(video_w, 4),
         "audio": a_score,
-        "audio_w": audio_w,
+        "audio_w": round(audio_w, 4),
         "languages": l_score,
-        "languages_w": languages_w,
+        "languages_w": round(languages_w, 4),
         "size": s_score,
-        "size_w": size_w,
+        "size_w": round(size_w, 4),
         "video_details": {
             "resolution": v_resolution,
             "codec": v_codec,

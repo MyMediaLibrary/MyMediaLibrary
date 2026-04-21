@@ -97,10 +97,12 @@ class ScoreConfigBackendTest(unittest.TestCase):
             self.assertGreaterEqual(payload["items"][0]["quality"]["score"], 0)
             self.assertEqual(
                 payload["items"][0]["quality"]["score"],
-                payload["items"][0]["quality"]["video_w"]
-                + payload["items"][0]["quality"]["audio_w"]
-                + payload["items"][0]["quality"]["languages_w"]
-                + payload["items"][0]["quality"]["size_w"],
+                int(round(
+                    payload["items"][0]["quality"]["video_w"]
+                    + payload["items"][0]["quality"]["audio_w"]
+                    + payload["items"][0]["quality"]["languages_w"]
+                    + payload["items"][0]["quality"]["size_w"]
+                )),
             )
 
     def test_recompute_scores_only_applies_weight_changes(self):
