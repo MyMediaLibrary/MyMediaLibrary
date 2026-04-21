@@ -438,6 +438,37 @@ def compute_size_quality_score(item: dict, score_config: dict[str, Any] | None =
     return int(_compute_size_quality_details(item, score_config).get("score", 0))
 
 
+def build_quality_block(
+    *,
+    video_resolution: int,
+    video_codec: int,
+    video_hdr: int,
+    audio: int,
+    languages: int,
+    size: int,
+) -> dict[str, Any]:
+    v_resolution = _as_int(video_resolution, 0)
+    v_codec = _as_int(video_codec, 0)
+    v_hdr = _as_int(video_hdr, 0)
+    video = int(v_resolution + v_codec + v_hdr)
+    a_score = _as_int(audio, 0)
+    l_score = _as_int(languages, 0)
+    s_score = _as_int(size, 0)
+    score = int(video + a_score + l_score + s_score)
+    return {
+        "score": score,
+        "video": video,
+        "audio": a_score,
+        "languages": l_score,
+        "size": s_score,
+        "video_details": {
+            "resolution": v_resolution,
+            "codec": v_codec,
+            "hdr": v_hdr,
+        },
+    }
+
+
 def get_quality_level(score: int) -> int:
     if score <= 20:
         return 1
@@ -452,7 +483,6 @@ def get_quality_level(score: int) -> int:
 
 def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> dict:
     cfg = _resolve_score_config(score_config)
-    weights = cfg.get("weights") if isinstance(cfg.get("weights"), dict) else {}
 
     video_details = compute_video_quality_score(item, cfg)
     video_score = int(video_details["score"])
@@ -461,38 +491,14 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     size_details = _compute_size_quality_details(item, cfg)
     size_score = int(size_details.get("score", 0))
 
-    maxima = _score_component_maxima(cfg)
-    weighted_total = 0.0
-    for component, raw_score in (
-        ("video", video_score),
-        ("audio", audio_score),
-        ("languages", language_score),
-        ("size", size_score),
-    ):
-        max_component = _as_float(maxima.get(component), 0.0)
-        weight = _as_float(weights.get(component), 0.0)
-        if max_component <= 0 or weight <= 0:
-            continue
-        ratio = max(0.0, min(1.0, _as_float(raw_score, 0.0) / max_component))
-        weighted_total += ratio * weight
-
-    final_score = _as_int(weighted_total, 0)
-    final_score = max(0, min(100, final_score))
-
     video_resolution = _as_int(video_details.get("resolution"), 0)
     video_codec = _as_int(video_details.get("codec"), 0)
     video_hdr = _as_int(video_details.get("hdr"), 0)
-    video_total = video_resolution + video_codec + video_hdr
-
-    return {
-        "score": final_score,
-        "video": _as_int(video_total, 0),
-        "audio": _as_int(audio_score, 0),
-        "languages": _as_int(language_score, 0),
-        "size": _as_int(size_score, 0),
-        "video_details": {
-            "resolution": _as_int(video_resolution, 0),
-            "codec": _as_int(video_codec, 0),
-            "hdr": _as_int(video_hdr, 0),
-        },
-    }
+    return build_quality_block(
+        video_resolution=video_resolution,
+        video_codec=video_codec,
+        video_hdr=video_hdr,
+        audio=audio_score,
+        languages=language_score,
+        size=size_score,
+    )

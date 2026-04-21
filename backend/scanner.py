@@ -127,10 +127,10 @@ except Exception:
 log = logging.getLogger("scanner")
 
 try:
-    from backend.scoring import compute_quality, get_builtin_score_defaults
+    from backend.scoring import build_quality_block, compute_quality, get_builtin_score_defaults
 except Exception:
     try:
-        from scoring import compute_quality, get_builtin_score_defaults
+        from scoring import build_quality_block, compute_quality, get_builtin_score_defaults
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
@@ -148,6 +148,21 @@ except Exception:
                     "resolution": 0,
                     "codec": 0,
                     "hdr": 0,
+                },
+            }
+
+        def build_quality_block(*, video_resolution: int, video_codec: int, video_hdr: int, audio: int, languages: int, size: int) -> dict:
+            video = int(video_resolution) + int(video_codec) + int(video_hdr)
+            return {
+                "score": video + int(audio) + int(languages) + int(size),
+                "video": video,
+                "audio": int(audio),
+                "languages": int(languages),
+                "size": int(size),
+                "video_details": {
+                    "resolution": int(video_resolution),
+                    "codec": int(video_codec),
+                    "hdr": int(video_hdr),
                 },
             }
 
@@ -1192,51 +1207,6 @@ def aggregate_season_metadata(
     }
 
 
-def _weighted_quality_from_seasons(seasons: list[dict]) -> dict | None:
-    weighted = [s for s in seasons if isinstance(s, dict) and isinstance(s.get("quality"), dict) and int(s.get("episodes_found") or 0) > 0]
-    if not weighted:
-        return None
-    total_weight = float(sum(int(s.get("episodes_found") or 0) for s in weighted))
-    if total_weight <= 0:
-        return None
-
-    def _wavg(key: str) -> int:
-        total = 0.0
-        for s in weighted:
-            q = s.get("quality") or {}
-            total += float(q.get(key, 0) or 0) * int(s.get("episodes_found") or 0)
-        return int(round(total / total_weight))
-
-    def _wavg_video_detail(key: str) -> int:
-        total = 0.0
-        for s in weighted:
-            q = s.get("quality") or {}
-            vd = q.get("video_details") or {}
-            total += float(vd.get(key, 0) or 0) * int(s.get("episodes_found") or 0)
-        return int(round(total / total_weight))
-
-    score = max(0, min(100, _wavg("score")))
-    video_resolution = max(0, _wavg_video_detail("resolution"))
-    video_codec = max(0, _wavg_video_detail("codec"))
-    video_hdr = max(0, _wavg_video_detail("hdr"))
-    video = int(video_resolution + video_codec + video_hdr)
-    audio = max(0, _wavg("audio"))
-    languages = max(0, _wavg("languages"))
-    size = max(0, _wavg("size"))
-    return {
-        "score": score,
-        "video": video,
-        "audio": audio,
-        "languages": languages,
-        "size": size,
-        "video_details": {
-            "resolution": video_resolution,
-            "codec": video_codec,
-            "hdr": video_hdr,
-        },
-    }
-
-
 def aggregate_series_metadata(
     series_episodes: list[dict],
     *,
@@ -1306,9 +1276,7 @@ def aggregate_series_metadata(
         "hdr_type": hdr_type,
         "size_b": size_b,
     }
-    fallback_quality = compute_quality(series_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(series_item_for_score)
-    weighted_quality = _weighted_quality_from_seasons(seasons)
-    quality = weighted_quality or fallback_quality
+    quality = compute_quality(series_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(series_item_for_score)
 
     return {
         "seasons": seasons,
@@ -2142,9 +2110,23 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
             }
         else:
             vd = {"resolution": 0, "codec": 0, "hdr": 0}
-        q["video_details"] = vd
-        q["video"] = int(vd["resolution"] + vd["codec"] + vd["hdr"])
-        clean["quality"] = q
+        normalized_q = build_quality_block(
+            video_resolution=vd["resolution"],
+            video_codec=vd["codec"],
+            video_hdr=vd["hdr"],
+            audio=_safe_int(q.get("audio"), 0) or 0,
+            languages=_safe_int(q.get("languages"), 0) or 0,
+            size=_safe_int(q.get("size"), 0) or 0,
+        )
+        if _safe_int(q.get("video"), normalized_q["video"]) != normalized_q["video"] or _safe_int(q.get("score"), normalized_q["score"]) != normalized_q["score"]:
+            log.warning(
+                "[score] Normalized inconsistent quality block for item %r (%s): score=%s video=%s",
+                clean.get("title"),
+                clean.get("path"),
+                q.get("score"),
+                q.get("video"),
+            )
+        clean["quality"] = normalized_q
     seasons = clean.get("seasons")
     if isinstance(seasons, list):
         sanitized_seasons = []
@@ -2170,9 +2152,21 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                     }
                 else:
                     vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
-                sq2["video_details"] = vd2
-                sq2["video"] = int(vd2["resolution"] + vd2["codec"] + vd2["hdr"])
-                s["quality"] = sq2
+                normalized_sq = build_quality_block(
+                    video_resolution=vd2["resolution"],
+                    video_codec=vd2["codec"],
+                    video_hdr=vd2["hdr"],
+                    audio=_safe_int(sq2.get("audio"), 0) or 0,
+                    languages=_safe_int(sq2.get("languages"), 0) or 0,
+                    size=_safe_int(sq2.get("size"), 0) or 0,
+                )
+                if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
+                    log.warning(
+                        "[score] Normalized inconsistent season quality for item %r season=%s",
+                        clean.get("title"),
+                        s.get("season"),
+                    )
+                s["quality"] = normalized_sq
             sanitized_seasons.append(s)
         clean["seasons"] = sanitized_seasons
     return clean
@@ -2804,7 +2798,6 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                 season_copy["quality"] = quality
                 seasons.append(season_copy)
             item["seasons"] = seasons
-            weighted_quality = _weighted_quality_from_seasons(seasons)
             item_for_score = {
                 "type": "tv",
                 "resolution": item.get("resolution"),
@@ -2819,7 +2812,7 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                 "hdr_type": item.get("hdr_type"),
                 "size_b": item.get("size_b"),
             }
-            item["quality"] = weighted_quality or compute_quality(item_for_score, score_config)
+            item["quality"] = compute_quality(item_for_score, score_config)
         else:
             item["quality"] = compute_quality(item, score_config)
         item.pop("score", None)

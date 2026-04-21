@@ -250,11 +250,10 @@ let allItems=[], categories=[], groups=[];
     const score = Number(quality?.score);
     if (!Number.isFinite(score)) return '';
 
-    const details = quality?.score_details || {};
-    const video = Number.isFinite(Number(details?.video)) ? Number(details.video) : Number(quality?.video);
-    const audio = Number.isFinite(Number(details?.audio)) ? Number(details.audio) : Number(quality?.audio);
-    const languages = Number.isFinite(Number(details?.languages)) ? Number(details.languages) : Number(quality?.languages);
-    const size = Number.isFinite(Number(details?.size)) ? Number(details.size) : Number(quality?.size);
+    const video = Number(quality?.video);
+    const audio = Number(quality?.audio);
+    const languages = Number(quality?.languages);
+    const size = Number(quality?.size);
 
     const lines = [
       `${t('quality_tooltip.score')}: ${Math.round(score)}`,

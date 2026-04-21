@@ -113,7 +113,7 @@ class QualityScoringV1Test(unittest.TestCase):
         self.assertGreaterEqual(low_quality["score"], 0)
         self.assertLessEqual(low_quality["score"], 100)
 
-    def test_weights_change_score_when_only_weights_change(self):
+    def test_weights_do_not_change_score_when_only_weights_change(self):
         item = {
             "resolution": "1080p",
             "codec": "H.264",
@@ -134,9 +134,9 @@ class QualityScoringV1Test(unittest.TestCase):
         }
         shifted = scoring.compute_quality(item, reweighted)["score"]
 
-        self.assertNotEqual(baseline, shifted)
+        self.assertEqual(baseline, shifted)
 
-    def test_weighted_score_stays_bounded_even_with_invalid_weight_values(self):
+    def test_score_formula_is_deterministic_even_with_invalid_weight_values(self):
         item = {
             "resolution": "2160p",
             "codec": "H.265",
@@ -153,8 +153,10 @@ class QualityScoringV1Test(unittest.TestCase):
             "size": 200,
         }
         quality = scoring.compute_quality(item, cfg)
-        self.assertGreaterEqual(quality["score"], 0)
-        self.assertLessEqual(quality["score"], 100)
+        self.assertEqual(
+            quality["score"],
+            quality["video"] + quality["audio"] + quality["languages"] + quality["size"],
+        )
 
 
 if __name__ == "__main__":
