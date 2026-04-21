@@ -26,6 +26,7 @@
   // ── Settings private state ────────────────────────────────────────────────
   let _settingsJsrTestOk = false;
   let _settingsLayoutMode = null;
+  let _settingsFoldersSnapshot = [];
   let _scoreSettingsMeta = null;
   let _scoreSettingsDraft = null;
   let _scoreEnabledLocalOverride = null;
@@ -811,6 +812,7 @@
     }
     toggleJsrFields();
 
+    _settingsFoldersSnapshot = JSON.parse(JSON.stringify(appConfig.folders || []));
     renderFoldersUI();
     renderProviderToggles();
     loadScoreSettings();
@@ -863,7 +865,7 @@
 
     // Gather folder type/activation — always include current state
     const folderUpdates = gatherFolderEdits();
-    if (folderUpdates && shouldTriggerScan(appConfig, { folders: folderUpdates })) {
+    if (folderUpdates && shouldTriggerScan({ folders: _settingsFoldersSnapshot }, { folders: folderUpdates })) {
       partial.folders = folderUpdates;
     }
 

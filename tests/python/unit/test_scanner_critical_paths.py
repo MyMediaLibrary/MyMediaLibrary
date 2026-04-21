@@ -490,5 +490,19 @@ class HdrFallbackSafetyTest(unittest.TestCase):
             self.assertEqual(item["quality"]["video"], 30)
 
 
+class LibraryWriteSafetyTest(unittest.TestCase):
+    def test_write_json_is_atomic_and_keeps_previous_valid_file_on_serialize_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = pathlib.Path(tmpdir) / "library.json"
+
+            scanner.write_json({"ok": True, "items": []}, str(output))
+            with self.assertRaises(ValueError):
+                scanner.write_json({"items": [{"bad": float("nan")}]}, str(output))
+
+            with open(output, encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertEqual(data, {"ok": True, "items": []})
+
+
 if __name__ == "__main__":
     unittest.main()

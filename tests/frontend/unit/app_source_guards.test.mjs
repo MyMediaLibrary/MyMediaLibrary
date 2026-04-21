@@ -168,7 +168,7 @@ test('score settings use shared collapsible style and dynamic label fallback', (
 
 test('score settings do not render a penalties section anymore', () => {
   assert.doesNotMatch(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should be removed');
-  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties'\) return;/, 'legacy penalties key should be ignored when rendering sections');
+  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties' \|\| key === 'max_score'\) return;/, 'legacy penalties/max_score keys should be ignored when rendering sections');
 });
 
 test('score weights renderer outputs dedicated grid container', () => {
@@ -216,7 +216,7 @@ test('settings trigger scan only when folders changed', () => {
   assert.match(shouldTriggerScanBlock, /return prevSig !== nextSig;/, 'scan trigger helper should only trigger on actual folder diff');
 
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
-  assert.match(saveSettingsBlock, /shouldTriggerScan\(appConfig, \{ folders: folderUpdates \}\)/, 'settings save should gate folder payload behind shouldTriggerScan');
+  assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
 });
 
 test('restoreState defers stats tab render until library load is complete', () => {

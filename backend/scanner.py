@@ -37,6 +37,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -1754,8 +1755,26 @@ def load_existing(output_path: str) -> dict:
 def write_json(data: dict, output_path: str) -> None:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(output.parent),
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+            json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output)
+    except Exception:
+        if tmp_path is not None:
+            with contextlib.suppress(Exception):
+                tmp_path.unlink(missing_ok=True)
+        raise
     log.debug(f"Written: {output_path}")
 
 
@@ -1839,6 +1858,22 @@ def _ensure_needs_onboarding(cfg: dict, config_exists: bool | None = None) -> tu
         system["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists)
         changed = True
     return cfg, changed
+
+
+def _finalize_needs_onboarding_after_config_update(cfg: dict) -> bool:
+    """
+    Keep onboarding deterministic after onboarding/settings saves.
+    Once a usable media folder exists, onboarding is considered completed.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    if not _has_usable_config(cfg):
+        return False
+    system = cfg.setdefault("system", {})
+    if system.get("needs_onboarding") is False:
+        return False
+    system["needs_onboarding"] = False
+    return True
 
 
 def _is_inventory_enabled(cfg: dict | None) -> bool:
@@ -3771,6 +3806,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 if root.exists():
                     sync_folders(root, cfg)
                     changed = True
+            # Self-heal stale onboarding flag if a usable config already exists
+            # and a library snapshot is present.
+            if (
+                cfg.get("system", {}).get("needs_onboarding") is True
+                and _has_usable_config(cfg)
+                and Path(OUTPUT_PATH).exists()
+            ):
+                cfg["system"]["needs_onboarding"] = False
+                changed = True
             if changed:
                 save_config(cfg)
                 cfg = load_config()
@@ -4053,6 +4097,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             normalize_folder_enabled_flags(merged, drop_visible=True)
             merged, _ = normalize_seerr_config(merged)
             merged, _, _ = normalize_score_configuration_sections(merged)
+            _finalize_needs_onboarding_after_config_update(merged)
             # Ensure apikey never persists in config.json
             if "seerr" in merged:
                 merged["seerr"].pop("apikey", None)
