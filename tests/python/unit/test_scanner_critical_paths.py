@@ -175,6 +175,7 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             self.assertEqual(item["tmdb_id"], "228068")
             self.assertEqual(item["tvdb_id"], "83867")
             self.assertIn("seasons", item)
+            self.assertNotIn("quality", item)
             self.assertIsNone(item.get("episodes_expected"))
             self.assertNotIn("complete", item)
 

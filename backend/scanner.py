@@ -1294,6 +1294,7 @@ def aggregate_season_metadata(
     *,
     episodes_expected: int | None = None,
     score_config: dict | None = None,
+    include_quality: bool = True,
 ) -> dict:
     episodes_found = len(season_episodes)
     dominant_resolution = _dominant_value([e.get("resolution") for e in season_episodes])
@@ -1317,23 +1318,7 @@ def aggregate_season_metadata(
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
 
-    season_item_for_score = {
-        "type": "tv",
-        "resolution": dominant_resolution,
-        "width": dominant_width,
-        "height": dominant_height,
-        "codec": dominant_codec,
-        "audio_codec_raw": dominant_audio_raw,
-        "audio_codec": dominant_audio,
-        "audio_languages": audio_languages,
-        "audio_languages_simple": audio_languages_simple,
-        "hdr": dominant_hdr,
-        "hdr_type": dominant_hdr_type,
-        "size_b": size_b,
-    }
-    quality = compute_quality(season_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(season_item_for_score)
-
-    return {
+    out = {
         "season": int(season_number),
         "episodes_found": int(episodes_found),
         "episodes_expected": int(episodes_expected) if isinstance(episodes_expected, int) and episodes_expected >= 0 else None,
@@ -1351,8 +1336,24 @@ def aggregate_season_metadata(
         "runtime_min_avg": runtime_min_avg,
         "size_b": size_b,
         "size": format_size(size_b),
-        "quality": quality,
     }
+    if include_quality:
+        season_item_for_score = {
+            "type": "tv",
+            "resolution": dominant_resolution,
+            "width": dominant_width,
+            "height": dominant_height,
+            "codec": dominant_codec,
+            "audio_codec_raw": dominant_audio_raw,
+            "audio_codec": dominant_audio,
+            "audio_languages": audio_languages,
+            "audio_languages_simple": audio_languages_simple,
+            "hdr": dominant_hdr,
+            "hdr_type": dominant_hdr_type,
+            "size_b": size_b,
+        }
+        out["quality"] = compute_quality(season_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(season_item_for_score)
+    return out
 
 
 def aggregate_series_metadata(
@@ -1360,6 +1361,7 @@ def aggregate_series_metadata(
     *,
     score_config: dict | None = None,
     season_expected_counts: dict[int, int] | None = None,
+    include_quality: bool = True,
 ) -> dict:
     by_season: dict[int, list[dict]] = defaultdict(list)
     for ep in series_episodes:
@@ -1379,6 +1381,7 @@ def aggregate_series_metadata(
                 season_eps,
                 episodes_expected=expected.get(season_num),
                 score_config=score_config,
+                include_quality=include_quality,
             )
         )
 
@@ -1429,13 +1432,7 @@ def aggregate_series_metadata(
         "hdr_type": hdr_type,
         "size_b": size_b,
     }
-    quality = _aggregate_series_quality_from_seasons(
-        seasons,
-        score_config=score_config,
-        fallback_item_for_score=series_item_for_score,
-    )
-
-    return {
+    out = {
         "seasons": seasons,
         "season_count": season_count,
         "episode_count": episode_count,
@@ -1453,8 +1450,14 @@ def aggregate_series_metadata(
         "audio_languages_simple": audio_languages_simple,
         "hdr": hdr,
         "hdr_type": hdr_type,
-        "quality": quality,
     }
+    if include_quality:
+        out["quality"] = _aggregate_series_quality_from_seasons(
+            seasons,
+            score_config=score_config,
+            fallback_item_for_score=series_item_for_score,
+        )
+    return out
 
 
 def _extract_seerr_expected_counts(payload: dict) -> dict | None:
@@ -2464,6 +2467,7 @@ def scan_media_item(
         series_agg = aggregate_series_metadata(
             series_episodes,
             score_config=score_config if isinstance(score_config, dict) else None,
+            include_quality=bool(enable_score),
         )
         if isinstance(jsr_for_counts, dict) and jsr_for_counts.get("enabled"):
             expected_counts = _fetch_tv_expected_counts_from_seerr(
@@ -2480,6 +2484,7 @@ def scan_media_item(
                         series_episodes,
                         score_config=score_config if isinstance(score_config, dict) else None,
                         season_expected_counts=season_expected,
+                        include_quality=bool(enable_score),
                     )
     else:
         nfo_file = find_movie_nfo(media_dir)
@@ -2607,7 +2612,12 @@ def run_quick(only_category: str | None = None) -> None:
     if normalize_folder_enabled_flags(cfg, drop_visible=True):
         save_config(cfg)
         cfg = load_config()
-    score_enabled = _is_score_enabled(cfg)
+    score_feature_enabled = _is_score_enabled(cfg)
+    # v0.3.3 policy: final quality scoring is full-phase only (phase 3).
+    # Phase 1 builds metadata/aggregations but does not persist final quality.
+    score_enabled = False
+    if score_feature_enabled:
+        log.debug("[SCAN] Phase 1 keeps score disabled (final quality is computed in phase 3)")
     _, effective_score_config, _ = get_effective_score_config(cfg)
     jsr_for_counts = _jsr_cfg()
     seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
