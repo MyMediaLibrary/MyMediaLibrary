@@ -196,7 +196,9 @@ except Exception:
 try:
     from backend.nfo import (
         classify_resolution, normalize_codec, normalize_audio_codec,
-        parse_audio_languages, simplify_audio_languages,
+        parse_audio_languages, parse_subtitle_languages,
+        parse_audio_channels, parse_video_bitrate,
+        normalize_audio_channels, simplify_audio_languages,
         parse_movie_nfo, parse_tvshow_nfo, count_seasons_episodes,
         find_episode_nfo, find_movie_nfo, poster_rel_path,
         _nfo_stats, _parse_lang_raw, _parse_concatenated_lang_codes,
@@ -204,7 +206,9 @@ try:
 except ImportError:
     from nfo import (
         classify_resolution, normalize_codec, normalize_audio_codec,
-        parse_audio_languages, simplify_audio_languages,
+        parse_audio_languages, parse_subtitle_languages,
+        parse_audio_channels, parse_video_bitrate,
+        normalize_audio_channels, simplify_audio_languages,
         parse_movie_nfo, parse_tvshow_nfo, count_seasons_episodes,
         find_episode_nfo, find_movie_nfo, poster_rel_path,
         _nfo_stats, _parse_lang_raw, _parse_concatenated_lang_codes,
@@ -1001,7 +1005,10 @@ def _episode_metadata_completeness(ep: dict) -> int:
         "codec",
         "audio_codec_raw",
         "audio_codec",
+        "audio_channels",
         "audio_languages",
+        "subtitle_languages",
+        "video_bitrate",
         "hdr_type",
         "runtime_min",
         "size_b",
@@ -1075,6 +1082,9 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
     audio_languages_simple = simplify_audio_languages(langs)
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
+    audio_channels = parse_audio_channels(root)
+    subtitle_languages = parse_subtitle_languages(root) or None
+    video_bitrate = parse_video_bitrate(root)
 
     size_b = 0
     for ext in MEDIA_EXTENSIONS:
@@ -1102,8 +1112,11 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
         "codec": codec,
         "audio_codec_raw": audio_norm.get("raw"),
         "audio_codec": audio_norm.get("normalized"),
+        "audio_channels": audio_channels,
         "audio_languages": langs,
         "audio_languages_simple": audio_languages_simple,
+        "subtitle_languages": subtitle_languages,
+        "video_bitrate": video_bitrate,
         "hdr": hdr,
         "hdr_type": hdr_type,
         "runtime_min": runtime_min,
@@ -1148,8 +1161,11 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
             "codec": None,
             "audio_codec_raw": None,
             "audio_codec": None,
+            "audio_channels": None,
             "audio_languages": [],
             "audio_languages_simple": None,
+            "subtitle_languages": None,
+            "video_bitrate": None,
             "hdr": False,
             "hdr_type": None,
             "runtime_min": None,
@@ -1198,6 +1214,63 @@ def _aggregate_audio_languages_from_episodes(episodes: list[dict]) -> list[str]:
     if not selected and lang_counter:
         selected = [lang for lang, _ in sorted(lang_counter.items(), key=lambda x: (-x[1], x[0]))[:2]]
     return sorted(selected)
+
+
+_AUDIO_CHANNELS_PRIORITY: dict[str, int] = {
+    "1.0": 1,
+    "2.0": 2,
+    "5.1": 3,
+    "7.1": 4,
+}
+
+
+def _audio_channels_tie_break(value: str) -> tuple[int, int]:
+    priority = _AUDIO_CHANNELS_PRIORITY.get(value, 0)
+    base = 0
+    if isinstance(value, str):
+        try:
+            base = int(float(value))
+        except Exception:
+            base = 0
+    return priority, base
+
+
+def _dominant_audio_channels(values: list) -> str | None:
+    normalized_values: list[str] = []
+    for value in values:
+        normalized = normalize_audio_channels(value)
+        if normalized:
+            normalized_values.append(normalized)
+    counter = Counter(normalized_values)
+    if not counter:
+        return None
+    return sorted(
+        counter.items(),
+        key=lambda x: (-x[1], -_audio_channels_tie_break(x[0])[0], -_audio_channels_tie_break(x[0])[1], str(x[0])),
+    )[0][0]
+
+
+def _aggregate_subtitle_languages_from_episodes(episodes: list[dict]) -> list[str]:
+    collected: set[str] = set()
+    for ep in episodes:
+        langs = ep.get("subtitle_languages")
+        if not isinstance(langs, list):
+            continue
+        for lang in langs:
+            if isinstance(lang, str) and lang.strip():
+                collected.add(lang.strip())
+    return sorted(collected)
+
+
+def _average_video_bitrate_from_episodes(episodes: list[dict]) -> int | None:
+    values = [
+        int(ep.get("video_bitrate"))
+        for ep in episodes
+        if isinstance(ep.get("video_bitrate"), int) and int(ep.get("video_bitrate")) > 0
+    ]
+    if not values:
+        return None
+    return int(round(sum(values) / len(values)))
 
 
 def _season_weight(season: dict) -> int:
@@ -1304,6 +1377,7 @@ def aggregate_season_metadata(
     dominant_codec = _dominant_value([e.get("codec") for e in season_episodes])
     dominant_audio_raw = _dominant_value([e.get("audio_codec_raw") for e in season_episodes])
     dominant_audio = _dominant_value([e.get("audio_codec") for e in season_episodes])
+    dominant_audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in season_episodes])
     dominant_hdr_type = _dominant_value([e.get("hdr_type") for e in season_episodes])
     dominant_hdr = bool(dominant_hdr_type)
     if not dominant_hdr and any(bool(e.get("hdr")) for e in season_episodes):
@@ -1316,6 +1390,8 @@ def aggregate_season_metadata(
     size_b = int(sum(int(e.get("size_b") or 0) for e in season_episodes))
     audio_languages = _aggregate_audio_languages_from_episodes(season_episodes)
     audio_languages_simple = simplify_audio_languages(audio_languages)
+    subtitle_languages = _aggregate_subtitle_languages_from_episodes(season_episodes) or None
+    video_bitrate = _average_video_bitrate_from_episodes(season_episodes)
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
 
@@ -1329,8 +1405,11 @@ def aggregate_season_metadata(
         "codec": dominant_codec,
         "audio_codec_raw": dominant_audio_raw,
         "audio_codec": dominant_audio,
+        "audio_channels": dominant_audio_channels,
         "audio_languages": audio_languages,
         "audio_languages_simple": audio_languages_simple,
+        "subtitle_languages": subtitle_languages,
+        "video_bitrate": video_bitrate,
         "hdr": dominant_hdr,
         "hdr_type": dominant_hdr_type,
         "runtime_min_total": runtime_min_total,
@@ -1392,6 +1471,7 @@ def aggregate_series_metadata(
     codec = _dominant_value_from_seasons(seasons, "codec")
     audio_codec_raw = _dominant_value_from_seasons(seasons, "audio_codec_raw")
     audio_codec = _dominant_value_from_seasons(seasons, "audio_codec")
+    audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in series_episodes])
     hdr_type = _dominant_value_from_seasons(seasons, "hdr_type")
     hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict))
 
@@ -1407,6 +1487,8 @@ def aggregate_series_metadata(
     size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)))
 
     audio_languages = _aggregate_audio_languages_from_seasons(seasons)
+    subtitle_languages = _aggregate_subtitle_languages_from_episodes(series_episodes) or None
+    video_bitrate = _average_video_bitrate_from_episodes(series_episodes)
     audio_languages_simple = simplify_audio_languages(audio_languages)
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
@@ -1427,8 +1509,11 @@ def aggregate_series_metadata(
         "codec": codec,
         "audio_codec_raw": audio_codec_raw,
         "audio_codec": audio_codec,
+        "audio_channels": audio_channels,
         "audio_languages": audio_languages,
         "audio_languages_simple": audio_languages_simple,
+        "subtitle_languages": subtitle_languages,
+        "video_bitrate": video_bitrate,
         "hdr": hdr,
         "hdr_type": hdr_type,
         "size_b": size_b,
@@ -1447,8 +1532,11 @@ def aggregate_series_metadata(
         "codec": codec,
         "audio_codec_raw": audio_codec_raw,
         "audio_codec": audio_codec,
+        "audio_channels": audio_channels,
         "audio_languages": audio_languages,
         "audio_languages_simple": audio_languages_simple,
+        "subtitle_languages": subtitle_languages,
+        "video_bitrate": video_bitrate,
         "hdr": hdr,
         "hdr_type": hdr_type,
     }
@@ -2584,6 +2672,7 @@ def scan_media_item(
         "width":             (series_agg.get("width") if is_tv else nfo_meta.get("width")) or prev.get("width"),
         "height":            (series_agg.get("height") if is_tv else nfo_meta.get("height")) or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
+        "genres":            nfo_meta.get("genres"),
         "runtime_min":       (series_agg.get("runtime_min") if is_tv else nfo_meta.get("runtime_min")) or prev.get("runtime_min"),
         "runtime_min_avg":   (series_agg.get("runtime_min_avg") if is_tv else nfo_meta.get("runtime_min_avg")) or prev.get("runtime_min_avg"),
         "season_count":      (series_agg.get("season_count") if is_tv else nfo_meta.get("season_count")) or prev.get("season_count"),
@@ -2591,8 +2680,11 @@ def scan_media_item(
         "codec":             (series_agg.get("codec") if is_tv else nfo_meta.get("codec")) or prev.get("codec"),
         "audio_codec_raw":   (series_agg.get("audio_codec_raw") if is_tv else nfo_meta.get("audio_codec_raw")) or prev.get("audio_codec_raw"),
         "audio_codec":       (series_agg.get("audio_codec") if is_tv else nfo_meta.get("audio_codec")) or prev.get("audio_codec"),
+        "audio_channels":    (series_agg.get("audio_channels") if is_tv else nfo_meta.get("audio_channels")) or prev.get("audio_channels"),
         "audio_languages":   (series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or [],
         "audio_languages_simple": (series_agg.get("audio_languages_simple") if is_tv else nfo_meta.get("audio_languages_simple")) or prev.get("audio_languages_simple") or simplify_audio_languages((series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or []),
+        "subtitle_languages": (series_agg.get("subtitle_languages") if is_tv else nfo_meta.get("subtitle_languages")) or prev.get("subtitle_languages"),
+        "video_bitrate":     (series_agg.get("video_bitrate") if is_tv else nfo_meta.get("video_bitrate")) or prev.get("video_bitrate"),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous library.json — overwritten by full scan phases

@@ -222,6 +222,15 @@
     .storage-section{display:flex;flex-direction:column;gap:10px}
     .storage-block{display:flex;flex-direction:column;gap:4px}
     .storage-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-family:var(--font-display);font-weight:700;margin-bottom:1px}
+    .filters-collapsible{display:flex;flex-direction:column;gap:6px}
+    .filters-collapsible-trigger{width:100%;display:flex;align-items:center;justify-content:space-between;
+      background:var(--card);border:1px solid var(--border);border-radius:10px;padding:7px 10px;
+      cursor:pointer;color:var(--text);font-family:var(--font-display);font-size:12px;font-weight:700}
+    .filters-collapsible-trigger:hover{border-color:var(--accent)}
+    .filters-collapsible-icon{color:var(--muted);transition:transform .2s ease}
+    .filters-collapsible-trigger[aria-expanded="false"] .filters-collapsible-icon{transform:rotate(-90deg)}
+    .filters-collapsible-body{display:block;padding-left:8px;border-left:1px solid var(--border)}
+    .filters-collapsible-body.is-collapsed{display:none}
     .storage-bar{display:flex;height:8px;border-radius:999px;overflow:hidden;gap:2px}
     .storage-segment{height:100%;border-radius:2px;cursor:pointer;min-width:2px;transition:opacity var(--transition)}
     .storage-segment:hover{opacity:.75}

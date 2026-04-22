@@ -21,6 +21,8 @@ function baseState() {
     activeProviders: new Set(),
     activeCodecs: new Set(),
     activeAudioCodecs: new Set(),
+    activeAudioChannels: new Set(),
+    activeGenres: new Set(),
     activeAudioLanguages: new Set(),
     activeQualityLevels: new Set(),
     scoreMin: 0,
@@ -28,6 +30,8 @@ function baseState() {
     includeNoScore: true,
     providerExclude: false,
     resolutionExclude: false,
+    genreExclude: false,
+    audioChannelsExclude: false,
     videoCodecExclude: false,
     audioCodecExclude: false,
     audioLanguageExclude: false,
@@ -130,6 +134,41 @@ test('missing values are handled as a selectable none value across filters', () 
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['MissingAll', 'ResOnly', 'AudioCodecOnly', 'LangOnly']);
   state.videoCodecExclude = true;
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['CodecOnly']);
+});
+
+test('genre filter supports include/exclude and none matching', () => {
+  const sample = [
+    { title: 'ActionMovie', genres: ['Action', 'Thriller'] },
+    { title: 'DramaMovie', genres: ['Drama'] },
+    { title: 'NoGenre' },
+    { title: 'EmptyGenre', genres: [] }
+  ];
+  const state = baseState();
+  state.activeGenres = new Set(['Action']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['ActionMovie']);
+
+  state.activeGenres = new Set(['__none__']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['NoGenre', 'EmptyGenre']);
+
+  state.genreExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['ActionMovie', 'DramaMovie']);
+});
+
+test('audio channel filter supports dynamic values and none matching', () => {
+  const sample = [
+    { title: 'A', audio_channels: '7.1' },
+    { title: 'B', audio_channels: '5.1' },
+    { title: 'C' }
+  ];
+  const state = baseState();
+  state.activeAudioChannels = new Set(['5.1']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['B']);
+
+  state.activeAudioChannels = new Set(['__none__']);
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['C']);
+
+  state.audioChannelsExclude = true;
+  assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A', 'B']);
 });
 
 test('export button enablement and stale-safe behavior', () => {

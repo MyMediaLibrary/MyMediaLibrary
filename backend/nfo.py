@@ -90,6 +90,30 @@ def _load_audiocodec_mapping() -> dict:
 
 AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
 
+
+def _load_genres_mapping() -> dict:
+    """Load mapping_genres.json from runtime path or dev-local fallback."""
+    paths = [
+        "/app/mapping_genres.json",
+        os.path.join(os.path.dirname(__file__), "../app/mapping_genres.json"),
+    ]
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            # Silent fallback requested: keep current behavior with no crash.
+            return {}
+    return {}
+
+
+GENRES_MAPPING = _load_genres_mapping()
+_GENRES_UNKNOWN_LOGGED: set[str] = set()
+
 # ---------------------------------------------------------------------------
 # Audio language normalisation
 # ---------------------------------------------------------------------------
@@ -300,6 +324,23 @@ def parse_audio_languages(root: ET.Element, item_title: str = '') -> list[str]:
     return sorted(result)
 
 
+def parse_subtitle_languages(root: ET.Element, item_title: str = '') -> list[str]:
+    """Collect subtitle language codes from streamdetails. Returns sorted ISO 639-2 list."""
+    langs: list[str] = []
+    for sub_el in root.findall(".//fileinfo/streamdetails/subtitle"):
+        raw = _xml_text(sub_el, "language")
+        if raw:
+            langs.extend(_parse_lang_raw(raw, item_title))
+
+    seen: set[str] = set()
+    result = []
+    for l in langs:
+        if l not in seen and l != 'und':
+            seen.add(l)
+            result.append(l)
+    return sorted(result)
+
+
 def simplify_audio_languages(codes: list[str] | None) -> str:
     """Map detailed audio language codes to VF / VO / MULTI / UNKNOWN.
 
@@ -363,6 +404,55 @@ def normalize_audio_codec(raw: str | None) -> dict:
     return {"raw": raw, "normalized": fb["normalized"], "display": fb["display"]}
 
 
+def normalize_audio_channels(raw: str | int | float | None) -> str | None:
+    """Normalize channel count (1,2,6,8) to canonical labels (1.0,2.0,5.1,7.1)."""
+    try:
+        if raw is None:
+            return None
+        value_raw = str(raw).strip()
+        if value_raw in {"1.0", "2.0", "5.1", "7.1"}:
+            return value_raw
+        channels_f = float(value_raw)
+    except Exception:
+        return None
+
+    if channels_f <= 0:
+        return None
+    channels = int(channels_f)
+    if channels == 1:
+        return "1.0"
+    if channels == 2:
+        return "2.0"
+    if channels == 6:
+        return "5.1"
+    if channels == 8:
+        return "7.1"
+    if abs(channels_f - channels) > 1e-6:
+        return f"{channels_f:.1f}"
+    return f"{channels}.0"
+
+
+def parse_audio_channels(root: ET.Element) -> str | None:
+    """Extract normalized audio channels from streamdetails audio tracks."""
+    for audio_el in root.findall(".//fileinfo/streamdetails/audio"):
+        normalized = normalize_audio_channels(_xml_text(audio_el, "channels"))
+        if normalized:
+            return normalized
+    return None
+
+
+def parse_video_bitrate(root: ET.Element) -> int | None:
+    """Extract raw positive video bitrate from streamdetails video."""
+    video = root.find(".//fileinfo/streamdetails/video")
+    if video is None:
+        return None
+    try:
+        bitrate = int(float((_xml_text(video, "bitrate") or "").strip()))
+    except Exception:
+        return None
+    return bitrate if bitrate > 0 else None
+
+
 # NFO parse stats — reset at each run_quick() call, reported as grouped summary
 _nfo_stats: dict = {"ok": 0, "failed": 0}
 
@@ -419,6 +509,32 @@ def _xml_text(root: ET.Element, *tags) -> str | None:
     return None
 
 
+def _parse_genres(root: ET.Element) -> list[str] | None:
+    """Parse repeated <genre> tags into an ordered de-duplicated mapped list."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for genre_el in root.findall("genre"):
+        raw = (genre_el.text or "").strip()
+        if not raw:
+            continue
+        mapped = GENRES_MAPPING.get(raw, raw) if isinstance(GENRES_MAPPING, dict) else raw
+        if raw in GENRES_MAPPING and mapped is None:
+            continue
+        if raw not in GENRES_MAPPING and raw not in _GENRES_UNKNOWN_LOGGED:
+            _GENRES_UNKNOWN_LOGGED.add(raw)
+            log.debug(f"[SCAN] Unknown genre detected: {raw}")
+        if not isinstance(mapped, str):
+            continue
+        mapped = mapped.strip()
+        if not mapped:
+            continue
+        if mapped in seen:
+            continue
+        seen.add(mapped)
+        out.append(mapped)
+    return out or None
+
+
 def parse_movie_nfo(nfo_path: Path) -> dict:
     """Parse a Kodi/Jellyfin movie .nfo file. Returns a dict of metadata."""
     result = {}
@@ -430,6 +546,7 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
     result["year"]    = _xml_text(root, "year")
     result["plot"]    = _xml_text(root, "plot")
     result["runtime"] = _xml_text(root, "runtime")
+    result["genres"]  = _parse_genres(root)
 
     # IDs — prefer explicit uniqueid tags, then dedicated root tags, then legacy <id>.
     for uid in root.findall("uniqueid"):
@@ -489,6 +606,10 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
 
     result["audio_languages"] = parse_audio_languages(root, result.get("title") or "")
     result["audio_languages_simple"] = simplify_audio_languages(result["audio_languages"])
+    result["audio_channels"] = parse_audio_channels(root)
+    subtitle_languages = parse_subtitle_languages(root, result.get("title") or "")
+    result["subtitle_languages"] = subtitle_languages or None
+    result["video_bitrate"] = parse_video_bitrate(root)
 
     return result
 
@@ -503,6 +624,7 @@ def parse_tvshow_nfo(nfo_path: Path) -> dict:
     result["title"] = _xml_text(root, "title")
     result["year"]  = _xml_text(root, "year")
     result["plot"]  = _xml_text(root, "plot")
+    result["genres"] = _parse_genres(root)
 
     for uid in root.findall("uniqueid"):
         uid_type = (uid.get("type") or "").strip().lower()

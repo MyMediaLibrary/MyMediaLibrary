@@ -170,6 +170,22 @@
 
     out = applySelectionFilter(out, state.activeCodecs, state.videoCodecExclude, (i) => i.codec || PROVIDER_NONE_KEY);
     out = applySelectionFilter(out, state.activeAudioCodecs, state.audioCodecExclude, (i) => i.audio_codec || PROVIDER_NONE_KEY);
+    out = applySelectionFilter(out, state.activeAudioChannels, state.audioChannelsExclude, (i) => i.audio_channels || PROVIDER_NONE_KEY);
+    if (state.activeGenres && state.activeGenres.size > 0) {
+      out = out.filter((item) => {
+        const genres = Array.isArray(item?.genres)
+          ? [...new Set(item.genres.map((g) => String(g || '').trim()).filter(Boolean))]
+          : [];
+        const hasNone = genres.length === 0;
+        if (state.genreExclude) {
+          if (state.activeGenres.has(PROVIDER_NONE_KEY) && hasNone) return false;
+          if (hasNone) return true;
+          return !genres.some((genre) => state.activeGenres.has(genre));
+        }
+        if (state.activeGenres.has(PROVIDER_NONE_KEY) && hasNone) return true;
+        return genres.some((genre) => state.activeGenres.has(genre));
+      });
+    }
     out = applySelectionFilter(
       out,
       state.activeAudioLanguages,
@@ -221,6 +237,8 @@
     if (field === 'provider') nextState.activeProviders = new Set();
     if (field === 'codec') nextState.activeCodecs = new Set();
     if (field === 'audioCodec') nextState.activeAudioCodecs = new Set();
+    if (field === 'audioChannels') nextState.activeAudioChannels = new Set();
+    if (field === 'genre') nextState.activeGenres = new Set();
     if (field === 'audioLanguage') nextState.activeAudioLanguages = new Set();
     if (field === 'quality') {
       nextState.activeQualityLevels = new Set();
@@ -250,6 +268,20 @@
       } else if (field === 'audioCodec') {
         const key = item.audio_codec || PROVIDER_NONE_KEY;
         counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'audioChannels') {
+        const key = item.audio_channels || PROVIDER_NONE_KEY;
+        counts[key] = (counts[key] || 0) + 1;
+      } else if (field === 'genre') {
+        const genres = Array.isArray(item?.genres)
+          ? [...new Set(item.genres.map((g) => String(g || '').trim()).filter(Boolean))]
+          : [];
+        if (genres.length === 0) {
+          counts[PROVIDER_NONE_KEY] = (counts[PROVIDER_NONE_KEY] || 0) + 1;
+        } else {
+          genres.forEach((genre) => {
+            counts[genre] = (counts[genre] || 0) + 1;
+          });
+        }
       } else if (field === 'audioLanguage') {
         const key = item.audio_languages_simple === 'UNKNOWN'
           ? PROVIDER_NONE_KEY
@@ -274,6 +306,8 @@
       || state.activeProviders.size > 0
       || state.activeCodecs.size > 0
       || state.activeAudioCodecs.size > 0
+      || state.activeAudioChannels.size > 0
+      || state.activeGenres.size > 0
       || state.activeAudioLanguages.size > 0
       || (Number.isFinite(Number(state.scoreMin)) ? Number(state.scoreMin) : 0) > 0
       || (Number.isFinite(Number(state.scoreMax)) ? Number(state.scoreMax) : 100) < 100
@@ -281,6 +315,8 @@
       || state.activeQualityLevels.size > 0
       || state.providerExclude
       || state.resolutionExclude
+      || state.genreExclude
+      || state.audioChannelsExclude
       || state.videoCodecExclude
       || state.audioCodecExclude
       || state.audioLanguageExclude
@@ -298,6 +334,8 @@
       activeProviders: new Set(),
       activeCodecs: new Set(),
       activeAudioCodecs: new Set(),
+      activeAudioChannels: new Set(),
+      activeGenres: new Set(),
       activeAudioLanguages: new Set(),
       activeQualityLevels: new Set(),
       scoreMin: 0,
@@ -305,6 +343,8 @@
       includeNoScore: true,
       providerExclude: false,
       resolutionExclude: false,
+      genreExclude: false,
+      audioChannelsExclude: false,
       videoCodecExclude: false,
       audioCodecExclude: false,
       audioLanguageExclude: false,

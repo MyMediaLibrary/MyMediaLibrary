@@ -145,16 +145,29 @@
     <!-- CATEGORY / GROUP FILTERS -->
     <div class="sidebar-section" id="storageSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="folderSection" style="display:none;width:100%"></div>
-
-    <!-- RESOLUTION FILTER -->
-    <div class="sidebar-section" id="resolutionSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="genreSection" style="display:none;width:100%"></div>
 
     <!-- PROVIDER FILTER -->
     <div class="sidebar-section" id="providerSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="codecSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="qualitySection" style="display:none;width:100%"></div>
+
+    <!-- TECHNICAL QUALITY -->
+    <div class="sidebar-section" id="technicalSection" style="display:none;width:100%">
+      <div class="filters-collapsible">
+        <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtn" onclick="toggleTechnicalFilters(false)" aria-expanded="false">
+          <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
+          <span class="filters-collapsible-icon">▾</span>
+        </button>
+        <div class="filters-collapsible-body is-collapsed" id="technicalBody">
+          <div class="sidebar-section" id="resolutionSection" style="display:none;width:100%"></div>
+          <div class="sidebar-section" id="codecSection" style="display:none;width:100%"></div>
+          <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
+          <div class="sidebar-section" id="audioChannelsSection" style="display:none;width:100%"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="sidebar-section" id="audioLanguageSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="qualitySection" style="display:none;width:100%"></div>
   </div>
 
   <div class="sidebar-bottom">
@@ -507,12 +520,24 @@
       </div>
       <div id="storageSectionMobile" style="margin-bottom:8px"></div>
       <div id="folderSectionMobile" style="margin-bottom:8px"></div>
-      <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
+      <div id="genreSectionMobile" style="margin-bottom:8px"></div>
       <div id="providerSectionMobile" style="margin-bottom:8px"></div>
-      <div id="codecSectionMobile" style="margin-bottom:8px"></div>
-      <div id="audioCodecSectionMobile"></div>
-      <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
+      <div id="technicalSectionMobile" style="margin-bottom:8px;display:none">
+        <div class="filters-collapsible">
+          <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtnMobile" onclick="toggleTechnicalFilters(true)" aria-expanded="false">
+            <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
+            <span class="filters-collapsible-icon">▾</span>
+          </button>
+          <div class="filters-collapsible-body is-collapsed" id="technicalBodyMobile">
+            <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
+            <div id="codecSectionMobile" style="margin-bottom:8px"></div>
+            <div id="audioCodecSectionMobile" style="margin-bottom:8px"></div>
+            <div id="audioChannelsSectionMobile" style="margin-bottom:8px"></div>
+          </div>
+        </div>
+      </div>
       <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
+      <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
     </div>
   </div>
   <div id="mobileScanSheet" class="mobile-sheet-backdrop" onclick="closeMobileScanSheetIfBackdrop(event)">

@@ -27,6 +27,9 @@
     getAudioLanguageSimpleDisplay: null,
     getAudioCodecDisplay: null,
     getFilterDisplayValue: null,
+    getNormalizedGenres: null,
+    getGenreDisplay: null,
+    getNormalizedAudioChannels: null,
     getEnabledProvidersForItem: null,
     _itemProviderGroups: null,
     _providerGroupKey: null,
@@ -38,6 +41,9 @@
     escH: null,
     MMLLogic: null,
   };
+  const STATS_SUBTABS = ['general', 'technical', 'evolution'];
+  const STATS_GENRE_OTHERS_KEY = '__genre_others__';
+  let activeStatsSubtab = 'general';
 
   function getDep(name) {
     return deps[name] !== null && deps[name] !== undefined ? deps[name] : window[name];
@@ -69,11 +75,34 @@
         if (yearControls?.contains(e.target)) setYearPeriod(e.target);
       }
     });
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.dataset.statsSubtab) return;
+      const tabsHost = document.getElementById('statsSubtabs');
+      if (tabsHost?.contains(e.target)) setStatsSubtab(e.target);
+    });
+
   }
 
   // ══════════════════════════════════════════════════════════
   //  DATA LAYER — pure aggregations, no HTML
   // ══════════════════════════════════════════════════════════
+
+  function mapToSortedEntries(mapObj) {
+    return Object.entries(mapObj).sort((a, b) => b[1] - a[1]);
+  }
+
+  function buildGenreTopEntries(byGenreMetric, items) {
+    const sorted = mapToSortedEntries(byGenreMetric);
+    const topEntries = sorted.slice(0, 12);
+    const topKeys = new Set(topEntries.map(([genre]) => genre));
+    const uncoveredItems = items.filter((item) => {
+      const genres = getDep('getNormalizedGenres')(item);
+      return !genres.some((genre) => topKeys.has(genre));
+    });
+    const othersCount = uncoveredItems.length;
+    return [...topEntries, [STATS_GENRE_OTHERS_KEY, othersCount]];
+  }
 
   function buildStatsData(items) {
     const C = window.MMLConstants.CHARTS;
@@ -126,6 +155,33 @@
       entriesCount: Object.entries(byAudioLangCount).sort((a,b) => b[1]-a[1]),
       entriesSize:  Object.entries(byAudioLangSize).sort((a,b) => b[1]-a[1]),
       hasData:      Object.keys(byAudioLangCount).length > 0,
+    };
+
+    // ── Genres ───────────────────────────────────────────────
+    const byGenreCount = {};
+    items.forEach((item) => {
+      const genres = getDep('getNormalizedGenres')(item);
+      genres.forEach((genre) => {
+        byGenreCount[genre] = (byGenreCount[genre] || 0) + 1;
+      });
+    });
+    const genres = {
+      entriesCount: buildGenreTopEntries(byGenreCount, items),
+      hasData: items.length > 0,
+      referenceCount: items.length,
+    };
+
+    // ── Audio channels ───────────────────────────────────────
+    const byAudioChannelsCount = {}, byAudioChannelsSize = {};
+    items.forEach((item) => {
+      const channel = getDep('getNormalizedAudioChannels')(item);
+      byAudioChannelsCount[channel] = (byAudioChannelsCount[channel] || 0) + 1;
+      byAudioChannelsSize[channel] = (byAudioChannelsSize[channel] || 0) + (item.size_b || 0);
+    });
+    const audioChannels = {
+      entriesCount: mapToSortedEntries(byAudioChannelsCount),
+      entriesSize: mapToSortedEntries(byAudioChannelsSize),
+      hasData: Object.keys(byAudioChannelsCount).length > 0,
     };
 
     // ── Resolution ───────────────────────────────────────────
@@ -250,7 +306,7 @@
       hasData:     getDep('allItems').some(i => i.quality),
     };
 
-    return { category, codec, audioCodec, audioLang, resolution, providers, timeline, years, quality };
+    return { category, genres, codec, audioCodec, audioLang, audioChannels, resolution, providers, timeline, years, quality };
   }
 
   function getScopedProviders(item) {
@@ -385,6 +441,41 @@
       +'</div>';
   }
 
+  function makeHorizontalBars(entries, labelFn, valueFormatter, percentBase, colorFn) {
+    if (!entries.length) return '';
+    const maxValue = Math.max(...entries.map(([, value]) => Number(value) || 0), 0);
+    if (!maxValue) return '';
+    return '<div class="hbar-list">'
+      +entries.map(([key, value], index) => {
+        const numericValue = Number(value) || 0;
+        const width = maxValue > 0 ? (numericValue / maxValue) * 100 : 0;
+        const percent = percentBase > 0 ? Math.round((numericValue / percentBase) * 100) + ' %' : '0 %';
+        return '<div class="hbar-item">'
+          +'<div class="hbar-label" title="'+getDep('escH')(labelFn(key))+'">'+getDep('escH')(labelFn(key))+'</div>'
+          +'<div class="hbar-track"><div class="hbar-fill" style="width:'+width.toFixed(2)+'%;background:'+colorFn(key, index)+'"></div></div>'
+          +'<div class="hbar-val">'+valueFormatter(numericValue)+' <span class="stat-row-sub">('+percent+')</span></div>'
+          +'</div>';
+      }).join('')
+      +'</div>';
+  }
+
+  function getGenreLabel(key) {
+    if (key === STATS_GENRE_OTHERS_KEY) return getDep('t')('stats.others');
+    return getDep('getGenreDisplay')(key);
+  }
+
+  function renderGenresBlock(genreData) {
+    if (!genreData.hasData) return '';
+    const colorFn = (key, idx) => key === STATS_GENRE_OTHERS_KEY ? '#64748b' : getDep('PALETTE')[idx % getDep('PALETTE').length];
+    const valueFormatter = (value) => String(Math.round(value));
+    return '<div class="stats-block">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
+        +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+getDep('t')('stats.genres_chart_title')+'</div>'
+      +'</div>'
+      +makeHorizontalBars(genreData.entriesCount, getGenreLabel, valueFormatter, Number(genreData.referenceCount || 0), colorFn)
+      +'</div>';
+  }
+
   // ══════════════════════════════════════════════════════════
   //  RENDER LAYER — consume data, produce HTML
   // ══════════════════════════════════════════════════════════
@@ -465,13 +556,14 @@
     window._buildCurveForPeriodGlobal   = (period) => buildCurveForPeriod(period, data.timeline);
 
     // ── Color helpers ────────────────────────────────────────
-    const categoryColorFn    = (k,idx) => getDep('PALETTE')[idx%getDep('PALETTE').length];
-    const codecColorFn       = (k,idx) => C.COLORS.CODEC[idx%C.COLORS.CODEC.length];
-    const audioCodecColorFn  = (k,idx) => C.COLORS.AUDIO_CODEC[idx%C.COLORS.AUDIO_CODEC.length];
-    const audioLangColorFn   = (k,idx) => C.COLORS.AUDIO_LANG[idx%C.COLORS.AUDIO_LANG.length];
-    const resColorFn         = (k)     => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : (C.COLORS.RESOLUTION[k] || '#888');
-    const provColors         = C.COLORS.PROVIDER;
-    const noProviderLabel    = getDep('t')('filters.no_provider');
+    const categoryColorFn     = (k,idx) => getDep('PALETTE')[idx%getDep('PALETTE').length];
+    const codecColorFn        = (k,idx) => C.COLORS.CODEC[idx%C.COLORS.CODEC.length];
+    const audioCodecColorFn   = (k,idx) => C.COLORS.AUDIO_CODEC[idx%C.COLORS.AUDIO_CODEC.length];
+    const audioLangColorFn    = (k,idx) => C.COLORS.AUDIO_LANG[idx%C.COLORS.AUDIO_LANG.length];
+    const audioChannelsColorFn = (k,idx) => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : getDep('PALETTE')[idx%getDep('PALETTE').length];
+    const resColorFn          = (k)     => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : (C.COLORS.RESOLUTION[k] || '#888');
+    const provColors          = C.COLORS.PROVIDER;
+    const noProviderLabel     = getDep('t')('filters.no_provider');
     const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
 
     // ── Provider entries with size ───────────────────────────
@@ -484,6 +576,7 @@
       ...provEntries.map(([k]) => [k, byProvSize[k]||0]),
       ...(noneSize  > 0 ? [[noProviderLabel, noneSize]]  : []),
     ];
+    const audioChannelsLabelFn = (key) => getDep('getFilterDisplayValue')(key, 'filters.none');
 
     // ── Block HTML ───────────────────────────────────────────
     const provPieHtml = provCountEntries.length
@@ -538,31 +631,44 @@
       : '';
 
     // ── Final layout ─────────────────────────────────────────
-    return ''
-      // Row 1: Dossiers | Fournisseurs
+    const generalTabHtml = ''
       + '<div class="stats-row">'
           + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size') : '')+'</div>'
-          + '<div>'+provPieHtml+providersNoteHtml+'</div>'
+          + '<div>'+renderGenresBlock(data.genres)+'</div>'
         + '</div>'
-      // Row 2: Résolution | Codec vidéo
+      + '<div class="stats-row">'
+          + '<div>'+provPieHtml+providersNoteHtml+'</div>'
+          + '<div></div>'
+        + '</div>'
+      + yearChartHtml;
+
+    const technicalTabHtml = ''
       + '<div class="stats-row">'
           + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
           + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
         + '</div>'
-      // Row 3: Codec audio | Langues
       + '<div class="stats-row">'
           + '<div>'+(data.audioCodec.entriesSize.length ? switchablePie('audioCodec', getDep('t')('stats.audio_codec_chart_title'), data.audioCodec.entriesSize, data.audioCodec.entriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : '')+'</div>'
           + '<div>'+(data.audioLang.hasData             ? switchablePie('audioLang',  getDep('t')('stats.audio_languages_chart_title'), data.audioLang.entriesSize, data.audioLang.entriesCount, audioLangColorFn, k=>k, 'count') : '')+'</div>'
         + '</div>'
-      // Row 4: Qualité | [vide]
       + '<div class="stats-row">'
-          + '<div>'+renderQualityChart(data.quality)+'</div>'
+          + '<div>'+(data.audioChannels.hasData         ? switchablePie('audioChannels', getDep('t')('stats.audio_channels_chart_title'), data.audioChannels.entriesSize, data.audioChannels.entriesCount, audioChannelsColorFn, audioChannelsLabelFn, 'count') : '')+'</div>'
           + '<div></div>'
-        + '</div>'
-      // Full width: Années de sortie
-      + yearChartHtml
-      // Full width: Évolution mensuelle
-      + curveHtml;
+        + '</div>';
+
+    const evolutionTabHtml = curveHtml;
+    const activeGeneral = activeStatsSubtab === 'general' ? ' active' : '';
+    const activeTechnical = activeStatsSubtab === 'technical' ? ' active' : '';
+    const activeEvolution = activeStatsSubtab === 'evolution' ? ' active' : '';
+    return ''
+      + '<div id="statsSubtabs" class="stats-subtabs">'
+        + '<button class="pie-switch-btn stats-subtab-btn'+activeGeneral+'" data-stats-subtab="general">'+getDep('t')('stats.subtab_general')+'</button>'
+        + '<button class="pie-switch-btn stats-subtab-btn'+activeTechnical+'" data-stats-subtab="technical">'+getDep('t')('stats.subtab_technical')+'</button>'
+        + '<button class="pie-switch-btn stats-subtab-btn'+activeEvolution+'" data-stats-subtab="evolution">'+getDep('t')('stats.subtab_evolution')+'</button>'
+      + '</div>'
+      + '<div id="statsSubtab-general" class="stats-subtab-content'+activeGeneral+'">'+generalTabHtml+'</div>'
+      + '<div id="statsSubtab-technical" class="stats-subtab-content'+activeTechnical+'">'+technicalTabHtml+'</div>'
+      + '<div id="statsSubtab-evolution" class="stats-subtab-content'+activeEvolution+'">'+evolutionTabHtml+'</div>';
   }
 
   // ── STATS PANEL ENTRY POINT ───────────────────────────────
@@ -607,6 +713,22 @@
     controls.querySelectorAll('.pie-switch-btn').forEach(b => b.classList.toggle('active', b===btn));
     const charts = document.getElementById('yearCharts');
     if (charts) charts.innerHTML = getDep('_buildYearChartGlobal')(period);
+  }
+
+  function setStatsSubtab(btn) {
+    const next = btn.dataset.statsSubtab;
+    if (!STATS_SUBTABS.includes(next)) return;
+    activeStatsSubtab = next;
+    const host = document.getElementById('statsSubtabs');
+    if (host) {
+      host.querySelectorAll('.stats-subtab-btn').forEach((button) => {
+        button.classList.toggle('active', button.dataset.statsSubtab === next);
+      });
+    }
+    STATS_SUBTABS.forEach((tab) => {
+      const section = document.getElementById('statsSubtab-' + tab);
+      if (section) section.classList.toggle('active', tab === next);
+    });
   }
 
   // ── EXPORT API ────────────────────────────────────────────

@@ -44,21 +44,19 @@ let allItems=[], categories=[], groups=[];
   const FILTER_ORDER = [
     'type',
     'folder',
+    'genre',
     'streaming',
-    'resolution',
-    'video_codec',
-    'audio_codec',
     'audio_language',
-    'score'
+    'score',
+    'technical'
   ];
   const FILTER_SECTION_IDS = {
     type: { desktop: 'typeSection', mobile: 'mobileTypeSection' },
     storage: { desktop: 'storageSection', mobile: 'storageSectionMobile' },
     folder: { desktop: 'folderSection', mobile: 'folderSectionMobile' },
+    genre: { desktop: 'genreSection', mobile: 'genreSectionMobile' },
     streaming: { desktop: 'providerSection', mobile: 'providerSectionMobile' },
-    resolution: { desktop: 'resolutionSection', mobile: 'resolutionSectionMobile' },
-    video_codec: { desktop: 'codecSection', mobile: 'codecSectionMobile' },
-    audio_codec: { desktop: 'audioCodecSection', mobile: 'audioCodecSectionMobile' },
+    technical: { desktop: 'technicalSection', mobile: 'technicalSectionMobile' },
     audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
@@ -182,6 +180,24 @@ let allItems=[], categories=[], groups=[];
     return item?.resolution || FILTER_NONE_KEY;
   }
 
+  function getNormalizedGenres(item) {
+    if (!Array.isArray(item?.genres)) return [];
+    const seen = new Set();
+    const genres = [];
+    item.genres.forEach((genre) => {
+      const value = String(genre || '').trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      genres.push(value);
+    });
+    return genres;
+  }
+
+  function getNormalizedAudioChannels(item) {
+    const value = String(item?.audio_channels || '').trim();
+    return value || FILTER_NONE_KEY;
+  }
+
   function canonicalFilterMissingKey(raw) {
     if (raw === null || raw === undefined) return null;
     const key = String(raw).trim();
@@ -199,6 +215,13 @@ let allItems=[], categories=[], groups=[];
     const normalized = normalizeFilterValue(key);
     if (normalized === FILTER_NONE_KEY) return t(noneTranslationKey);
     return normalized;
+  }
+
+  function getGenreDisplay(value) {
+    const normalized = normalizeFilterValue(value);
+    if (normalized === FILTER_NONE_KEY) return t('filters.none');
+    const translated = TRANSLATIONS?.genres?.[normalized];
+    return typeof translated === 'string' && translated.trim() ? translated : normalized;
   }
 
   function canonicalAudioLanguageFilterKey(raw) {
@@ -458,6 +481,7 @@ let allItems=[], categories=[], groups=[];
   let activeFolders = new Set();
   let activeResolutions = new Set();
   let activeCodecs = new Set(), activeAudioCodecs = new Set(), activeProviders = new Set();
+  let activeGenres = new Set(), activeAudioChannels = new Set();
   let activeAudioLanguages = new Set();
   let activeQualityLevels = new Set();
   let scoreMin = 0;
@@ -467,9 +491,13 @@ let allItems=[], categories=[], groups=[];
   let videoCodecExclude = false;
   let providerExclude = false;
   let resolutionExclude = false;
+  let genreExclude = false;
+  let audioChannelsExclude = false;
   let audioLanguageExclude = false;
   let folderExclude = false;
   let qualityExclude = false;
+  let technicalFiltersOpenDesktop = false;
+  let technicalFiltersOpenMobile = false;
   const SCORE_FILTER_RANGES = [
     { key: '0_20', min: 0, max: 20, maxInclusive: false, labelKey: 'filters.score.range_0_20', level: 1 },
     { key: '20_40', min: 20, max: 40, maxInclusive: false, labelKey: 'filters.score.range_20_40', level: 2 },
@@ -555,12 +583,13 @@ let allItems=[], categories=[], groups=[];
         activeFolders: [...activeFolders],
         activeResolutions: [...activeResolutions],
         activeCodecs: [...activeCodecs], activeAudioCodecs: [...activeAudioCodecs], activeProviders: [...activeProviders],
+        activeGenres: [...activeGenres], activeAudioChannels: [...activeAudioChannels],
         activeAudioLanguages: [...activeAudioLanguages],
         activeQualityLevels: [...activeQualityLevels],
         scoreMin,
         scoreMax,
         includeNoScore,
-        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, audioLanguageExclude, folderExclude, qualityExclude,
+        audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, genreExclude, audioChannelsExclude, audioLanguageExclude, folderExclude, qualityExclude,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -590,6 +619,8 @@ let allItems=[], categories=[], groups=[];
       }
       if (Array.isArray(s.activeCodecs))      activeCodecs      = new Set(s.activeCodecs.map(canonicalFilterMissingKey).filter(Boolean));
       if (Array.isArray(s.activeAudioCodecs))     activeAudioCodecs     = new Set(s.activeAudioCodecs.map(canonicalFilterMissingKey).filter(Boolean));
+      if (Array.isArray(s.activeGenres)) activeGenres = new Set(s.activeGenres.map(canonicalFilterMissingKey).filter(Boolean));
+      if (Array.isArray(s.activeAudioChannels)) activeAudioChannels = new Set(s.activeAudioChannels.map(canonicalFilterMissingKey).filter(Boolean));
       if (Array.isArray(s.activeAudioLanguages)) activeAudioLanguages = new Set(s.activeAudioLanguages.map(canonicalAudioLanguageFilterKey).filter(Boolean));
       if (isScoreEnabled() && Array.isArray(s.activeQualityLevels)) {
         activeQualityLevels = new Set(
@@ -610,6 +641,8 @@ let allItems=[], categories=[], groups=[];
       if (s.videoCodecExclude !== undefined)     videoCodecExclude     = !!s.videoCodecExclude;
       if (s.providerExclude   !== undefined)     providerExclude       = !!s.providerExclude;
       if (s.resolutionExclude !== undefined)     resolutionExclude     = !!s.resolutionExclude;
+      if (s.genreExclude !== undefined)          genreExclude          = !!s.genreExclude;
+      if (s.audioChannelsExclude !== undefined)  audioChannelsExclude  = !!s.audioChannelsExclude;
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
       if (s.folderExclude !== undefined)         folderExclude         = !!s.folderExclude;
       if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
@@ -625,10 +658,13 @@ let allItems=[], categories=[], groups=[];
       // Re-render all filter pills with correct active states (no saveState)
       renderStorageBar();
       renderFolderFilter();
+      renderGenreFilter();
       renderProviderFilter();
       renderResolutionFilter();
       renderCodecFilter();
       renderAudioCodecFilter();
+      renderAudioChannelsFilter();
+      renderTechnicalFilters();
       renderAudioLanguageFilter();
       renderQualityFilter();
       ensureScoreFilterLast();
@@ -718,9 +754,16 @@ let allItems=[], categories=[], groups=[];
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.run_scan');
       renderStorageBar();
+      renderFolderFilter();
+      renderGenreFilter();
       renderProviderFilter();
       renderResolutionFilter();
       renderCodecFilter();
+      renderAudioCodecFilter();
+      renderAudioChannelsFilter();
+      renderTechnicalFilters();
+      renderAudioLanguageFilter();
+      renderQualityFilter();
       renderStats(filterItems());
       switchTab(currentTab);
       updateExportJsonButtonState();
@@ -768,6 +811,9 @@ let allItems=[], categories=[], groups=[];
         getNormalizedVideoCodec,
         getNormalizedAudioCodec,
         getNormalizedResolution,
+        getNormalizedGenres,
+        getGenreDisplay,
+        getNormalizedAudioChannels,
         getAudioLanguageSimple,
         getAudioLanguageSimpleDisplay,
         getAudioCodecDisplay,
@@ -795,9 +841,16 @@ let allItems=[], categories=[], groups=[];
       enableScore = resolveScoreEnabled();
       applyScoreFeatureVisibility();
       renderStorageBar();
+      renderFolderFilter();
+      renderGenreFilter();
       renderProviderFilter();
       renderResolutionFilter();
       renderCodecFilter();
+      renderAudioCodecFilter();
+      renderAudioChannelsFilter();
+      renderTechnicalFilters();
+      renderAudioLanguageFilter();
+      renderQualityFilter();
       restoreState();
       window.MMLState.isLoaded  = true;
       window.MMLState.isLoading = false;
@@ -1053,9 +1106,13 @@ let allItems=[], categories=[], groups=[];
     activeType = (type !== 'all' && activeType === type) ? 'all' : type;
     syncTypePills();
     renderStorageBar();
+    renderGenreFilter();
     renderProviderFilter();
     renderResolutionFilter();
     renderCodecFilter();
+    renderAudioCodecFilter();
+    renderAudioChannelsFilter();
+    renderTechnicalFilters();
     onFilter();
   }
 
@@ -1104,6 +1161,8 @@ let allItems=[], categories=[], groups=[];
         activeProviders,
         activeCodecs,
         activeAudioCodecs,
+        activeGenres,
+        activeAudioChannels,
         activeAudioLanguages,
         activeQualityLevels,
         scoreMin,
@@ -1111,6 +1170,8 @@ let allItems=[], categories=[], groups=[];
         includeNoScore,
         providerExclude,
         resolutionExclude,
+        genreExclude,
+        audioChannelsExclude,
         videoCodecExclude,
         audioCodecExclude,
         audioLanguageExclude,
@@ -1126,10 +1187,14 @@ let allItems=[], categories=[], groups=[];
       || activeProviders.size > 0
       || activeCodecs.size > 0
       || activeAudioCodecs.size > 0
+      || activeGenres.size > 0
+      || activeAudioChannels.size > 0
       || activeAudioLanguages.size > 0
       || (isScoreEnabled() && (scoreMin > 0 || scoreMax < 100 || !includeNoScore))
       || providerExclude
       || resolutionExclude
+      || genreExclude
+      || audioChannelsExclude
       || videoCodecExclude
       || audioCodecExclude
       || audioLanguageExclude
@@ -1160,6 +1225,8 @@ let allItems=[], categories=[], groups=[];
     activeProviders.clear();
     activeCodecs.clear();
     activeAudioCodecs.clear();
+    activeGenres.clear();
+    activeAudioChannels.clear();
     activeAudioLanguages.clear();
     activeQualityLevels.clear();
     scoreMin = 0;
@@ -1167,6 +1234,8 @@ let allItems=[], categories=[], groups=[];
     includeNoScore = true;
     providerExclude = false;
     resolutionExclude = false;
+    genreExclude = false;
+    audioChannelsExclude = false;
     videoCodecExclude = false;
     audioCodecExclude = false;
     audioLanguageExclude = false;
@@ -1194,7 +1263,7 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
-  function buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet }) {
+  function buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet, sortOptions }) {
     const activeKeys = activeSet instanceof Set ? [...activeSet] : [];
     const activeLookup = new Set(activeKeys);
     const options = Object.keys(counts || {}).map((key) => ({
@@ -1207,16 +1276,19 @@ let allItems=[], categories=[], groups=[];
     });
     const pinned = pinFirst ? options.filter(option => option.key === pinFirst) : [];
     const remaining = pinFirst ? options.filter(option => option.key !== pinFirst) : options;
+    const sortedRemaining = typeof sortOptions === 'function'
+      ? sortOptions(remaining.slice(), getDisplay)
+      : sortFilterOptionsByCount(remaining, getDisplay);
     return [
       ...pinned,
-      ...sortFilterOptionsByCount(remaining, getDisplay)
+      ...sortedRemaining
     ];
   }
 
-  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, getOptionPrefixHtml }) {
+  function renderFilterDropdown({ containerId, counts, label, activeSet, toggleFn, clearFn, getDisplay, pinFirst, excludeMode, onToggleExclude, getOptionPrefixHtml, sortOptions }) {
     const sec = document.getElementById(containerId);
     if (!sec) return;
-    const model = buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet });
+    const model = buildDropdownFilterModel({ counts, getDisplay, pinFirst, activeSet, sortOptions });
     const keys = model.map(option => option.key);
     if (!keys.length && activeSet.size === 0) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
@@ -1350,6 +1422,8 @@ let allItems=[], categories=[], groups=[];
       'resolutionSection': activeResolutions, 'resolutionSectionMobile': activeResolutions,
       'codecSection': activeCodecs, 'codecSectionMobile': activeCodecs,
       'audioCodecSection': activeAudioCodecs, 'audioCodecSectionMobile': activeAudioCodecs,
+      'audioChannelsSection': activeAudioChannels, 'audioChannelsSectionMobile': activeAudioChannels,
+      'genreSection': activeGenres, 'genreSectionMobile': activeGenres,
       'audioLanguageSection': activeAudioLanguages, 'audioLanguageSectionMobile': activeAudioLanguages,
       'folderSection': activeFolders, 'folderSectionMobile': activeFolders,
       'qualitySection': activeQualityLevels, 'qualitySectionMobile': activeQualityLevels,
@@ -1366,12 +1440,18 @@ let allItems=[], categories=[], groups=[];
   function clearCodecFilter() { activeCodecs.clear(); onFilter(); }
   function toggleAudioCodecFilter(key) { if (activeAudioCodecs.has(key)) activeAudioCodecs.delete(key); else activeAudioCodecs.add(key); onFilter(); }
   function clearAudioCodecFilter() { activeAudioCodecs.clear(); onFilter(); }
+  function toggleAudioChannelsFilter(key) { if (activeAudioChannels.has(key)) activeAudioChannels.delete(key); else activeAudioChannels.add(key); onFilter(); }
+  function clearAudioChannelsFilter() { activeAudioChannels.clear(); onFilter(); }
+  function toggleGenreFilter(key) { if (activeGenres.has(key)) activeGenres.delete(key); else activeGenres.add(key); onFilter(); }
+  function clearGenreFilter() { activeGenres.clear(); onFilter(); }
   function toggleAudioLanguageFilter(key) { if (activeAudioLanguages.has(key)) activeAudioLanguages.delete(key); else activeAudioLanguages.add(key); onFilter(); }
   function clearAudioLanguageFilter() { activeAudioLanguages.clear(); onFilter(); }
   function toggleProviderExclude() { providerExclude = !providerExclude; onFilter(); }
   function toggleResolutionExclude() { resolutionExclude = !resolutionExclude; onFilter(); }
   function toggleVideoCodecExclude() { videoCodecExclude = !videoCodecExclude; onFilter(); }
   function toggleAudioCodecExclude() { audioCodecExclude = !audioCodecExclude; onFilter(); }
+  function toggleAudioChannelsExclude() { audioChannelsExclude = !audioChannelsExclude; onFilter(); }
+  function toggleGenreExclude() { genreExclude = !genreExclude; onFilter(); }
   function toggleAudioLanguageExclude() { audioLanguageExclude = !audioLanguageExclude; onFilter(); }
   function toggleFolderFilter(key) { if (activeFolders.has(key)) activeFolders.delete(key); else activeFolders.add(key); onFilter(); }
   function clearFolderFilter() { activeFolders.clear(); onFilter(); }
@@ -1384,6 +1464,12 @@ let allItems=[], categories=[], groups=[];
   }
   function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
   function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
+
+  function toggleTechnicalFilters(isMobile) {
+    if (isMobile) technicalFiltersOpenMobile = !technicalFiltersOpenMobile;
+    else technicalFiltersOpenDesktop = !technicalFiltersOpenDesktop;
+    renderTechnicalFilters();
+  }
 
   // ── PROVIDER FILTER ──────────────────────────────────
   function renderProviderFilter() {
@@ -1473,6 +1559,27 @@ let allItems=[], categories=[], groups=[];
         activeSet: activeFolders, toggleFn: 'toggleFolderFilter', clearFn: 'clearFolderFilter',
         getDisplay: k => getFilterDisplayValue(k),
         excludeMode: folderExclude, onToggleExclude: 'toggleFolderExclude' });
+    });
+  }
+
+  function renderGenreFilter() {
+    const base = baseItems('genre');
+    const counts = {};
+    base.forEach((item) => {
+      const genres = getNormalizedGenres(item);
+      if (!genres.length) {
+        counts[FILTER_NONE_KEY] = (counts[FILTER_NONE_KEY] || 0) + 1;
+        return;
+      }
+      genres.forEach((genre) => {
+        counts[genre] = (counts[genre] || 0) + 1;
+      });
+    });
+    ['genreSection', 'genreSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({ containerId: cid, counts, label: t('filters.genre'),
+        activeSet: activeGenres, toggleFn: 'toggleGenreFilter', clearFn: 'clearGenreFilter',
+        getDisplay: k => getGenreDisplay(k),
+        excludeMode: genreExclude, onToggleExclude: 'toggleGenreExclude' });
     });
   }
 
@@ -1607,14 +1714,73 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
+  function renderAudioChannelsFilter() {
+    const base = baseItems('audioChannels');
+    const counts = {};
+    base.forEach((item) => {
+      const key = getNormalizedAudioChannels(item);
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const sortAudioChannels = (options) => options.sort((a, b) => {
+      if (a.key === FILTER_NONE_KEY && b.key !== FILTER_NONE_KEY) return 1;
+      if (a.key !== FILTER_NONE_KEY && b.key === FILTER_NONE_KEY) return -1;
+      const aNum = Number.parseFloat(a.key);
+      const bNum = Number.parseFloat(b.key);
+      const aIsNum = Number.isFinite(aNum);
+      const bIsNum = Number.isFinite(bNum);
+      if (aIsNum && bIsNum && bNum !== aNum) return bNum - aNum;
+      if (aIsNum && !bIsNum) return -1;
+      if (!aIsNum && bIsNum) return 1;
+      return String(a.key).localeCompare(String(b.key), undefined, { sensitivity: 'base', numeric: true });
+    });
+    ['audioChannelsSection', 'audioChannelsSectionMobile'].forEach(function(cid) {
+      renderFilterDropdown({
+        containerId: cid,
+        counts,
+        label: t('filters.audio_channels'),
+        activeSet: activeAudioChannels,
+        toggleFn: 'toggleAudioChannelsFilter',
+        clearFn: 'clearAudioChannelsFilter',
+        getDisplay: k => getFilterDisplayValue(k, 'filters.none'),
+        excludeMode: audioChannelsExclude,
+        onToggleExclude: 'toggleAudioChannelsExclude',
+        sortOptions: sortAudioChannels,
+      });
+    });
+  }
+
+  function renderTechnicalFilters() {
+    const cfg = [
+      { sectionId: 'technicalSection', bodyId: 'technicalBody', btnId: 'technicalToggleBtn', open: technicalFiltersOpenDesktop },
+      { sectionId: 'technicalSectionMobile', bodyId: 'technicalBodyMobile', btnId: 'technicalToggleBtnMobile', open: technicalFiltersOpenMobile },
+    ];
+    cfg.forEach((entry) => {
+      const section = document.getElementById(entry.sectionId);
+      const body = document.getElementById(entry.bodyId);
+      const btn = document.getElementById(entry.btnId);
+      if (!section || !body || !btn) return;
+      const hasVisibleChildren = [...body.children].some((child) => child.style.display !== 'none');
+      if (!hasVisibleChildren) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      body.classList.toggle('is-collapsed', !entry.open);
+      btn.setAttribute('aria-expanded', entry.open ? 'true' : 'false');
+    });
+  }
+
   function onFilter() {
     syncTypePills();
     renderStorageBar();
     renderFolderFilter();
+    renderGenreFilter();
     renderProviderFilter();
     renderResolutionFilter();
     renderCodecFilter();
     renderAudioCodecFilter();
+    renderAudioChannelsFilter();
+    renderTechnicalFilters();
     renderAudioLanguageFilter();
     renderQualityFilter();
     ensureScoreFilterLast();
@@ -1755,6 +1921,31 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       }
     }
+    if (activeAudioChannels.size > 0) {
+      if (audioChannelsExclude) {
+        items = items.filter((i) => !activeAudioChannels.has(getNormalizedAudioChannels(i)));
+      } else {
+        items = items.filter((i) => activeAudioChannels.has(getNormalizedAudioChannels(i)));
+      }
+    }
+    if (activeGenres.size > 0) {
+      if (genreExclude) {
+        items = items.filter((i) => {
+          const genres = getNormalizedGenres(i);
+          const hasNone = genres.length === 0;
+          if (activeGenres.has(FILTER_NONE_KEY) && hasNone) return false;
+          if (hasNone) return true;
+          return !genres.some((g) => activeGenres.has(g));
+        });
+      } else {
+        items = items.filter((i) => {
+          const genres = getNormalizedGenres(i);
+          const hasNone = genres.length === 0;
+          if (activeGenres.has(FILTER_NONE_KEY) && hasNone) return true;
+          return genres.some((g) => activeGenres.has(g));
+        });
+      }
+    }
     if (activeAudioLanguages.size > 0) {
       if (audioLanguageExclude) {
         items=items.filter(i=>!activeAudioLanguages.has(getAudioLanguageSimple(i)));
@@ -1810,6 +2001,31 @@ let allItems=[], categories=[], groups=[];
         items=items.filter(i=>!activeAudioCodecs.has(getNormalizedAudioCodec(i)));
       } else {
         items=items.filter(i=>activeAudioCodecs.has(getNormalizedAudioCodec(i)));
+      }
+    }
+    if (except!=='audioChannels' && activeAudioChannels.size > 0) {
+      if (audioChannelsExclude) {
+        items = items.filter((i) => !activeAudioChannels.has(getNormalizedAudioChannels(i)));
+      } else {
+        items = items.filter((i) => activeAudioChannels.has(getNormalizedAudioChannels(i)));
+      }
+    }
+    if (except!=='genre' && activeGenres.size > 0) {
+      if (genreExclude) {
+        items = items.filter((i) => {
+          const genres = getNormalizedGenres(i);
+          const hasNone = genres.length === 0;
+          if (activeGenres.has(FILTER_NONE_KEY) && hasNone) return false;
+          if (hasNone) return true;
+          return !genres.some((g) => activeGenres.has(g));
+        });
+      } else {
+        items = items.filter((i) => {
+          const genres = getNormalizedGenres(i);
+          const hasNone = genres.length === 0;
+          if (activeGenres.has(FILTER_NONE_KEY) && hasNone) return true;
+          return genres.some((g) => activeGenres.has(g));
+        });
       }
     }
     if (except!=='audioLanguage' && activeAudioLanguages.size > 0) {
