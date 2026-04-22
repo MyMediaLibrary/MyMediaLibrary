@@ -640,6 +640,10 @@
           + '<div>'+provPieHtml+providersNoteHtml+'</div>'
           + '<div></div>'
         + '</div>'
+      + '<div class="stats-row">'
+          + '<div>'+renderQualityChart(data.quality)+'</div>'
+          + '<div></div>'
+        + '</div>'
       + yearChartHtml;
 
     const technicalTabHtml = ''
