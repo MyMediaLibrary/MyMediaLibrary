@@ -265,9 +265,10 @@ test('stats providers rely on flat provider lists', () => {
 
 test('stats include genre and audio-channel aggregations from existing item fields', () => {
   const block = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
-  assert.match(block, /const byGenreCount = \{\}, byGenreSize = \{\};/, 'stats should aggregate genres from normalized genre arrays');
-  assert.match(block, /entriesByCount:\s*buildGenreTopEntries\(byGenreCount, items, 'count'\)/, 'genre chart should compute top list in count mode');
-  assert.match(block, /entriesBySize:\s*buildGenreTopEntries\(byGenreSize, items, 'size'\)/, 'genre chart should compute top list in size mode');
+  assert.match(block, /const byGenreCount = \{\};/, 'stats should aggregate genres from normalized genre arrays');
+  assert.match(block, /entriesCount:\s*buildGenreTopEntries\(byGenreCount, items\)/, 'genre chart should compute top list in count mode');
+  assert.match(block, /referenceCount:\s*items\.length/, 'genre chart percentages should use filtered item count as reference');
+  assert.doesNotMatch(block, /entriesBySize/, 'genre chart should not keep size-based modes');
   assert.match(block, /const byAudioChannelsCount = \{\}, byAudioChannelsSize = \{\};/, 'stats should aggregate audio channels dynamically');
   assert.match(block, /getDep\('getNormalizedAudioChannels'\)\(item\)/, 'audio channel stats should reuse normalized channel helper');
 });
@@ -280,6 +281,7 @@ test('stats layout is organized into 3 subtabs and renders new genre/audio-chann
   assert.match(block, /data-stats-subtab="evolution"/, 'evolution subtab should be present');
   assert.match(block, /renderGenresBlock\(data\.genres\)/, 'general subtab should render genres chart');
   assert.match(block, /switchablePie\('audioChannels', getDep\('t'\)\('stats\.audio_channels_chart_title'\)/, 'technical subtab should render audio channels pie chart');
+  assert.doesNotMatch(block, /genreModeControls|data-genre-unit/, 'genre chart should not expose multi-mode toggle controls');
 });
 
 test('provider count chart displays raw counts without "media" unit suffix', () => {

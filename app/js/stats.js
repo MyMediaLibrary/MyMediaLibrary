@@ -44,7 +44,6 @@
   const STATS_SUBTABS = ['general', 'technical', 'evolution'];
   const STATS_GENRE_OTHERS_KEY = '__genre_others__';
   let activeStatsSubtab = 'general';
-  let activeGenreUnit = 'count';
 
   function getDep(name) {
     return deps[name] !== null && deps[name] !== undefined ? deps[name] : window[name];
@@ -83,11 +82,6 @@
       if (tabsHost?.contains(e.target)) setStatsSubtab(e.target);
     });
 
-    document.addEventListener('click', (e) => {
-      if (!e.target.dataset.genreUnit) return;
-      const controls = document.getElementById('genreModeControls');
-      if (controls?.contains(e.target)) setGenreMode(e.target);
-    });
   }
 
   // ══════════════════════════════════════════════════════════
@@ -98,7 +92,7 @@
     return Object.entries(mapObj).sort((a, b) => b[1] - a[1]);
   }
 
-  function buildGenreTopEntries(byGenreMetric, items, mode) {
+  function buildGenreTopEntries(byGenreMetric, items) {
     const sorted = mapToSortedEntries(byGenreMetric);
     const topEntries = sorted.slice(0, 12);
     const topKeys = new Set(topEntries.map(([genre]) => genre));
@@ -107,9 +101,7 @@
       return !genres.some((genre) => topKeys.has(genre));
     });
     const othersCount = uncoveredItems.length;
-    const othersSize = uncoveredItems.reduce((sum, item) => sum + (item.size_b || 0), 0);
-    const othersValue = mode === 'size' ? othersSize : othersCount;
-    return [...topEntries, [STATS_GENRE_OTHERS_KEY, othersValue]];
+    return [...topEntries, [STATS_GENRE_OTHERS_KEY, othersCount]];
   }
 
   function buildStatsData(items) {
@@ -166,20 +158,17 @@
     };
 
     // ── Genres ───────────────────────────────────────────────
-    const byGenreCount = {}, byGenreSize = {};
+    const byGenreCount = {};
     items.forEach((item) => {
       const genres = getDep('getNormalizedGenres')(item);
       genres.forEach((genre) => {
         byGenreCount[genre] = (byGenreCount[genre] || 0) + 1;
-        byGenreSize[genre] = (byGenreSize[genre] || 0) + (item.size_b || 0);
       });
     });
     const genres = {
-      entriesByCount: buildGenreTopEntries(byGenreCount, items, 'count'),
-      entriesBySize: buildGenreTopEntries(byGenreSize, items, 'size'),
+      entriesCount: buildGenreTopEntries(byGenreCount, items),
       hasData: items.length > 0,
       referenceCount: items.length,
-      referenceSize: items.reduce((sum, item) => sum + (item.size_b || 0), 0),
     };
 
     // ── Audio channels ───────────────────────────────────────
@@ -460,7 +449,7 @@
       +entries.map(([key, value], index) => {
         const numericValue = Number(value) || 0;
         const width = maxValue > 0 ? (numericValue / maxValue) * 100 : 0;
-        const percent = percentBase > 0 ? ((numericValue / percentBase) * 100).toFixed(1) + '%' : '0.0%';
+        const percent = percentBase > 0 ? Math.round((numericValue / percentBase) * 100) + ' %' : '0 %';
         return '<div class="hbar-item">'
           +'<div class="hbar-label" title="'+getDep('escH')(labelFn(key))+'">'+getDep('escH')(labelFn(key))+'</div>'
           +'<div class="hbar-track"><div class="hbar-fill" style="width:'+width.toFixed(2)+'%;background:'+colorFn(key, index)+'"></div></div>'
@@ -470,51 +459,20 @@
       +'</div>';
   }
 
-  function getGenreChartDataByUnit(genreData, unit) {
-    const isSize = unit === 'size' || unit === 'size_pct';
-    return {
-      entries: isSize ? genreData.entriesBySize : genreData.entriesByCount,
-      percentBase: isSize ? Number(genreData.referenceSize || 0) : Number(genreData.referenceCount || 0),
-    };
-  }
-
   function getGenreLabel(key) {
     if (key === STATS_GENRE_OTHERS_KEY) return getDep('t')('stats.others');
     return getDep('getGenreDisplay')(key);
   }
 
-  function renderGenreChartByUnit(genreData, unit) {
-    const { entries, percentBase } = getGenreChartDataByUnit(genreData, unit);
-    const colorFn = (key, idx) => key === STATS_GENRE_OTHERS_KEY ? '#64748b' : getDep('PALETTE')[idx % getDep('PALETTE').length];
-    const valueFormatter = (value) => {
-      if (unit === 'size') return getDep('fmtSize')(value);
-      if (unit === 'count') return String(Math.round(value));
-      if (unit === 'pct' || unit === 'size_pct') {
-        if (!percentBase) return '0.0%';
-        return ((value / percentBase) * 100).toFixed(1) + '%';
-      }
-      return String(value);
-    };
-    return makeHorizontalBars(entries, getGenreLabel, valueFormatter, percentBase, colorFn);
-  }
-
   function renderGenresBlock(genreData) {
     if (!genreData.hasData) return '';
-    const units = ['count', 'pct', 'size', 'size_pct'];
-    const buttonLabel = (unit) => {
-      if (unit === 'count') return getDep('t')('stats.by_count');
-      if (unit === 'size') return getDep('t')('stats.by_size');
-      if (unit === 'pct') return getDep('t')('stats.by_count_pct');
-      return getDep('t')('stats.by_size_pct');
-    };
+    const colorFn = (key, idx) => key === STATS_GENRE_OTHERS_KEY ? '#64748b' : getDep('PALETTE')[idx % getDep('PALETTE').length];
+    const valueFormatter = (value) => String(Math.round(value));
     return '<div class="stats-block">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
         +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+getDep('t')('stats.genres_chart_title')+'</div>'
-        +'<div id="genreModeControls" class="pie-switch">'
-          +units.map((unit) => '<button class="pie-switch-btn'+(activeGenreUnit === unit ? ' active' : '')+'" data-genre-unit="'+unit+'">'+buttonLabel(unit)+'</button>').join('')
-        +'</div>'
       +'</div>'
-      +units.map((unit) => '<div id="genreChart'+unit+'"'+(activeGenreUnit === unit ? '' : ' style="display:none"')+'>'+renderGenreChartByUnit(genreData, unit)+'</div>').join('')
+      +makeHorizontalBars(genreData.entriesCount, getGenreLabel, valueFormatter, Number(genreData.referenceCount || 0), colorFn)
       +'</div>';
   }
 
@@ -770,23 +728,6 @@
     STATS_SUBTABS.forEach((tab) => {
       const section = document.getElementById('statsSubtab-' + tab);
       if (section) section.classList.toggle('active', tab === next);
-    });
-  }
-
-  function setGenreMode(btn) {
-    const unit = btn.dataset.genreUnit;
-    const allowed = ['count', 'pct', 'size', 'size_pct'];
-    if (!allowed.includes(unit)) return;
-    activeGenreUnit = unit;
-    const controls = document.getElementById('genreModeControls');
-    if (controls) {
-      controls.querySelectorAll('.pie-switch-btn').forEach((button) => {
-        button.classList.toggle('active', button.dataset.genreUnit === unit);
-      });
-    }
-    allowed.forEach((mode) => {
-      const panel = document.getElementById('genreChart' + mode);
-      if (panel) panel.style.display = mode === unit ? '' : 'none';
     });
   }
 
