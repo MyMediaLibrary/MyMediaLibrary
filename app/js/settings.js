@@ -26,6 +26,7 @@
   // ── Settings private state ────────────────────────────────────────────────
   let _settingsJsrTestOk = false;
   let _settingsLayoutMode = null;
+  let _settingsFoldersSnapshot = [];
   let _scoreSettingsMeta = null;
   let _scoreSettingsDraft = null;
   let _scoreEnabledLocalOverride = null;
@@ -33,6 +34,7 @@
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
   let _onbJsr = { enabled: false, url: '', key: '' };
+  let _onbFeatures = { scoreEnabled: false, inventoryEnabled: false };
   let _onbLogSeen = 0;
   let _langTimer = null;
   let _onbLang = 'fr';
@@ -606,7 +608,7 @@
     let html = weightsHtml;
     let sectionIdx = 0;
     Object.entries(_scoreSettingsDraft).forEach(([key, value]) => {
-      if (key === 'weights' || key === 'penalties') return;
+      if (key === 'weights' || key === 'penalties' || key === 'max_score') return;
       html += _renderScoreSection(key, value, sectionIdx);
       sectionIdx += 1;
     });
@@ -810,6 +812,7 @@
     }
     toggleJsrFields();
 
+    _settingsFoldersSnapshot = JSON.parse(JSON.stringify(appConfig.folders || []));
     renderFoldersUI();
     renderProviderToggles();
     loadScoreSettings();
@@ -862,7 +865,7 @@
 
     // Gather folder type/activation — always include current state
     const folderUpdates = gatherFolderEdits();
-    if (folderUpdates && shouldTriggerScan(appConfig, { folders: folderUpdates })) {
+    if (folderUpdates && shouldTriggerScan({ folders: _settingsFoldersSnapshot }, { folders: folderUpdates })) {
       partial.folders = folderUpdates;
     }
 
@@ -1472,6 +1475,10 @@
       url:     seerrCfg.url || '',
       key:     '',
     };
+    _onbFeatures = {
+      scoreEnabled: !!(appConfig?.score?.enabled),
+      inventoryEnabled: appConfig?.system?.inventory_enabled === true,
+    };
     _onbLogSeen = 0;
     // Prefetch both i18n files so lang switching is instant (browser caches them)
     ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
@@ -1486,7 +1493,7 @@
       if (_onbStep === 0) {
         stepsEl.innerHTML = '';
       } else {
-        stepsEl.innerHTML = [1,2,3].map(n =>
+        stepsEl.innerHTML = [1,2,3,4].map(n =>
           '<div style="width:40px;height:4px;border-radius:2px;background:'+(n===_onbStep?'var(--accent)':'var(--border)')+'"></div>'
         ).join('');
       }
@@ -1497,7 +1504,8 @@
     if      (_onbStep === 0) { panel.innerHTML = _onbStep0HTML(); _startLangToggle(); }
     else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
     else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
-    else                     panel.innerHTML = _onbStep3HTML();
+    else if (_onbStep === 3) panel.innerHTML = _onbStep3HTML();
+    else                     panel.innerHTML = _onbStep4HTML();
 
     // Nav buttons
     const prev = document.getElementById('onbPrevBtn');
@@ -1513,7 +1521,7 @@
     if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (_onbStep === 3) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
+      if (_onbStep === 4) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
@@ -1668,6 +1676,23 @@
   }
 
   function _onbStep3HTML() {
+    return '<div style="margin-bottom:16px">'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_features_title')+'</div>'
+      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_features_desc')+'</div>'
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:14px">'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_inventory_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_inventory_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function _onbStep4HTML() {
     const folders = appConfig.folders || [];
     const nMovies  = folders.filter(f => !f.missing && (f._onbType||f.type)==='movie').length;
     const nTv      = folders.filter(f => !f.missing && (f._onbType||f.type)==='tv').length;
@@ -1683,7 +1708,22 @@
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
       + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🗂️ Inventaire : '+(_onbFeatures.inventoryEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '</div>';
+  }
+
+  function _captureOnbFeatures() {
+    const scoreEnabled = document.getElementById('onbScoreEnabled')?.checked;
+    const inventoryEnabled = document.getElementById('onbInventoryEnabled')?.checked;
+    _onbFeatures = {
+      scoreEnabled: !!scoreEnabled,
+      inventoryEnabled: !!inventoryEnabled,
+    };
+  }
+
+  function _onbFeaturesToggle() {
+    _captureOnbFeatures();
   }
 
   async function onbTestJsr() {
@@ -1702,7 +1742,8 @@
   function onbNext() {
     if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
     if (_onbStep === 2) _captureOnbJsr();
-    if (_onbStep < 3) { _onbStep++; _onbRender(); }
+    if (_onbStep === 3) _captureOnbFeatures();
+    if (_onbStep < 4) { _onbStep++; _onbRender(); }
   }
 
   function onbPrev() {
@@ -1739,21 +1780,43 @@
         const onbKey = (_onbJsr.key || '').trim();
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
-      system: { language: _onbLang },
+      score: { enabled: _onbFeatures.scoreEnabled },
+      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled },
       ui: { theme: _onbTheme },
     };
 
+    let savePayload = {};
     try {
-      await saveConfig(partial);
+      savePayload = await saveConfig(partial);
     } catch(e) {
       alert(t('settings.save_error', {msg: e.message}));
       if (btn) { btn.disabled = false; btn.textContent = t('nav.launch_scan'); }
       return;
     }
 
-    const mode = 'quick';
+    // If config save already triggered a phased scan (or one is already running),
+    // do not attempt to start another scan from onboarding.
+    let shouldStartScan = true;
     try {
-      await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})});
+      const statusResp = await fetch('/api/scan/status');
+      const statusData = await statusResp.json();
+      if (statusData?.status === 'running') shouldStartScan = false;
+    } catch(_) {}
+    if (Array.isArray(savePayload?.phases) && savePayload.phases.length > 0) {
+      shouldStartScan = false;
+    }
+    if (savePayload?.scan_skipped === 'running') {
+      shouldStartScan = false;
+    }
+
+    try {
+      if (shouldStartScan) {
+        const r = await fetch('/api/scan/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode: 'default'})});
+        const d = await r.json().catch(() => ({}));
+        if (d?.running || d?.skipped === 'already_running') {
+          shouldStartScan = false;
+        }
+      }
     } catch(e) {}
 
     // Switch to live scan log view
@@ -1796,11 +1859,22 @@
           logBox.scrollTop = logBox.scrollHeight;
         }
       }
-      if (d.status === 'done' || d.status === 'error') {
+      if (d.status === 'done') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
         const doneBtn = document.getElementById('onbDoneBtn');
         if (doneBtn) doneBtn.style.display = '';
+        return;
+      }
+      if (d.status === 'error') {
+        const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
+        if (spinnerRow) spinnerRow.style.display = 'none';
+        if (logBox) {
+          const div = document.createElement('div');
+          div.style.color = '#f97316';
+          div.textContent = '[onboarding] Scan failed, please retry from Scan.';
+          logBox.appendChild(div);
+        }
         return;
       }
     } catch(e) {}
@@ -1890,6 +1964,7 @@
   window.toggleOnboardingTheme     = toggleOnboardingTheme;
   window._onbFolderChange          = _onbFolderChange;
   window._onbJsrToggle             = _onbJsrToggle;
+  window._onbFeaturesToggle        = _onbFeaturesToggle;
   window.onbTestJsr                = onbTestJsr;
   window.onbNext                   = onbNext;
   window.onbPrev                   = onbPrev;

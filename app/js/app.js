@@ -250,11 +250,10 @@ let allItems=[], categories=[], groups=[];
     const score = Number(quality?.score);
     if (!Number.isFinite(score)) return '';
 
-    const details = quality?.score_details || {};
-    const video = Number.isFinite(Number(details?.video)) ? Number(details.video) : Number(quality?.video);
-    const audio = Number.isFinite(Number(details?.audio)) ? Number(details.audio) : Number(quality?.audio);
-    const languages = Number.isFinite(Number(details?.languages)) ? Number(details.languages) : Number(quality?.languages);
-    const size = Number.isFinite(Number(details?.size)) ? Number(details.size) : Number(quality?.size);
+    const video = Number(quality?.video);
+    const audio = Number(quality?.audio);
+    const languages = Number(quality?.languages);
+    const size = Number(quality?.size);
 
     const lines = [
       `${t('quality_tooltip.score')}: ${Math.round(score)}`,
@@ -732,9 +731,8 @@ let allItems=[], categories=[], groups=[];
     }
 
     try {
-      const libraryUrl = '/library.json?_=' + Date.now();
-      const r = await fetch(libraryUrl);
-      if (r.status === 404) {
+      const lib = await _fetchLibraryJsonWithRetry();
+      if (lib.missing) {
         // Missing library.json is expected before the first scan.
         // If onboarding is still required (explicitly or legacy missing flag + no usable folders),
         // keep onboarding flow. Otherwise show an empty-library state with scan prompt.
@@ -745,13 +743,7 @@ let allItems=[], categories=[], groups=[];
         }
         return;
       }
-      if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
-      let data = null;
-      try {
-        data = await r.json();
-      } catch (_) {
-        throw new Error('Invalid JSON in /library.json');
-      }
+      const data = lib.data;
       libraryExportSource = data;
       allItems = safeArray(data.items);
       categories = safeArray(data.categories);
@@ -967,10 +959,36 @@ let allItems=[], categories=[], groups=[];
         body: JSON.stringify(partial),
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
+      try {
+        return await r.json();
+      } catch (_) {
+        return {};
+      }
     } catch(e) {
       console.error('saveConfig error:', e);
       throw e;
     }
+  }
+
+  async function _fetchLibraryJsonWithRetry() {
+    let parseError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const libraryUrl = '/library.json?_=' + Date.now();
+      const r = await fetch(libraryUrl);
+      if (r.status === 404) return { missing: true };
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
+      const body = await r.text();
+      try {
+        return { missing: false, data: JSON.parse(body) };
+      } catch (_) {
+        parseError = new Error('Invalid JSON in /library.json');
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          continue;
+        }
+      }
+    }
+    throw parseError || new Error('Invalid JSON in /library.json');
   }
 
   // ── STATS ────────────────────────────────────────────
@@ -2265,7 +2283,7 @@ let allItems=[], categories=[], groups=[];
     fetch('/api/scan/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: 'full'}),
+      body: JSON.stringify({mode: 'default'}),
     })
     .then(r => r.json())
     .then(data => {

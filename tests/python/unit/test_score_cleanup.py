@@ -12,7 +12,7 @@ import scanner  # noqa: E402
 
 
 class ScoreCleanupTest(unittest.TestCase):
-    def _make_scan_item(self, media_dir, root, cat, prev, enable_score=True):
+    def _make_scan_item(self, media_dir, root, cat, prev, enable_score=True, **kwargs):
         item = {
             "path": str(media_dir.relative_to(root)),
             "title": media_dir.name,
@@ -78,7 +78,7 @@ class ScoreCleanupTest(unittest.TestCase):
                 self.assertNotIn("runtime", item)
                 self.assertNotIn("audio_codec_display", item)
 
-    def test_category_only_scan_keeps_score_fields_when_enabled(self):
+    def test_category_only_scan_does_not_persist_score_fields_even_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp) / "library"
             movies = root / "Movies"
@@ -127,10 +127,8 @@ class ScoreCleanupTest(unittest.TestCase):
             for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
                 self.assertNotIn(root_key, payload)
             by_path = {item["path"]: item for item in payload["items"]}
-            self.assertIn("quality", by_path["Movies/MovieA"])
-            self.assertIn("quality", by_path["Series/ShowA"])
-            self.assertIn("score", by_path["Movies/MovieA"]["quality"])
-            self.assertNotIn("level", by_path["Movies/MovieA"]["quality"])
+            self.assertNotIn("quality", by_path["Movies/MovieA"])
+            self.assertNotIn("quality", by_path["Series/ShowA"])
 
 
 if __name__ == "__main__":

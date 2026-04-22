@@ -139,7 +139,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             self.assertIsNotNone(written)
             self.assertFalse(written["missing_reconciliation"])
 
-    def test_run_quick_still_writes_library_json_if_inventory_sidecar_call_raises(self):
+    def test_run_quick_writes_library_json_without_inventory_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             movies = root / "films"
@@ -162,8 +162,9 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             with patch.object(scanner, "LIBRARY_PATH", str(root)):
                 with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
-                        with patch("scanner.write_inventory_json_non_blocking", side_effect=RuntimeError("boom")):
+                        with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick()
+                            inventory_write.assert_not_called()
 
             with open(output_path, encoding="utf-8") as f:
                 written_library = json.load(f)
@@ -197,7 +198,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                             scanner.run_quick()
                             inventory_write.assert_not_called()
 
-    def test_run_quick_runs_inventory_when_flag_enabled(self):
+    def test_run_quick_does_not_run_inventory_when_flag_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             movies = root / "films"
@@ -227,9 +228,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick()
-                            inventory_write.assert_called_once()
-                            _, kwargs = inventory_write.call_args
-                            self.assertEqual(kwargs["forced_missing_folder_refs"], set())
+                            inventory_write.assert_not_called()
 
     def test_build_categories_from_config_skips_disabled_folders(self):
         cfg = {
@@ -244,7 +243,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
         self.assertEqual(len(categories), 1)
         self.assertEqual(categories[0]["name"], "Series")
 
-    def test_run_quick_passes_disabled_categories_to_inventory_force_missing(self):
+    def test_run_quick_does_not_pass_disabled_categories_to_inventory_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             series = root / "series"
@@ -277,8 +276,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick()
-                            _, kwargs = inventory_write.call_args
-                            self.assertEqual(kwargs["forced_missing_folder_refs"], {("movie", "Films")})
+                            inventory_write.assert_not_called()
 
     def test_quick_scan_forces_missing_for_disabled_category(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -385,7 +383,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
             written = scanner.load_existing_inventory_document_non_blocking(str(output_path))
             self.assertEqual(written["items"][0]["status"], "missing")
 
-    def test_run_quick_writes_inventory_when_all_categories_disabled(self):
+    def test_run_quick_does_not_write_inventory_when_all_categories_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             films = root / "films"
@@ -413,10 +411,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick()
-                            inventory_write.assert_called_once()
-                            args, kwargs = inventory_write.call_args
-                            self.assertEqual(args[0], [])
-                            self.assertEqual(kwargs["forced_missing_folder_refs"], {("movie", "Films")})
+                            inventory_write.assert_not_called()
 
     def test_disabling_inventory_does_not_delete_existing_inventory_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -459,7 +454,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                 '{"version":1,"items":[{"id":"legacy"}]}',
             )
 
-    def test_run_quick_full_category_scope_does_not_trigger_missing_reconciliation(self):
+    def test_run_quick_full_category_scope_does_not_trigger_inventory_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             movies = root / "films"
@@ -489,12 +484,9 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick(only_category="Films")
-                            inventory_write.assert_called_once()
-                            _, kwargs = inventory_write.call_args
-                            self.assertIn("reconcile_missing", kwargs)
-                            self.assertFalse(kwargs["reconcile_missing"])
+                            inventory_write.assert_not_called()
 
-    def test_run_quick_full_empty_category_string_triggers_reconciliation(self):
+    def test_run_quick_full_empty_category_string_does_not_trigger_inventory_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir) / "library"
             movies = root / "films"
@@ -524,10 +516,7 @@ class ScannerInventoryStep2Test(unittest.TestCase):
                     with patch.object(scanner, "CONFIG_PATH", str(config_path)):
                         with patch("scanner.write_inventory_json_non_blocking") as inventory_write:
                             scanner.run_quick(only_category="")
-                            inventory_write.assert_called_once()
-                            _, kwargs = inventory_write.call_args
-                            self.assertIn("reconcile_missing", kwargs)
-                            self.assertTrue(kwargs["reconcile_missing"])
+                            inventory_write.assert_not_called()
 
     def test_is_folder_enabled_fallbacks_to_visible_for_legacy_config(self):
         self.assertFalse(scanner.is_folder_enabled({"name": "films", "type": "movie", "visible": False}))

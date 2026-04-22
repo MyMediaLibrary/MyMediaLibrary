@@ -128,10 +128,11 @@ test('loadLibrary restores active tab only after data is loaded', () => {
 
 test('loadLibrary treats missing library.json as a first-run/empty-library state (no hard error)', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
-  assert.match(block, /if \(r\.status === 404\) \{/, 'loadLibrary should branch explicitly on library.json 404');
+  assert.match(block, /const lib = await _fetchLibraryJsonWithRetry\(\);/, 'loadLibrary should fetch library data through retry helper');
+  assert.match(appSource, /if \(r\.status === 404\) return \{ missing: true \};/, 'library fetch helper should branch explicitly on library.json 404');
   assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
-  assert.doesNotMatch(block, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'loadLibrary should not throw a generic HTTP error for expected missing library.json');
+  assert.doesNotMatch(appSource, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'library fetch helper should not throw a generic HTTP error for expected missing library.json');
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
@@ -168,7 +169,7 @@ test('score settings use shared collapsible style and dynamic label fallback', (
 
 test('score settings do not render a penalties section anymore', () => {
   assert.doesNotMatch(settingsSource, /function _renderScorePenalties\(/, 'penalties renderer should be removed');
-  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties'\) return;/, 'legacy penalties key should be ignored when rendering sections');
+  assert.match(settingsSource, /if \(key === 'weights' \|\| key === 'penalties' \|\| key === 'max_score'\) return;/, 'legacy penalties/max_score keys should be ignored when rendering sections');
 });
 
 test('score weights renderer outputs dedicated grid container', () => {
@@ -216,7 +217,7 @@ test('settings trigger scan only when folders changed', () => {
   assert.match(shouldTriggerScanBlock, /return prevSig !== nextSig;/, 'scan trigger helper should only trigger on actual folder diff');
 
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
-  assert.match(saveSettingsBlock, /shouldTriggerScan\(appConfig, \{ folders: folderUpdates \}\)/, 'settings save should gate folder payload behind shouldTriggerScan');
+  assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
 });
 
 test('restoreState defers stats tab render until library load is complete', () => {

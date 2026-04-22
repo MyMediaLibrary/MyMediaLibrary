@@ -55,6 +55,24 @@ class NeedsOnboardingBackendTest(unittest.TestCase):
         }
         self.assertTrue(scanner._derive_needs_onboarding(cfg, config_exists=False))
 
+    def test_finalize_needs_onboarding_switches_false_when_usable_folder_exists(self):
+        cfg = {
+            "system": {"needs_onboarding": True},
+            "folders": [{"name": "Movies", "type": "movie", "missing": False}],
+        }
+        changed = scanner._finalize_needs_onboarding_after_config_update(cfg)
+        self.assertTrue(changed)
+        self.assertFalse(cfg["system"]["needs_onboarding"])
+
+    def test_finalize_needs_onboarding_does_not_force_true_without_usable_folder(self):
+        cfg = {
+            "system": {"needs_onboarding": False},
+            "folders": [{"name": "Misc", "type": None, "missing": False}],
+        }
+        changed = scanner._finalize_needs_onboarding_after_config_update(cfg)
+        self.assertFalse(changed)
+        self.assertFalse(cfg["system"]["needs_onboarding"])
+
 
 if __name__ == "__main__":
     unittest.main()

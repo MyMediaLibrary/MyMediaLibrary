@@ -23,6 +23,14 @@ fi
 envsubst '${LIBRARY_PATH}' < /etc/nginx/nginx.conf > /tmp/nginx_rendered.conf
 cp /tmp/nginx_rendered.conf /etc/nginx/nginx.conf
 
+# Keep persisted JSON artifacts readable by nginx worker (fix legacy 0600 files).
+if [ -f "$OUTPUT_PATH" ]; then
+  chmod 644 "$OUTPUT_PATH" || true
+fi
+if [ -f "/data/library_inventory.json" ]; then
+  chmod 644 "/data/library_inventory.json" || true
+fi
+
 # Start nginx in background
 nginx -g "daemon off;" &
 NGINX_PID=$!
@@ -45,9 +53,9 @@ if [ ! -f "$PROVIDERS_MAPPING_DST" ]; then
   echo "[entrypoint] Bootstrapped providers mapping: $PROVIDERS_MAPPING_DST"
 fi
 
-# Initial scan on startup — also runs migrate_env_to_config() which populates config.json
+# Initial scan on startup (phases decided by scanner startup rules)
 echo "[entrypoint] Running initial scan..."
-python3 /app/scanner.py --quick --origin startup
+python3 /app/scanner.py --origin startup
 
 # Read scan_cron from config.json — sole source of truth
 SCAN_CRON=$(python3 -c "

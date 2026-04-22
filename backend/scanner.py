@@ -28,18 +28,21 @@ import hmac
 import http.server
 import json
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from logging.handlers import RotatingFileHandler
+import math
 import os
 import re
 import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
 import urllib.parse
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,10 +128,10 @@ except Exception:
 log = logging.getLogger("scanner")
 
 try:
-    from backend.scoring import compute_quality, get_builtin_score_defaults
+    from backend.scoring import build_quality_block, compute_quality, get_builtin_score_defaults
 except Exception:
     try:
-        from scoring import compute_quality, get_builtin_score_defaults
+        from scoring import build_quality_block, compute_quality, get_builtin_score_defaults
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[SCAN] scoring import failed (%s). Quality scoring disabled; continuing non-blocking.",
@@ -138,11 +141,51 @@ except Exception:
         def compute_quality(item: dict) -> dict:
             return {
                 "score": 0,
-                "base_score": 0,
                 "video": 0,
                 "audio": 0,
                 "languages": 0,
                 "size": 0,
+                "video_details": {
+                    "resolution": 0,
+                    "codec": 0,
+                    "hdr": 0,
+                },
+            }
+
+        def build_quality_block(
+            *,
+            video_resolution: int,
+            video_codec: int,
+            video_hdr: int,
+            audio: int,
+            languages: int,
+            size: int,
+            max_video_score: int,
+            max_audio_score: int,
+            max_languages_score: int,
+            max_size_score: int,
+            weights: dict | None = None,
+        ) -> dict:
+            video = int(video_resolution) + int(video_codec) + int(video_hdr)
+            video_w = int(video)
+            audio_w = int(audio)
+            languages_w = int(languages)
+            size_w = int(size)
+            return {
+                "score": video_w + audio_w + languages_w + size_w,
+                "video": video,
+                "video_w": video_w,
+                "audio": int(audio),
+                "audio_w": audio_w,
+                "languages": int(languages),
+                "languages_w": languages_w,
+                "size": int(size),
+                "size_w": size_w,
+                "video_details": {
+                    "resolution": int(video_resolution),
+                    "codec": int(video_codec),
+                    "hdr": int(video_hdr),
+                },
             }
 
         def get_builtin_score_defaults() -> dict:
@@ -874,6 +917,680 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
+_TV_SKIP_NFO = {"tvshow.nfo", "season.nfo"}
+_TV_SE_EP_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+_TV_X_SE_EP_RE = re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.IGNORECASE)
+_TV_SEASON_HINT_RE = re.compile(r"(?:season|saison)[\s._-]*(\d{1,2})", re.IGNORECASE)
+_TV_EP_TOKEN_RE = re.compile(r"(?:^|[\s._\-])(?:e|ep|episode)[\s._\-]*(\d{1,3})(?=$|[\s._\-])", re.IGNORECASE)
+_TV_TRAILING_NUM_RE = re.compile(r"(?:^|[\s._\-])(\d{2,3})$")
+_TV_COMMON_TECH_NUMBERS = {2160, 1080, 720, 576, 540, 480}
+
+
+def _safe_int(value, default: int | None = None) -> int | None:
+    try:
+        if value is None:
+            return default
+        return int(float(str(value).strip()))
+    except Exception:
+        return default
+
+
+def _dominant_value(values: list):
+    counter = Counter(v for v in values if v not in (None, "", []))
+    if not counter:
+        return None
+    return sorted(counter.items(), key=lambda x: (-x[1], str(x[0])))[0][0]
+
+
+def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int | None]:
+    if not path_like:
+        return None, None
+
+    season_hint = _TV_SEASON_HINT_RE.search(path_like)
+    hinted_season = _safe_int(season_hint.group(1), None) if season_hint else None
+
+    match = _TV_SE_EP_RE.search(path_like)
+    if match:
+        return _safe_int(match.group(1)), _safe_int(match.group(2))
+    match = _TV_X_SE_EP_RE.search(path_like)
+    if match:
+        return _safe_int(match.group(1)), _safe_int(match.group(2))
+
+    # Episode extraction is based on basename to avoid unrelated parent folders.
+    basename = Path(path_like).name
+    stem = Path(basename).stem
+
+    match = _TV_EP_TOKEN_RE.search(stem)
+    if match:
+        return hinted_season, _safe_int(match.group(1))
+
+    # Anime-like names often use trailing numeric episodes: "Title.001", "Title - 01".
+    # Keep this fallback conservative to avoid confusing quality markers (720/1080/2160).
+    match = _TV_TRAILING_NUM_RE.search(stem)
+    if match:
+        ep_num = _safe_int(match.group(1))
+        if isinstance(ep_num, int) and ep_num > 0 and ep_num not in _TV_COMMON_TECH_NUMBERS:
+            return hinted_season, ep_num
+
+    if hinted_season is not None:
+        return hinted_season, None
+    return None, None
+
+
+def _build_episode_dedupe_key(season_num: int | None, episode_num: int | None, fallback: str) -> str:
+    if season_num is not None and episode_num is not None:
+        return f"s{season_num:02d}e{episode_num:03d}"
+    return fallback.casefold()
+
+
+def _episode_fallback_key(path: Path, series_dir: Path | None = None) -> str:
+    try:
+        base = path.relative_to(series_dir) if isinstance(series_dir, Path) else path
+    except Exception:
+        base = path
+    no_suffix = base.with_suffix("")
+    return str(no_suffix).replace("\\", "/").casefold()
+
+
+def _episode_metadata_completeness(ep: dict) -> int:
+    score = 0
+    for key in (
+        "resolution",
+        "width",
+        "height",
+        "codec",
+        "audio_codec_raw",
+        "audio_codec",
+        "audio_languages",
+        "hdr_type",
+        "runtime_min",
+        "size_b",
+    ):
+        val = ep.get(key)
+        if val not in (None, "", [], 0):
+            score += 1
+    return score
+
+
+def _prefer_episode_metadata(current: dict | None, candidate: dict) -> dict:
+    if current is None:
+        return candidate
+    cur_score = _episode_metadata_completeness(current)
+    new_score = _episode_metadata_completeness(candidate)
+    if new_score > cur_score:
+        return candidate
+    if new_score < cur_score:
+        return current
+    if int(candidate.get("size_b") or 0) > int(current.get("size_b") or 0):
+        return candidate
+    return current
+
+
+def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) -> dict | None:
+    try:
+        root = ET.parse(nfo_path).getroot()
+    except Exception:
+        return None
+
+    rel_hint = str(nfo_path)
+    season_num = _safe_int((root.findtext("season") or "").strip(), None)
+    episode_num = _safe_int((root.findtext("episode") or "").strip(), None)
+    if season_num is None or episode_num is None:
+        inferred_season, inferred_episode = _extract_season_episode_from_name(rel_hint)
+        if season_num is None:
+            season_num = inferred_season
+        if episode_num is None:
+            episode_num = inferred_episode
+    if season_num is None:
+        season_num = 1
+
+    video = root.find(".//fileinfo/streamdetails/video")
+    audio = root.find(".//fileinfo/streamdetails/audio")
+
+    width = _safe_int(video.findtext("width") if video is not None else None, None)
+    height = _safe_int(video.findtext("height") if video is not None else None, None)
+    resolution = classify_resolution(width, height) if width and height else None
+
+    raw_codec = (video.findtext("codec") if video is not None else None)
+    codec = normalize_codec(raw_codec)
+    if _is_unknown_sentinel(codec):
+        codec = None
+
+    hdr_type = (video.findtext("hdrtype") if video is not None else None) or None
+    if isinstance(hdr_type, str):
+        hdr_type = hdr_type.strip() or None
+    hdr = bool(hdr_type)
+
+    runtime_min = _safe_int(
+        (video.findtext("duration") if video is not None else None)
+        or root.findtext("runtime")
+        or root.findtext("durationinseconds"),
+        None,
+    )
+
+    raw_audio = (audio.findtext("codec") if audio is not None else None) or root.findtext("audio_codec") or root.findtext("audiocodec")
+    audio_norm = normalize_audio_codec(raw_audio)
+
+    langs = parse_audio_languages(root)
+    audio_languages_simple = simplify_audio_languages(langs)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    size_b = 0
+    for ext in MEDIA_EXTENSIONS:
+        candidate = nfo_path.with_suffix(ext)
+        if candidate.exists() and candidate.is_file():
+            try:
+                size_b = int(candidate.stat().st_size)
+            except Exception:
+                size_b = 0
+            break
+
+    dedupe_key = _build_episode_dedupe_key(
+        season_num,
+        episode_num,
+        fallback=_episode_fallback_key(nfo_path, series_dir),
+    )
+    return {
+        "season": season_num,
+        "episode": episode_num,
+        "dedupe_key": dedupe_key,
+        "size_b": max(0, int(size_b or 0)),
+        "width": width,
+        "height": height,
+        "resolution": resolution,
+        "codec": codec,
+        "audio_codec_raw": audio_norm.get("raw"),
+        "audio_codec": audio_norm.get("normalized"),
+        "audio_languages": langs,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+        "runtime_min": runtime_min,
+    }
+
+
+def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) -> list[dict]:
+    parsed: list[dict] = []
+    try:
+        files = sorted(
+            p for p in series_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in MEDIA_EXTENSIONS and not p.name.startswith("._")
+        )
+    except Exception:
+        return parsed
+
+    for video in files:
+        if video.with_suffix(".nfo").exists():
+            continue
+        season_num, episode_num = _extract_season_episode_from_name(str(video))
+        if season_num is None:
+            season_num = 1
+        key = _build_episode_dedupe_key(
+            season_num,
+            episode_num,
+            fallback=_episode_fallback_key(video, series_dir),
+        )
+        if key in existing_keys:
+            continue
+        try:
+            size_b = int(video.stat().st_size)
+        except Exception:
+            size_b = 0
+        parsed.append({
+            "season": season_num,
+            "episode": episode_num,
+            "dedupe_key": key,
+            "size_b": max(0, size_b),
+            "width": None,
+            "height": None,
+            "resolution": None,
+            "codec": None,
+            "audio_codec_raw": None,
+            "audio_codec": None,
+            "audio_languages": [],
+            "audio_languages_simple": None,
+            "hdr": False,
+            "hdr_type": None,
+            "runtime_min": None,
+        })
+    return parsed
+
+
+def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    try:
+        nfo_candidates = sorted(
+            p for p in series_dir.rglob("*.nfo")
+            if p.is_file() and p.name.lower() not in _TV_SKIP_NFO and not p.name.startswith("._")
+        )
+    except Exception:
+        nfo_candidates = []
+
+    for nfo_path in nfo_candidates:
+        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir)
+        if not isinstance(ep, dict):
+            continue
+        key = ep["dedupe_key"]
+        deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
+
+    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys())):
+        key = ep["dedupe_key"]
+        deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
+
+    return list(deduped.values())
+
+
+def _aggregate_audio_languages_from_episodes(episodes: list[dict]) -> list[str]:
+    total = len(episodes)
+    if total <= 0:
+        return []
+    threshold = 1 if total <= 2 else max(2, int(math.ceil(total * 0.20)))
+    lang_counter: Counter = Counter()
+    for ep in episodes:
+        langs = ep.get("audio_languages") or []
+        if not isinstance(langs, list):
+            continue
+        for lang in sorted(set(langs)):
+            if lang:
+                lang_counter[lang] += 1
+    selected = [lang for lang, count in lang_counter.items() if count >= threshold]
+    if not selected and lang_counter:
+        selected = [lang for lang, _ in sorted(lang_counter.items(), key=lambda x: (-x[1], x[0]))[:2]]
+    return sorted(selected)
+
+
+def _season_weight(season: dict) -> int:
+    weight = _safe_int((season or {}).get("episodes_found"), 0) or 0
+    return weight if weight > 0 else 1
+
+
+def _dominant_value_from_seasons(seasons: list[dict], field: str):
+    weighted: dict = defaultdict(int)
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        val = season.get(field)
+        if val in (None, "", []):
+            continue
+        weighted[val] += _season_weight(season)
+    if not weighted:
+        return None
+    return sorted(weighted.items(), key=lambda x: (-x[1], str(x[0])))[0][0]
+
+
+def _aggregate_audio_languages_from_seasons(seasons: list[dict]) -> list[str]:
+    total_weight = sum(_season_weight(s) for s in seasons if isinstance(s, dict))
+    if total_weight <= 0:
+        return []
+    threshold = max(1, int(math.ceil(total_weight * 0.20)))
+    lang_counter: Counter = Counter()
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        langs = season.get("audio_languages") or []
+        if not isinstance(langs, list):
+            continue
+        w = _season_weight(season)
+        for lang in sorted(set(langs)):
+            if lang:
+                lang_counter[lang] += w
+    selected = [lang for lang, count in lang_counter.items() if count >= threshold]
+    if not selected and lang_counter:
+        selected = [lang for lang, _ in sorted(lang_counter.items(), key=lambda x: (-x[1], x[0]))[:2]]
+    return sorted(selected)
+
+
+def _aggregate_series_quality_from_seasons(
+    seasons: list[dict],
+    *,
+    score_config: dict | None = None,
+    fallback_item_for_score: dict | None = None,
+) -> dict:
+    weighted_total = 0
+    acc: dict[str, float] = defaultdict(float)
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        q = season.get("quality")
+        if not isinstance(q, dict):
+            continue
+        w = _season_weight(season)
+        weighted_total += w
+        for k in ("video", "audio", "languages", "size", "video_w", "audio_w", "languages_w", "size_w"):
+            acc[k] += _as_number(q.get(k), 0.0) * w
+        vd = q.get("video_details") if isinstance(q.get("video_details"), dict) else {}
+        acc["vd_resolution"] += _as_number(vd.get("resolution"), 0.0) * w
+        acc["vd_codec"] += _as_number(vd.get("codec"), 0.0) * w
+        acc["vd_hdr"] += _as_number(vd.get("hdr"), 0.0) * w
+
+    if weighted_total <= 0:
+        if isinstance(fallback_item_for_score, dict):
+            return compute_quality(fallback_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(fallback_item_for_score)
+        return {}
+
+    video_details = {
+        "resolution": int(round(acc["vd_resolution"] / weighted_total)),
+        "codec": int(round(acc["vd_codec"] / weighted_total)),
+        "hdr": int(round(acc["vd_hdr"] / weighted_total)),
+    }
+    quality = {
+        "video_details": video_details,
+        "video": int(video_details["resolution"] + video_details["codec"] + video_details["hdr"]),
+        "audio": int(round(acc["audio"] / weighted_total)),
+        "languages": int(round(acc["languages"] / weighted_total)),
+        "size": int(round(acc["size"] / weighted_total)),
+        "video_w": round(acc["video_w"] / weighted_total, 4),
+        "audio_w": round(acc["audio_w"] / weighted_total, 4),
+        "languages_w": round(acc["languages_w"] / weighted_total, 4),
+        "size_w": round(acc["size_w"] / weighted_total, 4),
+    }
+    quality["score"] = int(round(quality["video_w"] + quality["audio_w"] + quality["languages_w"] + quality["size_w"]))
+    return quality
+
+
+def aggregate_season_metadata(
+    season_number: int,
+    season_episodes: list[dict],
+    *,
+    episodes_expected: int | None = None,
+    score_config: dict | None = None,
+    include_quality: bool = True,
+) -> dict:
+    episodes_found = len(season_episodes)
+    dominant_resolution = _dominant_value([e.get("resolution") for e in season_episodes])
+    dominant_width = _dominant_value([e.get("width") for e in season_episodes])
+    dominant_height = _dominant_value([e.get("height") for e in season_episodes])
+    dominant_codec = _dominant_value([e.get("codec") for e in season_episodes])
+    dominant_audio_raw = _dominant_value([e.get("audio_codec_raw") for e in season_episodes])
+    dominant_audio = _dominant_value([e.get("audio_codec") for e in season_episodes])
+    dominant_hdr_type = _dominant_value([e.get("hdr_type") for e in season_episodes])
+    dominant_hdr = bool(dominant_hdr_type)
+    if not dominant_hdr and any(bool(e.get("hdr")) for e in season_episodes):
+        dominant_hdr = True
+
+    known_runtimes = [int(e["runtime_min"]) for e in season_episodes if isinstance(e.get("runtime_min"), int) and e.get("runtime_min") > 0]
+    runtime_min_total = int(sum(known_runtimes)) if known_runtimes else 0
+    runtime_min_avg = int(round(runtime_min_total / len(known_runtimes))) if known_runtimes else None
+
+    size_b = int(sum(int(e.get("size_b") or 0) for e in season_episodes))
+    audio_languages = _aggregate_audio_languages_from_episodes(season_episodes)
+    audio_languages_simple = simplify_audio_languages(audio_languages)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    out = {
+        "season": int(season_number),
+        "episodes_found": int(episodes_found),
+        "episodes_expected": int(episodes_expected) if isinstance(episodes_expected, int) and episodes_expected >= 0 else None,
+        "resolution": dominant_resolution,
+        "width": dominant_width,
+        "height": dominant_height,
+        "codec": dominant_codec,
+        "audio_codec_raw": dominant_audio_raw,
+        "audio_codec": dominant_audio,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": dominant_hdr,
+        "hdr_type": dominant_hdr_type,
+        "runtime_min_total": runtime_min_total,
+        "runtime_min_avg": runtime_min_avg,
+        "size_b": size_b,
+        "size": format_size(size_b),
+    }
+    if include_quality:
+        season_item_for_score = {
+            "type": "tv",
+            "resolution": dominant_resolution,
+            "width": dominant_width,
+            "height": dominant_height,
+            "codec": dominant_codec,
+            "audio_codec_raw": dominant_audio_raw,
+            "audio_codec": dominant_audio,
+            "audio_languages": audio_languages,
+            "audio_languages_simple": audio_languages_simple,
+            "hdr": dominant_hdr,
+            "hdr_type": dominant_hdr_type,
+            "size_b": size_b,
+        }
+        out["quality"] = compute_quality(season_item_for_score, score_config) if isinstance(score_config, dict) else compute_quality(season_item_for_score)
+    return out
+
+
+def aggregate_series_metadata(
+    series_episodes: list[dict],
+    *,
+    score_config: dict | None = None,
+    season_expected_counts: dict[int, int] | None = None,
+    include_quality: bool = True,
+) -> dict:
+    by_season: dict[int, list[dict]] = defaultdict(list)
+    for ep in series_episodes:
+        season_num = _safe_int(ep.get("season"), 1)
+        if season_num is None:
+            season_num = 1
+        by_season[int(season_num)].append(ep)
+
+    seasons: list[dict] = []
+    expected = season_expected_counts or {}
+    season_numbers = sorted(set(by_season.keys()) | set(expected.keys()))
+    for season_num in season_numbers:
+        season_eps = by_season.get(season_num, [])
+        seasons.append(
+            aggregate_season_metadata(
+                season_num,
+                season_eps,
+                episodes_expected=expected.get(season_num),
+                score_config=score_config,
+                include_quality=include_quality,
+            )
+        )
+
+    resolution = _dominant_value_from_seasons(seasons, "resolution")
+    width = _dominant_value_from_seasons(seasons, "width")
+    height = _dominant_value_from_seasons(seasons, "height")
+    codec = _dominant_value_from_seasons(seasons, "codec")
+    audio_codec_raw = _dominant_value_from_seasons(seasons, "audio_codec_raw")
+    audio_codec = _dominant_value_from_seasons(seasons, "audio_codec")
+    hdr_type = _dominant_value_from_seasons(seasons, "hdr_type")
+    hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict))
+
+    season_runtime_totals = [
+        _safe_int((s or {}).get("runtime_min_total"), 0) or 0
+        for s in seasons
+        if isinstance(s, dict)
+    ]
+    runtime_min = int(sum(season_runtime_totals)) if season_runtime_totals else 0
+    episode_count = int(sum((_safe_int((s or {}).get("episodes_found"), 0) or 0) for s in seasons if isinstance(s, dict)))
+    runtime_min_avg = int(round(runtime_min / episode_count)) if runtime_min > 0 and episode_count > 0 else None
+    season_count = len(seasons)
+    size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)))
+
+    audio_languages = _aggregate_audio_languages_from_seasons(seasons)
+    audio_languages_simple = simplify_audio_languages(audio_languages)
+    if _is_unknown_sentinel(audio_languages_simple):
+        audio_languages_simple = None
+
+    expected_values = [
+        _safe_int((s or {}).get("episodes_expected"), None)
+        for s in seasons
+        if isinstance(s, dict)
+    ]
+    known_expected = [v for v in expected_values if isinstance(v, int) and v >= 0]
+    episodes_expected = int(sum(known_expected)) if expected_values and len(known_expected) == len(expected_values) else None
+
+    series_item_for_score = {
+        "type": "tv",
+        "resolution": resolution,
+        "width": width,
+        "height": height,
+        "codec": codec,
+        "audio_codec_raw": audio_codec_raw,
+        "audio_codec": audio_codec,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+        "size_b": size_b,
+    }
+    out = {
+        "seasons": seasons,
+        "season_count": season_count,
+        "episode_count": episode_count,
+        "episodes_expected": episodes_expected,
+        "size_b": size_b,
+        "resolution": resolution,
+        "width": width,
+        "height": height,
+        "runtime_min": runtime_min,
+        "runtime_min_avg": runtime_min_avg,
+        "codec": codec,
+        "audio_codec_raw": audio_codec_raw,
+        "audio_codec": audio_codec,
+        "audio_languages": audio_languages,
+        "audio_languages_simple": audio_languages_simple,
+        "hdr": hdr,
+        "hdr_type": hdr_type,
+    }
+    if include_quality:
+        out["quality"] = _aggregate_series_quality_from_seasons(
+            seasons,
+            score_config=score_config,
+            fallback_item_for_score=series_item_for_score,
+        )
+    return out
+
+
+def _extract_seerr_expected_counts(payload: dict) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    episodes_expected = _safe_int(
+        payload.get("numberOfEpisodes")
+        or payload.get("number_of_episodes")
+        or payload.get("episodeCount")
+        or payload.get("episode_count"),
+        None,
+    )
+    season_count_expected = _safe_int(
+        payload.get("numberOfSeasons")
+        or payload.get("number_of_seasons")
+        or payload.get("seasonCount")
+        or payload.get("season_count"),
+        None,
+    )
+    season_episode_counts: dict[int, int] = {}
+    seasons = payload.get("seasons")
+    if isinstance(seasons, list):
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            season_num = _safe_int(season.get("seasonNumber") or season.get("season_number"), None)
+            if season_num is None:
+                continue
+            ep_expected = _safe_int(
+                season.get("episodeCount")
+                or season.get("episode_count")
+                or season.get("episodes")
+                or season.get("episodes_count"),
+                None,
+            )
+            if isinstance(ep_expected, int) and ep_expected >= 0:
+                season_episode_counts[int(season_num)] = int(ep_expected)
+    if episodes_expected is None and season_episode_counts:
+        episodes_expected = int(sum(season_episode_counts.values()))
+    if season_count_expected is None and season_episode_counts:
+        season_count_expected = len(season_episode_counts)
+    if episodes_expected is None and season_count_expected is None and not season_episode_counts:
+        return None
+    return {
+        "episodes_expected": episodes_expected,
+        "season_count_expected": season_count_expected,
+        "season_episode_counts": season_episode_counts,
+    }
+
+
+def _fetch_tv_expected_counts_from_seerr(
+    *,
+    tvdb_id: str | int | None,
+    tmdb_id: str | int | None,
+    title: str | None,
+    year: str | int | None,
+    jsr: dict | None,
+) -> dict | None:
+    if not isinstance(jsr, dict) or not jsr.get("enabled") or not jsr.get("url") or not jsr.get("apikey"):
+        return None
+    candidate_ids = []
+    if tvdb_id not in (None, ""):
+        candidate_ids.append(str(tvdb_id))
+    if tmdb_id not in (None, "") and str(tmdb_id) not in candidate_ids:
+        candidate_ids.append(str(tmdb_id))
+    for candidate in candidate_ids:
+        resp = _jsr_get(f"/tv/{candidate}", jsr)
+        if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND, _JSR_ERROR):
+            continue
+        counts = _extract_seerr_expected_counts(resp)
+        if counts:
+            return counts
+
+    resolved = _resolve_ids_from_search(title, year, is_tv=True, jsr=jsr)
+    if resolved is _FETCH_ERROR or not isinstance(resolved, dict):
+        return None
+    resolved_tvdb = resolved.get("tvdb_id")
+    resolved_tmdb = resolved.get("tmdb_id")
+    for candidate in (resolved_tvdb, resolved_tmdb):
+        if candidate in (None, ""):
+            continue
+        resp = _jsr_get(f"/tv/{candidate}", jsr)
+        if resp in (_JSR_NOT_CONFIGURED, _JSR_NOT_FOUND, _JSR_ERROR):
+            continue
+        counts = _extract_seerr_expected_counts(resp)
+        if counts:
+            return counts
+    return None
+
+
+def merge_series_expected_counts_from_seerr(series_item: dict, expected_counts: dict | None) -> dict:
+    if not isinstance(series_item, dict):
+        return series_item
+    if not isinstance(expected_counts, dict):
+        series_item["episodes_expected"] = None
+        return series_item
+
+    episodes_expected = expected_counts.get("episodes_expected")
+    if isinstance(episodes_expected, int) and episodes_expected >= 0:
+        series_item["episodes_expected"] = episodes_expected
+    else:
+        series_item["episodes_expected"] = None
+
+    season_expected = expected_counts.get("season_episode_counts")
+    if isinstance(season_expected, dict):
+        by_season = {
+            int(s.get("season")): s
+            for s in (series_item.get("seasons") or [])
+            if isinstance(s, dict) and isinstance(s.get("season"), int)
+        }
+        for season_num, expected_ep in season_expected.items():
+            if not isinstance(expected_ep, int) or expected_ep < 0:
+                continue
+            if season_num in by_season:
+                by_season[season_num]["episodes_expected"] = expected_ep
+                continue
+            placeholder = aggregate_season_metadata(
+                int(season_num),
+                [],
+                episodes_expected=expected_ep,
+                score_config=None,
+            )
+            by_season[season_num] = placeholder
+        series_item["seasons"] = [by_season[k] for k in sorted(by_season.keys())]
+
+    season_count_expected = expected_counts.get("season_count_expected")
+    if isinstance(season_count_expected, int) and season_count_expected > 0:
+        current = _safe_int(series_item.get("season_count"), 0) or 0
+        series_item["season_count"] = max(current, int(season_count_expected))
+    return series_item
+
+
 def _inventory_item_id(media_type: str, category: str, folder_name: str) -> str:
     return f"{media_type}:{category}:{folder_name}"
 
@@ -1038,8 +1755,29 @@ def load_existing(output_path: str) -> dict:
 def write_json(data: dict, output_path: str) -> None:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(output.parent),
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+            json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output)
+        # nginx serves /data/library.json as a static file; keep it world-readable.
+        with contextlib.suppress(Exception):
+            output.chmod(0o644)
+    except Exception:
+        if tmp_path is not None:
+            with contextlib.suppress(Exception):
+                tmp_path.unlink(missing_ok=True)
+        raise
     log.debug(f"Written: {output_path}")
 
 
@@ -1123,6 +1861,22 @@ def _ensure_needs_onboarding(cfg: dict, config_exists: bool | None = None) -> tu
         system["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists)
         changed = True
     return cfg, changed
+
+
+def _finalize_needs_onboarding_after_config_update(cfg: dict) -> bool:
+    """
+    Keep onboarding deterministic after onboarding/settings saves.
+    Once a usable media folder exists, onboarding is considered completed.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    if not _has_usable_config(cfg):
+        return False
+    system = cfg.setdefault("system", {})
+    if system.get("needs_onboarding") is False:
+        return False
+    system["needs_onboarding"] = False
+    return True
 
 
 def _is_inventory_enabled(cfg: dict | None) -> bool:
@@ -1298,6 +2052,41 @@ def _clamp_int(value, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
 
 
+def _score_max_from_table(table: dict | None) -> int:
+    if not isinstance(table, dict):
+        return 0
+    best = 0.0
+    for value in table.values():
+        if isinstance(value, (int, float)):
+            best = max(best, _as_number(value, 0.0))
+    return _as_int(best, 0)
+
+
+def _compute_derived_max_score(score_config: dict) -> dict:
+    if not isinstance(score_config, dict):
+        return {
+            "max_video": 0,
+            "max_audio": 0,
+            "max_languages": 0,
+            "max_size": 0,
+        }
+    video = score_config.get("video") if isinstance(score_config.get("video"), dict) else {}
+    audio = score_config.get("audio") if isinstance(score_config.get("audio"), dict) else {}
+    languages = score_config.get("languages") if isinstance(score_config.get("languages"), dict) else {}
+    size = score_config.get("size") if isinstance(score_config.get("size"), dict) else {}
+    max_video = (
+        _score_max_from_table(video.get("resolution") if isinstance(video.get("resolution"), dict) else {})
+        + _score_max_from_table(video.get("codec") if isinstance(video.get("codec"), dict) else {})
+        + _score_max_from_table(video.get("hdr") if isinstance(video.get("hdr"), dict) else {})
+    )
+    return {
+        "max_video": _as_int(max_video, 0),
+        "max_audio": _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {}),
+        "max_languages": _score_max_from_table(languages.get("profile") if isinstance(languages.get("profile"), dict) else {}),
+        "max_size": _score_max_from_table(size.get("points") if isinstance(size.get("points"), dict) else {}),
+    }
+
+
 def load_score_defaults() -> dict:
     try:
         with open(SCORE_DEFAULTS_PATH, encoding="utf-8") as f:
@@ -1345,6 +2134,11 @@ def validate_score_config(score_config: dict, defaults: dict | None = None) -> t
             fallback = _score_get_path(base_defaults, path)
             _score_set_path(cfg, path, fallback)
             notes.append({"path": path, "reason": "missing_default_restored"})
+
+    derived_max_score = _compute_derived_max_score(cfg)
+    if cfg.get("max_score") != derived_max_score:
+        cfg["max_score"] = derived_max_score
+        notes.append({"path": "max_score", "reason": "derived_refreshed"})
 
     status = compute_score_status(cfg)
     status["normalization_notes"] = notes
@@ -1525,8 +2319,12 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     if not isinstance(item, dict):
         return item
     clean = dict(item)
+    clean.pop("_scan_tv_episodes_scanned", None)
+    clean.pop("_scan_tv_series_scanned", None)
+    clean.pop("_scan_tv_seerr_counts", None)
     clean.pop("runtime", None)
     clean.pop("audio_codec_display", None)
+    clean.pop("complete", None)
     for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
         if _is_unknown_sentinel(clean.get(field)):
             clean[field] = None
@@ -1536,7 +2334,98 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     if isinstance(quality, dict):
         q = dict(quality)
         q.pop("level", None)
-        clean["quality"] = q
+        q.pop("base_score", None)
+        q.pop("score_details", None)
+        video_details = q.get("video_details")
+        if isinstance(video_details, dict):
+            vd = {
+                "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+            }
+        else:
+            vd = {"resolution": 0, "codec": 0, "hdr": 0}
+        q_audio = _safe_int(q.get("audio"), 0) or 0
+        q_languages = _safe_int(q.get("languages"), 0) or 0
+        q_size = _safe_int(q.get("size"), 0) or 0
+        q_video_w = _as_number(q.get("video_w"), _as_number(q.get("video"), 0.0))
+        q_audio_w = _as_number(q.get("audio_w"), _as_number(q_audio, 0.0))
+        q_languages_w = _as_number(q.get("languages_w"), _as_number(q_languages, 0.0))
+        q_size_w = _as_number(q.get("size_w"), _as_number(q_size, 0.0))
+        normalized_q = {
+            "video_details": vd,
+            "video": int(vd["resolution"] + vd["codec"] + vd["hdr"]),
+            "audio": q_audio,
+            "languages": q_languages,
+            "size": q_size,
+            "video_w": round(q_video_w, 4),
+            "audio_w": round(q_audio_w, 4),
+            "languages_w": round(q_languages_w, 4),
+            "size_w": round(q_size_w, 4),
+        }
+        normalized_q["score"] = int(round(normalized_q["video_w"] + normalized_q["audio_w"] + normalized_q["languages_w"] + normalized_q["size_w"]))
+        if _safe_int(q.get("video"), normalized_q["video"]) != normalized_q["video"] or _safe_int(q.get("score"), normalized_q["score"]) != normalized_q["score"]:
+            log.warning(
+                "[score] Normalized inconsistent quality block for item %r (%s): score=%s video=%s",
+                clean.get("title"),
+                clean.get("path"),
+                q.get("score"),
+                q.get("video"),
+            )
+        clean["quality"] = normalized_q
+    seasons = clean.get("seasons")
+    if isinstance(seasons, list):
+        sanitized_seasons = []
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            s = dict(season)
+            for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
+                if _is_unknown_sentinel(s.get(field)):
+                    s[field] = None
+            sq = s.get("quality")
+            if isinstance(sq, dict):
+                sq2 = dict(sq)
+                sq2.pop("level", None)
+                sq2.pop("base_score", None)
+                sq2.pop("score_details", None)
+                video_details = sq2.get("video_details")
+                if isinstance(video_details, dict):
+                    vd2 = {
+                        "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                        "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                        "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+                    }
+                else:
+                    vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
+                sq_audio = _safe_int(sq2.get("audio"), 0) or 0
+                sq_languages = _safe_int(sq2.get("languages"), 0) or 0
+                sq_size = _safe_int(sq2.get("size"), 0) or 0
+                sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
+                sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
+                sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
+                sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
+                normalized_sq = {
+                    "video_details": vd2,
+                    "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
+                    "audio": sq_audio,
+                    "languages": sq_languages,
+                    "size": sq_size,
+                    "video_w": round(sq_video_w, 4),
+                    "audio_w": round(sq_audio_w, 4),
+                    "languages_w": round(sq_languages_w, 4),
+                    "size_w": round(sq_size_w, 4),
+                }
+                normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
+                if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
+                    log.warning(
+                        "[score] Normalized inconsistent season quality for item %r season=%s",
+                        clean.get("title"),
+                        s.get("season"),
+                    )
+                s["quality"] = normalized_sq
+            sanitized_seasons.append(s)
+        clean["seasons"] = sanitized_seasons
     return clean
 
 
@@ -1582,7 +2471,15 @@ def _clean_raw_provider_name(name: str | None) -> str | None:
         return None
     return cleaned
 
-def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_score: bool = True) -> dict:
+def scan_media_item(
+    media_dir: Path,
+    root: Path,
+    cat: dict,
+    prev: dict,
+    enable_score: bool = True,
+    score_config: dict | None = None,
+    jsr_for_counts: dict | None = None,
+) -> dict:
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing item from library.json (may be empty dict).
@@ -1598,15 +2495,35 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
 
     # --- NFO metadata ---
     nfo_meta = {}
+    series_agg: dict = {}
+    expected_counts: dict | None = None
     if is_tv:
         tvshow_nfo = media_dir / "tvshow.nfo"
         if tvshow_nfo.exists():
             nfo_meta = parse_tvshow_nfo(tvshow_nfo)
-        res_meta = find_episode_nfo(media_dir)
-        nfo_meta.update(res_meta)
-        s_count, e_count = count_seasons_episodes(media_dir)
-        nfo_meta["season_count"]  = s_count
-        nfo_meta["episode_count"] = e_count
+        series_episodes = collect_series_episode_metadata(media_dir)
+        series_agg = aggregate_series_metadata(
+            series_episodes,
+            score_config=score_config if isinstance(score_config, dict) else None,
+            include_quality=bool(enable_score),
+        )
+        if isinstance(jsr_for_counts, dict) and jsr_for_counts.get("enabled"):
+            expected_counts = _fetch_tv_expected_counts_from_seerr(
+                tvdb_id=nfo_meta.get("tvdb_id") or prev.get("tvdb_id"),
+                tmdb_id=nfo_meta.get("tmdb_id") or prev.get("tmdb_id"),
+                title=nfo_meta.get("title") or prev.get("title") or _clean_title(raw_name),
+                year=nfo_meta.get("year") or prev.get("year") or _extract_year(raw_name),
+                jsr=jsr_for_counts,
+            )
+            if isinstance(expected_counts, dict):
+                season_expected = expected_counts.get("season_episode_counts")
+                if isinstance(season_expected, dict):
+                    series_agg = aggregate_series_metadata(
+                        series_episodes,
+                        score_config=score_config if isinstance(score_config, dict) else None,
+                        season_expected_counts=season_expected,
+                        include_quality=bool(enable_score),
+                    )
     else:
         nfo_file = find_movie_nfo(media_dir)
         if nfo_file:
@@ -1641,8 +2558,9 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         tvdb_id = None
     size_b = get_dir_size(media_dir)
 
-    hdr_current = bool(nfo_meta.get("hdr", False))
-    hdr_type_current = (nfo_meta.get("hdr_type") or "").strip() or None
+    hdr_source = series_agg if is_tv else nfo_meta
+    hdr_current = bool(hdr_source.get("hdr", False))
+    hdr_type_current = (hdr_source.get("hdr_type") or "").strip() or None
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
@@ -1662,30 +2580,45 @@ def scan_media_item(media_dir: Path, root: Path, cat: dict, prev: dict, enable_s
         "poster":            poster,
         "tmdb_id":           tmdb_id,
         "tvdb_id":           tvdb_id,
-        "resolution":        nfo_meta.get("resolution") or prev.get("resolution"),
-        "width":             nfo_meta.get("width")      or prev.get("width"),
-        "height":            nfo_meta.get("height")     or prev.get("height"),
+        "resolution":        (series_agg.get("resolution") if is_tv else nfo_meta.get("resolution")) or prev.get("resolution"),
+        "width":             (series_agg.get("width") if is_tv else nfo_meta.get("width")) or prev.get("width"),
+        "height":            (series_agg.get("height") if is_tv else nfo_meta.get("height")) or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
-        "runtime_min":       nfo_meta.get("runtime_min") or prev.get("runtime_min"),
-        "season_count":      nfo_meta.get("season_count")  or prev.get("season_count"),
-        "episode_count":     nfo_meta.get("episode_count") or prev.get("episode_count"),
-        "codec":              nfo_meta.get("codec")              or prev.get("codec"),
-        "audio_codec_raw":    nfo_meta.get("audio_codec_raw")    or prev.get("audio_codec_raw"),
-        "audio_codec":        nfo_meta.get("audio_codec")        or prev.get("audio_codec"),
-        "audio_languages":    nfo_meta.get("audio_languages")    or prev.get("audio_languages")    or [],
-        "audio_languages_simple": nfo_meta.get("audio_languages_simple") or prev.get("audio_languages_simple") or simplify_audio_languages(nfo_meta.get("audio_languages") or prev.get("audio_languages") or []),
+        "runtime_min":       (series_agg.get("runtime_min") if is_tv else nfo_meta.get("runtime_min")) or prev.get("runtime_min"),
+        "runtime_min_avg":   (series_agg.get("runtime_min_avg") if is_tv else nfo_meta.get("runtime_min_avg")) or prev.get("runtime_min_avg"),
+        "season_count":      (series_agg.get("season_count") if is_tv else nfo_meta.get("season_count")) or prev.get("season_count"),
+        "episode_count":     (series_agg.get("episode_count") if is_tv else nfo_meta.get("episode_count")) or prev.get("episode_count"),
+        "codec":             (series_agg.get("codec") if is_tv else nfo_meta.get("codec")) or prev.get("codec"),
+        "audio_codec_raw":   (series_agg.get("audio_codec_raw") if is_tv else nfo_meta.get("audio_codec_raw")) or prev.get("audio_codec_raw"),
+        "audio_codec":       (series_agg.get("audio_codec") if is_tv else nfo_meta.get("audio_codec")) or prev.get("audio_codec"),
+        "audio_languages":   (series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or [],
+        "audio_languages_simple": (series_agg.get("audio_languages_simple") if is_tv else nfo_meta.get("audio_languages_simple")) or prev.get("audio_languages_simple") or simplify_audio_languages((series_agg.get("audio_languages") if is_tv else nfo_meta.get("audio_languages")) or prev.get("audio_languages") or []),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous library.json — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
+    if is_tv:
+        item["size_b"] = int(series_agg.get("size_b") or size_b)
+        item["size"] = format_size(item["size_b"])
+        item["seasons"] = series_agg.get("seasons") or []
+        item["episodes_expected"] = series_agg.get("episodes_expected")
+        item = merge_series_expected_counts_from_seerr(item, expected_counts)
+        item["_scan_tv_episodes_scanned"] = int(series_agg.get("episode_count") or 0)
+        item["_scan_tv_series_scanned"] = 1
+        item["_scan_tv_seerr_counts"] = bool(isinstance(expected_counts, dict))
     if enable_score:
-        preserved_quality = prev.get("quality")
-        if isinstance(preserved_quality, dict):
-            q = dict(preserved_quality)
+        if is_tv and isinstance(series_agg.get("quality"), dict):
+            q = dict(series_agg["quality"])
             q.pop("level", None)
-            item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+            item["quality"] = q
+        else:
+            preserved_quality = prev.get("quality")
+            if isinstance(preserved_quality, dict):
+                q = dict(preserved_quality)
+                q.pop("level", None)
+                item["quality"] = q  # preserved during quick scan; overwritten by phase 3
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
@@ -1717,7 +2650,15 @@ def run_quick(only_category: str | None = None) -> None:
     if normalize_folder_enabled_flags(cfg, drop_visible=True):
         save_config(cfg)
         cfg = load_config()
-    score_enabled = _is_score_enabled(cfg)
+    score_feature_enabled = _is_score_enabled(cfg)
+    # v0.3.3 policy: final quality scoring is full-phase only (phase 3).
+    # Phase 1 builds metadata/aggregations but does not persist final quality.
+    score_enabled = False
+    if score_feature_enabled:
+        log.debug("[SCAN] Phase 1 keeps score disabled (final quality is computed in phase 3)")
+    _, effective_score_config, _ = get_effective_score_config(cfg)
+    jsr_for_counts = _jsr_cfg()
+    seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
 
     categories = build_categories_from_config(cfg)
 
@@ -1741,22 +2682,6 @@ def run_quick(only_category: str | None = None) -> None:
         else:
             # Folders exist but all are disabled — update inventory to mark them missing
             log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
-            if _is_inventory_enabled(cfg):
-                disabled_refs = {
-                    ("tv" if f.get("type") == "tv" else "movie", f["name"].replace("_", " ").replace("-", " ").title())
-                    for f in all_typed_folders
-                    if not is_folder_enabled(f)
-                }
-                if disabled_refs:
-                    try:
-                        write_inventory_json_non_blocking(
-                            [],
-                            scan_mode="quick",
-                            reconcile_missing=not bool(only_category),
-                            forced_missing_folder_refs=disabled_refs,
-                        )
-                    except Exception as e:
-                        log.warning(f"[SCAN] Inventory sidecar failed: {e}")
         return
 
     log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
@@ -1772,6 +2697,9 @@ def run_quick(only_category: str | None = None) -> None:
 
     items = []
     scanned_paths = set()
+    tv_series_scanned = 0
+    tv_episodes_scanned = 0
+    tv_series_with_seerr_counts = 0
 
     active_cats = [c for c in categories if not only_category or c["name"] == only_category]
     n_cats = len(active_cats)
@@ -1793,8 +2721,19 @@ def run_quick(only_category: str | None = None) -> None:
             prev = existing.get(item_path, {})
 
             # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
-            item = scan_media_item(media_dir, root, cat, prev, enable_score=score_enabled)
+            item = scan_media_item(
+                media_dir,
+                root,
+                cat,
+                prev,
+                enable_score=score_enabled,
+                score_config=effective_score_config,
+                jsr_for_counts=jsr_for_counts if cat["type"] == "tv" and seerr_counts_active else None,
+            )
             items.append(item)
+            tv_series_scanned += int(item.get("_scan_tv_series_scanned") or 0)
+            tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
+            tv_series_with_seerr_counts += int(1 if item.get("_scan_tv_seerr_counts") else 0)
             scanned_paths.add(item_path)
 
         count = len(items) - cat_items_before
@@ -1878,29 +2817,17 @@ def run_quick(only_category: str | None = None) -> None:
     res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
     log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
     log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    log.info(
+        f"[SCAN] TV scan summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
+    )
+    if seerr_counts_active:
+        log.info(
+            f"[SCAN] TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
+        )
 
     log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
 
-    # Inventory sidecar — non-blocking
-    if _is_inventory_enabled(cfg):
-        inventory_entries = [
-            {"media_dir": root / item["path"], "cat": {"name": item["category"], "type": item["type"]}, "title": item["title"]}
-            for item in items
-        ]
-        disabled_refs = {
-            ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
-            for folder in cfg.get("folders", [])
-            if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
-        }
-        try:
-            write_inventory_json_non_blocking(
-                inventory_entries,
-                scan_mode="quick",
-                reconcile_missing=not bool(only_category),
-                forced_missing_folder_refs=disabled_refs,
-            )
-        except Exception as e:
-            log.warning(f"[SCAN] Inventory sidecar failed: {e}")
+    # Inventory update is handled explicitly by phase 4.
 
 
 # ---------------------------------------------------------------------------
@@ -2076,7 +3003,51 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
     for item in items:
         if not isinstance(item, dict):
             continue
-        item["quality"] = compute_quality(item, score_config)
+        if str(item.get("type")).lower() == "tv" and isinstance(item.get("seasons"), list):
+            seasons = []
+            for season in item.get("seasons") or []:
+                if not isinstance(season, dict):
+                    continue
+                season_for_score = {
+                    "type": "tv",
+                    "resolution": season.get("resolution"),
+                    "width": season.get("width"),
+                    "height": season.get("height"),
+                    "codec": season.get("codec"),
+                    "audio_codec_raw": season.get("audio_codec_raw"),
+                    "audio_codec": season.get("audio_codec"),
+                    "audio_languages": season.get("audio_languages") or [],
+                    "audio_languages_simple": season.get("audio_languages_simple"),
+                    "hdr": season.get("hdr"),
+                    "hdr_type": season.get("hdr_type"),
+                    "size_b": season.get("size_b"),
+                }
+                quality = compute_quality(season_for_score, score_config)
+                season_copy = dict(season)
+                season_copy["quality"] = quality
+                seasons.append(season_copy)
+            item["seasons"] = seasons
+            item_for_score = {
+                "type": "tv",
+                "resolution": item.get("resolution"),
+                "width": item.get("width"),
+                "height": item.get("height"),
+                "codec": item.get("codec"),
+                "audio_codec_raw": item.get("audio_codec_raw"),
+                "audio_codec": item.get("audio_codec"),
+                "audio_languages": item.get("audio_languages") or [],
+                "audio_languages_simple": item.get("audio_languages_simple"),
+                "hdr": item.get("hdr"),
+                "hdr_type": item.get("hdr_type"),
+                "size_b": item.get("size_b"),
+            }
+            item["quality"] = _aggregate_series_quality_from_seasons(
+                seasons,
+                score_config=score_config,
+                fallback_item_for_score=item_for_score,
+            )
+        else:
+            item["quality"] = compute_quality(item, score_config)
         item.pop("score", None)
         updated += 1
     return updated
@@ -2306,6 +3277,53 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     )
 
 
+def _prepare_startup_configuration() -> dict:
+    """Bootstrap config on startup without forcing a media scan."""
+    migrate_env_to_config()
+    cfg = load_config()
+    changed = False
+    cfg, onboarding_changed = _ensure_needs_onboarding(cfg)
+    changed = changed or onboarding_changed
+    if normalize_folder_enabled_flags(cfg, drop_visible=True):
+        changed = True
+    root = Path(LIBRARY_PATH)
+    if root.exists():
+        if sync_folders(root, cfg):
+            changed = True
+    if changed:
+        save_config(cfg)
+        cfg = load_config()
+    return cfg
+
+
+def _resolve_startup_phases(cfg: dict) -> list[int]:
+    library_exists = Path(OUTPUT_PATH).exists()
+    if library_exists:
+        return []
+    if not _has_configured_media_folders(cfg):
+        return []
+    # Startup bootstrap: lightweight initial pass only.
+    return [PHASE_SCAN]
+
+
+def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
+    ordered = _normalize_phases(phases)
+    if not ordered:
+        log.info("[SCAN] No phase selected — nothing to run")
+        return
+    log.info("[SCAN] Planned phases: %s", " -> ".join(str(p) for p in ordered))
+    for phase in ordered:
+        if phase == PHASE_SCAN:
+            run_quick(only_category=only_category)
+        elif phase == PHASE_ENRICH:
+            run_enrich(force=True, only_category=only_category)
+        elif phase == PHASE_SCORE:
+            run_scoring(only_category=only_category)
+        elif phase == PHASE_INVENTORY:
+            scan_mode = "full" if PHASE_SCAN in ordered else "partial"
+            run_inventory(scan_mode=scan_mode, only_category=only_category)
+
+
 # ---------------------------------------------------------------------------
 # RESET
 # ---------------------------------------------------------------------------
@@ -2431,15 +3449,177 @@ _srv_state = {
 }
 _srv_proc = None
 
-VALID_MODES = {"quick", "full", "default", "score_only"}
+PHASE_SCAN = 1
+PHASE_ENRICH = 2
+PHASE_SCORE = 3
+PHASE_INVENTORY = 4
+_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
+VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 
 
-def _scanner_cmd(mode: str) -> list[str]:
+def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
+    if not phases:
+        return []
+    wanted: set[int] = set()
+    for raw in phases:
+        try:
+            val = int(raw)
+        except Exception:
+            continue
+        if val in _PHASE_ORDER:
+            wanted.add(val)
+    return [p for p in _PHASE_ORDER if p in wanted]
+
+
+def _parse_phases_csv(value: str | None) -> list[int]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    out: list[int] = []
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            out.append(int(chunk))
+        except Exception:
+            continue
+    return _normalize_phases(out)
+
+
+def _phases_to_csv(phases: list[int] | None) -> str:
+    norm = _normalize_phases(phases or [])
+    return ",".join(str(p) for p in norm)
+
+
+def _configured_media_folder_count(cfg: dict | None) -> int:
+    if not isinstance(cfg, dict):
+        return 0
+    count = 0
+    for folder in cfg.get("folders") or []:
+        if not isinstance(folder, dict):
+            continue
+        if folder.get("missing"):
+            continue
+        if not is_folder_enabled(folder):
+            continue
+        if folder.get("type") in {"movie", "tv"}:
+            count += 1
+    return count
+
+
+def _has_configured_media_folders(cfg: dict | None) -> bool:
+    return _configured_media_folder_count(cfg) > 0
+
+
+def _seerr_runtime_state(cfg: dict | None, secrets: dict | None = None) -> dict:
+    if not isinstance(cfg, dict):
+        cfg = {}
+    seerr = cfg.get("seerr")
+    if not isinstance(seerr, dict):
+        seerr = cfg.get("jellyseerr")
+    if not isinstance(seerr, dict):
+        seerr = {}
+    sec = secrets if isinstance(secrets, dict) else _load_secrets()
+    sec, _ = _normalize_seerr_secret_keys(sec)
+    return {
+        "enabled": bool(seerr.get("enabled")),
+        "url": str(seerr.get("url") or "").strip(),
+        "has_key": bool(sec.get("seerr_apikey") or sec.get("jellyseerr_apikey")),
+    }
+
+
+def _is_seerr_enrichment_active(cfg: dict | None, secrets: dict | None = None) -> bool:
+    st = _seerr_runtime_state(cfg, secrets=secrets)
+    return bool(st["enabled"] and st["url"] and st["has_key"])
+
+
+def _phase_plan_from_config(
+    cfg: dict | None,
+    *,
+    include_phase1: bool = True,
+    secrets: dict | None = None,
+) -> list[int]:
+    phases: list[int] = []
+    if include_phase1 and _has_configured_media_folders(cfg):
+        phases.append(PHASE_SCAN)
+    if _is_seerr_enrichment_active(cfg, secrets=secrets):
+        phases.append(PHASE_ENRICH)
+    if _is_score_enabled(cfg):
+        phases.append(PHASE_SCORE)
+    if _is_inventory_enabled(cfg):
+        phases.append(PHASE_INVENTORY)
+    return _normalize_phases(phases)
+
+
+def _folder_scan_signature(folders: list | None) -> str:
+    if not isinstance(folders, list):
+        return "[]"
+    normalized = []
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        normalized.append({
+            "name": str(folder.get("name") or ""),
+            "type": folder.get("type"),
+            "enabled": bool(is_folder_enabled(folder)),
+            "missing": bool(folder.get("missing")),
+        })
+    normalized.sort(key=lambda f: f["name"])
+    return json.dumps(normalized, sort_keys=True)
+
+
+def _compute_phases_for_config_change(
+    previous_cfg: dict | None,
+    next_cfg: dict | None,
+    *,
+    secrets_before: dict | None = None,
+    secrets_after: dict | None = None,
+) -> list[int]:
+    prev_cfg = previous_cfg if isinstance(previous_cfg, dict) else {}
+    new_cfg = next_cfg if isinstance(next_cfg, dict) else {}
+    prev_secrets = secrets_before if isinstance(secrets_before, dict) else _load_secrets()
+    next_secrets = secrets_after if isinstance(secrets_after, dict) else _load_secrets()
+
+    folders_changed = _folder_scan_signature(prev_cfg.get("folders")) != _folder_scan_signature(new_cfg.get("folders"))
+    seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
+    score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
+    inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
+
+    phases: list[int] = []
+    if folders_changed:
+        phases.extend(_phase_plan_from_config(new_cfg, include_phase1=True, secrets=next_secrets))
+        # If folders changed but none are currently configured, still run phase 1
+        # to refresh library outputs consistently.
+        if PHASE_SCAN not in phases:
+            phases.insert(0, PHASE_SCAN)
+    else:
+        if seerr_changed:
+            phases.append(PHASE_ENRICH)
+        if score_changed:
+            phases.append(PHASE_SCORE)
+        if inventory_changed:
+            phases.append(PHASE_INVENTORY)
+    return _normalize_phases(phases)
+
+
+def _scanner_cmd(mode: str, *, phases: list[int] | None = None, category: str | None = None, origin: str | None = None) -> list[str]:
     base = [sys.executable, __file__]
-    if mode == "quick": return base + ["--quick"]
-    if mode == "full":  return base + ["--full"]
-    if mode == "score_only": return base + ["--score-only"]
-    return base + ["--full"]  # default → full
+    norm_phases = _normalize_phases(phases or [])
+    if norm_phases:
+        base += ["--phases", _phases_to_csv(norm_phases)]
+    elif mode == "quick":
+        base += ["--quick"]
+    elif mode == "score_only":
+        base += ["--score-only"]
+    elif mode == "full":
+        base += ["--full"]
+    else:
+        base += ["--full"]
+    if category:
+        base += ["--category", str(category)]
+    if origin:
+        base += ["--origin", str(origin)]
+    return base
 
 
 def _score_ui_schema() -> dict:
@@ -2468,15 +3648,19 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
-def _run_scan_bg(mode: str):
+def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
     global _srv_proc
-    cmd = _scanner_cmd(mode)
+    cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
     env = os.environ.copy()
 
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
                           started_at=datetime.now(timezone.utc).isoformat(),
                           ended_at=None, log=[f"[server] Starting: {' '.join(cmd)}"])
+        if phases:
+            _srv_state["phases"] = _normalize_phases(phases)
+        else:
+            _srv_state.pop("phases", None)
 
     try:
         proc = subprocess.Popen(cmd, env=env,
@@ -2625,6 +3809,15 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 if root.exists():
                     sync_folders(root, cfg)
                     changed = True
+            # Self-heal stale onboarding flag if a usable config already exists
+            # and a library snapshot is present.
+            if (
+                cfg.get("system", {}).get("needs_onboarding") is True
+                and _has_usable_config(cfg)
+                and Path(OUTPUT_PATH).exists()
+            ):
+                cfg["system"]["needs_onboarding"] = False
+                changed = True
             if changed:
                 save_config(cfg)
                 cfg = load_config()
@@ -2853,17 +4046,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(409, {"error": "scan already running"}); return
+                    self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running", "phases": _srv_state.get("phases", [])}); return
             if _is_scan_locked():
                 log.info("[SCAN] Scan already running — refusing new scan request")
-                self._json(409, {"error": "scan already running"}); return
+                self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running"}); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
                 cfg["system"]["needs_onboarding"] = False
                 save_config(cfg)
-            threading.Thread(target=_run_scan_bg, args=(mode,), daemon=True).start()
-            self._json(200, {"ok": True, "mode": mode})
+            phases = []
+            if isinstance(payload, dict) and payload.get("phases"):
+                raw = payload.get("phases")
+                if isinstance(raw, str):
+                    phases = _parse_phases_csv(raw)
+                elif isinstance(raw, list):
+                    phases = _normalize_phases(raw)
+            if not phases:
+                if mode == "quick":
+                    phases = [PHASE_SCAN]
+                elif mode == "score_only":
+                    phases = [PHASE_SCORE]
+                else:
+                    phases = _phase_plan_from_config(cfg, include_phase1=True)
+            phases = _normalize_phases(phases)
+            if not phases:
+                self._json(200, {"ok": True, "mode": mode, "phases": [], "skipped": True})
+                return
+            threading.Thread(target=_run_scan_bg, args=(mode, phases, None, "manual"), daemon=True).start()
+            self._json(200, {"ok": True, "mode": mode, "phases": phases})
 
         elif path == "/api/config":
             if not isinstance(payload, dict):
@@ -2889,6 +4100,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             normalize_folder_enabled_flags(merged, drop_visible=True)
             merged, _ = normalize_seerr_config(merged)
             merged, _, _ = normalize_score_configuration_sections(merged)
+            _finalize_needs_onboarding_after_config_update(merged)
             # Ensure apikey never persists in config.json
             if "seerr" in merged:
                 merged["seerr"].pop("apikey", None)
@@ -2913,15 +4125,21 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if new_level:
                 _set_global_log_level(new_level)
 
-            # Trigger a quick scan when folder configuration changed (type or enabled state)
-            folders_changed = "folders" in payload
-            if folders_changed and not _is_scan_locked():
-                log.info("[config] Folder configuration changed — triggering quick scan")
-                threading.Thread(target=_run_scan_bg, args=("quick",), daemon=True).start()
-            elif folders_changed:
-                log.info("[config] Folder configuration changed — scan already running, skipping auto quick scan")
-
-            self._json(200, {"ok": True})
+            phases = _compute_phases_for_config_change(
+                cfg,
+                merged,
+                secrets_before=secrets_before,
+                secrets_after=secrets_after,
+            )
+            response = {"ok": True, "phases": phases}
+            if phases:
+                if _is_scan_locked():
+                    log.info("[config] Phase plan %s skipped — scan already running", phases)
+                    response["scan_skipped"] = "running"
+                else:
+                    log.info("[config] Triggering phased scan from config save: %s", phases)
+                    threading.Thread(target=_run_scan_bg, args=("phased", phases, None, "manual"), daemon=True).start()
+            self._json(200, response)
 
         elif path == "/api/settings/score":
             self._handle_score_settings_update(payload)
@@ -2966,7 +4184,9 @@ def main():
     mode_group.add_argument("--quick", action="store_true",
         help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
     mode_group.add_argument("--full",  action="store_true",
-        help="All 4 phases: filesystem scan + Seerr + scoring + inventory (default)")
+        help="Automatic phased scan based on current config (default)")
+    mode_group.add_argument("--phases", default=None, metavar="LIST",
+        help="Explicit phases list, comma-separated (e.g. 1,2,3,4)")
     mode_group.add_argument("--score-only", action="store_true",
         help="Recompute score fields from existing library.json only")
     mode_group.add_argument("--serve", action="store_true",
@@ -2994,8 +4214,11 @@ def main():
     elif args.score_only:
         lock_mode = "score_only"
         mode_label = "--score-only"
+    elif args.phases:
+        lock_mode = "phased"
+        mode_label = f"--phases {args.phases}"
     else:
-        lock_mode = "full"
+        lock_mode = "default"
         mode_label = "--full"
 
     try:
@@ -3006,15 +4229,20 @@ def main():
             log.info(f"[SCAN] ═══════════════════════════════════")
 
             if args.quick:
-                run_quick(only_category=args.category)
+                run_phases([PHASE_SCAN], only_category=args.category)
             elif args.score_only:
                 run_score_only()
+            elif args.phases:
+                run_phases(_parse_phases_csv(args.phases), only_category=args.category)
             else:
-                # --full or default
-                run_quick(only_category=args.category)
-                run_enrich(force=True, only_category=args.category)
-                run_scoring(only_category=args.category)
-                run_inventory(scan_mode="full", only_category=args.category)
+                cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
+                if args.origin == "startup":
+                    phases = _resolve_startup_phases(cfg_for_plan)
+                    if not phases:
+                        log.info("[SCAN] Startup: no media scan phase required")
+                else:
+                    phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
+                run_phases(phases, only_category=args.category)
 
             elapsed = time.monotonic() - _t_main
             log.info(f"[SCAN] ═══════════════════════════════════")

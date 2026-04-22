@@ -14,6 +14,26 @@ def _gb(value: float) -> int:
 
 
 class QualityScoringV1Test(unittest.TestCase):
+    def test_max_helpers_from_active_config(self):
+        cfg = scoring.get_builtin_score_defaults()
+        self.assertEqual(scoring.get_max_video_score(cfg), 50)
+        self.assertEqual(scoring.get_max_audio_score(cfg), 20)
+        self.assertEqual(scoring.get_max_languages_score(cfg), 15)
+        self.assertEqual(scoring.get_max_size_score(cfg), 15)
+
+    def test_max_helpers_prefer_precomputed_max_score_block(self):
+        cfg = scoring.get_builtin_score_defaults()
+        cfg["max_score"] = {
+            "max_video": 77,
+            "max_audio": 31,
+            "max_languages": 22,
+            "max_size": 11,
+        }
+        self.assertEqual(scoring.get_max_video_score(cfg), 77)
+        self.assertEqual(scoring.get_max_audio_score(cfg), 31)
+        self.assertEqual(scoring.get_max_languages_score(cfg), 22)
+        self.assertEqual(scoring.get_max_size_score(cfg), 11)
+
     def test_video_scores(self):
         self.assertEqual(
             scoring.compute_video_quality_score({"resolution": "4K", "codec": "H.265", "hdr_type": "Dolby Vision"})["score"],
@@ -83,14 +103,22 @@ class QualityScoringV1Test(unittest.TestCase):
 
         expected_keys = {
             "score",
-            "base_score",
             "video",
             "audio",
             "languages",
             "size",
+            "video_details",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
         self.assertNotIn("level", quality)
+        self.assertNotIn("base_score", quality)
+        self.assertNotIn("score_details", quality)
+        self.assertEqual(
+            quality["video"],
+            int(quality["video_details"]["resolution"])
+            + int(quality["video_details"]["codec"])
+            + int(quality["video_details"]["hdr"]),
+        )
 
         low_quality = scoring.compute_quality(
             {
@@ -128,7 +156,7 @@ class QualityScoringV1Test(unittest.TestCase):
 
         self.assertNotEqual(baseline, shifted)
 
-    def test_weighted_score_stays_bounded_even_with_invalid_weight_values(self):
+    def test_score_formula_is_deterministic_even_with_invalid_weight_values(self):
         item = {
             "resolution": "2160p",
             "codec": "H.265",
@@ -145,8 +173,14 @@ class QualityScoringV1Test(unittest.TestCase):
             "size": 200,
         }
         quality = scoring.compute_quality(item, cfg)
-        self.assertGreaterEqual(quality["score"], 0)
-        self.assertLessEqual(quality["score"], 100)
+        self.assertEqual(
+            quality["score"],
+            int(round(quality["video_w"] + quality["audio_w"] + quality["languages_w"] + quality["size_w"])),
+        )
+        self.assertEqual(
+            quality["video"],
+            quality["video_details"]["resolution"] + quality["video_details"]["codec"] + quality["video_details"]["hdr"],
+        )
 
 
 if __name__ == "__main__":
