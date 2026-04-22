@@ -60,7 +60,15 @@ DEFAULT_SCORE_CONFIG: dict[str, Any] = {
             "mp3_mp2": 3,
             "unknown": 8,
             "default": 8,
-        }
+        },
+        "channels": {
+            "7.1": 10,
+            "5.1": 8,
+            "2.0": 5,
+            "1.0": 3,
+            "unknown": 2,
+            "default": 2,
+        },
     },
     "languages": {
         "profile": {
@@ -130,7 +138,7 @@ DEFAULT_SCORE_CONFIG: dict[str, Any] = {
     },
     "max_score": {
         "max_video": 50,
-        "max_audio": 20,
+        "max_audio": 30,
         "max_languages": 15,
         "max_size": 15,
     },
@@ -247,6 +255,36 @@ def _audio_codec_key(item: dict) -> str:
     return "unknown"
 
 
+def _audio_channels_key(item: dict) -> str:
+    raw = item.get("audio_channels")
+    value = str(raw or "").strip().upper()
+    if not value or value == "UNKNOWN":
+        return "unknown"
+
+    normalized_map = {
+        "8": "7.1",
+        "8.0": "7.1",
+        "7.1": "7.1",
+        "6": "5.1",
+        "6.0": "5.1",
+        "5.1": "5.1",
+        "2": "2.0",
+        "2.0": "2.0",
+        "1": "1.0",
+        "1.0": "1.0",
+    }
+    return normalized_map.get(value, "unknown")
+
+
+def _compute_audio_component_scores(item: dict, cfg: dict[str, Any]) -> tuple[int, int]:
+    audio_cfg = cfg.get("audio") if isinstance(cfg.get("audio"), dict) else {}
+    codec_key = _audio_codec_key(item)
+    channels_key = _audio_channels_key(item)
+    codec_score = _as_int(_lookup_number(audio_cfg.get("codec"), codec_key, fallback=0), 0)
+    channels_score = _as_int(_lookup_number(audio_cfg.get("channels"), channels_key, fallback=0), 0)
+    return codec_score, channels_score
+
+
 def _language_profile_key(item: dict) -> str:
     simple = _as_upper(item.get("audio_languages_simple"))
     if simple == "MULTI":
@@ -316,7 +354,11 @@ def _score_component_maxima(score_config: dict[str, Any]) -> dict[str, float]:
     )
     return {
         "video": max(0.0, video_max),
-        "audio": max(0.0, _max_table_value(audio_cfg.get("codec"), fallback=0.0)),
+        "audio": max(
+            0.0,
+            _max_table_value(audio_cfg.get("codec"), fallback=0.0)
+            + _max_table_value(audio_cfg.get("channels"), fallback=0.0),
+        ),
         "languages": max(0.0, _max_table_value(langs_cfg.get("profile"), fallback=0.0)),
         "size": max(0.0, _max_table_value(size_cfg.get("points"), fallback=0.0)),
     }
@@ -428,9 +470,8 @@ def compute_video_quality_score(item: dict, score_config: dict[str, Any] | None 
 
 def compute_audio_quality_score(item: dict, score_config: dict[str, Any] | None = None) -> int:
     cfg = _resolve_score_config(score_config)
-    audio_cfg = cfg.get("audio") if isinstance(cfg.get("audio"), dict) else {}
-    key = _audio_codec_key(item)
-    return _as_int(_lookup_number(audio_cfg.get("codec"), key, fallback=0), 0)
+    codec_score, channels_score = _compute_audio_component_scores(item, cfg)
+    return codec_score + channels_score
 
 
 def compute_language_quality_score(item: dict, score_config: dict[str, Any] | None = None) -> int:
@@ -489,6 +530,8 @@ def build_quality_block(
     video_resolution: int,
     video_codec: int,
     video_hdr: int,
+    audio_codec: int,
+    audio_channels: int,
     audio: int,
     languages: int,
     size: int,
@@ -538,6 +581,10 @@ def build_quality_block(
             "codec": v_codec,
             "hdr": v_hdr,
         },
+        "audio_details": {
+            "codec": _as_int(audio_codec, 0),
+            "channels": _as_int(audio_channels, 0),
+        },
     }
 
 
@@ -557,7 +604,8 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
     cfg = _resolve_score_config(score_config)
 
     video_details = compute_video_quality_score(item, cfg)
-    audio_score = int(compute_audio_quality_score(item, cfg))
+    audio_codec_score, audio_channels_score = _compute_audio_component_scores(item, cfg)
+    audio_score = int(audio_codec_score + audio_channels_score)
     language_score = int(compute_language_quality_score(item, cfg))
     size_details = _compute_size_quality_details(item, cfg)
     size_score = int(size_details.get("score", 0))
@@ -570,6 +618,8 @@ def compute_quality(item: dict, score_config: dict[str, Any] | None = None) -> d
         video_resolution=video_resolution,
         video_codec=video_codec,
         video_hdr=video_hdr,
+        audio_codec=audio_codec_score,
+        audio_channels=audio_channels_score,
         audio=audio_score,
         languages=language_score,
         size=size_score,

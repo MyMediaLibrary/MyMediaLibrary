@@ -103,7 +103,7 @@ class TestScoreSettingsApi(unittest.TestCase):
             payload["effective"]["max_score"],
             {
                 "max_video": 50,
-                "max_audio": 20,
+                "max_audio": 30,
                 "max_languages": 15,
                 "max_size": 15,
             },

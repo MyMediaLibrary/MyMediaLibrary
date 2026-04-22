@@ -638,7 +638,7 @@
         + '</div>'
       + '<div class="stats-row">'
           + '<div>'+provPieHtml+providersNoteHtml+'</div>'
-          + '<div></div>'
+          + '<div>'+renderQualityChart(data.quality)+'</div>'
         + '</div>'
       + yearChartHtml;
 

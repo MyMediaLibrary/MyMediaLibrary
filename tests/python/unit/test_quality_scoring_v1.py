@@ -17,7 +17,7 @@ class QualityScoringV1Test(unittest.TestCase):
     def test_max_helpers_from_active_config(self):
         cfg = scoring.get_builtin_score_defaults()
         self.assertEqual(scoring.get_max_video_score(cfg), 50)
-        self.assertEqual(scoring.get_max_audio_score(cfg), 20)
+        self.assertEqual(scoring.get_max_audio_score(cfg), 30)
         self.assertEqual(scoring.get_max_languages_score(cfg), 15)
         self.assertEqual(scoring.get_max_size_score(cfg), 15)
 
@@ -50,10 +50,12 @@ class QualityScoringV1Test(unittest.TestCase):
         self.assertEqual(scoring.compute_video_quality_score({})["score"], 14)
 
     def test_audio_scores(self):
-        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec_raw": "TRUEHD ATMOS"}), 20)
-        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec_raw": "DTS-HD MA"}), 18)
-        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec": "AAC"}), 6)
-        self.assertEqual(scoring.compute_audio_quality_score({}), 8)
+        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec_raw": "TRUEHD ATMOS"}), 22)
+        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec_raw": "DTS-HD MA"}), 20)
+        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec": "AAC"}), 8)
+        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec": "AAC", "audio_channels": "5.1"}), 14)
+        self.assertEqual(scoring.compute_audio_quality_score({"audio_codec": "AAC", "audio_channels": "strange"}), 8)
+        self.assertEqual(scoring.compute_audio_quality_score({}), 10)
 
     def test_language_scores(self):
         self.assertEqual(scoring.compute_language_quality_score({"audio_languages_simple": "MULTI"}), 15)
@@ -99,7 +101,7 @@ class QualityScoringV1Test(unittest.TestCase):
                 "size_b": _gb(8),
             }
         )
-        self.assertEqual(quality["score"], 65)
+        self.assertEqual(quality["score"], 63)
 
         expected_keys = {
             "score",
@@ -108,6 +110,7 @@ class QualityScoringV1Test(unittest.TestCase):
             "languages",
             "size",
             "video_details",
+            "audio_details",
         }
         self.assertTrue(expected_keys.issubset(set(quality.keys())))
         self.assertNotIn("level", quality)
@@ -118,6 +121,10 @@ class QualityScoringV1Test(unittest.TestCase):
             int(quality["video_details"]["resolution"])
             + int(quality["video_details"]["codec"])
             + int(quality["video_details"]["hdr"]),
+        )
+        self.assertEqual(
+            quality["audio"],
+            int(quality["audio_details"]["codec"]) + int(quality["audio_details"]["channels"]),
         )
 
         low_quality = scoring.compute_quality(

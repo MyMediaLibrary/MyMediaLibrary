@@ -48,6 +48,14 @@
       "mp3_mp2": 3,
       "unknown": 8,
       "default": 8
+    },
+    "channels": {
+      "7.1": 10,
+      "5.1": 8,
+      "2.0": 5,
+      "1.0": 3,
+      "unknown": 2,
+      "default": 2
     }
   },
   "languages": {
@@ -118,7 +126,7 @@
   },
   "max_score": {
     "max_video": 50,
-    "max_audio": 20,
+    "max_audio": 30,
     "max_languages": 15,
     "max_size": 15
   }

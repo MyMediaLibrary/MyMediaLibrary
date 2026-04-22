@@ -150,6 +150,10 @@ except Exception:
                     "codec": 0,
                     "hdr": 0,
                 },
+                "audio_details": {
+                    "codec": 0,
+                    "channels": 0,
+                },
             }
 
         def build_quality_block(
@@ -157,6 +161,8 @@ except Exception:
             video_resolution: int,
             video_codec: int,
             video_hdr: int,
+            audio_codec: int,
+            audio_channels: int,
             audio: int,
             languages: int,
             size: int,
@@ -185,6 +191,10 @@ except Exception:
                     "resolution": int(video_resolution),
                     "codec": int(video_codec),
                     "hdr": int(video_hdr),
+                },
+                "audio_details": {
+                    "codec": int(audio_codec),
+                    "channels": int(audio_channels),
                 },
             }
 
@@ -1333,9 +1343,12 @@ def _aggregate_series_quality_from_seasons(
         for k in ("video", "audio", "languages", "size", "video_w", "audio_w", "languages_w", "size_w"):
             acc[k] += _as_number(q.get(k), 0.0) * w
         vd = q.get("video_details") if isinstance(q.get("video_details"), dict) else {}
+        ad = q.get("audio_details") if isinstance(q.get("audio_details"), dict) else {}
         acc["vd_resolution"] += _as_number(vd.get("resolution"), 0.0) * w
         acc["vd_codec"] += _as_number(vd.get("codec"), 0.0) * w
         acc["vd_hdr"] += _as_number(vd.get("hdr"), 0.0) * w
+        acc["ad_codec"] += _as_number(ad.get("codec"), 0.0) * w
+        acc["ad_channels"] += _as_number(ad.get("channels"), 0.0) * w
 
     if weighted_total <= 0:
         if isinstance(fallback_item_for_score, dict):
@@ -1347,8 +1360,13 @@ def _aggregate_series_quality_from_seasons(
         "codec": int(round(acc["vd_codec"] / weighted_total)),
         "hdr": int(round(acc["vd_hdr"] / weighted_total)),
     }
+    audio_details = {
+        "codec": int(round(acc["ad_codec"] / weighted_total)),
+        "channels": int(round(acc["ad_channels"] / weighted_total)),
+    }
     quality = {
         "video_details": video_details,
+        "audio_details": audio_details,
         "video": int(video_details["resolution"] + video_details["codec"] + video_details["hdr"]),
         "audio": int(round(acc["audio"] / weighted_total)),
         "languages": int(round(acc["languages"] / weighted_total)),
@@ -2085,6 +2103,7 @@ _SCORE_REQUIRED_DEFAULT_PATHS = (
     "video.codec.default",
     "video.hdr.default",
     "audio.codec.default",
+    "audio.channels.default",
     "languages.profile.default",
     "size.points.default",
     "size.profiles.movie.default.default.min_gb",
@@ -2169,7 +2188,11 @@ def _compute_derived_max_score(score_config: dict) -> dict:
     )
     return {
         "max_video": _as_int(max_video, 0),
-        "max_audio": _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {}),
+        "max_audio": _as_int(
+            _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {})
+            + _score_max_from_table(audio.get("channels") if isinstance(audio.get("channels"), dict) else {}),
+            0,
+        ),
         "max_languages": _score_max_from_table(languages.get("profile") if isinstance(languages.get("profile"), dict) else {}),
         "max_size": _score_max_from_table(size.get("points") if isinstance(size.get("points"), dict) else {}),
     }
@@ -2433,6 +2456,14 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
             }
         else:
             vd = {"resolution": 0, "codec": 0, "hdr": 0}
+        audio_details = q.get("audio_details")
+        if isinstance(audio_details, dict):
+            ad = {
+                "codec": _safe_int(audio_details.get("codec"), 0) or 0,
+                "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+            }
+        else:
+            ad = {"codec": 0, "channels": 0}
         q_audio = _safe_int(q.get("audio"), 0) or 0
         q_languages = _safe_int(q.get("languages"), 0) or 0
         q_size = _safe_int(q.get("size"), 0) or 0
@@ -2442,6 +2473,7 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
         q_size_w = _as_number(q.get("size_w"), _as_number(q_size, 0.0))
         normalized_q = {
             "video_details": vd,
+            "audio_details": ad,
             "video": int(vd["resolution"] + vd["codec"] + vd["hdr"]),
             "audio": q_audio,
             "languages": q_languages,
@@ -2486,6 +2518,14 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                     }
                 else:
                     vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
+                audio_details = sq2.get("audio_details")
+                if isinstance(audio_details, dict):
+                    ad2 = {
+                        "codec": _safe_int(audio_details.get("codec"), 0) or 0,
+                        "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+                    }
+                else:
+                    ad2 = {"codec": 0, "channels": 0}
                 sq_audio = _safe_int(sq2.get("audio"), 0) or 0
                 sq_languages = _safe_int(sq2.get("languages"), 0) or 0
                 sq_size = _safe_int(sq2.get("size"), 0) or 0
@@ -2495,6 +2535,7 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                 sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
                 normalized_sq = {
                     "video_details": vd2,
+                    "audio_details": ad2,
                     "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
                     "audio": sq_audio,
                     "languages": sq_languages,
@@ -3108,6 +3149,7 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                     "codec": season.get("codec"),
                     "audio_codec_raw": season.get("audio_codec_raw"),
                     "audio_codec": season.get("audio_codec"),
+                    "audio_channels": season.get("audio_channels"),
                     "audio_languages": season.get("audio_languages") or [],
                     "audio_languages_simple": season.get("audio_languages_simple"),
                     "hdr": season.get("hdr"),
@@ -3127,6 +3169,7 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                 "codec": item.get("codec"),
                 "audio_codec_raw": item.get("audio_codec_raw"),
                 "audio_codec": item.get("audio_codec"),
+                "audio_channels": item.get("audio_channels"),
                 "audio_languages": item.get("audio_languages") or [],
                 "audio_languages_simple": item.get("audio_languages_simple"),
                 "hdr": item.get("hdr"),
