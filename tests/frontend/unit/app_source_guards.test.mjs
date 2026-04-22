@@ -68,7 +68,7 @@ test('standard dropdown sorting is centralized and stable by count then label', 
 test('renderFilterDropdown hides empty filters when no positive-count options remain', () => {
   const block = functionBlock(appSource, 'renderFilterDropdown', 'normalizeScoreRangeKey');
   assert.match(block, /if \(!keys\.length && activeSet\.size === 0\) \{ sec\.style\.display = 'none'; return; \}/, 'dropdown should stay visible when active values must remain clearable');
-  assert.match(block, /buildDropdownFilterModel\(\{ counts, getDisplay, pinFirst, activeSet \}\)/, 'dropdown model should receive active set to preserve active zero-count options');
+  assert.match(block, /buildDropdownFilterModel\(\{ counts, getDisplay, pinFirst, activeSet, sortOptions \}\)/, 'dropdown model should receive active set to preserve active zero-count options');
 });
 
 test('score filter is forced to last position after filter rendering', () => {
@@ -304,7 +304,7 @@ test('provider exclude requires at least one remaining non-Autres provider', () 
 });
 
 test('filter order is centralized and explicit for desktop and mobile', () => {
-  assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'streaming',\s*'resolution',\s*'video_codec',\s*'audio_codec',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
+  assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'genre',\s*'streaming',\s*'technical',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
   const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');
   assert.match(reorderBlock, /const desktopOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'desktop order should be derived from centralized filter order');
   assert.match(reorderBlock, /const mobileOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'mobile order should be derived from the same centralized filter order');
