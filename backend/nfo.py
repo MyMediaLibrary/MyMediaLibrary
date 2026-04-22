@@ -90,6 +90,30 @@ def _load_audiocodec_mapping() -> dict:
 
 AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
 
+
+def _load_genres_mapping() -> dict:
+    """Load mapping_genres.json from runtime path or dev-local fallback."""
+    paths = [
+        "/app/mapping_genres.json",
+        os.path.join(os.path.dirname(__file__), "../app/mapping_genres.json"),
+    ]
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            # Silent fallback requested: keep current behavior with no crash.
+            return {}
+    return {}
+
+
+GENRES_MAPPING = _load_genres_mapping()
+_GENRES_UNKNOWN_LOGGED: set[str] = set()
+
 # ---------------------------------------------------------------------------
 # Audio language normalisation
 # ---------------------------------------------------------------------------
@@ -486,17 +510,28 @@ def _xml_text(root: ET.Element, *tags) -> str | None:
 
 
 def _parse_genres(root: ET.Element) -> list[str] | None:
-    """Parse repeated <genre> tags into an ordered de-duplicated list."""
+    """Parse repeated <genre> tags into an ordered de-duplicated mapped list."""
     out: list[str] = []
     seen: set[str] = set()
     for genre_el in root.findall("genre"):
         raw = (genre_el.text or "").strip()
         if not raw:
             continue
-        if raw in seen:
+        mapped = GENRES_MAPPING.get(raw, raw) if isinstance(GENRES_MAPPING, dict) else raw
+        if raw in GENRES_MAPPING and mapped is None:
             continue
-        seen.add(raw)
-        out.append(raw)
+        if raw not in GENRES_MAPPING and raw not in _GENRES_UNKNOWN_LOGGED:
+            _GENRES_UNKNOWN_LOGGED.add(raw)
+            log.debug(f"[SCAN] Unknown genre detected: {raw}")
+        if not isinstance(mapped, str):
+            continue
+        mapped = mapped.strip()
+        if not mapped:
+            continue
+        if mapped in seen:
+            continue
+        seen.add(mapped)
+        out.append(mapped)
     return out or None
 
 

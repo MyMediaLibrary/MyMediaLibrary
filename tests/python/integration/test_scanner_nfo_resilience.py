@@ -8,6 +8,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
+import nfo as nfo_module  # noqa: E402
 from nfo import _parse_nfo_xml  # noqa: E402
 
 
@@ -85,6 +86,22 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             result = scanner.parse_movie_nfo(path)
             self.assertEqual(result.get("genres"), ["Action", "Science Fiction"])
 
+    def test_movie_nfo_genre_mapping_applies_replacements_and_ignores_null_targets(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Demo</title>
+  <genre>Comédie</genre>
+  <genre>TV Movie</genre>
+  <genre>Mini-Series</genre>
+  <genre>Drama</genre>
+</movie>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "movie.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_movie_nfo(path)
+            self.assertEqual(result.get("genres"), ["Comedy", "Drama"])
+
     def test_tvshow_nfo_parses_genres_or_null_when_absent(self):
         xml_with = """<?xml version="1.0" encoding="UTF-8"?>
 <tvshow>
@@ -108,6 +125,39 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             result_without = scanner.parse_tvshow_nfo(path_without)
             self.assertEqual(result_with.get("genres"), ["Drama", "Thriller"])
             self.assertIsNone(result_without.get("genres"))
+
+    def test_unknown_genre_is_kept_and_logged_once(self):
+        original_mapping = nfo_module.GENRES_MAPPING
+        original_seen = set(nfo_module._GENRES_UNKNOWN_LOGGED)
+        try:
+            nfo_module.GENRES_MAPPING = {}
+            nfo_module._GENRES_UNKNOWN_LOGGED.clear()
+
+            xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie><title>Demo</title><genre>Cyberpunk Noir</genre></movie>
+"""
+            with tempfile.TemporaryDirectory() as td:
+                path1 = pathlib.Path(td) / "a.nfo"
+                path2 = pathlib.Path(td) / "b.nfo"
+                path1.write_text(xml, encoding="utf-8")
+                path2.write_text(xml, encoding="utf-8")
+                with unittest.mock.patch.object(nfo_module.log, "debug") as debug_mock:
+                    r1 = scanner.parse_movie_nfo(path1)
+                    r2 = scanner.parse_movie_nfo(path2)
+                self.assertEqual(r1.get("genres"), ["Cyberpunk Noir"])
+                self.assertEqual(r2.get("genres"), ["Cyberpunk Noir"])
+                self.assertEqual(
+                    sum(1 for c in debug_mock.call_args_list if "Unknown genre detected: Cyberpunk Noir" in str(c)),
+                    1,
+                )
+        finally:
+            nfo_module.GENRES_MAPPING = original_mapping
+            nfo_module._GENRES_UNKNOWN_LOGGED.clear()
+            nfo_module._GENRES_UNKNOWN_LOGGED.update(original_seen)
+
+    def test_genres_mapping_loader_fallbacks_silently_when_file_missing(self):
+        with unittest.mock.patch.object(nfo_module.os.path, "exists", return_value=False):
+            self.assertEqual(nfo_module._load_genres_mapping(), {})
 
     def test_movie_nfo_prefers_tmdb_uniqueid(self):
         xml = """<?xml version="1.0" encoding="UTF-8"?>
