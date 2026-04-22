@@ -49,6 +49,10 @@
   padding:4px 12px;border-radius:999px;border:1px solid var(--border);
   background:var(--tag-bg);color:var(--muted);cursor:pointer;transition:all var(--transition)}
 .pie-switch-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.stats-subtabs{display:flex;gap:8px;flex-wrap:wrap}
+.stats-subtab-content{display:none;flex-direction:column;gap:24px}
+.stats-subtab-content.active{display:flex}
+.stats-subtab-btn{min-width:110px}
 
 /* ── Provider bars ────────────────────────────────────────────────────────── */
 .prov-bar-row{display:flex;align-items:center;gap:9px;margin-bottom:8px}
@@ -86,6 +90,7 @@
 @media(max-width:768px){
   .stats-row{grid-template-columns:1fr!important}
   #statsContent{padding:12px 10px 40px!important;gap:16px!important}
+  .stats-subtab-content{gap:16px}
   #statsPanel .stats-block{margin-bottom:12px}
   .pie-wrap{flex-direction:column!important;align-items:center!important;gap:10px!important}
   .pie-wrap svg{width:120px!important;height:120px!important}
