@@ -21,7 +21,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
             effective["max_score"],
             {
                 "max_video": 50,
-                "max_audio": 20,
+                "max_audio": 30,
                 "max_languages": 15,
                 "max_size": 15,
             },
@@ -31,11 +31,13 @@ class ScoreConfigBackendTest(unittest.TestCase):
         defaults = scanner.load_score_defaults()
         broken = scanner.merge_score_config(defaults, {})
         del broken["video"]["codec"]["default"]
+        del broken["audio"]["channels"]["default"]
         del broken["size"]["profiles"]["movie"]["default"]["default"]["min_gb"]
 
         effective, status = scanner.validate_score_config(broken, defaults=defaults)
 
         self.assertIn("default", effective["video"]["codec"])
+        self.assertIn("default", effective["audio"]["channels"])
         self.assertIn("min_gb", effective["size"]["profiles"]["movie"]["default"]["default"])
         self.assertEqual(status["weights_total"], 100)
         self.assertTrue(status["weights_valid"])
@@ -139,6 +141,30 @@ class ScoreConfigBackendTest(unittest.TestCase):
                 shifted_score = shifted_payload["items"][0]["quality"]["score"]
 
             self.assertNotEqual(baseline_score, shifted_score)
+
+    def test_recompute_scores_for_tv_season_uses_audio_channels(self):
+        defaults = scanner.load_score_defaults()
+        items = [{
+            "title": "Show",
+            "type": "tv",
+            "seasons": [{
+                "season": 1,
+                "type": "tv",
+                "resolution": "1080p",
+                "codec": "H.264",
+                "audio_codec": "AAC",
+                "audio_channels": "5.1",
+                "audio_languages_simple": "VF",
+                "size_b": int(1 * (1024 ** 3)),
+            }],
+        }]
+
+        updated = scanner.recompute_scores_for_items(items, defaults)
+
+        self.assertEqual(updated, 1)
+        season_quality = items[0]["seasons"][0]["quality"]
+        self.assertEqual(season_quality["audio"], 14)
+        self.assertEqual(items[0]["quality"]["audio"], 14)
 
     def test_run_score_only_does_not_trigger_scan_phases(self):
         with patch("scanner.run_quick") as run_quick, \

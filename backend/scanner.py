@@ -2085,6 +2085,7 @@ _SCORE_REQUIRED_DEFAULT_PATHS = (
     "video.codec.default",
     "video.hdr.default",
     "audio.codec.default",
+    "audio.channels.default",
     "languages.profile.default",
     "size.points.default",
     "size.profiles.movie.default.default.min_gb",
@@ -2169,7 +2170,11 @@ def _compute_derived_max_score(score_config: dict) -> dict:
     )
     return {
         "max_video": _as_int(max_video, 0),
-        "max_audio": _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {}),
+        "max_audio": _as_int(
+            _score_max_from_table(audio.get("codec") if isinstance(audio.get("codec"), dict) else {})
+            + _score_max_from_table(audio.get("channels") if isinstance(audio.get("channels"), dict) else {}),
+            0,
+        ),
         "max_languages": _score_max_from_table(languages.get("profile") if isinstance(languages.get("profile"), dict) else {}),
         "max_size": _score_max_from_table(size.get("points") if isinstance(size.get("points"), dict) else {}),
     }
@@ -3108,6 +3113,7 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                     "codec": season.get("codec"),
                     "audio_codec_raw": season.get("audio_codec_raw"),
                     "audio_codec": season.get("audio_codec"),
+                    "audio_channels": season.get("audio_channels"),
                     "audio_languages": season.get("audio_languages") or [],
                     "audio_languages_simple": season.get("audio_languages_simple"),
                     "hdr": season.get("hdr"),
@@ -3127,6 +3133,7 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
                 "codec": item.get("codec"),
                 "audio_codec_raw": item.get("audio_codec_raw"),
                 "audio_codec": item.get("audio_codec"),
+                "audio_channels": item.get("audio_channels"),
                 "audio_languages": item.get("audio_languages") or [],
                 "audio_languages_simple": item.get("audio_languages_simple"),
                 "hdr": item.get("hdr"),
