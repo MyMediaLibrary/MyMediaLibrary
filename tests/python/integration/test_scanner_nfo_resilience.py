@@ -35,6 +35,39 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             self.assertEqual(result["resolution"], "1080p")
             self.assertEqual(result["audio_languages"], [])
             self.assertEqual(result["audio_languages_simple"], "UNKNOWN")
+            self.assertIsNone(result.get("audio_channels"))
+            self.assertIsNone(result.get("subtitle_languages"))
+            self.assertIsNone(result.get("video_bitrate"))
+
+    def test_movie_streamdetails_extracts_new_fields(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Demo</title>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <width>1920</width>
+        <height>1080</height>
+        <bitrate>7500000</bitrate>
+      </video>
+      <audio>
+        <codec>eac3</codec>
+        <channels>6</channels>
+        <language>fre</language>
+      </audio>
+      <subtitle><language>eng</language></subtitle>
+      <subtitle><language>fra</language></subtitle>
+    </streamdetails>
+  </fileinfo>
+</movie>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "movie.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_movie_nfo(path)
+            self.assertEqual(result.get("audio_channels"), "5.1")
+            self.assertEqual(result.get("subtitle_languages"), ["eng", "fra"])
+            self.assertEqual(result.get("video_bitrate"), 7500000)
 
     def test_movie_nfo_prefers_tmdb_uniqueid(self):
         xml = """<?xml version="1.0" encoding="UTF-8"?>

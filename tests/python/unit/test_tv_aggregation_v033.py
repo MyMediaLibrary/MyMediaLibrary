@@ -56,6 +56,39 @@ class TvAggregationV033Test(unittest.TestCase):
             self.assertEqual([e.get("episode") for e in episodes], [1, 2])
             self.assertEqual(sum(int(e.get("size_b") or 0) for e in episodes), 8)
 
+    def test_parse_episode_nfo_metadata_extracts_new_streamdetails_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nfo = pathlib.Path(tmpdir) / "Show.S01E01.nfo"
+            nfo.write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+<episodedetails>
+  <season>1</season>
+  <episode>1</episode>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <width>1920</width>
+        <height>1080</height>
+        <bitrate>4500000</bitrate>
+      </video>
+      <audio>
+        <channels>8</channels>
+        <language>eng</language>
+      </audio>
+      <subtitle><language>fra</language></subtitle>
+      <subtitle><language>eng</language></subtitle>
+    </streamdetails>
+  </fileinfo>
+</episodedetails>
+""",
+                encoding="utf-8",
+            )
+            parsed = scanner._parse_episode_nfo_metadata(nfo)
+            self.assertIsNotNone(parsed)
+            self.assertEqual(parsed["audio_channels"], "7.1")
+            self.assertEqual(parsed["subtitle_languages"], ["eng", "fra"])
+            self.assertEqual(parsed["video_bitrate"], 4500000)
+
     def test_aggregate_series_metadata_uses_dominant_values(self):
         episodes = []
         for _ in range(7):
@@ -282,6 +315,32 @@ class TvAggregationV033Test(unittest.TestCase):
                 + quality["video_details"]["codec"]
                 + quality["video_details"]["hdr"],
             )
+
+    def test_aggregate_season_metadata_adds_channels_subtitles_and_bitrate(self):
+        season = scanner.aggregate_season_metadata(
+            1,
+            [
+                {"audio_channels": "5.1", "subtitle_languages": ["fra", "eng"], "video_bitrate": 4000, "size_b": 1, "audio_languages": [], "hdr": False},
+                {"audio_channels": "5.1", "subtitle_languages": ["eng"], "video_bitrate": 0, "size_b": 1, "audio_languages": [], "hdr": False},
+                {"audio_channels": "7.1", "subtitle_languages": None, "video_bitrate": None, "size_b": 1, "audio_languages": [], "hdr": False},
+                {"audio_channels": "7.1", "subtitle_languages": ["jpn"], "video_bitrate": 6000, "size_b": 1, "audio_languages": [], "hdr": False},
+            ],
+        )
+        self.assertEqual(season["audio_channels"], "7.1")
+        self.assertEqual(season["subtitle_languages"], ["eng", "fra", "jpn"])
+        self.assertEqual(season["video_bitrate"], 5000)
+
+    def test_aggregate_series_metadata_uses_episode_level_for_new_fields(self):
+        episodes = [
+            {"season": 1, "audio_channels": "7.1", "subtitle_languages": ["eng"], "video_bitrate": 1000, "size_b": 1, "audio_languages": [], "hdr": False},
+            {"season": 1, "audio_channels": "7.1", "subtitle_languages": ["fra"], "video_bitrate": 3000, "size_b": 1, "audio_languages": [], "hdr": False},
+            {"season": 2, "audio_channels": "5.1", "subtitle_languages": ["jpn"], "video_bitrate": 0, "size_b": 1, "audio_languages": [], "hdr": False},
+            {"season": 2, "audio_channels": "5.1", "subtitle_languages": None, "video_bitrate": None, "size_b": 1, "audio_languages": [], "hdr": False},
+        ]
+        agg = scanner.aggregate_series_metadata(episodes)
+        self.assertEqual(agg["audio_channels"], "7.1")
+        self.assertEqual(agg["subtitle_languages"], ["eng", "fra", "jpn"])
+        self.assertEqual(agg["video_bitrate"], 2000)
 
     def test_merge_series_expected_counts_adds_missing_expected_season(self):
         item = {
