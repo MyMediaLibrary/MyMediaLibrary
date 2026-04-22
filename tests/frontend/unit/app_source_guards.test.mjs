@@ -304,7 +304,7 @@ test('provider exclude requires at least one remaining non-Autres provider', () 
 });
 
 test('filter order is centralized and explicit for desktop and mobile', () => {
-  assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'genre',\s*'streaming',\s*'technical',\s*'audio_language',\s*'score'\s*\];/, 'filter order should be declared once in a stable canonical list');
+  assert.match(appSource, /const FILTER_ORDER = \[\s*'type',\s*'folder',\s*'genre',\s*'streaming',\s*'audio_language',\s*'score',\s*'technical'\s*\];/, 'filter order should be declared once in a stable canonical list');
   const reorderBlock = functionBlock(appSource, 'ensureScoreFilterLast', '_dropdownSelectAll');
   assert.match(reorderBlock, /const desktopOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'desktop order should be derived from centralized filter order');
   assert.match(reorderBlock, /const mobileOrder = \['type', \.\.\.FILTER_ORDER\.filter\(k => k !== 'type'\), 'storage'\];/, 'mobile order should be derived from the same centralized filter order');

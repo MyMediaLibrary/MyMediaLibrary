@@ -46,9 +46,9 @@ let allItems=[], categories=[], groups=[];
     'folder',
     'genre',
     'streaming',
-    'technical',
     'audio_language',
-    'score'
+    'score',
+    'technical'
   ];
   const FILTER_SECTION_IDS = {
     type: { desktop: 'typeSection', mobile: 'mobileTypeSection' },
