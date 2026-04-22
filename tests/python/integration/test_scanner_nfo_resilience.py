@@ -38,6 +38,7 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             self.assertIsNone(result.get("audio_channels"))
             self.assertIsNone(result.get("subtitle_languages"))
             self.assertIsNone(result.get("video_bitrate"))
+            self.assertIsNone(result.get("genres"))
 
     def test_movie_streamdetails_extracts_new_fields(self):
         xml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -68,6 +69,45 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             self.assertEqual(result.get("audio_channels"), "5.1")
             self.assertEqual(result.get("subtitle_languages"), ["eng", "fra"])
             self.assertEqual(result.get("video_bitrate"), 7500000)
+
+    def test_movie_nfo_parses_genres_ordered_deduplicated(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Demo</title>
+  <genre> Action </genre>
+  <genre>Science Fiction</genre>
+  <genre>Action</genre>
+</movie>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "movie.nfo"
+            path.write_text(xml, encoding="utf-8")
+            result = scanner.parse_movie_nfo(path)
+            self.assertEqual(result.get("genres"), ["Action", "Science Fiction"])
+
+    def test_tvshow_nfo_parses_genres_or_null_when_absent(self):
+        xml_with = """<?xml version="1.0" encoding="UTF-8"?>
+<tvshow>
+  <title>Show</title>
+  <genre>Drama</genre>
+  <genre> Thriller </genre>
+  <genre>Drama</genre>
+</tvshow>
+"""
+        xml_without = """<?xml version="1.0" encoding="UTF-8"?>
+<tvshow>
+  <title>Show</title>
+</tvshow>
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path_with = pathlib.Path(td) / "tvshow-with.nfo"
+            path_without = pathlib.Path(td) / "tvshow-without.nfo"
+            path_with.write_text(xml_with, encoding="utf-8")
+            path_without.write_text(xml_without, encoding="utf-8")
+            result_with = scanner.parse_tvshow_nfo(path_with)
+            result_without = scanner.parse_tvshow_nfo(path_without)
+            self.assertEqual(result_with.get("genres"), ["Drama", "Thriller"])
+            self.assertIsNone(result_without.get("genres"))
 
     def test_movie_nfo_prefers_tmdb_uniqueid(self):
         xml = """<?xml version="1.0" encoding="UTF-8"?>

@@ -2672,6 +2672,7 @@ def scan_media_item(
         "width":             (series_agg.get("width") if is_tv else nfo_meta.get("width")) or prev.get("width"),
         "height":            (series_agg.get("height") if is_tv else nfo_meta.get("height")) or prev.get("height"),
         "plot":              nfo_meta.get("plot")        or prev.get("plot"),
+        "genres":            nfo_meta.get("genres"),
         "runtime_min":       (series_agg.get("runtime_min") if is_tv else nfo_meta.get("runtime_min")) or prev.get("runtime_min"),
         "runtime_min_avg":   (series_agg.get("runtime_min_avg") if is_tv else nfo_meta.get("runtime_min_avg")) or prev.get("runtime_min_avg"),
         "season_count":      (series_agg.get("season_count") if is_tv else nfo_meta.get("season_count")) or prev.get("season_count"),

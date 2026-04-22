@@ -180,6 +180,21 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             self.assertIsNone(item.get("episodes_expected"))
             self.assertNotIn("complete", item)
 
+    def test_scan_media_item_sets_genres_on_item_only_not_seasons(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            media_dir = root / "Series" / "Andor"
+            media_dir.mkdir(parents=True)
+            (media_dir / "tvshow.nfo").write_text("<tvshow/>", encoding="utf-8")
+            cat = {"name": "Series", "type": "tv"}
+            with patch.object(scanner, "parse_tvshow_nfo", return_value={"title": "Andor", "genres": ["Drama", "Sci-Fi"]}), \
+                 patch.object(scanner, "collect_series_episode_metadata", return_value=[]), \
+                 patch.object(scanner, "aggregate_series_metadata", return_value={"seasons": [{"season": 1, "episodes_found": 0}], "season_count": 1, "episode_count": 0}):
+                item = scanner.scan_media_item(media_dir, root, cat, {}, enable_score=False)
+            self.assertEqual(item.get("genres"), ["Drama", "Sci-Fi"])
+            self.assertIn("seasons", item)
+            self.assertNotIn("genres", item["seasons"][0])
+
     def test_aggregate_audio_languages_does_not_promote_single_episode_outlier(self):
         episodes = [
             {"audio_languages": ["fra", "eng"]},

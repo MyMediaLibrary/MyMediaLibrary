@@ -485,6 +485,21 @@ def _xml_text(root: ET.Element, *tags) -> str | None:
     return None
 
 
+def _parse_genres(root: ET.Element) -> list[str] | None:
+    """Parse repeated <genre> tags into an ordered de-duplicated list."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for genre_el in root.findall("genre"):
+        raw = (genre_el.text or "").strip()
+        if not raw:
+            continue
+        if raw in seen:
+            continue
+        seen.add(raw)
+        out.append(raw)
+    return out or None
+
+
 def parse_movie_nfo(nfo_path: Path) -> dict:
     """Parse a Kodi/Jellyfin movie .nfo file. Returns a dict of metadata."""
     result = {}
@@ -496,6 +511,7 @@ def parse_movie_nfo(nfo_path: Path) -> dict:
     result["year"]    = _xml_text(root, "year")
     result["plot"]    = _xml_text(root, "plot")
     result["runtime"] = _xml_text(root, "runtime")
+    result["genres"]  = _parse_genres(root)
 
     # IDs — prefer explicit uniqueid tags, then dedicated root tags, then legacy <id>.
     for uid in root.findall("uniqueid"):
@@ -573,6 +589,7 @@ def parse_tvshow_nfo(nfo_path: Path) -> dict:
     result["title"] = _xml_text(root, "title")
     result["year"]  = _xml_text(root, "year")
     result["plot"]  = _xml_text(root, "plot")
+    result["genres"] = _parse_genres(root)
 
     for uid in root.findall("uniqueid"):
         uid_type = (uid.get("type") or "").strip().lower()
