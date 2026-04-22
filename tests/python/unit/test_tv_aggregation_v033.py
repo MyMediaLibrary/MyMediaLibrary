@@ -143,6 +143,10 @@ class TvAggregationV033Test(unittest.TestCase):
             + agg["quality"]["video_details"]["codec"]
             + agg["quality"]["video_details"]["hdr"],
         )
+        self.assertEqual(
+            agg["quality"]["audio"],
+            agg["quality"]["audio_details"]["codec"] + agg["quality"]["audio_details"]["channels"],
+        )
 
     def test_aggregate_series_metadata_uses_season_sums_for_runtime_and_size(self):
         seasons = [
@@ -257,6 +261,10 @@ class TvAggregationV033Test(unittest.TestCase):
             + season["quality"]["video_details"]["codec"]
             + season["quality"]["video_details"]["hdr"],
         )
+        self.assertEqual(
+            season["quality"]["audio"],
+            season["quality"]["audio_details"]["codec"] + season["quality"]["audio_details"]["channels"],
+        )
 
     def test_recompute_scores_for_items_updates_tv_seasons(self):
         items = [
@@ -314,6 +322,10 @@ class TvAggregationV033Test(unittest.TestCase):
                 quality["video_details"]["resolution"]
                 + quality["video_details"]["codec"]
                 + quality["video_details"]["hdr"],
+            )
+            self.assertEqual(
+                quality["audio"],
+                quality["audio_details"]["codec"] + quality["audio_details"]["channels"],
             )
 
     def test_aggregate_season_metadata_adds_channels_subtitles_and_bitrate(self):

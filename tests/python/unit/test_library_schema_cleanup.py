@@ -568,6 +568,45 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertIsNone(clean["resolution"])
         self.assertEqual(clean["providers"], ["Netflix"])
 
+    def test_sanitize_item_keeps_audio_details_on_item_and_seasons(self):
+        item = {
+            "type": "tv",
+            "quality": {
+                "video_details": {"resolution": 20, "codec": 10, "hdr": 0},
+                "audio_details": {"codec": 6, "channels": 8},
+                "video": 30,
+                "audio": 14,
+                "languages": 10,
+                "size": 5,
+                "video_w": 30.0,
+                "audio_w": 9.3333,
+                "languages_w": 10.0,
+                "size_w": 5.0,
+                "score": 54,
+            },
+            "seasons": [{
+                "season": 1,
+                "quality": {
+                    "video_details": {"resolution": 10, "codec": 10, "hdr": 0},
+                    "audio_details": {"codec": 6, "channels": 8},
+                    "video": 20,
+                    "audio": 14,
+                    "languages": 10,
+                    "size": 5,
+                    "video_w": 20.0,
+                    "audio_w": 9.3333,
+                    "languages_w": 10.0,
+                    "size_w": 5.0,
+                    "score": 44,
+                },
+            }],
+        }
+        clean = scanner._sanitize_item_for_library_json(item)
+        self.assertEqual(clean["quality"]["audio_details"]["codec"], 6)
+        self.assertEqual(clean["quality"]["audio_details"]["channels"], 8)
+        self.assertEqual(clean["seasons"][0]["quality"]["audio_details"]["codec"], 6)
+        self.assertEqual(clean["seasons"][0]["quality"]["audio_details"]["channels"], 8)
+
 
 if __name__ == "__main__":
     unittest.main()
