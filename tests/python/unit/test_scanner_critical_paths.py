@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 import unittest
@@ -502,6 +503,13 @@ class LibraryWriteSafetyTest(unittest.TestCase):
             with open(output, encoding="utf-8") as f:
                 data = json.load(f)
             self.assertEqual(data, {"ok": True, "items": []})
+
+    def test_write_json_sets_world_readable_permissions_for_nginx(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = pathlib.Path(tmpdir) / "library.json"
+            scanner.write_json({"items": []}, str(output))
+            mode = stat.S_IMODE(output.stat().st_mode)
+            self.assertEqual(mode, 0o644)
 
 
 if __name__ == "__main__":

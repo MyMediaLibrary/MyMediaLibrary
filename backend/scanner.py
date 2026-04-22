@@ -1770,6 +1770,9 @@ def write_json(data: dict, output_path: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, output)
+        # nginx serves /data/library.json as a static file; keep it world-readable.
+        with contextlib.suppress(Exception):
+            output.chmod(0o644)
     except Exception:
         if tmp_path is not None:
             with contextlib.suppress(Exception):
