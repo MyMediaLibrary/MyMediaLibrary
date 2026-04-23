@@ -17,12 +17,12 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 
 ### Fonctionnalités
 
-- **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques (résolution, codec vidéo/audio, HDR)
-- **Filtres avancés** : système cohérent de dropdowns multi-sélection (dossiers, résolution, langues, codecs, plateformes) avec mode inclure/exclure, bouton "Tout sélectionner", tri dynamique par volume et persistance
+- **Bibliothèque unifiée** : visualisation de vos films et séries en vue grille ou tableau, avec posters, métadonnées et informations techniques enrichies depuis les NFO (résolution, codecs, HDR, genres, channels audio, langues de sous-titres, bitrate vidéo)
+- **Filtres avancés** : système cohérent de dropdowns multi-sélection (type, dossier, genre, streaming, langue audio, score) avec mode inclure/exclure, plus un bloc technique repliable (résolution, codecs, channels audio)
 - **Disponibilités streaming** : enrichissement via Seerr pour afficher les plateformes sur lesquelles chaque titre est disponible (Netflix, Canal+, etc.)
-- **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
+- **Statistiques** : page organisée en sous-onglets (Générales / Techniques / Évolution), avec graphes existants réutilisés et nouveaux graphes Genres + Channels audio
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Seerr), planifiable via cron, configurable depuis l'interface
-- **Score qualité (optionnel)** : activez un système de scoring configurable (poids, règles, pénalités) directement depuis les paramètres, avec des valeurs par défaut prêtes à l’emploi
+- **Score qualité (optionnel)** : système configurable (poids + règles) où l’audio combine désormais codec + channels, avec détail `video_details` et `audio_details` dans `library.json`
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, responsive
 
 ### Démarrage rapide
@@ -87,12 +87,12 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 
 ### Features
 
-- **Unified library**: browse your movies and TV shows in grid or table view, with posters, metadata, and technical details (resolution, video/audio codec, HDR)
-- **Advanced filters**: consistent multi-select dropdown system (folders, resolution, languages, codecs, providers) with include/exclude mode, "Select all", dynamic count sorting, and persistence
+- **Unified library**: browse your movies and TV shows in grid or table view, with posters, metadata, and enriched NFO technical fields (resolution, codecs, HDR, genres, audio channels, subtitle languages, video bitrate)
+- **Advanced filters**: consistent multi-select dropdown system (type, folder, genre, streaming, audio language, score) with include/exclude mode, plus a dedicated collapsible technical group (resolution, codecs, audio channels)
 - **Streaming availability**: Seerr enrichment to show on which platforms each title is available (Netflix, Canal+, etc.)
-- **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
+- **Statistics**: page split into subtabs (General / Technical / Evolution), reusing existing charts and adding Genres + Audio channels charts
 - **Configurable scan**: quick scan (local only) or full scan (with Seerr), schedulable via cron, configurable from the UI
-- **Quality score (optional)**: enable a fully configurable scoring system from settings (weights and rules for video/audio/languages/size), with ready-to-use default values
+- **Quality score (optional)**: configurable scoring system where audio now combines codec + channels, with detailed `video_details` and `audio_details` stored in `library.json`
 - **Bilingual interface**: fully available in French and English, light/dark theme, responsive
 
 ### Quick start
