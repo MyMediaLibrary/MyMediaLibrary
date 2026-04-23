@@ -199,6 +199,21 @@ Enchaîne 4 phases dans l'ordre :
 
 > Chaque phase lit la sortie de la phase précédente depuis le disque. Les phases sont entièrement séparées.
 
+### Parsing NFO enrichi (v0.3.4)
+
+Le parsing NFO extrait désormais aussi :
+- `genres`
+- `audio_channels`
+- `subtitle_languages`
+- `video_bitrate`
+
+Comportement :
+- **Films** : champs lus directement depuis le NFO film
+- **Séries** : champs techniques lus au niveau épisode puis agrégés vers saison puis série
+- **Genres séries** : lus depuis `tvshow.nfo`
+
+Les genres sont normalisés via un mapping externe : `app/mapping_genres.json`.
+
 ### Déclencheurs
 
 | Origine | Mode | Déclenchement |
@@ -251,8 +266,8 @@ Fichier principal consommé par l'interface web. Structure globale :
   "scanned_at": "2025-04-14T20:00:00.000000",
   "library_path": "/mnt/media/library",
   "total_items": 3289,
-  "items": [ ... ],
-  "meta": { "score_enabled": true }
+  "categories": ["Movies", "Series"],
+  "items": [ ... ]
 }
 ```
 
@@ -270,9 +285,25 @@ Exemple d'item :
   "resolution": "1080p",
   "codec": "HEVC",
   "audio_codec": "TRUEHD",
+  "audio_channels": "5.1",
   "audio_languages": ["fra", "eng"],
+  "subtitle_languages": ["fra", "eng"],
+  "video_bitrate": 18450000,
+  "genres": ["Action", "Crime"],
   "providers": ["Netflix", "Canal+"],
-  "quality": { "score": 87, "level": 5 }
+  "quality": {
+    "video_details": { "resolution": 20, "codec": 15, "hdr": 0 },
+    "audio_details": { "codec": 18, "channels": 8 },
+    "video": 35,
+    "audio": 26,
+    "languages": 15,
+    "size": 8,
+    "video_w": 35.0,
+    "audio_w": 17.3333,
+    "languages_w": 15.0,
+    "size_w": 8.0,
+    "score": 75
+  }
 }
 ```
 
@@ -336,13 +367,17 @@ Chaque tuile affiche :
 ## 9. Filtres
 
 Les filtres principaux utilisent une architecture unifiée de dropdowns (même comportement desktop/mobile) pour :
-- **Dossiers**
-- **Résolution**
-- **Langues audio**
-- **Codecs vidéo**
-- **Codecs audio**
-- **Plateformes streaming**
+- **Type**
+- **Par dossier**
+- **Genre**
+- **Streaming (FR)**
+- **Langue audio**
 - **Score** (double slider, uniquement si le scoring est activé)
+- **Qualité technique** (bloc repliable) :
+  - **Résolution**
+  - **Codec vidéo**
+  - **Codec audio**
+  - **Channel audio**
 
 Fonctionnalités communes :
 - multi-sélection
@@ -517,10 +552,22 @@ Ce dégradé est utilisé pour :
 | Critère | Points |
 |---|---:|
 | Vidéo | 50 |
-| Audio | 20 |
+| Audio | 30 |
 | Langues | 15 |
 | Taille | 15 |
-| **Total** | **100** |
+| **Total brut** | **110** |
+
+Le score audio est composé de deux sous-parties :
+- `audio_codec_score`
+- `audio_channels_score`
+
+Puis :
+
+```text
+audio_score = audio_codec_score + audio_channels_score
+```
+
+La normalisation finale globale existante reste inchangée.
 
 ### Critères détaillés
 
@@ -543,7 +590,7 @@ Ce dégradé est utilisé pour :
 | HDR | SDR | 0 |
 | HDR | Inconnu | 0 |
 
-#### 🔊 Audio (20)
+#### 🔊 Audio (30)
 
 | Codec audio | Points |
 |---|---:|
@@ -555,6 +602,14 @@ Ce dégradé est utilisé pour :
 | AAC | 6 |
 | MP3 / MP2 | 3 |
 | Inconnu | 8 |
+
+| Channels audio | Points |
+|---|---:|
+| 7.1 | 10 |
+| 5.1 | 8 |
+| 2.0 | 5 |
+| 1.0 | 3 |
+| Inconnu | 2 |
 
 #### 🌍 Langues (15)
 
@@ -609,6 +664,10 @@ Le score qualité est visible dans toute l'interface :
 - export CSV
 - statistiques
 
+Dans `library.json`, le détail est stocké dans `quality` avec :
+- `video_details` (`resolution`, `codec`, `hdr`)
+- `audio_details` (`codec`, `channels`)
+
 ### Infobulle
 
 Au survol du badge, une infobulle détaillée est affichée :
@@ -646,17 +705,27 @@ Les statistiques incluent une distribution des scores pour analyser la qualité 
 
 ## 12. Statistiques
 
-L'onglet Statistiques affiche :
+L'onglet Statistiques est organisé en 3 sous-onglets :
 
-- **Résumé global** — nombre total d'items, fichiers, taille disque
-- **Par type** — répartition Films / Séries
-- **Résolution** — camembert
-- **Codec vidéo** — camembert
-- **Codec audio** — camembert
-- **Années de sortie** — histogramme par année ou par décennie
-- **Évolution mensuelle** — courbe des ajouts par mois (taille et/ou nombre d'items), périodes : tout / 12 mois / 30 jours
-- **Répartition par groupe / dossier** — taille ou nombre
-- **Streaming** — disponibilité par plateforme, répartition par groupe
+- **Générales**
+  - Dossiers
+  - Genres (barres horizontales)
+  - Fournisseurs
+  - Qualité
+  - Répartition par année de sortie (pleine largeur)
+- **Techniques**
+  - Résolution
+  - Codec vidéo
+  - Codec audio
+  - Langues audio
+  - Channels audio
+- **Évolution**
+  - Évolution mensuelle des ajouts (pleine largeur)
+
+Spécificité du graphe **Genres** :
+- affichage en **nombre d'éléments**
+- **Top 12** + **Autres**
+- `Autres` représente les éléments non couverts par le Top 12 (et non la somme brute des genres hors Top 12)
 
 Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 

@@ -198,6 +198,21 @@ Runs 4 phases in sequence:
 
 > Each phase reads from the output of the previous phase on disk. Phases are fully independent.
 
+### Enriched NFO parsing (v0.3.4)
+
+NFO parsing now also extracts:
+- `genres`
+- `audio_channels`
+- `subtitle_languages`
+- `video_bitrate`
+
+Behavior:
+- **Movies**: fields are read directly from movie NFO
+- **Series**: technical fields are read at episode level, then aggregated to season and series
+- **Series genres**: read from `tvshow.nfo`
+
+Genres are normalized through an external mapping file: `app/mapping_genres.json`.
+
 ### Scan triggers
 
 | Origin | Mode | How |
@@ -250,8 +265,8 @@ Main file consumed by the web interface. Top-level structure:
   "scanned_at": "2025-04-14T20:00:00.000000",
   "library_path": "/mnt/media/library",
   "total_items": 3289,
-  "items": [ ... ],
-  "meta": { "score_enabled": true }
+  "categories": ["Movies", "Series"],
+  "items": [ ... ]
 }
 ```
 
@@ -269,9 +284,25 @@ Example item:
   "resolution": "1080p",
   "codec": "HEVC",
   "audio_codec": "TRUEHD",
+  "audio_channels": "5.1",
   "audio_languages": ["fra", "eng"],
+  "subtitle_languages": ["fra", "eng"],
+  "video_bitrate": 18450000,
+  "genres": ["Action", "Crime"],
   "providers": ["Netflix", "Canal+"],
-  "quality": { "score": 87, "level": 5 }
+  "quality": {
+    "video_details": { "resolution": 20, "codec": 15, "hdr": 0 },
+    "audio_details": { "codec": 18, "channels": 8 },
+    "video": 35,
+    "audio": 26,
+    "languages": 15,
+    "size": 8,
+    "video_w": 35.0,
+    "audio_w": 17.3333,
+    "languages_w": 15.0,
+    "size_w": 8.0,
+    "score": 75
+  }
 }
 ```
 
@@ -335,13 +366,17 @@ Each card displays:
 ## 9. Filters
 
 Main library filters now use a unified dropdown architecture (same behavior on desktop/mobile) for:
-- **Folders**
-- **Resolution**
-- **Audio languages**
-- **Video codecs**
-- **Audio codecs**
-- **Streaming providers**
+- **Type**
+- **By folder**
+- **Genre**
+- **Streaming (FR)**
+- **Audio language**
 - **Score** (dual-handle slider, only when scoring is enabled)
+- **Technical quality** (collapsible group):
+  - **Resolution**
+  - **Video codec**
+  - **Audio codec**
+  - **Audio channels**
 
 Shared capabilities:
 - multi-selection
@@ -516,10 +551,22 @@ Used for:
 | Criterion | Points |
 |---|---:|
 | Video | 50 |
-| Audio | 20 |
+| Audio | 30 |
 | Languages | 15 |
 | Size | 15 |
-| **Total** | **100** |
+| **Raw total** | **110** |
+
+Audio scoring is now composed of:
+- `audio_codec_score`
+- `audio_channels_score`
+
+Then:
+
+```text
+audio_score = audio_codec_score + audio_channels_score
+```
+
+The existing final global normalization logic remains unchanged.
 
 ### Detailed criteria
 
@@ -542,7 +589,7 @@ Used for:
 | HDR | SDR | 0 |
 | HDR | Unknown | 0 |
 
-#### 🔊 Audio (20)
+#### 🔊 Audio (30)
 
 | Audio codec | Points |
 |---|---:|
@@ -554,6 +601,14 @@ Used for:
 | AAC | 6 |
 | MP3 / MP2 | 3 |
 | Unknown | 8 |
+
+| Audio channels | Points |
+|---|---:|
+| 7.1 | 10 |
+| 5.1 | 8 |
+| 2.0 | 5 |
+| 1.0 | 3 |
+| Unknown | 2 |
 
 #### 🌍 Languages (15)
 
@@ -608,6 +663,10 @@ Quality scoring is visible throughout the interface:
 - CSV export
 - statistics
 
+In `library.json`, quality breakdown is stored with:
+- `video_details` (`resolution`, `codec`, `hdr`)
+- `audio_details` (`codec`, `channels`)
+
 ### Tooltip
 
 Hovering the quality badge shows a complete detailed tooltip:
@@ -645,17 +704,27 @@ Statistics include score distribution views to provide a global quality analysis
 
 ## 12. Statistics
 
-The Statistics tab displays:
+The Statistics page is now split into 3 subtabs:
 
-- **Global summary** — total items, files, disk usage
-- **By type** — Movies / Series breakdown
-- **Resolution** — pie chart
-- **Video codec** — pie chart
-- **Audio codec** — pie chart
-- **Release years** — bar chart by year or decade
-- **Monthly evolution** — line chart of additions per month (size and/or item count), periods: all / 12 months / 30 days
-- **By group / folder** — size or count
-- **Streaming** — availability by provider, breakdown by group
+- **General**
+  - Folders
+  - Genres (horizontal bars)
+  - Providers
+  - Quality
+  - Release years distribution (full width)
+- **Technical**
+  - Resolution
+  - Video codec
+  - Audio codec
+  - Audio languages
+  - Audio channels
+- **Evolution**
+  - Monthly additions timeline (full width)
+
+Genre chart specifics:
+- displayed in **item counts**
+- **Top 12** + **Others**
+- `Others` is based on items not covered by the Top 12 (not a raw sum of out-of-top genre occurrences)
 
 All charts are filtered by the active library filters.
 
