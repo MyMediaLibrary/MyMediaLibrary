@@ -99,6 +99,8 @@ CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
+CRONTAB_PATH = os.environ.get("MYMEDIALIBRARY_CRONTAB_PATH", "/etc/crontabs/root")
+CRON_WRAPPER_PATH = os.environ.get("MYMEDIALIBRARY_CRON_WRAPPER", "/app/scan_cron.sh")
 PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
 PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
 PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
@@ -3590,6 +3592,7 @@ PHASE_SCORE = 3
 PHASE_INVENTORY = 4
 _PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
+_CRON_MARKER = "# MyMediaLibrary user scan cron"
 
 
 def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
@@ -3748,13 +3751,62 @@ def _scanner_cmd(mode: str, *, phases: list[int] | None = None, category: str | 
         base += ["--score-only"]
     elif mode == "full":
         base += ["--full"]
-    else:
-        base += ["--full"]
     if category:
         base += ["--category", str(category)]
     if origin:
         base += ["--origin", str(origin)]
     return base
+
+
+def _valid_user_cron(expr: str) -> bool:
+    return isinstance(expr, str) and len(expr.strip().split()) == 5
+
+
+def _cron_from_config(cfg: dict | None = None) -> str:
+    current = cfg if isinstance(cfg, dict) else load_config()
+    cron = (current.get("system", {}) or {}).get("scan_cron") or "0 3 * * *"
+    return str(cron).strip()
+
+
+def _render_managed_root_crontab(existing: str, cron_expr: str, wrapper: str) -> str:
+    managed = [_CRON_MARKER, f"{cron_expr} {wrapper}"]
+    lines = []
+    skip_next = False
+    for line in existing.splitlines():
+        if skip_next:
+            skip_next = False
+            continue
+        if line.strip() == _CRON_MARKER:
+            skip_next = True
+            continue
+        lines.append(line)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines:
+        lines.append("")
+    lines.extend(managed)
+    return "\n".join(lines) + "\n"
+
+
+def sync_user_scan_cron(cfg: dict | None = None, *, reason: str = "config") -> bool:
+    cron_expr = _cron_from_config(cfg)
+    if not _valid_user_cron(cron_expr):
+        log.warning("[CRON] Invalid scheduled scan cron %r — keeping previous schedule", cron_expr)
+        return False
+    try:
+        path = Path(CRONTAB_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        path.write_text(_render_managed_root_crontab(existing, cron_expr, CRON_WRAPPER_PATH), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+        log.info("[CRON] Scheduled scan configured: %s (tz=%s)", cron_expr, os.environ.get("TZ", "UTC"))
+        return True
+    except Exception as e:
+        log.warning("[CRON] Failed to update scheduled scan (%s): %s", reason, e)
+        return False
 
 
 def _score_ui_schema() -> dict:
@@ -4260,6 +4312,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if new_level:
                 _set_global_log_level(new_level)
 
+            if isinstance(payload.get("system"), dict) and "scan_cron" in payload["system"]:
+                sync_user_scan_cron(merged, reason="config update")
+
             phases = _compute_phases_for_config_change(
                 cfg,
                 merged,
@@ -4354,11 +4409,16 @@ def main():
         mode_label = f"--phases {args.phases}"
     else:
         lock_mode = "default"
-        mode_label = "--full"
+        mode_label = "dynamic pipeline"
+
+    if args.origin == "cron":
+        log.info("[SCAN] Scheduled scan triggered by user cron")
 
     try:
         with _scan_lock(lock_mode):
             _t_main = time.monotonic()
+            if args.origin == "cron":
+                log.info("[SCAN] Starting scheduled scan (dynamic pipeline)")
             log.info(f"[SCAN] ═══════════════════════════════════")
             log.info(f"[SCAN] Starting scan {mode_label}")
             log.info(f"[SCAN] ═══════════════════════════════════")
@@ -4388,7 +4448,7 @@ def main():
         if args.origin == "startup":
             log.warning("[SCAN] Startup scan skipped — another scan is already running")
         elif args.origin == "cron":
-            log.warning("[SCAN] Cron scan skipped — another scan is already running")
+            log.warning("[SCAN] Scheduled scan skipped (lock active)")
         else:
             log.warning("[SCAN] Scan already running — refusing new scan request")
         sys.exit(1)

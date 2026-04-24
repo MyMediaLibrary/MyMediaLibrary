@@ -85,15 +85,20 @@ WRAPPER="/app/scan_cron.sh"
 cat > "$WRAPPER" << 'WRAPEOF'
 #!/bin/sh
 . /app/scanner_env.sh
-exec python3 /app/scanner.py --full --origin cron
+exec python3 /app/scanner.py --origin cron
 WRAPEOF
 chmod +x "$WRAPPER"
 
-# Write crontab — uses scan_cron from config.json
-CRON_FILE="/etc/cron.d/mymedialibrary"
-printf '%s root %s\n' "$SCAN_CRON" "$WRAPPER" > "$CRON_FILE"
-chmod 0644 "$CRON_FILE"
-echo "[entrypoint] Cron scheduled: ${SCAN_CRON} → ${WRAPPER}"
+# Write root crontab — dcron on Alpine reads /etc/crontabs/<user>
+CRON_FILE="/etc/crontabs/root"
+{
+  echo "# MyMediaLibrary user scan cron"
+  printf '%s %s\n' "$SCAN_CRON" "$WRAPPER"
+} > "$CRON_FILE"
+chmod 0600 "$CRON_FILE"
+CRON_LOG="[CRON] Scheduled scan configured: ${SCAN_CRON} (tz=${TZ})"
+echo "$CRON_LOG"
+printf '%s [INFO] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$CRON_LOG" >> "$LOG_PATH" 2>/dev/null || true
 
 # Start cron in foreground (keeps container alive)
 crond -f -l 6

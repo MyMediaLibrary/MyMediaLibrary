@@ -20,6 +20,15 @@ class EntrypointRuntimeGuardsTest(unittest.TestCase):
         self.assertNotIn('>> "${LOG_PATH', source)
         self.assertNotIn('>>"${LOG_PATH', source)
 
+    def test_entrypoint_writes_alpine_dcron_root_crontab(self):
+        source = ENTRYPOINT.read_text(encoding="utf-8")
+        self.assertIn('CRON_FILE="/etc/crontabs/root"', source)
+        self.assertIn("printf '%s %s\\n'", source)
+        self.assertIn("exec python3 /app/scanner.py --origin cron", source)
+        self.assertIn("[CRON] Scheduled scan configured:", source)
+        self.assertNotIn('CRON_FILE="/etc/cron.d/mymedialibrary"', source)
+        self.assertNotIn("printf '%s root %s\\n'", source)
+
 
 if __name__ == "__main__":
     unittest.main()

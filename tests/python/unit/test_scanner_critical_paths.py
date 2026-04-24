@@ -135,6 +135,54 @@ class InventoryFlagCriticalTest(unittest.TestCase):
         self.assertTrue(merged["system"]["inventory_enabled"])
 
 
+class ScheduledScanCronCriticalTest(unittest.TestCase):
+    def test_default_scan_command_uses_dynamic_pipeline_without_legacy_full_arg(self):
+        cmd = scanner._scanner_cmd("default", origin="cron")
+        self.assertIn("--origin", cmd)
+        self.assertIn("cron", cmd)
+        self.assertNotIn("--full", cmd)
+        self.assertNotIn("--quick", cmd)
+
+    def test_button_and_cron_default_scan_share_phase_planner(self):
+        cfg = {
+            "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+            "seerr": {"enabled": False, "url": ""},
+            "score": {"enabled": True},
+            "system": {"inventory_enabled": False},
+        }
+
+        self.assertEqual(scanner._phase_plan_from_config(cfg, include_phase1=True), [scanner.PHASE_SCAN, scanner.PHASE_SCORE])
+
+    def test_managed_crontab_render_replaces_existing_job_without_duplicates(self):
+        existing = (
+            "# unrelated job\n"
+            "5 4 * * * /bin/true\n"
+            "# MyMediaLibrary user scan cron\n"
+            "0 3 * * * /app/scan_cron.sh\n"
+        )
+
+        rendered = scanner._render_managed_root_crontab(existing, "15 2 * * *", "/app/scan_cron.sh")
+
+        self.assertIn("# unrelated job\n5 4 * * * /bin/true", rendered)
+        self.assertEqual(rendered.count("# MyMediaLibrary user scan cron"), 1)
+        self.assertIn("15 2 * * * /app/scan_cron.sh", rendered)
+        self.assertNotIn("0 3 * * * /app/scan_cron.sh", rendered)
+
+    def test_sync_user_scan_cron_writes_single_managed_root_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crontab_path = pathlib.Path(tmpdir) / "root"
+            cfg = {"system": {"scan_cron": "*/10 * * * *"}}
+
+            with patch.object(scanner, "CRONTAB_PATH", str(crontab_path)), \
+                 patch.object(scanner, "CRON_WRAPPER_PATH", "/app/scan_cron.sh"):
+                self.assertTrue(scanner.sync_user_scan_cron(cfg, reason="test"))
+                self.assertTrue(scanner.sync_user_scan_cron(cfg, reason="test"))
+
+            rendered = crontab_path.read_text(encoding="utf-8")
+            self.assertEqual(rendered.count("# MyMediaLibrary user scan cron"), 1)
+            self.assertEqual(rendered.count("*/10 * * * * /app/scan_cron.sh"), 1)
+
+
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):
     def test_default_config_score_flag_is_disabled(self):
         self.assertIs(scanner._DEFAULT_CONFIG["score"]["enabled"], False)
