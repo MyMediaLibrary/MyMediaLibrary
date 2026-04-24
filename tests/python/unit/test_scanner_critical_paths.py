@@ -153,34 +153,54 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
 
         self.assertEqual(scanner._phase_plan_from_config(cfg, include_phase1=True), [scanner.PHASE_SCAN, scanner.PHASE_SCORE])
 
-    def test_managed_crontab_render_replaces_existing_job_without_duplicates(self):
-        existing = (
-            "# unrelated job\n"
-            "5 4 * * * /bin/true\n"
-            "# MyMediaLibrary user scan cron\n"
-            "0 3 * * * /app/scan_cron.sh\n"
-        )
+    def test_next_cron_run_for_every_minute_has_next_run_time(self):
+        now = scanner.datetime(2026, 4, 24, 12, 34, 10, tzinfo=scanner.ZoneInfo("UTC"))
+        with patch.dict(os.environ, {"TZ": "UTC"}):
+            next_run = scanner._next_cron_run("* * * * *", now)
+        self.assertEqual(next_run.isoformat(timespec="minutes"), "2026-04-24T12:35+00:00")
 
-        rendered = scanner._render_managed_root_crontab(existing, "15 2 * * *", "/app/scan_cron.sh")
+    def test_sync_user_scan_cron_replaces_single_in_memory_job(self):
+        with patch.dict(os.environ, {"TZ": "UTC"}):
+            self.assertTrue(scanner.sync_user_scan_cron({"system": {"scan_cron": "*/10 * * * *"}}, reason="test"))
+            self.assertEqual(scanner._cron_job["expr"], "*/10 * * * *")
+            first_next = scanner._cron_job["next_run"]
+            self.assertIsNotNone(first_next)
 
-        self.assertIn("# unrelated job\n5 4 * * * /bin/true", rendered)
-        self.assertEqual(rendered.count("# MyMediaLibrary user scan cron"), 1)
-        self.assertIn("15 2 * * * /app/scan_cron.sh", rendered)
-        self.assertNotIn("0 3 * * * /app/scan_cron.sh", rendered)
+            self.assertTrue(scanner.sync_user_scan_cron({"system": {"scan_cron": "15 2 * * *"}}, reason="test"))
+            self.assertEqual(scanner._cron_job["expr"], "15 2 * * *")
+            self.assertIsNotNone(scanner._cron_job["next_run"])
 
-    def test_sync_user_scan_cron_writes_single_managed_root_job(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            crontab_path = pathlib.Path(tmpdir) / "root"
-            cfg = {"system": {"scan_cron": "*/10 * * * *"}}
+    def test_scheduled_scan_uses_button_dynamic_phase_pipeline(self):
+        with scanner._srv_lock:
+            previous_status = scanner._srv_state["status"]
+            scanner._srv_state["status"] = "idle"
+        try:
+            with patch.object(scanner, "_is_scan_locked", return_value=False), \
+                 patch.object(scanner, "load_config", return_value={"folders": [{"name": "Movies", "type": "movie", "enabled": True}], "score": {"enabled": True}}), \
+                 patch.object(scanner.threading, "Thread") as thread_cls:
+                scanner._start_scheduled_scan_from_cron()
+                thread_cls.assert_called_once_with(
+                    target=scanner._run_scan_bg,
+                    args=("default", [scanner.PHASE_SCAN, scanner.PHASE_SCORE], None, "cron"),
+                    daemon=True,
+                )
+                thread_cls.return_value.start.assert_called_once()
+        finally:
+            with scanner._srv_lock:
+                scanner._srv_state["status"] = previous_status
 
-            with patch.object(scanner, "CRONTAB_PATH", str(crontab_path)), \
-                 patch.object(scanner, "CRON_WRAPPER_PATH", "/app/scan_cron.sh"):
-                self.assertTrue(scanner.sync_user_scan_cron(cfg, reason="test"))
-                self.assertTrue(scanner.sync_user_scan_cron(cfg, reason="test"))
-
-            rendered = crontab_path.read_text(encoding="utf-8")
-            self.assertEqual(rendered.count("# MyMediaLibrary user scan cron"), 1)
-            self.assertEqual(rendered.count("*/10 * * * * /app/scan_cron.sh"), 1)
+    def test_scheduled_scan_skips_when_lock_active(self):
+        with scanner._srv_lock:
+            previous_status = scanner._srv_state["status"]
+            scanner._srv_state["status"] = "idle"
+        try:
+            with patch.object(scanner, "_is_scan_locked", return_value=True), \
+                 patch.object(scanner, "_run_scan_bg") as run_scan_bg:
+                scanner._start_scheduled_scan_from_cron()
+                run_scan_bg.assert_not_called()
+        finally:
+            with scanner._srv_lock:
+                scanner._srv_state["status"] = previous_status
 
 
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):

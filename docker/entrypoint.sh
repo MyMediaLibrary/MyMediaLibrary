@@ -1,5 +1,5 @@
 #!/bin/sh
-# entrypoint.sh — nginx + cron + scanner + scan API server
+# entrypoint.sh — nginx + scanner + scan API server
 
 OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 LOG_PATH="${LOG_PATH:-/data/scanner.log}"
@@ -57,48 +57,6 @@ fi
 echo "[entrypoint] Running initial scan..."
 python3 /app/scanner.py --origin startup
 
-# Read scan_cron from config.json — sole source of truth
-SCAN_CRON=$(python3 -c "
-import json
-try:
-    cfg = json.load(open('/data/config.json'))
-    val = cfg.get('system', {}).get('scan_cron') or ''
-    print(val if val else '0 3 * * *')
-except Exception:
-    print('0 3 * * *')
-" 2>/dev/null || echo "0 3 * * *")
-
-echo "[entrypoint] Cron schedule: ${SCAN_CRON}"
-
-# Write env file — sourced by the cron wrapper (only essential vars)
-ENV_FILE="/app/scanner_env.sh"
-cat > "$ENV_FILE" << ENVEOF
-export LIBRARY_PATH="${LIBRARY_PATH:-/mnt/media/library}"
-export OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
-export LOG_PATH="${LOG_PATH:-/data/scanner.log}"
-export TZ="${TZ:-UTC}"
-ENVEOF
-chmod 600 "$ENV_FILE"
-
-# Write cron wrapper script — sources env then runs scanner
-WRAPPER="/app/scan_cron.sh"
-cat > "$WRAPPER" << 'WRAPEOF'
-#!/bin/sh
-. /app/scanner_env.sh
-exec python3 /app/scanner.py --origin cron
-WRAPEOF
-chmod +x "$WRAPPER"
-
-# Write root crontab — dcron on Alpine reads /etc/crontabs/<user>
-CRON_FILE="/etc/crontabs/root"
-{
-  echo "# MyMediaLibrary user scan cron"
-  printf '%s %s\n' "$SCAN_CRON" "$WRAPPER"
-} > "$CRON_FILE"
-chmod 0600 "$CRON_FILE"
-CRON_LOG="[CRON] Scheduled scan configured: ${SCAN_CRON} (tz=${TZ})"
-echo "$CRON_LOG"
-printf '%s [INFO] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$CRON_LOG" >> "$LOG_PATH" 2>/dev/null || true
-
-# Start cron in foreground (keeps container alive)
-crond -f -l 6
+# The scan API server owns the user scheduler and reloads it on config saves.
+# Keep the container alive by waiting on that foreground service.
+wait "$SCANSERVER_PID"

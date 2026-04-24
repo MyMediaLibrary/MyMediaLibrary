@@ -44,8 +44,9 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 try:
     from backend.inventory_helpers import (
@@ -99,8 +100,6 @@ CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
 SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
-CRONTAB_PATH = os.environ.get("MYMEDIALIBRARY_CRONTAB_PATH", "/etc/crontabs/root")
-CRON_WRAPPER_PATH = os.environ.get("MYMEDIALIBRARY_CRON_WRAPPER", "/app/scan_cron.sh")
 PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
 PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
 PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
@@ -3585,6 +3584,14 @@ _srv_state = {
     "log":        [],
 }
 _srv_proc = None
+_cron_lock = threading.Lock()
+_cron_thread = None
+_cron_stop = threading.Event()
+_cron_job = {
+    "expr": None,
+    "next_run": None,
+    "tz": None,
+}
 
 PHASE_SCAN = 1
 PHASE_ENRICH = 2
@@ -3592,7 +3599,6 @@ PHASE_SCORE = 3
 PHASE_INVENTORY = 4
 _PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
-_CRON_MARKER = "# MyMediaLibrary user scan cron"
 
 
 def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
@@ -3762,51 +3768,162 @@ def _valid_user_cron(expr: str) -> bool:
     return isinstance(expr, str) and len(expr.strip().split()) == 5
 
 
+def _cron_tz() -> ZoneInfo:
+    name = os.environ.get("TZ", "UTC") or "UTC"
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        log.warning("[CRON] Invalid timezone %r — falling back to UTC", name)
+        return ZoneInfo("UTC")
+
+
 def _cron_from_config(cfg: dict | None = None) -> str:
     current = cfg if isinstance(cfg, dict) else load_config()
-    cron = (current.get("system", {}) or {}).get("scan_cron") or "0 3 * * *"
+    cron = (current.get("system", {}) or {}).get("scan_cron") or ""
     return str(cron).strip()
 
 
-def _render_managed_root_crontab(existing: str, cron_expr: str, wrapper: str) -> str:
-    managed = [_CRON_MARKER, f"{cron_expr} {wrapper}"]
-    lines = []
-    skip_next = False
-    for line in existing.splitlines():
-        if skip_next:
-            skip_next = False
+def _cron_field_matches(field: str, value: int, *, min_value: int, max_value: int) -> bool:
+    if not field:
+        return False
+    for part in field.split(","):
+        part = part.strip()
+        if not part:
             continue
-        if line.strip() == _CRON_MARKER:
-            skip_next = True
-            continue
-        lines.append(line)
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if lines:
-        lines.append("")
-    lines.extend(managed)
-    return "\n".join(lines) + "\n"
+        step = 1
+        if "/" in part:
+            base, raw_step = part.split("/", 1)
+            try:
+                step = max(1, int(raw_step))
+            except Exception:
+                return False
+        else:
+            base = part
+        if base == "*":
+            start, end = min_value, max_value
+        elif "-" in base:
+            raw_start, raw_end = base.split("-", 1)
+            try:
+                start, end = int(raw_start), int(raw_end)
+            except Exception:
+                return False
+        else:
+            try:
+                start = end = int(base)
+            except Exception:
+                return False
+        if min_value <= start <= value <= end <= max_value and (value - start) % step == 0:
+            return True
+    return False
+
+
+def _cron_matches(expr: str, when: datetime) -> bool:
+    parts = expr.split()
+    if len(parts) != 5:
+        return False
+    minute, hour, dom, month, dow = parts
+    # Cron uses Sunday as 0 or 7; Python weekday uses Monday=0.
+    cron_dow = (when.weekday() + 1) % 7
+    return (
+        _cron_field_matches(minute, when.minute, min_value=0, max_value=59)
+        and _cron_field_matches(hour, when.hour, min_value=0, max_value=23)
+        and _cron_field_matches(dom, when.day, min_value=1, max_value=31)
+        and _cron_field_matches(month, when.month, min_value=1, max_value=12)
+        and (
+            _cron_field_matches(dow, cron_dow, min_value=0, max_value=7)
+            or (cron_dow == 0 and _cron_field_matches(dow, 7, min_value=0, max_value=7))
+        )
+    )
+
+
+def _next_cron_run(expr: str, now: datetime | None = None) -> datetime | None:
+    if not _valid_user_cron(expr):
+        return None
+    tz = _cron_tz()
+    current = now.astimezone(tz) if now else datetime.now(tz)
+    current = current.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    deadline = current + timedelta(days=366)
+    while current <= deadline:
+        if _cron_matches(expr, current):
+            return current
+        current += timedelta(minutes=1)
+    return None
+
+
+def _format_next_run(value: datetime | None) -> str:
+    return value.isoformat(timespec="minutes") if value else "none"
+
+
+def _start_scheduled_scan_from_cron() -> None:
+    try:
+        log.info("[SCAN] Scheduled scan triggered by user cron")
+        with _srv_lock:
+            running = _srv_state["status"] == "running"
+        if running or _is_scan_locked():
+            log.warning("[SCAN] Scheduled scan skipped (lock active)")
+            return
+        phases = _phase_plan_from_config(load_config(), include_phase1=True)
+        if not phases:
+            log.info("[SCAN] Scheduled scan skipped — no enabled scan phases")
+            return
+        threading.Thread(target=_run_scan_bg, args=("default", phases, None, "cron"), daemon=True).start()
+    except Exception as e:
+        log.exception("[CRON] Scheduled scan failed: %s", e)
+
+
+def _cron_loop() -> None:
+    last_run_key = None
+    while not _cron_stop.is_set():
+        try:
+            with _cron_lock:
+                expr = _cron_job.get("expr")
+                next_run = _cron_job.get("next_run")
+            if expr and next_run:
+                now = datetime.now(_cron_tz()).replace(second=0, microsecond=0)
+                if now >= next_run:
+                    run_key = next_run.isoformat()
+                    with _cron_lock:
+                        _cron_job["next_run"] = _next_cron_run(expr, next_run)
+                    if run_key != last_run_key:
+                        last_run_key = run_key
+                        _start_scheduled_scan_from_cron()
+            _cron_stop.wait(1)
+        except Exception as e:
+            log.exception("[CRON] Scheduled scan failed: %s", e)
+            _cron_stop.wait(5)
+
+
+def start_user_scan_scheduler() -> None:
+    global _cron_thread
+    with _cron_lock:
+        if _cron_thread and _cron_thread.is_alive():
+            return
+        _cron_stop.clear()
+        _cron_thread = threading.Thread(target=_cron_loop, name="user-scan-cron", daemon=True)
+        _cron_thread.start()
+    log.info("[CRON] Scheduler started")
+    sync_user_scan_cron(load_config(), reason="startup")
 
 
 def sync_user_scan_cron(cfg: dict | None = None, *, reason: str = "config") -> bool:
     cron_expr = _cron_from_config(cfg)
+    if not cron_expr:
+        with _cron_lock:
+            _cron_job.update(expr=None, next_run=None, tz=str(_cron_tz().key))
+        log.info("[CRON] Scheduled scan disabled or not configured")
+        return True
     if not _valid_user_cron(cron_expr):
         log.warning("[CRON] Invalid scheduled scan cron %r — keeping previous schedule", cron_expr)
         return False
-    try:
-        path = Path(CRONTAB_PATH)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        path.write_text(_render_managed_root_crontab(existing, cron_expr, CRON_WRAPPER_PATH), encoding="utf-8")
-        try:
-            os.chmod(path, 0o600)
-        except Exception:
-            pass
-        log.info("[CRON] Scheduled scan configured: %s (tz=%s)", cron_expr, os.environ.get("TZ", "UTC"))
-        return True
-    except Exception as e:
-        log.warning("[CRON] Failed to update scheduled scan (%s): %s", reason, e)
+    next_run = _next_cron_run(cron_expr)
+    if next_run is None:
+        log.warning("[CRON] Invalid scheduled scan cron %r — no next run could be calculated", cron_expr)
         return False
+    tz_name = os.environ.get("TZ", "UTC") or "UTC"
+    with _cron_lock:
+        _cron_job.update(expr=cron_expr, next_run=next_run, tz=tz_name)
+    log.info("[CRON] Scheduled scan configured: %s (tz=%s, next_run=%s)", cron_expr, tz_name, _format_next_run(next_run))
+    return True
 
 
 def _score_ui_schema() -> dict:
@@ -3865,11 +3982,15 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
 
         proc.wait()
         rc = proc.returncode
+        if origin == "cron" and rc != 0:
+            log.error("[CRON] Scheduled scan failed: scanner exited with code %s", rc)
         with _srv_lock:
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
             _srv_state["status"]   = "done" if rc == 0 else "error"
             _srv_state["log"].append(f"[server] Done (code {rc})")
     except Exception as e:
+        if origin == "cron":
+            log.exception("[CRON] Scheduled scan failed: %s", e)
         with _srv_lock:
             _srv_state["status"]   = "error"
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
@@ -4355,6 +4476,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 
 def serve():
+    start_user_scan_scheduler()
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
     log.info("[server] Listening on 127.0.0.1:8095")
     server.serve_forever()
@@ -4410,9 +4532,6 @@ def main():
     else:
         lock_mode = "default"
         mode_label = "dynamic pipeline"
-
-    if args.origin == "cron":
-        log.info("[SCAN] Scheduled scan triggered by user cron")
 
     try:
         with _scan_lock(lock_mode):
