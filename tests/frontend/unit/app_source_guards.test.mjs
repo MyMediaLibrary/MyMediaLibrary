@@ -129,19 +129,23 @@ test('stats charts expose clickable filter mappings through a central callback',
   assert.match(statsSource, /key === getDep\('PROVIDER_OTHERS_KEY'\)/, 'provider Others bucket should stay non-clickable');
 });
 
-test('stats filter applier adds include filters without toggling existing values off', () => {
+test('stats filter applier toggles graph values in include mode only', () => {
   const block = functionBlock(appSource, 'applyStatsFilter', 'toggleTechnicalFilters');
-  assert.match(block, /activeResolutions\.add\(key\)/, 'resolution clicks should add selected value');
-  assert.match(block, /activeCodecs\.add\(key\)/, 'video codec clicks should add selected value');
-  assert.match(block, /activeAudioCodecs\.add\(key\)/, 'audio codec clicks should add selected value');
-  assert.match(block, /activeGenres\.add\(key\)/, 'genre clicks should add selected value');
-  assert.match(block, /activeProviders\.add\(_canonicalProviderFilterKey\(key\) \|\| key\)/, 'provider clicks should add canonical provider value');
-  assert.match(block, /activeAudioChannels\.add\(key\)/, 'audio channel clicks should add selected value');
-  assert.match(block, /activeAudioLanguages\.add\(canonicalAudioLanguageFilterKey\(key\) \|\| key\)/, 'audio language clicks should add canonical value');
+  const toggleBlock = functionBlock(appSource, 'applyStatsSetToggle', 'applyStatsFilter');
+  assert.match(toggleBlock, /!isExcludeMode && activeSet\.has\(key\)/, 'second include click should detect an already selected value');
+  assert.match(toggleBlock, /activeSet\.delete\(key\)/, 'second include click should remove only the selected value');
+  assert.match(toggleBlock, /activeSet\.add\(key\)/, 'first click or exclude-mode click should add selected value');
+  assert.match(block, /applyStatsSetToggle\(activeResolutions, key, resolutionExclude\)/, 'resolution clicks should toggle selected value');
+  assert.match(block, /applyStatsSetToggle\(activeCodecs, key, videoCodecExclude\)/, 'video codec clicks should toggle selected value');
+  assert.match(block, /applyStatsSetToggle\(activeAudioCodecs, key, audioCodecExclude\)/, 'audio codec clicks should toggle selected value');
+  assert.match(block, /applyStatsSetToggle\(activeGenres, key, genreExclude\)/, 'genre clicks should toggle selected value');
+  assert.match(block, /applyStatsSetToggle\(activeProviders, _canonicalProviderFilterKey\(key\) \|\| key, providerExclude\)/, 'provider clicks should toggle canonical provider value');
+  assert.match(block, /applyStatsSetToggle\(activeAudioChannels, key, audioChannelsExclude\)/, 'audio channel clicks should toggle selected value');
+  assert.match(block, /applyStatsSetToggle\(activeAudioLanguages, canonicalAudioLanguageFilterKey\(key\) \|\| key, audioLanguageExclude\)/, 'audio language clicks should toggle canonical value');
   assert.match(block, /folderExclude = false;/, 'folder clicks should force include mode');
   assert.match(block, /providerExclude = false;/, 'provider clicks should force include mode');
-  assert.match(block, /scoreMin = Math\.max/, 'score range clicks should set slider range');
-  assert.doesNotMatch(block, /\.delete\(/, 'stats clicks should not toggle selected values off');
+  assert.match(block, /isActiveIncludeRange/, 'score range clicks should detect an already active include range');
+  assert.match(block, /scoreMin = 0;/, 'second score range click should reset only the score filter');
 });
 
 test('loadLibrary resolves score feature from runtime config only', () => {

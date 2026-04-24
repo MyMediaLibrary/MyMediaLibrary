@@ -1466,41 +1466,58 @@ let allItems=[], categories=[], groups=[];
   function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
   function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
 
+  function applyStatsSetToggle(activeSet, key, isExcludeMode) {
+    if (!isExcludeMode && activeSet.has(key)) {
+      activeSet.delete(key);
+    } else {
+      activeSet.add(key);
+    }
+  }
+
   function applyStatsFilter(kind, value, meta = {}) {
     const key = normalizeFilterValue(value);
     if (!key) return;
     if (kind === 'folder') {
+      applyStatsSetToggle(activeFolders, key, folderExclude);
       folderExclude = false;
-      activeFolders.add(key);
     } else if (kind === 'genre') {
+      applyStatsSetToggle(activeGenres, key, genreExclude);
       genreExclude = false;
-      activeGenres.add(key);
     } else if (kind === 'provider') {
+      applyStatsSetToggle(activeProviders, _canonicalProviderFilterKey(key) || key, providerExclude);
       providerExclude = false;
-      activeProviders.add(_canonicalProviderFilterKey(key) || key);
     } else if (kind === 'resolution') {
+      applyStatsSetToggle(activeResolutions, key, resolutionExclude);
       resolutionExclude = false;
-      activeResolutions.add(key);
     } else if (kind === 'codec') {
+      applyStatsSetToggle(activeCodecs, key, videoCodecExclude);
       videoCodecExclude = false;
-      activeCodecs.add(key);
     } else if (kind === 'audioCodec') {
+      applyStatsSetToggle(activeAudioCodecs, key, audioCodecExclude);
       audioCodecExclude = false;
-      activeAudioCodecs.add(key);
     } else if (kind === 'audioLanguage') {
+      applyStatsSetToggle(activeAudioLanguages, canonicalAudioLanguageFilterKey(key) || key, audioLanguageExclude);
       audioLanguageExclude = false;
-      activeAudioLanguages.add(canonicalAudioLanguageFilterKey(key) || key);
     } else if (kind === 'audioChannels') {
+      applyStatsSetToggle(activeAudioChannels, key, audioChannelsExclude);
       audioChannelsExclude = false;
-      activeAudioChannels.add(key);
     } else if (kind === 'scoreRange' && isScoreEnabled()) {
       const min = Number(meta.min);
       const max = Number(meta.max);
       if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      const nextMin = Math.max(0, Math.min(100, Math.min(min, max)));
+      const nextMax = Math.max(0, Math.min(100, Math.max(min, max)));
+      const isActiveIncludeRange = !qualityExclude && scoreMin === nextMin && scoreMax === nextMax && includeNoScore === false;
       qualityExclude = false;
-      scoreMin = Math.max(0, Math.min(100, Math.min(min, max)));
-      scoreMax = Math.max(0, Math.min(100, Math.max(min, max)));
-      includeNoScore = false;
+      if (isActiveIncludeRange) {
+        scoreMin = 0;
+        scoreMax = 100;
+        includeNoScore = true;
+      } else {
+        scoreMin = nextMin;
+        scoreMax = nextMax;
+        includeNoScore = false;
+      }
     } else {
       return;
     }
