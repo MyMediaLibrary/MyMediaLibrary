@@ -113,6 +113,37 @@ test('renderFolderFilter uses shared dropdown with include/exclude toggles', () 
   assert.match(block, /baseItems\('folder'\)/, 'folder counts should be scoped through shared baseItems logic');
 });
 
+test('stats charts expose clickable filter mappings through a central callback', () => {
+  assert.match(statsSource, /data-stats-filter-kind/, 'stats charts should annotate clickable values with filter kind');
+  assert.match(statsSource, /applyStatsFilter\(kind, value/, 'stats click handler should delegate to injected filter applier');
+  assert.match(statsSource, /filterKind:\s*'folder'/, 'category stats should map to folder filter');
+  assert.match(statsSource, /filterKind:\s*'genre'/, 'genre stats should map to genre filter');
+  assert.match(statsSource, /filterKind:\s*'provider'/, 'provider stats should map to provider filter');
+  assert.match(statsSource, /filterKind:\s*'resolution'/, 'resolution stats should map to resolution filter');
+  assert.match(statsSource, /filterKind:\s*'codec'/, 'video codec stats should map to codec filter');
+  assert.match(statsSource, /filterKind:\s*'audioCodec'/, 'audio codec stats should map to audio codec filter');
+  assert.match(statsSource, /filterKind:\s*'audioLanguage'/, 'audio language stats should map to audio language filter');
+  assert.match(statsSource, /filterKind:\s*'audioChannels'/, 'audio channels stats should map to audio channels filter');
+  assert.match(statsSource, /statsFilterAttrs\('scoreRange'/, 'quality stats should map to score range filter');
+  assert.match(statsSource, /key === STATS_GENRE_OTHERS_KEY/, 'genre Others bucket should stay non-clickable');
+  assert.match(statsSource, /key === getDep\('PROVIDER_OTHERS_KEY'\)/, 'provider Others bucket should stay non-clickable');
+});
+
+test('stats filter applier adds include filters without toggling existing values off', () => {
+  const block = functionBlock(appSource, 'applyStatsFilter', 'toggleTechnicalFilters');
+  assert.match(block, /activeResolutions\.add\(key\)/, 'resolution clicks should add selected value');
+  assert.match(block, /activeCodecs\.add\(key\)/, 'video codec clicks should add selected value');
+  assert.match(block, /activeAudioCodecs\.add\(key\)/, 'audio codec clicks should add selected value');
+  assert.match(block, /activeGenres\.add\(key\)/, 'genre clicks should add selected value');
+  assert.match(block, /activeProviders\.add\(_canonicalProviderFilterKey\(key\) \|\| key\)/, 'provider clicks should add canonical provider value');
+  assert.match(block, /activeAudioChannels\.add\(key\)/, 'audio channel clicks should add selected value');
+  assert.match(block, /activeAudioLanguages\.add\(canonicalAudioLanguageFilterKey\(key\) \|\| key\)/, 'audio language clicks should add canonical value');
+  assert.match(block, /folderExclude = false;/, 'folder clicks should force include mode');
+  assert.match(block, /providerExclude = false;/, 'provider clicks should force include mode');
+  assert.match(block, /scoreMin = Math\.max/, 'score range clicks should set slider range');
+  assert.doesNotMatch(block, /\.delete\(/, 'stats clicks should not toggle selected values off');
+});
+
 test('loadLibrary resolves score feature from runtime config only', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
   assert.match(block, /enableScore = resolveScoreEnabled\(\);/, 'loadLibrary should resolve score from centralized config-driven helper');

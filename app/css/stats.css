@@ -53,6 +53,9 @@
 .stats-subtab-content{display:none;flex-direction:column;gap:24px}
 .stats-subtab-content.active{display:flex}
 .stats-subtab-btn{min-width:110px}
+.stats-clickable{cursor:pointer;transition:opacity .15s ease,filter .15s ease}
+.stats-clickable:hover{opacity:.86;filter:brightness(1.12)}
+.pie-leg-row.stats-clickable:hover,.hbar-item.stats-clickable:hover{background:var(--card-h)}
 
 /* ── Provider bars ────────────────────────────────────────────────────────── */
 .prov-bar-row{display:flex;align-items:center;gap:9px;margin-bottom:8px}

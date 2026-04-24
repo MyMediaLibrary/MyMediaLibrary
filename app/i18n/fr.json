@@ -356,6 +356,7 @@
     "audio_codec_chart_title": "Codec audio",
     "audio_languages_chart_title": "Langues audio",
     "others": "Autres",
+    "filter_on": "Filtrer sur {value}",
     "providers": "Fournisseurs",
     "media_count": "médias",
     "providers_overlap_note": "Un média peut être disponible sur plusieurs providers.",

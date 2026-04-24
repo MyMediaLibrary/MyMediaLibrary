@@ -828,7 +828,8 @@ let allItems=[], categories=[], groups=[];
         t,
         fmtSize,
         escH,
-        MMLLogic
+        MMLLogic,
+        applyStatsFilter
       });
 
       const d=new Date(data.scanned_at);
@@ -1464,6 +1465,47 @@ let allItems=[], categories=[], groups=[];
   }
   function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
   function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
+
+  function applyStatsFilter(kind, value, meta = {}) {
+    const key = normalizeFilterValue(value);
+    if (!key) return;
+    if (kind === 'folder') {
+      folderExclude = false;
+      activeFolders.add(key);
+    } else if (kind === 'genre') {
+      genreExclude = false;
+      activeGenres.add(key);
+    } else if (kind === 'provider') {
+      providerExclude = false;
+      activeProviders.add(_canonicalProviderFilterKey(key) || key);
+    } else if (kind === 'resolution') {
+      resolutionExclude = false;
+      activeResolutions.add(key);
+    } else if (kind === 'codec') {
+      videoCodecExclude = false;
+      activeCodecs.add(key);
+    } else if (kind === 'audioCodec') {
+      audioCodecExclude = false;
+      activeAudioCodecs.add(key);
+    } else if (kind === 'audioLanguage') {
+      audioLanguageExclude = false;
+      activeAudioLanguages.add(canonicalAudioLanguageFilterKey(key) || key);
+    } else if (kind === 'audioChannels') {
+      audioChannelsExclude = false;
+      activeAudioChannels.add(key);
+    } else if (kind === 'scoreRange' && isScoreEnabled()) {
+      const min = Number(meta.min);
+      const max = Number(meta.max);
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      qualityExclude = false;
+      scoreMin = Math.max(0, Math.min(100, Math.min(min, max)));
+      scoreMax = Math.max(0, Math.min(100, Math.max(min, max)));
+      includeNoScore = false;
+    } else {
+      return;
+    }
+    onFilter();
+  }
 
   function toggleTechnicalFilters(isMobile) {
     if (isMobile) technicalFiltersOpenMobile = !technicalFiltersOpenMobile;
