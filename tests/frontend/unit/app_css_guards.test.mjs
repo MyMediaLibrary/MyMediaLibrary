@@ -47,5 +47,9 @@ test('recommendation filters use priority type sort proportions and priority col
 
 test('stats recommendations layout supports local filters and full-width rows', () => {
   assert.match(cssSource, /\.stats-rec-filters\{grid-template-columns:3fr 5fr\}/, 'stats recommendations filters should keep priority/type proportions without sort');
+  assert.match(cssSource, /\.stats-rec-filters\.has-local-reset\{grid-template-columns:3fr 5fr minmax\(140px,1fr\)\}/, 'stats recommendations local reset should get a compact third column');
+  assert.match(cssSource, /\.stats-clickable\.active\{filter:brightness\(1\.16\)\}/, 'interactive stats chart elements should expose an active state');
+  assert.match(cssSource, /path\.stats-clickable\.active,circle\.stats-clickable\.active\{stroke:var\(--accent\);stroke-width:3px\}/, 'active SVG chart elements should be visibly outlined');
+  assert.match(cssSource, /\.pie-leg-row\.stats-clickable\.active,\.hbar-item\.stats-clickable\.active\{[\s\S]*outline:1px solid/, 'active legend and bar rows should be visibly highlighted');
   assert.match(cssSource, /\.stats-row-full\{grid-template-columns:1fr\}/, 'stats recommendations full-width rows should span one column');
 });

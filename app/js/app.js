@@ -868,7 +868,9 @@ let allItems=[], categories=[], groups=[];
         recScore,
         recSizeBytes,
         recommendationPriorityFilters,
-        recommendationTypeFilters
+        recommendationTypeFilters,
+        activeFolders,
+        getStatsScoreRangeState: () => ({ scoreMin, scoreMax, includeNoScore, qualityExclude })
       });
 
       const d=new Date(data.scanned_at);

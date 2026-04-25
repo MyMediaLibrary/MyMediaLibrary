@@ -368,6 +368,8 @@ test('stats recommendations subtab reuses visible recommendations and renders re
   assert.match(dataBlock, /visibleRecommendations\(\)/, 'recommendations stats should reuse visibleRecommendations');
   assert.match(dataBlock, /filterItems\(\)/, 'recommendations per-media buckets should use sidebar-filtered media');
   assert.match(dataBlock, /mediaById = new Map\(allItems\.map/, 'recommendations stats should join recommendations to library media');
+  assert.match(dataBlock, /recommendationCountBucketFilter/, 'recommendations stats should support a local recommendation-count bucket filter');
+  assert.match(dataBlock, /recommendationScoreBucketFilter/, 'recommendations stats should support a local unknown-score bucket filter');
   assert.match(dataBlock, /perMediaBuckets = \{ '0': 0, '1': 0, '2': 0, '3plus': 0 \}/, 'recommendations stats should include zero-recommendation media buckets');
   assert.match(dataBlock, /folderMediaTotals/, 'recommendations stats should compute visible media totals per folder');
   assert.match(dataBlock, /folderMediaWithRecommendations/, 'recommendations stats should compute media with visible recommendations per folder');
@@ -385,9 +387,16 @@ test('stats recommendations subtab reuses visible recommendations and renders re
   assert.match(renderBlock, /makeRecommendationPie\(t\('stats\.recommendations_per_media'\)/, 'recommendations per media should render as a pie chart');
   assert.match(statsSource, /recommendations_priority_distribution[\s\S]*'recommendationPriority'/, 'priority pie should toggle recommendation priority filters');
   assert.match(statsSource, /recommendations_type_distribution[\s\S]*'recommendationType'/, 'type pie should toggle recommendation type filters');
+  const folderImpactBlock = functionBlock(statsSource, 'makeFolderImpactBars', 'makeScoreBucketBars');
+  assert.match(folderImpactBlock, /statsFilterAttrs\('folder'/, 'media-by-folder impact chart should apply folder sidebar filters');
+  assert.match(statsSource, /recommendations_per_media[\s\S]*'recommendationCountBucket'/, 'recommendations per media pie should toggle count bucket filters');
+  assert.match(renderBlock, /makeScoreBucketBars\(t\('stats\.recommendations_score_distribution'\)/, 'score distribution should use interactive score bucket bars');
+  assert.match(statsSource, /filterKindForKey:\s*k => k === 'unknown' \? 'recommendationScoreBucket' : 'scoreRange'/, 'score buckets should use global score ranges when possible and local filter for unknown');
+  assert.match(statsSource, /data-stats-rec-reset="1"/, 'local stats recommendation filters should be resettable');
   const filterBlock = functionBlock(appSource, 'applyStatsFilter', 'toggleTechnicalFilters');
   assert.match(filterBlock, /kind === 'recommendationPriority'/, 'stats filter applier should toggle recommendation priority');
   assert.match(filterBlock, /kind === 'recommendationType'/, 'stats filter applier should toggle recommendation type');
+  assert.match(appSource, /getStatsScoreRangeState:\s*\(\) => \(\{ scoreMin, scoreMax, includeNoScore, qualityExclude \}\)/, 'stats should receive score range state for active bucket styling');
 });
 
 test('provider count chart displays raw counts without "media" unit suffix', () => {

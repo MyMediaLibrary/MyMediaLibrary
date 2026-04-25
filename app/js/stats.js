@@ -51,12 +51,16 @@
     recSizeBytes: null,
     recommendationPriorityFilters: null,
     recommendationTypeFilters: null,
+    activeFolders: null,
+    getStatsScoreRangeState: null,
   };
   const STATS_SUBTABS = ['general', 'technical', 'evolution', 'recommendations'];
   const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
   const RECOMMENDATION_TYPES = ['quality', 'space', 'languages', 'series', 'data'];
   const STATS_GENRE_OTHERS_KEY = '__genre_others__';
   let activeStatsSubtab = 'general';
+  let recommendationCountBucketFilter = null;
+  let recommendationScoreBucketFilter = null;
 
   function getDep(name) {
     return deps[name] !== null && deps[name] !== undefined ? deps[name] : window[name];
@@ -96,6 +100,17 @@
     });
 
     document.addEventListener('click', (e) => {
+      const resetTarget = e.target.closest?.('[data-stats-rec-reset]');
+      if (resetTarget) {
+        const statsHost = document.getElementById('statsContent');
+        if (statsHost?.contains(resetTarget)) {
+          recommendationCountBucketFilter = null;
+          recommendationScoreBucketFilter = null;
+          renderStatsPanel();
+        }
+        return;
+      }
+
       const target = e.target.closest?.('[data-stats-filter-kind]');
       if (!target) return;
       const statsHost = document.getElementById('statsContent');
@@ -103,6 +118,16 @@
       const kind = target.dataset.statsFilterKind;
       const value = target.dataset.statsFilterValue;
       if (!kind || value === undefined) return;
+      if (kind === 'recommendationCountBucket') {
+        recommendationCountBucketFilter = recommendationCountBucketFilter === value ? null : value;
+        renderStatsPanel();
+        return;
+      }
+      if (kind === 'recommendationScoreBucket') {
+        recommendationScoreBucketFilter = recommendationScoreBucketFilter === value ? null : value;
+        renderStatsPanel();
+        return;
+      }
       const applyStatsFilter = getDep('applyStatsFilter');
       if (typeof applyStatsFilter !== 'function') return;
       applyStatsFilter(kind, value, {
@@ -372,10 +397,44 @@
       || key === getDep('t')('stats.others');
   }
 
+  function isStatsFilterActive(kind, key, extra = {}) {
+    const value = String(key);
+    if (kind === 'recommendationPriority') {
+      return !!getDep('recommendationPriorityFilters')?.has(value);
+    }
+    if (kind === 'recommendationType') {
+      return !!getDep('recommendationTypeFilters')?.has(value);
+    }
+    if (kind === 'recommendationCountBucket') {
+      return recommendationCountBucketFilter === value;
+    }
+    if (kind === 'recommendationScoreBucket') {
+      return recommendationScoreBucketFilter === value;
+    }
+    if (kind === 'folder') {
+      return !!getDep('activeFolders')?.has(value);
+    }
+    if (kind === 'scoreRange') {
+      const getState = getDep('getStatsScoreRangeState');
+      const state = typeof getState === 'function' ? getState() : null;
+      const min = Number(extra.min);
+      const max = Number(extra.max);
+      return !!state
+        && Number.isFinite(min)
+        && Number.isFinite(max)
+        && state.qualityExclude === false
+        && state.includeNoScore === false
+        && Number(state.scoreMin) === min
+        && Number(state.scoreMax) === max;
+    }
+    return false;
+  }
+
   function statsFilterAttrs(kind, key, label, extra = {}, className = 'stats-clickable') {
     if (!kind || key === undefined || key === null || isStatsOtherValue(key)) return '';
     const escH = getDep('escH');
-    let attrs = ' class="'+escH(className)+'" role="button" tabindex="0"'
+    const activeClass = isStatsFilterActive(kind, key, extra) ? ' active' : '';
+    let attrs = ' class="'+escH(className + activeClass)+'" role="button" tabindex="0"'
       + ' data-stats-filter-kind="'+escH(kind)+'"'
       + ' data-stats-filter-value="'+escH(String(key))+'"'
       + ' title="'+escH(getDep('t')('stats.filter_on', { value: label }))+'"';
@@ -512,7 +571,9 @@
         const width = maxValue > 0 ? (numericValue / maxValue) * 100 : 0;
         const percent = percentBase > 0 ? Math.round((numericValue / percentBase) * 100) + ' %' : '0 %';
         const label = labelFn(key);
-        const rowAttrs = statsFilterAttrs(options.filterKind, key, label, {}, 'hbar-item stats-clickable') || ' class="hbar-item"';
+        const extra = typeof options.extraForKey === 'function' ? options.extraForKey(key) : {};
+        const filterKind = typeof options.filterKindForKey === 'function' ? options.filterKindForKey(key) : options.filterKind;
+        const rowAttrs = statsFilterAttrs(filterKind, key, label, extra, 'hbar-item stats-clickable') || ' class="hbar-item"';
         return '<div'+rowAttrs+'>'
           +'<div class="hbar-label" title="'+getDep('escH')(label)+'">'+getDep('escH')(label)+'</div>'
           +'<div class="hbar-track"><div class="hbar-fill" style="width:'+width.toFixed(2)+'%;background:'+colorFn(key, index)+'"></div></div>'
@@ -622,6 +683,17 @@
     return '81-100';
   }
 
+  function scoreBucketRange(bucket) {
+    const ranges = {
+      '0-20': { min: 0, max: 20 },
+      '21-40': { min: 21, max: 40 },
+      '41-60': { min: 41, max: 60 },
+      '61-80': { min: 61, max: 80 },
+      '81-100': { min: 81, max: 100 },
+    };
+    return ranges[bucket] || {};
+  }
+
   function recommendationCountBucket(count) {
     if (count <= 0) return '0';
     if (count === 1) return '1';
@@ -658,7 +730,8 @@
     const body = '<div class="hbar-list">'
       + entries.map(([folder, info], index) => {
         const pct = Number(info.percent) || 0;
-        return '<div class="hbar-item">'
+        const rowAttrs = statsFilterAttrs('folder', folder, folder, {}, 'hbar-item stats-clickable') || ' class="hbar-item"';
+        return '<div'+rowAttrs+'>'
           + '<div class="hbar-label" title="'+getDep('escH')(folder)+'">'+getDep('escH')(folder)+'</div>'
           + '<div class="hbar-track"><div class="hbar-fill" style="width:'+pct.toFixed(2)+'%;background:'+colorFn(folder, index)+'"></div></div>'
           + '<div class="hbar-val">'+Math.round(pct)+'% <span class="stat-row-sub">('+info.withRecommendations+'/'+info.total+')</span></div>'
@@ -668,16 +741,45 @@
     return makeStatsBlock(title, body);
   }
 
+  function makeScoreBucketBars(title, entries, percentBase) {
+    return makeRecommendationHBar(
+      title,
+      entries,
+      k => k === 'unknown' ? getDep('t')('filters.unknown') : k,
+      (k, i) => getDep('PALETTE')[i % getDep('PALETTE').length],
+      {
+        percentBase,
+        filterKindForKey: k => k === 'unknown' ? 'recommendationScoreBucket' : 'scoreRange',
+        extraForKey: scoreBucketRange,
+      }
+    );
+  }
+
   function buildRecommendationStatsData() {
     const visibleRecommendations = getDep('visibleRecommendations');
     const filterItems = getDep('filterItems');
     const allItems = getDep('allItems') || [];
-    const recs = typeof visibleRecommendations === 'function' ? visibleRecommendations() : [];
-    const visibleMedia = typeof filterItems === 'function' ? filterItems() : allItems;
+    const baseRecs = typeof visibleRecommendations === 'function' ? visibleRecommendations() : [];
+    let visibleMedia = typeof filterItems === 'function' ? filterItems() : allItems;
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
     const recMedia = getDep('recMedia');
     const recScore = getDep('recScore');
     const recSizeBytes = getDep('recSizeBytes');
+    const baseRecCountByMedia = {};
+    baseRecs.forEach((rec) => increment(baseRecCountByMedia, String(rec?.media_ref?.id || '')));
+
+    if (recommendationCountBucketFilter) {
+      visibleMedia = visibleMedia.filter((media) => (
+        recommendationCountBucket(baseRecCountByMedia[String(media.id || '')] || 0) === recommendationCountBucketFilter
+      ));
+    }
+    if (recommendationScoreBucketFilter) {
+      visibleMedia = visibleMedia.filter((media) => (
+        scoreBucket(typeof recScore === 'function' ? recScore(media) : media?.quality?.score) === recommendationScoreBucketFilter
+      ));
+    }
+    const visibleMediaIds = new Set(visibleMedia.map((media) => String(media.id || '')));
+    const recs = baseRecs.filter((rec) => visibleMediaIds.has(String(rec?.media_ref?.id || '')));
 
     const byPriority = {}, byType = {}, byFolder = {}, byScore = {};
     const recCountByMedia = {};
@@ -739,13 +841,17 @@
     if (typeof renderButtons !== 'function') return '';
     const priorityLabel = getDep('recPriorityLabel');
     const typeLabel = getDep('recTypeLabel');
-    return '<div class="rec-filters stats-rec-filters">'
+    const hasLocalFilters = !!(recommendationCountBucketFilter || recommendationScoreBucketFilter);
+    return '<div class="rec-filters stats-rec-filters'+(hasLocalFilters ? ' has-local-reset' : '')+'">'
       + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
       + renderButtons(RECOMMENDATION_PRIORITIES, getDep('recommendationPriorityFilters'), 'toggleRecommendationPriorityFilter', priorityLabel, 'rec-priority-filter')
       + '</div></div>'
       + '<div class="rec-filter-group rec-filter-type"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.type')+'</div><div class="rec-filter-row">'
       + renderButtons(RECOMMENDATION_TYPES, getDep('recommendationTypeFilters'), 'toggleRecommendationTypeFilter', typeLabel, 'provider-pill')
       + '</div></div>'
+      + (hasLocalFilters
+        ? '<div class="rec-filter-group stats-local-reset"><div class="rec-filter-label">&nbsp;</div><div class="rec-filter-row"><button type="button" class="provider-pill active" data-stats-rec-reset="1">'+getDep('escH')(getDep('t')('stats.recommendations_reset_local'))+'</button></div></div>'
+        : '')
       + '</div>';
   }
 
@@ -757,7 +863,7 @@
     const recPriorityLabel = getDep('recPriorityLabel');
     const recTypeLabel = getDep('recTypeLabel');
     const filters = recommendationStatsFilters();
-    if (!data.recs.length) {
+    if (!data.recs.length && !data.visibleMedia.length) {
       return filters + '<div class="empty rec-empty"><p>'+t('stats.recommendations_empty')+'</p></div>';
     }
 
@@ -782,11 +888,11 @@
         + '<div>'+makeFolderImpactBars(t('stats.recommendations_media_by_folder'), data.folderImpact)+'</div>'
       + '</div>'
       + '<div class="stats-row">'
-        + '<div>'+makeRecommendationPie(t('stats.recommendations_per_media'), perMediaEntries, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], recCountBucketLabel)+'</div>'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_per_media'), perMediaEntries, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], recCountBucketLabel, 'recommendationCountBucket')+'</div>'
         + '<div>'+makeStatsBlock(t('stats.recommendations_space_size'), spaceKpi)+'</div>'
       + '</div>'
       + '<div class="stats-row">'
-        + '<div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div>'
+        + '<div>'+makeScoreBucketBars(t('stats.recommendations_score_distribution'), scoreEntries, data.recs.length)+'</div>'
         + '<div></div>'
       + '</div>';
   }
