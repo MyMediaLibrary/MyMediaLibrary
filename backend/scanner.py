@@ -44,8 +44,9 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 try:
     from backend.inventory_helpers import (
@@ -88,6 +89,39 @@ except Exception:
             e,
         )
 
+try:
+    from backend.recommendations import (
+        ensure_user_rules,
+        generate_recommendations,
+        load_rules as load_recommendation_rules,
+        write_recommendations,
+    )
+except Exception:
+    try:
+        from recommendations import (
+            ensure_user_rules,
+            generate_recommendations,
+            load_rules as load_recommendation_rules,
+            write_recommendations,
+        )
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] recommendations import failed (%s). Recommendations disabled; continuing non-blocking.",
+            e,
+        )
+
+        def ensure_user_rules(default_rules_path, user_rules_path):
+            return False
+
+        def load_recommendation_rules(path):
+            return []
+
+        def generate_recommendations(library_doc, rules, *, max_per_media=3):
+            return []
+
+        def write_recommendations(items, output_path, now=None):
+            return {"generated_at": None, "version": 1, "items": items}
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -95,6 +129,9 @@ except Exception:
 LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
 OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
+RECOMMENDATIONS_OUTPUT_PATH = os.environ.get("RECOMMENDATIONS_OUTPUT_PATH", "/data/recommendations.json")
+RECOMMENDATIONS_DEFAULT_RULES_PATH = os.environ.get("RECOMMENDATIONS_DEFAULT_RULES_PATH", "/app/recommendations_rules.json")
+RECOMMENDATIONS_RULES_PATH = os.environ.get("RECOMMENDATIONS_RULES_PATH", "/data/recommendations_rules.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
@@ -862,6 +899,8 @@ def migrate_env_to_config() -> None:
 
     cfg, score_changed, score_status = normalize_score_configuration_sections(cfg)
     changed = changed or score_changed
+    cfg, rec_changed = normalize_recommendations_configuration(cfg)
+    changed = changed or rec_changed
     if not score_status.get("weights_valid", False):
         log.warning(
             "[score] Weight total is %s (expected 100) in effective score config",
@@ -873,6 +912,11 @@ def migrate_env_to_config() -> None:
         log.info("[MIGRATION] Env vars migrated to config.json")
     # Bootstrap runtime providers mapping once (non-destructive).
     _ensure_runtime_provider_mapping()
+    # Bootstrap editable recommendations rules once (non-destructive).
+    try:
+        ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
+    except Exception as e:
+        log.warning("[recommendations] Could not bootstrap rules file: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -1916,6 +1960,9 @@ _DEFAULT_CONFIG: dict = {
     "score": {
         "enabled": False,
     },
+    "recommendations": {
+        "enabled": False,
+    },
     "score_configuration": get_builtin_score_defaults(),
 }
 
@@ -1929,7 +1976,8 @@ def load_config() -> dict:
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
-        if seerr_changed or changed:
+        cfg, rec_changed = normalize_recommendations_configuration(cfg)
+        if seerr_changed or changed or rec_changed:
             save_config(cfg)
     return cfg
 
@@ -1996,6 +2044,24 @@ def _is_score_enabled(cfg: dict | None) -> bool:
         return score.get("enabled") is True
     system = (cfg or {}).get("system") or {}
     return system.get("enable_score") is True
+
+
+def _is_recommendations_enabled(cfg: dict | None) -> bool:
+    if not _is_score_enabled(cfg):
+        return False
+    rec = (cfg or {}).get("recommendations")
+    return isinstance(rec, dict) and rec.get("enabled") is True
+
+
+def normalize_recommendations_configuration(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    rec = cfg.get("recommendations")
+    enabled = isinstance(rec, dict) and rec.get("enabled") is True
+    normalized = {"enabled": bool(enabled and _is_score_enabled(cfg))}
+    if rec != normalized:
+        cfg["recommendations"] = normalized
+        changed = True
+    return cfg, changed
 
 
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:
@@ -3412,6 +3478,36 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     )
 
 
+# ---------------------------------------------------------------------------
+# RECOMMENDATIONS PHASE
+# ---------------------------------------------------------------------------
+
+def run_recommendations() -> int:
+    cfg = load_config()
+    if not _is_score_enabled(cfg):
+        log.info("[SCAN] Recommendations disabled — score required")
+        return 0
+    if not _is_recommendations_enabled(cfg):
+        log.info("[SCAN] Recommendations disabled — skipping phase")
+        return 0
+
+    log.info("[SCAN] Phase 5: recommendations")
+    ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as f:
+            lib_data = json.load(f)
+    except Exception as e:
+        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
+        return 0
+
+    rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+    recs = generate_recommendations(lib_data, rules)
+    write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
+    log.info("[SCAN] Recommendations generated: %s recommendation(s)", len(recs))
+    return len(recs)
+
+
 def _prepare_startup_configuration() -> dict:
     """Bootstrap config on startup without forcing a media scan."""
     migrate_env_to_config()
@@ -3457,6 +3553,8 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
         elif phase == PHASE_INVENTORY:
             scan_mode = "full" if PHASE_SCAN in ordered else "partial"
             run_inventory(scan_mode=scan_mode, only_category=only_category)
+        elif phase == PHASE_RECOMMENDATIONS:
+            run_recommendations()
 
 
 # ---------------------------------------------------------------------------
@@ -3583,12 +3681,21 @@ _srv_state = {
     "log":        [],
 }
 _srv_proc = None
+_cron_lock = threading.Lock()
+_cron_thread = None
+_cron_stop = threading.Event()
+_cron_job = {
+    "expr": None,
+    "next_run": None,
+    "tz": None,
+}
 
 PHASE_SCAN = 1
 PHASE_ENRICH = 2
 PHASE_SCORE = 3
 PHASE_INVENTORY = 4
-_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
+PHASE_RECOMMENDATIONS = 5
+_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 
 
@@ -3683,6 +3790,8 @@ def _phase_plan_from_config(
         phases.append(PHASE_SCORE)
     if _is_inventory_enabled(cfg):
         phases.append(PHASE_INVENTORY)
+    if _is_recommendations_enabled(cfg):
+        phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
 
 
@@ -3719,6 +3828,7 @@ def _compute_phases_for_config_change(
     seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
     score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
     inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
+    recommendations_changed = _is_recommendations_enabled(prev_cfg) != _is_recommendations_enabled(new_cfg)
 
     phases: list[int] = []
     if folders_changed:
@@ -3734,6 +3844,10 @@ def _compute_phases_for_config_change(
             phases.append(PHASE_SCORE)
         if inventory_changed:
             phases.append(PHASE_INVENTORY)
+        if recommendations_changed:
+            if _is_score_enabled(new_cfg):
+                phases.append(PHASE_SCORE)
+            phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
 
 
@@ -3748,13 +3862,190 @@ def _scanner_cmd(mode: str, *, phases: list[int] | None = None, category: str | 
         base += ["--score-only"]
     elif mode == "full":
         base += ["--full"]
-    else:
-        base += ["--full"]
     if category:
         base += ["--category", str(category)]
     if origin:
         base += ["--origin", str(origin)]
     return base
+
+
+def _valid_user_cron(expr: str) -> bool:
+    return isinstance(expr, str) and len(expr.strip().split()) == 5
+
+
+def _cron_tz() -> ZoneInfo:
+    name = os.environ.get("TZ", "UTC") or "UTC"
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        log.warning("[CRON] Invalid timezone %r — falling back to UTC", name)
+        return ZoneInfo("UTC")
+
+
+def _cron_from_config(cfg: dict | None = None) -> str:
+    current = cfg if isinstance(cfg, dict) else load_config()
+    cron = (current.get("system", {}) or {}).get("scan_cron") or ""
+    return str(cron).strip()
+
+
+def _cron_field_matches(field: str, value: int, *, min_value: int, max_value: int) -> bool:
+    if not field:
+        return False
+    for part in field.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        step = 1
+        if "/" in part:
+            base, raw_step = part.split("/", 1)
+            try:
+                step = max(1, int(raw_step))
+            except Exception:
+                return False
+        else:
+            base = part
+        if base == "*":
+            start, end = min_value, max_value
+        elif "-" in base:
+            raw_start, raw_end = base.split("-", 1)
+            try:
+                start, end = int(raw_start), int(raw_end)
+            except Exception:
+                return False
+        else:
+            try:
+                start = end = int(base)
+            except Exception:
+                return False
+        if min_value <= start <= value <= end <= max_value and (value - start) % step == 0:
+            return True
+    return False
+
+
+def _cron_field_is_wildcard(field: str) -> bool:
+    return str(field or "").strip() == "*"
+
+
+def _cron_dow_matches(field: str, cron_dow: int) -> bool:
+    return (
+        _cron_field_matches(field, cron_dow, min_value=0, max_value=7)
+        or (cron_dow == 0 and _cron_field_matches(field, 7, min_value=0, max_value=7))
+    )
+
+
+def _cron_matches(expr: str, when: datetime) -> bool:
+    parts = expr.split()
+    if len(parts) != 5:
+        return False
+    minute, hour, dom, month, dow = parts
+    # Cron uses Sunday as 0 or 7; Python weekday uses Monday=0.
+    cron_dow = (when.weekday() + 1) % 7
+    dom_match = _cron_field_matches(dom, when.day, min_value=1, max_value=31)
+    dow_match = _cron_dow_matches(dow, cron_dow)
+    if _cron_field_is_wildcard(dom) and _cron_field_is_wildcard(dow):
+        day_match = True
+    elif _cron_field_is_wildcard(dom):
+        day_match = dow_match
+    elif _cron_field_is_wildcard(dow):
+        day_match = dom_match
+    else:
+        day_match = dom_match or dow_match
+    return (
+        _cron_field_matches(minute, when.minute, min_value=0, max_value=59)
+        and _cron_field_matches(hour, when.hour, min_value=0, max_value=23)
+        and _cron_field_matches(month, when.month, min_value=1, max_value=12)
+        and day_match
+    )
+
+
+def _next_cron_run(expr: str, now: datetime | None = None) -> datetime | None:
+    if not _valid_user_cron(expr):
+        return None
+    tz = _cron_tz()
+    current = now.astimezone(tz) if now else datetime.now(tz)
+    current = current.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    deadline = current + timedelta(days=366)
+    while current <= deadline:
+        if _cron_matches(expr, current):
+            return current
+        current += timedelta(minutes=1)
+    return None
+
+
+def _format_next_run(value: datetime | None) -> str:
+    return value.isoformat(timespec="minutes") if value else "none"
+
+
+def _start_scheduled_scan_from_cron() -> None:
+    try:
+        log.info("[SCAN] Scheduled scan triggered by user cron")
+        with _srv_lock:
+            running = _srv_state["status"] == "running"
+        if running or _is_scan_locked():
+            log.warning("[SCAN] Scheduled scan skipped (lock active)")
+            return
+        phases = _phase_plan_from_config(load_config(), include_phase1=True)
+        if not phases:
+            log.info("[SCAN] Scheduled scan skipped — no enabled scan phases")
+            return
+        threading.Thread(target=_run_scan_bg, args=("default", phases, None, "cron"), daemon=True).start()
+    except Exception as e:
+        log.exception("[CRON] Scheduled scan failed: %s", e)
+
+
+def _cron_loop() -> None:
+    last_run_key = None
+    while not _cron_stop.is_set():
+        try:
+            with _cron_lock:
+                expr = _cron_job.get("expr")
+                next_run = _cron_job.get("next_run")
+            if expr and next_run:
+                now = datetime.now(_cron_tz()).replace(second=0, microsecond=0)
+                if now >= next_run:
+                    run_key = next_run.isoformat()
+                    with _cron_lock:
+                        _cron_job["next_run"] = _next_cron_run(expr, next_run)
+                    if run_key != last_run_key:
+                        last_run_key = run_key
+                        _start_scheduled_scan_from_cron()
+            _cron_stop.wait(1)
+        except Exception as e:
+            log.exception("[CRON] Scheduled scan failed: %s", e)
+            _cron_stop.wait(5)
+
+
+def start_user_scan_scheduler() -> None:
+    global _cron_thread
+    with _cron_lock:
+        if _cron_thread and _cron_thread.is_alive():
+            return
+        _cron_stop.clear()
+        _cron_thread = threading.Thread(target=_cron_loop, name="user-scan-cron", daemon=True)
+        _cron_thread.start()
+    log.info("[CRON] Scheduler started")
+    sync_user_scan_cron(load_config(), reason="startup")
+
+
+def sync_user_scan_cron(cfg: dict | None = None, *, reason: str = "config") -> bool:
+    cron_expr = _cron_from_config(cfg)
+    if not cron_expr:
+        with _cron_lock:
+            _cron_job.update(expr=None, next_run=None, tz=str(_cron_tz().key))
+        log.info("[CRON] Scheduled scan disabled or not configured")
+        return True
+    if not _valid_user_cron(cron_expr):
+        log.warning("[CRON] Invalid scheduled scan cron %r — keeping previous schedule", cron_expr)
+        return False
+    next_run = _next_cron_run(cron_expr)
+    if next_run is None:
+        log.warning("[CRON] Invalid scheduled scan cron %r — no next run could be calculated", cron_expr)
+        return False
+    tz_name = os.environ.get("TZ", "UTC") or "UTC"
+    with _cron_lock:
+        _cron_job.update(expr=cron_expr, next_run=next_run, tz=tz_name)
+    log.info("[CRON] Scheduled scan configured: %s (tz=%s, next_run=%s)", cron_expr, tz_name, _format_next_run(next_run))
+    return True
 
 
 def _score_ui_schema() -> dict:
@@ -3781,6 +4072,36 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
         "ui_schema": _score_ui_schema(),
         "status": status,
     }
+
+
+def _empty_recommendations_payload(enabled: bool) -> dict:
+    return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
+
+
+def _recommendations_api_payload(cfg: dict | None = None) -> dict:
+    current_cfg = cfg if isinstance(cfg, dict) else load_config()
+    enabled = _is_recommendations_enabled(current_cfg)
+    if not enabled:
+        return _empty_recommendations_payload(False)
+
+    rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
+    if not rec_path.exists():
+        return _empty_recommendations_payload(True)
+
+    try:
+        with open(rec_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return _empty_recommendations_payload(True)
+        payload["enabled"] = True
+        payload.setdefault("generated_at", None)
+        payload.setdefault("version", 1)
+        if not isinstance(payload.get("items"), list):
+            payload["items"] = []
+        return payload
+    except Exception as e:
+        log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
+        return _empty_recommendations_payload(True)
 
 
 def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
@@ -3813,11 +4134,15 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
 
         proc.wait()
         rc = proc.returncode
+        if origin == "cron" and rc != 0:
+            log.error("[CRON] Scheduled scan failed: scanner exited with code %s", rc)
         with _srv_lock:
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
             _srv_state["status"]   = "done" if rc == 0 else "error"
             _srv_state["log"].append(f"[server] Done (code {rc})")
     except Exception as e:
+        if origin == "cron":
+            log.exception("[CRON] Scheduled scan failed: %s", e)
         with _srv_lock:
             _srv_state["status"]   = "error"
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
@@ -3991,6 +4316,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 })
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
+        elif path == "/api/recommendations":
+            self._json(200, _recommendations_api_payload())
         else:
             self._json(404, {"error": "not found"})
 
@@ -4235,6 +4562,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             normalize_folder_enabled_flags(merged, drop_visible=True)
             merged, _ = normalize_seerr_config(merged)
             merged, _, _ = normalize_score_configuration_sections(merged)
+            merged, _ = normalize_recommendations_configuration(merged)
             _finalize_needs_onboarding_after_config_update(merged)
             # Ensure apikey never persists in config.json
             if "seerr" in merged:
@@ -4259,6 +4587,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
                 _set_global_log_level(new_level)
+
+            if isinstance(payload.get("system"), dict) and "scan_cron" in payload["system"]:
+                sync_user_scan_cron(merged, reason="config update")
 
             phases = _compute_phases_for_config_change(
                 cfg,
@@ -4300,6 +4631,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 
 def serve():
+    start_user_scan_scheduler()
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
     log.info("[server] Listening on 127.0.0.1:8095")
     server.serve_forever()
@@ -4354,11 +4686,13 @@ def main():
         mode_label = f"--phases {args.phases}"
     else:
         lock_mode = "default"
-        mode_label = "--full"
+        mode_label = "dynamic pipeline"
 
     try:
         with _scan_lock(lock_mode):
             _t_main = time.monotonic()
+            if args.origin == "cron":
+                log.info("[SCAN] Starting scheduled scan (dynamic pipeline)")
             log.info(f"[SCAN] ═══════════════════════════════════")
             log.info(f"[SCAN] Starting scan {mode_label}")
             log.info(f"[SCAN] ═══════════════════════════════════")
@@ -4388,7 +4722,7 @@ def main():
         if args.origin == "startup":
             log.warning("[SCAN] Startup scan skipped — another scan is already running")
         elif args.origin == "cron":
-            log.warning("[SCAN] Cron scan skipped — another scan is already running")
+            log.warning("[SCAN] Scheduled scan skipped (lock active)")
         else:
             log.warning("[SCAN] Scan already running — refusing new scan request")
         sys.exit(1)

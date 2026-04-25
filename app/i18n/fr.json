@@ -50,6 +50,7 @@
     "prev": "← Précédent",
     "library": "📚 Bibliothèque",
     "stats": "📊 Statistiques",
+    "recommendations": "💡 Recommandations",
     "scan": "Scanner"
   },
   "filters": {
@@ -319,7 +320,9 @@
       "export_json_btn": "Télécharger l'export",
       "export_unavailable": "Bibliothèque non chargée : impossible d'exporter.",
       "enable_score": "Activer le score de qualité",
-      "enable_score_hint": "Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats."
+      "enable_score_hint": "Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.",
+      "enable_recommendations": "Activer les recommandations",
+      "enable_recommendations_hint": "Nécessite le score qualité"
     },
     "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml.",
     "github_link": "Projet GitHub",
@@ -356,6 +359,7 @@
     "audio_codec_chart_title": "Codec audio",
     "audio_languages_chart_title": "Langues audio",
     "others": "Autres",
+    "filter_on": "Filtrer sur {value}",
     "providers": "Fournisseurs",
     "media_count": "médias",
     "providers_overlap_note": "Un média peut être disponible sur plusieurs providers.",
@@ -399,11 +403,85 @@
     "quality_score": "Score de qualité",
     "genres_chart_title": "Genres",
     "audio_channels_chart_title": "Channels audio",
-    "subtab_general": "Générales",
-    "subtab_technical": "Techniques",
-    "subtab_evolution": "Évolution",
-    "providers_by_group": "Fournisseurs par groupe",
-    "providers_by_category": "Fournisseurs par dossier"
+        "subtab_general": "Générales",
+        "subtab_technical": "Techniques",
+        "subtab_evolution": "Évolution",
+        "subtab_recommendations": "Recommandations",
+        "recommendations_priority_distribution": "Répartition par priorité",
+        "recommendations_type_distribution": "Répartition par type",
+        "recommendations_folder_distribution": "Répartition par dossier",
+        "recommendations_media_by_folder": "Médias avec recommandations par dossier",
+        "recommendations_per_media": "Nombre de recommandations par média",
+        "recommendations_score_distribution": "Distribution des scores",
+        "recommendations_space_size": "Taille concernée par les recos espace",
+        "recommendations_space_size_sub": "taille concernée",
+        "recommendations_per_media_0": "0 recommandation",
+        "recommendations_per_media_1": "1 recommandation",
+        "recommendations_per_media_2": "2 recommandations",
+        "recommendations_per_media_3plus": "3 recommandations",
+        "recommendations_reset_local": "Réinitialiser ces filtres",
+        "recommendations_empty": "Aucune donnée de recommandation pour les filtres actuels.",
+        "providers_by_group": "Fournisseurs par groupe",
+        "providers_by_category": "Fournisseurs par dossier"
+    },
+  "recommendations": {
+    "empty_run_scan": "Aucune recommandation disponible. Lancez un scan.",
+    "empty_filters": "Aucune recommandation pour les filtres actuels.",
+    "empty_error": "Impossible de charger les recommandations.",
+    "info_score": "Score {value}",
+    "export_csv": "Exporter CSV",
+    "sort_by": "Trier par",
+    "kpis": {
+      "total": "Total recommandations",
+      "high": "Priorité haute",
+      "quality": "Qualité",
+      "space": "Gain de place",
+      "languages": "Langues",
+      "series": "Séries",
+      "data": "Données"
+    },
+    "filters": {
+      "type": "Type de recommandation",
+      "priority": "Priorité"
+    },
+    "sort_options": {
+      "priority_desc": "Priorité ↓",
+      "priority_asc": "Priorité ↑",
+      "type_desc": "Type ↓",
+      "type_asc": "Type ↑",
+      "title_asc": "Titre A → Z",
+      "title_desc": "Titre Z → A",
+      "score_desc": "Score ↓",
+      "score_asc": "Score ↑",
+      "size_desc": "Taille ↓",
+      "size_asc": "Taille ↑",
+      "resolution_desc": "Résolution ↓",
+      "resolution_asc": "Résolution ↑"
+    },
+    "types": {
+      "quality": "Qualité",
+      "space": "Espace",
+      "languages": "Langues",
+      "series": "Séries",
+      "data": "Données"
+    },
+    "priorities": {
+      "high": "Haute",
+      "medium": "Moyenne",
+      "low": "Basse"
+    },
+    "table": {
+      "priority": "Priorité",
+      "type": "Type",
+      "media": "Média",
+      "info": "Infos principales",
+      "score": "Score",
+      "size": "Taille",
+      "resolution": "Résolution",
+      "audio_channels": "Channels audio",
+      "recommendation": "Recommandation",
+      "action": "Action"
+    }
   },
   "quality_level": {
     "0": "Très bas",
@@ -435,6 +513,7 @@
     "settings_short": "Paramètres",
     "library": "Biblio",
     "stats": "Stats",
+    "recommendations": "Recos",
     "scan_library": "Scanner la bibliothèque",
     "scan_quick_desc": "Détecte rapidement les changements récents.",
     "scan_full_desc": "Relance une analyse complète de la médiathèque.",

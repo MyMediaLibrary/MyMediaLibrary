@@ -2,12 +2,11 @@ FROM nginx:alpine3.23
 
 # Keep runtime packages minimal:
 # - python3: scanner + API
-# - dcron: scheduled scans
 # - gettext-envsubst: render nginx config from env vars
-# - tzdata: timezone support for scanner/cron logs
+# - tzdata: timezone support for scanner scheduler logs
 RUN apk update \
     && apk upgrade --no-cache \
-    && apk add --no-cache python3 dcron gettext-envsubst tzdata
+    && apk add --no-cache python3 gettext-envsubst tzdata
 
 WORKDIR /app
 
@@ -18,6 +17,8 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY backend/scanner.py /app/scanner.py
 COPY backend/scoring.py /app/scoring.py
 COPY backend/score_defaults.json /app/score_defaults.json
+COPY backend/recommendations.py /app/recommendations.py
+COPY backend/recommendations_rules.json /app/recommendations_rules.json
 COPY backend/inventory_helpers.py /app/inventory_helpers.py
 COPY backend/nfo.py /app/nfo.py
 COPY docker/entrypoint.sh /app/entrypoint.sh

@@ -40,10 +40,29 @@
     fmtSize: null,
     escH: null,
     MMLLogic: null,
+    renderStats: null,
+    applyStatsFilter: null,
+    isRecommendationsEnabled: null,
+    visibleRecommendations: null,
+    renderRecommendationFilterButtons: null,
+    recPriorityLabel: null,
+    recTypeLabel: null,
+    recMedia: null,
+    recScore: null,
+    recSizeBytes: null,
+    recommendationPriorityFilters: null,
+    recommendationTypeFilters: null,
+    activeFolders: null,
+    getStatsScoreRangeState: null,
+    updateGlobalResetButtons: null,
   };
-  const STATS_SUBTABS = ['general', 'technical', 'evolution'];
+  const STATS_SUBTABS = ['general', 'technical', 'evolution', 'recommendations'];
+  const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
+  const RECOMMENDATION_TYPES = ['quality', 'space', 'languages', 'series', 'data'];
   const STATS_GENRE_OTHERS_KEY = '__genre_others__';
   let activeStatsSubtab = 'general';
+  let recommendationCountBucketFilter = null;
+  let recommendationScoreBucketFilter = null;
 
   function getDep(name) {
     return deps[name] !== null && deps[name] !== undefined ? deps[name] : window[name];
@@ -82,6 +101,74 @@
       if (tabsHost?.contains(e.target)) setStatsSubtab(e.target);
     });
 
+    document.addEventListener('click', (e) => {
+      const resetTarget = e.target.closest?.('[data-stats-rec-reset]');
+      if (resetTarget) {
+        const statsHost = document.getElementById('statsContent');
+        if (statsHost?.contains(resetTarget)) {
+          resetRecommendationStatsFilters();
+        }
+        return;
+      }
+
+      const target = e.target.closest?.('[data-stats-filter-kind]');
+      if (!target) return;
+      const statsHost = document.getElementById('statsContent');
+      if (!statsHost?.contains(target)) return;
+      const kind = target.dataset.statsFilterKind;
+      const value = target.dataset.statsFilterValue;
+      if (!kind || value === undefined) return;
+      if (kind === 'recommendationCountBucket') {
+        recommendationCountBucketFilter = recommendationCountBucketFilter === value ? null : value;
+        renderStatsPanel();
+        syncRecommendationStatsSummary();
+        updateResetButtons();
+        return;
+      }
+      if (kind === 'recommendationScoreBucket') {
+        recommendationScoreBucketFilter = recommendationScoreBucketFilter === value ? null : value;
+        renderStatsPanel();
+        syncRecommendationStatsSummary();
+        updateResetButtons();
+        return;
+      }
+      const applyStatsFilter = getDep('applyStatsFilter');
+      if (typeof applyStatsFilter !== 'function') return;
+      applyStatsFilter(kind, value, {
+        min: target.dataset.statsFilterMin,
+        max: target.dataset.statsFilterMax,
+      });
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const target = e.target.closest?.('[data-stats-filter-kind]');
+      if (!target) return;
+      const statsHost = document.getElementById('statsContent');
+      if (!statsHost?.contains(target)) return;
+      e.preventDefault();
+      target.click();
+    });
+
+  }
+
+  function updateResetButtons() {
+    const update = getDep('updateGlobalResetButtons');
+    if (typeof update === 'function') update();
+  }
+
+  function hasActiveRecommendationStatsFilters() {
+    return !!(recommendationCountBucketFilter || recommendationScoreBucketFilter);
+  }
+
+  function resetRecommendationStatsFilters(options = {}) {
+    const changed = hasActiveRecommendationStatsFilters();
+    recommendationCountBucketFilter = null;
+    recommendationScoreBucketFilter = null;
+    if (changed && options.render !== false) renderStatsPanel();
+    if (changed) syncRecommendationStatsSummary();
+    updateResetButtons();
+    return changed;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -147,7 +234,7 @@
     // ── Audio languages ──────────────────────────────────────
     const byAudioLangCount = {}, byAudioLangSize = {};
     items.forEach(i => {
-      const k = getDep('getAudioLanguageSimpleDisplay')(getDep('getAudioLanguageSimple')(i));
+      const k = getDep('getAudioLanguageSimple')(i);
       byAudioLangCount[k] = (byAudioLangCount[k] || 0) + 1;
       byAudioLangSize[k]  = (byAudioLangSize[k]  || 0) + (i.size_b || 0);
     });
@@ -327,6 +414,58 @@
   //  RENDER PRIMITIVES — pure SVG/HTML generators
   // ══════════════════════════════════════════════════════════
 
+  function isStatsOtherValue(key) {
+    return key === STATS_GENRE_OTHERS_KEY
+      || key === getDep('PROVIDER_OTHERS_KEY')
+      || key === getDep('t')('stats.others');
+  }
+
+  function isStatsFilterActive(kind, key, extra = {}) {
+    const value = String(key);
+    if (kind === 'recommendationPriority') {
+      return !!getDep('recommendationPriorityFilters')?.has(value);
+    }
+    if (kind === 'recommendationType') {
+      return !!getDep('recommendationTypeFilters')?.has(value);
+    }
+    if (kind === 'recommendationCountBucket') {
+      return recommendationCountBucketFilter === value;
+    }
+    if (kind === 'recommendationScoreBucket') {
+      return recommendationScoreBucketFilter === value;
+    }
+    if (kind === 'folder') {
+      return !!getDep('activeFolders')?.has(value);
+    }
+    if (kind === 'scoreRange') {
+      const getState = getDep('getStatsScoreRangeState');
+      const state = typeof getState === 'function' ? getState() : null;
+      const min = Number(extra.min);
+      const max = Number(extra.max);
+      return !!state
+        && Number.isFinite(min)
+        && Number.isFinite(max)
+        && state.qualityExclude === false
+        && state.includeNoScore === false
+        && Number(state.scoreMin) === min
+        && Number(state.scoreMax) === max;
+    }
+    return false;
+  }
+
+  function statsFilterAttrs(kind, key, label, extra = {}, className = 'stats-clickable') {
+    if (!kind || key === undefined || key === null || isStatsOtherValue(key)) return '';
+    const escH = getDep('escH');
+    const activeClass = isStatsFilterActive(kind, key, extra) ? ' active' : '';
+    let attrs = ' class="'+escH(className + activeClass)+'" role="button" tabindex="0"'
+      + ' data-stats-filter-kind="'+escH(kind)+'"'
+      + ' data-stats-filter-value="'+escH(String(key))+'"'
+      + ' title="'+escH(getDep('t')('stats.filter_on', { value: label }))+'"';
+    if (extra.min !== undefined) attrs += ' data-stats-filter-min="'+escH(String(extra.min))+'"';
+    if (extra.max !== undefined) attrs += ' data-stats-filter-max="'+escH(String(extra.max))+'"';
+    return attrs;
+  }
+
   function makePie(entries, colorFn, valFn, labelFn, fmtFn, options = {}) {
     const total = entries.reduce((s,[,v]) => s+valFn(v), 0);
     if (!total) return '';
@@ -347,10 +486,12 @@
       const x2=CX+R*Math.cos(a2), y2=CY+R*Math.sin(a2);
       const large = frac > 0.5 ? 1 : 0;
       const col   = colorFn(k, idx);
+      const label = labelFn(k);
+      const attrs = statsFilterAttrs(options.filterKind, k, label);
       if (frac > 0.999) {
-        slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="'+col+'"/>';
+        slices += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="'+col+'"'+attrs+'><title>'+getDep('escH')(label)+' — '+formatValue(val)+' ('+formatPercent(val)+')</title></circle>';
       } else {
-        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"><title>'+getDep('escH')(labelFn(k))+' — '+formatValue(val)+' ('+formatPercent(val)+')</title></path>';
+        slices += '<path d="M'+CX+','+CY+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+col+'"'+attrs+'><title>'+getDep('escH')(label)+' — '+formatValue(val)+' ('+formatPercent(val)+')</title></path>';
       }
       angle = a2;
     });
@@ -360,9 +501,11 @@
     const svg    = '<svg viewBox="0 0 '+SIZE+' '+SIZE+'" width="'+SIZE+'" height="'+SIZE+'" style="flex-shrink:0">'+slices+'</svg>';
     const legend = '<div class="pie-legend">'+entries.slice(0,12).map(([k,v],idx) => {
       const val=valFn(v);
-      return '<div class="pie-leg-row">'
+      const label = labelFn(k);
+      const rowAttrs = statsFilterAttrs(options.filterKind, k, label, {}, 'pie-leg-row stats-clickable') || ' class="pie-leg-row"';
+      return '<div'+rowAttrs+'>'
         +'<div class="pie-leg-dot" style="background:'+colorFn(k,idx)+'"></div>'
-        +'<div class="pie-leg-label" title="'+getDep('escH')(labelFn(k))+'">'+getDep('escH')(labelFn(k))+'</div>'
+        +'<div class="pie-leg-label" title="'+getDep('escH')(label)+'">'+getDep('escH')(label)+'</div>'
         +'<div class="pie-leg-val">'+formatValue(val)+'</div>'
         +'<div class="pie-leg-pct">'+formatPercent(val)+'</div>'
         +'</div>';
@@ -426,8 +569,8 @@
 
   function switchablePie(id, title, sizeEntries, countEntries, colorFn, labelFn = k=>k, defaultUnit = 'size', options = {}) {
     const showCount = defaultUnit === 'count';
-    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'), options.size || {});
-    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v), options.count || {});
+    const pieSize   = makePie(sizeEntries,  colorFn, v=>v, k=>labelFn(k), getDep('fmtSize'), { ...(options.size || {}), filterKind: options.filterKind });
+    const pieCount  = makePie(countEntries, colorFn, v=>v, k=>labelFn(k), v=>String(v), { ...(options.count || {}), filterKind: options.filterKind });
     return '<div class="stats-block">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
         +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+title+'</div>'
@@ -441,7 +584,7 @@
       +'</div>';
   }
 
-  function makeHorizontalBars(entries, labelFn, valueFormatter, percentBase, colorFn) {
+  function makeHorizontalBars(entries, labelFn, valueFormatter, percentBase, colorFn, options = {}) {
     if (!entries.length) return '';
     const maxValue = Math.max(...entries.map(([, value]) => Number(value) || 0), 0);
     if (!maxValue) return '';
@@ -450,8 +593,12 @@
         const numericValue = Number(value) || 0;
         const width = maxValue > 0 ? (numericValue / maxValue) * 100 : 0;
         const percent = percentBase > 0 ? Math.round((numericValue / percentBase) * 100) + ' %' : '0 %';
-        return '<div class="hbar-item">'
-          +'<div class="hbar-label" title="'+getDep('escH')(labelFn(key))+'">'+getDep('escH')(labelFn(key))+'</div>'
+        const label = labelFn(key);
+        const extra = typeof options.extraForKey === 'function' ? options.extraForKey(key) : {};
+        const filterKind = typeof options.filterKindForKey === 'function' ? options.filterKindForKey(key) : options.filterKind;
+        const rowAttrs = statsFilterAttrs(filterKind, key, label, extra, 'hbar-item stats-clickable') || ' class="hbar-item"';
+        return '<div'+rowAttrs+'>'
+          +'<div class="hbar-label" title="'+getDep('escH')(label)+'">'+getDep('escH')(label)+'</div>'
           +'<div class="hbar-track"><div class="hbar-fill" style="width:'+width.toFixed(2)+'%;background:'+colorFn(key, index)+'"></div></div>'
           +'<div class="hbar-val">'+valueFormatter(numericValue)+' <span class="stat-row-sub">('+percent+')</span></div>'
           +'</div>';
@@ -472,7 +619,7 @@
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">'
         +'<div class="stats-block-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">'+getDep('t')('stats.genres_chart_title')+'</div>'
       +'</div>'
-      +makeHorizontalBars(genreData.entriesCount, getGenreLabel, valueFormatter, Number(genreData.referenceCount || 0), colorFn)
+      +makeHorizontalBars(genreData.entriesCount, getGenreLabel, valueFormatter, Number(genreData.referenceCount || 0), colorFn, { filterKind: 'genre' })
       +'</div>';
   }
 
@@ -525,13 +672,282 @@
       +makeCurve(curveKeys, sizeVals, '#ef4444', 'gradSize', getDep('fmtSize'), getDep('fmtSize'));
   }
 
+  function recommendationStatsEnabled() {
+    const fn = getDep('isRecommendationsEnabled');
+    return typeof fn === 'function' && fn();
+  }
+
+  function recommendationPriorityColor(priority) {
+    if (priority === 'high') return 'var(--priority-high-bg)';
+    if (priority === 'medium') return 'var(--priority-medium-bg)';
+    if (priority === 'low') return 'var(--priority-low-bg)';
+    return '#64748b';
+  }
+
+  function recommendationTypeColor(type, idx) {
+    const colors = {
+      quality: '#7c6aff',
+      space: '#16a34a',
+      languages: '#0ea5e9',
+      series: '#f97316',
+      data: '#64748b',
+    };
+    return colors[type] || getDep('PALETTE')[idx % getDep('PALETTE').length];
+  }
+
+  function scoreBucket(score) {
+    if (score === '' || score === null || score === undefined) return 'unknown';
+    const n = Number(score);
+    if (!Number.isFinite(n)) return 'unknown';
+    if (n <= 20) return '0-20';
+    if (n <= 40) return '21-40';
+    if (n <= 60) return '41-60';
+    if (n <= 80) return '61-80';
+    return '81-100';
+  }
+
+  function scoreBucketRange(bucket) {
+    const ranges = {
+      '0-20': { min: 0, max: 20 },
+      '21-40': { min: 21, max: 40 },
+      '41-60': { min: 41, max: 60 },
+      '61-80': { min: 61, max: 80 },
+      '81-100': { min: 81, max: 100 },
+    };
+    return ranges[bucket] || {};
+  }
+
+  function recommendationCountBucket(count) {
+    if (count <= 0) return '0';
+    if (count === 1) return '1';
+    if (count === 2) return '2';
+    return '3plus';
+  }
+
+  function recCountBucketLabel(bucket) {
+    return getDep('t')('stats.recommendations_per_media_' + bucket);
+  }
+
+  function increment(map, key, by = 1) {
+    map[key] = (map[key] || 0) + by;
+  }
+
+  function makeStatsBlock(title, body) {
+    return '<div class="stats-block"><div class="stats-block-title">'+getDep('escH')(title)+'</div>'+body+'</div>';
+  }
+
+  function makeRecommendationPie(title, entries, colorFn, labelFn, filterKind) {
+    if (!entries.length) return '';
+    return makeStatsBlock(title, makePie(entries, colorFn, v=>v, labelFn, v=>String(v), { filterKind }));
+  }
+
+  function makeRecommendationHBar(title, entries, labelFn, colorFn, options = {}) {
+    if (!entries.length) return '';
+    const total = Number(options.percentBase || entries.reduce((sum, [, value]) => sum + (Number(value) || 0), 0));
+    return makeStatsBlock(title, makeHorizontalBars(entries, labelFn, v=>String(v), total, colorFn, options));
+  }
+
+  function makeFolderImpactBars(title, entries) {
+    if (!entries.length) return '';
+    const colorFn = (key, index) => getDep('PALETTE')[index % getDep('PALETTE').length];
+    const body = '<div class="hbar-list">'
+      + entries.map(([folder, info], index) => {
+        const pct = Number(info.percent) || 0;
+        const rowAttrs = statsFilterAttrs('folder', folder, folder, {}, 'hbar-item stats-clickable') || ' class="hbar-item"';
+        return '<div'+rowAttrs+'>'
+          + '<div class="hbar-label" title="'+getDep('escH')(folder)+'">'+getDep('escH')(folder)+'</div>'
+          + '<div class="hbar-track"><div class="hbar-fill" style="width:'+pct.toFixed(2)+'%;background:'+colorFn(folder, index)+'"></div></div>'
+          + '<div class="hbar-val">'+Math.round(pct)+'% <span class="stat-row-sub">('+info.withRecommendations+'/'+info.total+')</span></div>'
+          + '</div>';
+      }).join('')
+      + '</div>';
+    return makeStatsBlock(title, body);
+  }
+
+  function makeScoreBucketBars(title, entries, percentBase) {
+    return makeRecommendationHBar(
+      title,
+      entries,
+      k => k === 'unknown' ? getDep('t')('filters.unknown') : k,
+      (k, i) => getDep('PALETTE')[i % getDep('PALETTE').length],
+      {
+        percentBase,
+        filterKindForKey: k => k === 'unknown' ? 'recommendationScoreBucket' : 'scoreRange',
+        extraForKey: scoreBucketRange,
+      }
+    );
+  }
+
+  function buildRecommendationStatsData() {
+    const visibleRecommendations = getDep('visibleRecommendations');
+    const filterItems = getDep('filterItems');
+    const allItems = getDep('allItems') || [];
+    const baseRecs = typeof visibleRecommendations === 'function' ? visibleRecommendations() : [];
+    let visibleMedia = typeof filterItems === 'function' ? filterItems() : allItems;
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const recMedia = getDep('recMedia');
+    const recScore = getDep('recScore');
+    const recSizeBytes = getDep('recSizeBytes');
+    const baseRecCountByMedia = {};
+    baseRecs.forEach((rec) => increment(baseRecCountByMedia, String(rec?.media_ref?.id || '')));
+
+    if (recommendationCountBucketFilter) {
+      visibleMedia = visibleMedia.filter((media) => (
+        recommendationCountBucket(baseRecCountByMedia[String(media.id || '')] || 0) === recommendationCountBucketFilter
+      ));
+    }
+    if (recommendationScoreBucketFilter) {
+      visibleMedia = visibleMedia.filter((media) => (
+        scoreBucket(typeof recScore === 'function' ? recScore(media) : media?.quality?.score) === recommendationScoreBucketFilter
+      ));
+    }
+    const visibleMediaIds = new Set(visibleMedia.map((media) => String(media.id || '')));
+    const recs = baseRecs.filter((rec) => visibleMediaIds.has(String(rec?.media_ref?.id || '')));
+
+    const byPriority = {}, byType = {}, byFolder = {}, byScore = {};
+    const recCountByMedia = {};
+    const folderMediaTotals = {};
+    const folderMediaWithRecommendations = {};
+    const spaceMediaIds = new Set();
+
+    recs.forEach((rec) => {
+      const media = typeof recMedia === 'function' ? recMedia(rec, mediaById) : mediaById.get(String(rec?.media_ref?.id || '')) || {};
+      const mid = String(rec?.media_ref?.id || '');
+      const folder = media.category || media.group || '?';
+      increment(byPriority, rec.priority || 'medium');
+      increment(byType, rec.recommendation_type || 'data');
+      increment(byFolder, folder);
+      increment(recCountByMedia, mid);
+      increment(byScore, scoreBucket(typeof recScore === 'function' ? recScore(media) : media?.quality?.score));
+      if (!folderMediaWithRecommendations[folder]) folderMediaWithRecommendations[folder] = new Set();
+      folderMediaWithRecommendations[folder].add(mid);
+      if (rec.recommendation_type === 'space') spaceMediaIds.add(mid);
+    });
+
+    const perMediaBuckets = { '0': 0, '1': 0, '2': 0, '3plus': 0 };
+    visibleMedia.forEach((media) => {
+      increment(folderMediaTotals, media.category || media.group || '?');
+      const bucket = recommendationCountBucket(recCountByMedia[String(media.id || '')] || 0);
+      perMediaBuckets[bucket] += 1;
+    });
+
+    const folderImpact = Object.entries(folderMediaTotals).map(([folder, total]) => {
+      const withRecommendations = folderMediaWithRecommendations[folder]?.size || 0;
+      return [folder, {
+        total,
+        withRecommendations,
+        percent: total > 0 ? (withRecommendations / total) * 100 : 0,
+      }];
+    }).sort((a, b) => b[1].percent - a[1].percent || b[1].withRecommendations - a[1].withRecommendations).slice(0, 10);
+
+    const spaceSizeBytes = [...spaceMediaIds].reduce((sum, mid) => {
+      const media = mediaById.get(String(mid)) || {};
+      return sum + (typeof recSizeBytes === 'function' ? recSizeBytes(media) : Number(media.size_b || 0));
+    }, 0);
+
+    return {
+      recs,
+      visibleMedia,
+      byPriority,
+      byType,
+      byFolder,
+      byScore,
+      perMediaBuckets,
+      folderImpact,
+      spaceSizeBytes,
+      spaceMediaCount: spaceMediaIds.size,
+    };
+  }
+
+  function getRecommendationStatsVisibleMedia() {
+    return buildRecommendationStatsData().visibleMedia;
+  }
+
+  function syncRecommendationStatsSummary() {
+    const renderStats = getDep('renderStats');
+    if (typeof renderStats !== 'function') return;
+    if (activeStatsSubtab === 'recommendations' && hasActiveRecommendationStatsFilters()) {
+      renderStats(getRecommendationStatsVisibleMedia());
+      return;
+    }
+    const filterItems = getDep('filterItems');
+    const allItems = getDep('allItems') || [];
+    renderStats(typeof filterItems === 'function' ? filterItems() : allItems);
+  }
+
+  function recommendationStatsFilters() {
+    const renderButtons = getDep('renderRecommendationFilterButtons');
+    if (typeof renderButtons !== 'function') return '';
+    const priorityLabel = getDep('recPriorityLabel');
+    const typeLabel = getDep('recTypeLabel');
+    const hasLocalFilters = !!(recommendationCountBucketFilter || recommendationScoreBucketFilter);
+    return '<div class="rec-filters stats-rec-filters'+(hasLocalFilters ? ' has-local-reset' : '')+'">'
+      + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + renderButtons(RECOMMENDATION_PRIORITIES, getDep('recommendationPriorityFilters'), 'toggleRecommendationPriorityFilter', priorityLabel, 'rec-priority-filter')
+      + '</div></div>'
+      + '<div class="rec-filter-group rec-filter-type"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + renderButtons(RECOMMENDATION_TYPES, getDep('recommendationTypeFilters'), 'toggleRecommendationTypeFilter', typeLabel, 'provider-pill')
+      + '</div></div>'
+      + (hasLocalFilters
+        ? '<div class="rec-filter-group stats-local-reset"><div class="rec-filter-label">&nbsp;</div><div class="rec-filter-row"><button type="button" class="provider-pill active" data-stats-rec-reset="1">'+getDep('escH')(getDep('t')('stats.recommendations_reset_local'))+'</button></div></div>'
+        : '')
+      + '</div>';
+  }
+
+  function buildRecommendationsStatsTab() {
+    const data = buildRecommendationStatsData();
+    const t = getDep('t');
+    const escH = getDep('escH');
+    const fmtSize = getDep('fmtSize');
+    const recPriorityLabel = getDep('recPriorityLabel');
+    const recTypeLabel = getDep('recTypeLabel');
+    const filters = recommendationStatsFilters();
+    if (!data.recs.length && !data.visibleMedia.length) {
+      return filters + '<div class="empty rec-empty"><p>'+t('stats.recommendations_empty')+'</p></div>';
+    }
+
+    const priorityEntries = RECOMMENDATION_PRIORITIES.map((key) => [key, data.byPriority[key] || 0]).filter(([, value]) => value > 0);
+    const typeEntries = RECOMMENDATION_TYPES
+      .map((key) => [key, data.byType[key] || 0])
+      .filter(([, value]) => value > 0)
+      .sort((a, b) => b[1] - a[1]);
+    const folderEntries = Object.entries(data.byFolder).sort((a,b) => b[1]-a[1]).slice(0, 10);
+    const perMediaEntries = ['0', '1', '2', '3plus'].map((key) => [key, data.perMediaBuckets[key] || 0]);
+    const scoreEntries = ['0-20', '21-40', '41-60', '61-80', '81-100', 'unknown'].map((key) => [key, data.byScore[key] || 0]).filter(([, value]) => value > 0);
+
+    const spaceKpi = '<div class="stat-kpi-grid">'
+      + '<div class="stat-kpi"><div class="stat-kpi-label">'+escH(t('table.size'))+'</div><div class="stat-kpi-val">'+escH(fmtSize(data.spaceSizeBytes))+'</div><div class="stat-kpi-sub">'+escH(t('stats.recommendations_space_size_sub'))+'</div></div>'
+      + '<div class="stat-kpi"><div class="stat-kpi-label">'+escH(t('stats.media_count'))+'</div><div class="stat-kpi-val">'+data.spaceMediaCount+'</div></div>'
+      + '</div>';
+
+    return filters
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_priority_distribution'), priorityEntries, recommendationPriorityColor, recPriorityLabel, 'recommendationPriority')+'</div>'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_type_distribution'), typeEntries, recommendationTypeColor, recTypeLabel, 'recommendationType')+'</div>'
+      + '</div>'
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationHBar(t('stats.recommendations_folder_distribution'), folderEntries, k=>k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { filterKind: 'folder', percentBase: data.recs.length })+'</div>'
+        + '<div>'+makeFolderImpactBars(t('stats.recommendations_media_by_folder'), data.folderImpact)+'</div>'
+      + '</div>'
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_per_media'), perMediaEntries, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], recCountBucketLabel, 'recommendationCountBucket')+'</div>'
+        + '<div>'+makeStatsBlock(t('stats.recommendations_space_size'), spaceKpi)+'</div>'
+      + '</div>'
+      + '<div class="stats-row">'
+        + '<div>'+makeScoreBucketBars(t('stats.recommendations_score_distribution'), scoreEntries, data.recs.length)+'</div>'
+        + '<div></div>'
+      + '</div>';
+  }
+
   function renderQualityChart(quality) {
     if (!quality.hasData || !quality.scoredCount) return '';
     let html = '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.quality_score')+'</div>';
     quality.tranches.forEach((tr, i) => {
       const count = quality.counts[i];
       const pct   = quality.maxCount ? Math.round(100*count/quality.maxCount) : 0;
-      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"'
+        + statsFilterAttrs('scoreRange', tr.key, tr.label, { min: tr.min, max: tr.max })
+        + '>'
         +'<div style="width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">'+getDep('escH')(tr.label)+'</div>'
         +'<div style="flex:1;height:6px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+tr.color+'"></div></div>'
         +'<div style="font-size:11px;color:var(--muted);width:30px;text-align:right">'+count+'</div>'
@@ -563,19 +979,22 @@
     const audioChannelsColorFn = (k,idx) => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : getDep('PALETTE')[idx%getDep('PALETTE').length];
     const resColorFn          = (k)     => k === window.MMLConstants.PROVIDER_NONE_KEY ? '#64748b' : (C.COLORS.RESOLUTION[k] || '#888');
     const provColors          = C.COLORS.PROVIDER;
-    const noProviderLabel     = getDep('t')('filters.no_provider');
-    const provColorFnWithNone = (k,i)  => k===noProviderLabel ? '#555577' : provColors[i%provColors.length];
+    const noProviderKey       = window.MMLConstants.PROVIDER_NONE_KEY;
+    const provColorFnWithNone = (k,i)  => k===noProviderKey ? '#555577' : provColors[i%provColors.length];
 
     // ── Provider entries with size ───────────────────────────
     const { entries: provEntries, bySize: byProvSize, noneCount, noneSize, referenceCount: provReferenceCount, referenceSize: provReferenceSize } = data.providers;
     const provCountEntries = [
       ...provEntries.map(([k,v]) => [k, v.count]),
-      ...(noneCount > 0 ? [[noProviderLabel, noneCount]] : []),
+      ...(noneCount > 0 ? [[noProviderKey, noneCount]] : []),
     ];
     const provSizeEntries = [
       ...provEntries.map(([k]) => [k, byProvSize[k]||0]),
-      ...(noneSize  > 0 ? [[noProviderLabel, noneSize]]  : []),
+      ...(noneSize  > 0 ? [[noProviderKey, noneSize]]  : []),
     ];
+    const providerLabelFn = (key) => key === noProviderKey
+      ? getDep('getFilterDisplayValue')(key, 'filters.no_provider')
+      : getDep('_providerGroupLabel')(key);
     const audioChannelsLabelFn = (key) => getDep('getFilterDisplayValue')(key, 'filters.none');
 
     // ── Block HTML ───────────────────────────────────────────
@@ -586,7 +1005,7 @@
           provSizeEntries,
           provCountEntries,
           provColorFnWithNone,
-          getDep('_providerGroupLabel'),
+          providerLabelFn,
           'count',
           {
             size: {
@@ -596,6 +1015,7 @@
               percentBase: Number(provReferenceCount || 0),
               valueFormatter: (value) => String(value),
             },
+            filterKind: 'provider',
           }
         )
       : '';
@@ -633,7 +1053,7 @@
     // ── Final layout ─────────────────────────────────────────
     const generalTabHtml = ''
       + '<div class="stats-row">'
-          + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size') : '')+'</div>'
+          + '<div>'+(data.category.entriesSize.length ? switchablePie('category', getDep('t')('stats.categories'), data.category.entriesSize, data.category.entriesCount, categoryColorFn, k=>k, 'size', { filterKind: 'folder' }) : '')+'</div>'
           + '<div>'+renderGenresBlock(data.genres)+'</div>'
         + '</div>'
       + '<div class="stats-row">'
@@ -644,31 +1064,37 @@
 
     const technicalTabHtml = ''
       + '<div class="stats-row">'
-          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
-          + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count') : '')+'</div>'
+          + '<div>'+(data.resolution.entriesSize.length ? switchablePie('res', getDep('t')('stats.resolution'), data.resolution.entriesSize, data.resolution.entriesCount, resColorFn, k=>getDep('getFilterDisplayValue')(k), 'count', { filterKind: 'resolution' }) : '')+'</div>'
+          + '<div>'+(data.codec.entriesSize.length      ? switchablePie('codec', getDep('t')('stats.codec'), data.codec.entriesSize, data.codec.entriesCount, codecColorFn, k=>getDep('getFilterDisplayValue')(k), 'count', { filterKind: 'codec' }) : '')+'</div>'
         + '</div>'
       + '<div class="stats-row">'
-          + '<div>'+(data.audioCodec.entriesSize.length ? switchablePie('audioCodec', getDep('t')('stats.audio_codec_chart_title'), data.audioCodec.entriesSize, data.audioCodec.entriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count') : '')+'</div>'
-          + '<div>'+(data.audioLang.hasData             ? switchablePie('audioLang',  getDep('t')('stats.audio_languages_chart_title'), data.audioLang.entriesSize, data.audioLang.entriesCount, audioLangColorFn, k=>k, 'count') : '')+'</div>'
+          + '<div>'+(data.audioCodec.entriesSize.length ? switchablePie('audioCodec', getDep('t')('stats.audio_codec_chart_title'), data.audioCodec.entriesSize, data.audioCodec.entriesCount, audioCodecColorFn, getDep('getAudioCodecDisplay'), 'count', { filterKind: 'audioCodec' }) : '')+'</div>'
+          + '<div>'+(data.audioLang.hasData             ? switchablePie('audioLang',  getDep('t')('stats.audio_languages_chart_title'), data.audioLang.entriesSize, data.audioLang.entriesCount, audioLangColorFn, getDep('getAudioLanguageSimpleDisplay'), 'count', { filterKind: 'audioLanguage' }) : '')+'</div>'
         + '</div>'
       + '<div class="stats-row">'
-          + '<div>'+(data.audioChannels.hasData         ? switchablePie('audioChannels', getDep('t')('stats.audio_channels_chart_title'), data.audioChannels.entriesSize, data.audioChannels.entriesCount, audioChannelsColorFn, audioChannelsLabelFn, 'count') : '')+'</div>'
+          + '<div>'+(data.audioChannels.hasData         ? switchablePie('audioChannels', getDep('t')('stats.audio_channels_chart_title'), data.audioChannels.entriesSize, data.audioChannels.entriesCount, audioChannelsColorFn, audioChannelsLabelFn, 'count', { filterKind: 'audioChannels' }) : '')+'</div>'
           + '<div></div>'
         + '</div>';
 
+    const recommendationsAvailable = recommendationStatsEnabled();
+    if (!recommendationsAvailable && activeStatsSubtab === 'recommendations') activeStatsSubtab = 'general';
     const evolutionTabHtml = curveHtml;
+    const recommendationsTabHtml = recommendationsAvailable ? buildRecommendationsStatsTab() : '';
     const activeGeneral = activeStatsSubtab === 'general' ? ' active' : '';
     const activeTechnical = activeStatsSubtab === 'technical' ? ' active' : '';
     const activeEvolution = activeStatsSubtab === 'evolution' ? ' active' : '';
+    const activeRecommendations = activeStatsSubtab === 'recommendations' ? ' active' : '';
     return ''
       + '<div id="statsSubtabs" class="stats-subtabs">'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeGeneral+'" data-stats-subtab="general">'+getDep('t')('stats.subtab_general')+'</button>'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeTechnical+'" data-stats-subtab="technical">'+getDep('t')('stats.subtab_technical')+'</button>'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeEvolution+'" data-stats-subtab="evolution">'+getDep('t')('stats.subtab_evolution')+'</button>'
+        + (recommendationsAvailable ? '<button class="pie-switch-btn stats-subtab-btn'+activeRecommendations+'" data-stats-subtab="recommendations">'+getDep('t')('stats.subtab_recommendations')+'</button>' : '')
       + '</div>'
       + '<div id="statsSubtab-general" class="stats-subtab-content'+activeGeneral+'">'+generalTabHtml+'</div>'
       + '<div id="statsSubtab-technical" class="stats-subtab-content'+activeTechnical+'">'+technicalTabHtml+'</div>'
-      + '<div id="statsSubtab-evolution" class="stats-subtab-content'+activeEvolution+'">'+evolutionTabHtml+'</div>';
+      + '<div id="statsSubtab-evolution" class="stats-subtab-content'+activeEvolution+'">'+evolutionTabHtml+'</div>'
+      + (recommendationsAvailable ? '<div id="statsSubtab-recommendations" class="stats-subtab-content'+activeRecommendations+'">'+recommendationsTabHtml+'</div>' : '');
   }
 
   // ── STATS PANEL ENTRY POINT ───────────────────────────────
@@ -686,6 +1112,9 @@
     const items       = filterItems ? filterItems() : allItems;
     const el = document.getElementById('statsContent');
     if (el) el.innerHTML = buildStats(items);
+    if (activeStatsSubtab === 'recommendations' && hasActiveRecommendationStatsFilters()) {
+      syncRecommendationStatsSummary();
+    }
   }
 
   // ── INTERACTIONS ──────────────────────────────────────────
@@ -729,10 +1158,17 @@
       const section = document.getElementById('statsSubtab-' + tab);
       if (section) section.classList.toggle('active', tab === next);
     });
+    syncRecommendationStatsSummary();
   }
 
   // ── EXPORT API ────────────────────────────────────────────
-  window.MMLStats = { renderStatsPanel, init };
+  window.MMLStats = {
+    renderStatsPanel,
+    init,
+    resetRecommendationStatsFilters,
+    hasActiveRecommendationStatsFilters,
+    getRecommendationStatsVisibleMedia,
+  };
 
   initializeEventHandlers();
 })();

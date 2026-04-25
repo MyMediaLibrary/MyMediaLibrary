@@ -50,6 +50,7 @@
     "prev": "← Back",
     "library": "📚 Library",
     "stats": "📊 Statistics",
+    "recommendations": "💡 Recommendations",
     "scan": "Scan"
   },
   "filters": {
@@ -319,7 +320,9 @@
       "export_json_btn": "Download export",
       "export_unavailable": "Library not loaded: export unavailable.",
       "enable_score": "Enable quality score",
-      "enable_score_hint": "When disabled, score is no longer computed during scan and is removed from sort/filter/stats."
+      "enable_score_hint": "When disabled, score is no longer computed during scan and is removed from sort/filter/stats.",
+      "enable_recommendations": "Enable recommendations",
+      "enable_recommendations_hint": "Requires quality score"
     },
     "env_note": "⚙️ Read-only values are configured via compose.yaml.",
     "github_link": "GitHub project",
@@ -356,6 +359,7 @@
     "audio_codec_chart_title": "Audio codec",
     "audio_languages_chart_title": "Audio languages",
     "others": "Others",
+    "filter_on": "Filter on {value}",
     "providers": "Providers",
     "media_count": "media",
     "providers_overlap_note": "One media item can be available on multiple providers.",
@@ -399,11 +403,85 @@
     "quality_score": "Quality score",
     "genres_chart_title": "Genres",
     "audio_channels_chart_title": "Audio channels",
-    "subtab_general": "General",
-    "subtab_technical": "Technical",
-    "subtab_evolution": "Evolution",
-    "providers_by_group": "Providers by group",
-    "providers_by_category": "Providers by folder"
+        "subtab_general": "General",
+        "subtab_technical": "Technical",
+        "subtab_evolution": "Evolution",
+        "subtab_recommendations": "Recommendations",
+        "recommendations_priority_distribution": "Distribution by priority",
+        "recommendations_type_distribution": "Distribution by type",
+        "recommendations_folder_distribution": "Distribution by folder",
+        "recommendations_media_by_folder": "Media with recommendations by folder",
+        "recommendations_per_media": "Recommendations per media",
+        "recommendations_score_distribution": "Score distribution",
+        "recommendations_space_size": "Size affected by space recommendations",
+        "recommendations_space_size_sub": "affected size",
+        "recommendations_per_media_0": "0 recommendations",
+        "recommendations_per_media_1": "1 recommendation",
+        "recommendations_per_media_2": "2 recommendations",
+        "recommendations_per_media_3plus": "3 recommendations",
+        "recommendations_reset_local": "Reset these filters",
+        "recommendations_empty": "No recommendation data for the current filters.",
+        "providers_by_group": "Providers by group",
+        "providers_by_category": "Providers by folder"
+    },
+  "recommendations": {
+    "empty_run_scan": "No recommendations available. Run a scan.",
+    "empty_filters": "No recommendations for the current filters.",
+    "empty_error": "Unable to load recommendations.",
+    "info_score": "Score {value}",
+    "export_csv": "Export CSV",
+    "sort_by": "Sort by",
+    "kpis": {
+      "total": "Total recommendations",
+      "high": "High priority",
+      "quality": "Quality",
+      "space": "Space saving",
+      "languages": "Languages",
+      "series": "Series",
+      "data": "Data"
+    },
+    "filters": {
+      "type": "Recommendation type",
+      "priority": "Priority"
+    },
+    "sort_options": {
+      "priority_desc": "Priority ↓",
+      "priority_asc": "Priority ↑",
+      "type_desc": "Type ↓",
+      "type_asc": "Type ↑",
+      "title_asc": "Title A → Z",
+      "title_desc": "Title Z → A",
+      "score_desc": "Score ↓",
+      "score_asc": "Score ↑",
+      "size_desc": "Size ↓",
+      "size_asc": "Size ↑",
+      "resolution_desc": "Resolution ↓",
+      "resolution_asc": "Resolution ↑"
+    },
+    "types": {
+      "quality": "Quality",
+      "space": "Space",
+      "languages": "Languages",
+      "series": "Series",
+      "data": "Data"
+    },
+    "priorities": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "table": {
+      "priority": "Priority",
+      "type": "Type",
+      "media": "Media",
+      "info": "Main info",
+      "score": "Score",
+      "size": "Size",
+      "resolution": "Resolution",
+      "audio_channels": "Audio channels",
+      "recommendation": "Recommendation",
+      "action": "Action"
+    }
   },
   "quality_level": {
     "0": "Very low",
@@ -435,6 +513,7 @@
     "settings_short": "Settings",
     "library": "Library",
     "stats": "Stats",
+    "recommendations": "Recos",
     "scan_library": "Scan library",
     "scan_quick_desc": "Quickly detects recent changes.",
     "scan_full_desc": "Reruns a full media library analysis.",

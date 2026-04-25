@@ -20,6 +20,16 @@ class EntrypointRuntimeGuardsTest(unittest.TestCase):
         self.assertNotIn('>> "${LOG_PATH', source)
         self.assertNotIn('>>"${LOG_PATH', source)
 
+    def test_entrypoint_uses_python_scheduler_not_external_crond(self):
+        source = ENTRYPOINT.read_text(encoding="utf-8")
+        self.assertIn('python3 /app/scanner.py --serve &', source)
+        self.assertIn('wait "$SCANSERVER_PID"', source)
+        self.assertNotIn('crond -f', source)
+        self.assertNotIn('scan_cron.sh', source)
+        self.assertNotIn('Cron schedule:', source)
+        self.assertNotIn('CRON_FILE="/etc/crontabs/root"', source)
+        self.assertNotIn('CRON_FILE="/etc/cron.d/mymedialibrary"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

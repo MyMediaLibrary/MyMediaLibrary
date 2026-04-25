@@ -135,6 +135,105 @@ class InventoryFlagCriticalTest(unittest.TestCase):
         self.assertTrue(merged["system"]["inventory_enabled"])
 
 
+class ScheduledScanCronCriticalTest(unittest.TestCase):
+    def test_cron_matches_every_minute_wildcards(self):
+        when = scanner.datetime(2026, 4, 24, 12, 34)
+        self.assertTrue(scanner._cron_matches("* * * * *", when))
+
+    def test_cron_matches_dom_only_when_day_matches(self):
+        first = scanner.datetime(2026, 4, 1, 0, 0)
+        second = scanner.datetime(2026, 4, 2, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 1 * *", first))
+        self.assertFalse(scanner._cron_matches("0 0 1 * *", second))
+
+    def test_cron_matches_dow_only_when_day_matches(self):
+        monday = scanner.datetime(2026, 4, 6, 0, 0)
+        tuesday = scanner.datetime(2026, 4, 7, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 * * 1", monday))
+        self.assertFalse(scanner._cron_matches("0 0 * * 1", tuesday))
+
+    def test_cron_matches_dom_or_dow_when_both_are_constrained(self):
+        first_not_monday = scanner.datetime(2026, 4, 1, 0, 0)
+        monday_not_first = scanner.datetime(2026, 4, 6, 0, 0)
+        neither = scanner.datetime(2026, 4, 7, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 1 * 1", first_not_monday))
+        self.assertTrue(scanner._cron_matches("0 0 1 * 1", monday_not_first))
+        self.assertFalse(scanner._cron_matches("0 0 1 * 1", neither))
+
+    def test_cron_matches_sunday_as_zero_or_seven(self):
+        sunday = scanner.datetime(2026, 4, 5, 0, 0)
+        monday = scanner.datetime(2026, 4, 6, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 * * 0", sunday))
+        self.assertTrue(scanner._cron_matches("0 0 * * 7", sunday))
+        self.assertFalse(scanner._cron_matches("0 0 * * 0", monday))
+
+    def test_default_scan_command_uses_dynamic_pipeline_without_legacy_full_arg(self):
+        cmd = scanner._scanner_cmd("default", origin="cron")
+        self.assertIn("--origin", cmd)
+        self.assertIn("cron", cmd)
+        self.assertNotIn("--full", cmd)
+        self.assertNotIn("--quick", cmd)
+
+    def test_button_and_cron_default_scan_share_phase_planner(self):
+        cfg = {
+            "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+            "seerr": {"enabled": False, "url": ""},
+            "score": {"enabled": True},
+            "system": {"inventory_enabled": False},
+        }
+
+        self.assertEqual(scanner._phase_plan_from_config(cfg, include_phase1=True), [scanner.PHASE_SCAN, scanner.PHASE_SCORE])
+
+    def test_next_cron_run_for_every_minute_has_next_run_time(self):
+        now = scanner.datetime(2026, 4, 24, 12, 34, 10, tzinfo=scanner.ZoneInfo("UTC"))
+        with patch.dict(os.environ, {"TZ": "UTC"}):
+            next_run = scanner._next_cron_run("* * * * *", now)
+        self.assertEqual(next_run.isoformat(timespec="minutes"), "2026-04-24T12:35+00:00")
+
+    def test_sync_user_scan_cron_replaces_single_in_memory_job(self):
+        with patch.dict(os.environ, {"TZ": "UTC"}):
+            self.assertTrue(scanner.sync_user_scan_cron({"system": {"scan_cron": "*/10 * * * *"}}, reason="test"))
+            self.assertEqual(scanner._cron_job["expr"], "*/10 * * * *")
+            first_next = scanner._cron_job["next_run"]
+            self.assertIsNotNone(first_next)
+
+            self.assertTrue(scanner.sync_user_scan_cron({"system": {"scan_cron": "15 2 * * *"}}, reason="test"))
+            self.assertEqual(scanner._cron_job["expr"], "15 2 * * *")
+            self.assertIsNotNone(scanner._cron_job["next_run"])
+
+    def test_scheduled_scan_uses_button_dynamic_phase_pipeline(self):
+        with scanner._srv_lock:
+            previous_status = scanner._srv_state["status"]
+            scanner._srv_state["status"] = "idle"
+        try:
+            with patch.object(scanner, "_is_scan_locked", return_value=False), \
+                 patch.object(scanner, "load_config", return_value={"folders": [{"name": "Movies", "type": "movie", "enabled": True}], "score": {"enabled": True}}), \
+                 patch.object(scanner.threading, "Thread") as thread_cls:
+                scanner._start_scheduled_scan_from_cron()
+                thread_cls.assert_called_once_with(
+                    target=scanner._run_scan_bg,
+                    args=("default", [scanner.PHASE_SCAN, scanner.PHASE_SCORE], None, "cron"),
+                    daemon=True,
+                )
+                thread_cls.return_value.start.assert_called_once()
+        finally:
+            with scanner._srv_lock:
+                scanner._srv_state["status"] = previous_status
+
+    def test_scheduled_scan_skips_when_lock_active(self):
+        with scanner._srv_lock:
+            previous_status = scanner._srv_state["status"]
+            scanner._srv_state["status"] = "idle"
+        try:
+            with patch.object(scanner, "_is_scan_locked", return_value=True), \
+                 patch.object(scanner, "_run_scan_bg") as run_scan_bg:
+                scanner._start_scheduled_scan_from_cron()
+                run_scan_bg.assert_not_called()
+        finally:
+            with scanner._srv_lock:
+                scanner._srv_state["status"] = previous_status
+
+
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):
     def test_default_config_score_flag_is_disabled(self):
         self.assertIs(scanner._DEFAULT_CONFIG["score"]["enabled"], False)
@@ -146,6 +245,20 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         self.assertFalse(scanner._is_score_enabled({"score": {"enabled": False}}))
         self.assertTrue(scanner._is_score_enabled({"system": {"enable_score": True}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": False}}))
+
+    def test_recommendations_require_score_flag(self):
+        cfg = {"score": {"enabled": False}, "recommendations": {"enabled": True}}
+        normalized, changed = scanner.normalize_recommendations_configuration(cfg)
+        self.assertTrue(changed)
+        self.assertFalse(normalized["recommendations"]["enabled"])
+        self.assertFalse(scanner._is_recommendations_enabled(normalized))
+
+        cfg = {
+            "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+            "score": {"enabled": True},
+            "recommendations": {"enabled": True},
+        }
+        self.assertIn(scanner.PHASE_RECOMMENDATIONS, scanner._phase_plan_from_config(cfg, include_phase1=True))
 
     def test_scan_media_item_skips_quality_payload_when_score_is_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

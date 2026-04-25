@@ -476,7 +476,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false, enableRecommendations=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -522,6 +522,10 @@ let allItems=[], categories=[], groups=[];
   let appConfig = {};            // loaded from /api/config
   let libraryPathLabel = '';     // from library.json root field: library_path
   let appVersionInfo = null;     // loaded from /version.json
+  let recommendationsDoc = null;
+  let recommendationTypeFilters = new Set();
+  let recommendationPriorityFilters = new Set();
+  let recommendationSort = { key: 'priority', dir: 'desc' };
 
   function resolveScoreEnabled() {
     const configScoreEnabled = appConfig?.score?.enabled;
@@ -537,6 +541,14 @@ let allItems=[], categories=[], groups=[];
 
   function isScoreEnabled() {
     return enableScore === true;
+  }
+
+  function resolveRecommendationsEnabled() {
+    return isScoreEnabled() && appConfig?.recommendations?.enabled === true;
+  }
+
+  function isRecommendationsEnabled() {
+    return enableRecommendations === true;
   }
 
   function sanitizeScoreState() {
@@ -574,6 +586,23 @@ let allItems=[], categories=[], groups=[];
         sec.innerHTML = '';
       }
     });
+  }
+
+  function applyRecommendationsFeatureVisibility() {
+    const show = isRecommendationsEnabled();
+    ['navRecommendations', 'mnavRecommendations'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+    const controls = document.getElementById('recommendationsControls');
+    if (controls) controls.style.display = show && currentTab === 'recommendations' ? '' : 'none';
+    if (!show) {
+      recommendationsDoc = null;
+      recommendationTypeFilters.clear();
+      recommendationPriorityFilters.clear();
+      if (currentTab === 'recommendations') currentTab = 'library';
+      if (currentMobileTab === 'recommendations') currentMobileTab = 'library';
+    }
   }
 
   function saveState() {
@@ -670,7 +699,7 @@ let allItems=[], categories=[], groups=[];
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
-      if (s.currentTab === 'library' || s.currentTab === 'stats') {
+      if (s.currentTab === 'library' || s.currentTab === 'stats' || (s.currentTab === 'recommendations' && isRecommendationsEnabled())) {
         currentTab = s.currentTab;
       }
       updateGlobalResetButtons();
@@ -828,7 +857,22 @@ let allItems=[], categories=[], groups=[];
         t,
         fmtSize,
         escH,
-        MMLLogic
+        MMLLogic,
+        renderStats,
+        applyStatsFilter,
+        isRecommendationsEnabled,
+        visibleRecommendations,
+        renderRecommendationFilterButtons,
+        recPriorityLabel,
+        recTypeLabel,
+        recMedia,
+        recScore,
+        recSizeBytes,
+        recommendationPriorityFilters,
+        recommendationTypeFilters,
+        activeFolders,
+        getStatsScoreRangeState: () => ({ scoreMin, scoreMax, includeNoScore, qualityExclude }),
+        updateGlobalResetButtons
       });
 
       const d=new Date(data.scanned_at);
@@ -839,7 +883,10 @@ let allItems=[], categories=[], groups=[];
       libraryPathLabel = typeof data.library_path === 'string' ? data.library_path : '';
       if (libraryPathLabel) document.getElementById('brandSub').textContent = libraryPathLabel;
       enableScore = resolveScoreEnabled();
+      enableRecommendations = resolveRecommendationsEnabled();
       applyScoreFeatureVisibility();
+      applyRecommendationsFeatureVisibility();
+      await loadRecommendations();
       renderStorageBar();
       renderFolderFilter();
       renderGenreFilter();
@@ -979,6 +1026,7 @@ let allItems=[], categories=[], groups=[];
       enableSeries     = appConfig.enable_series ?? true;
       enableSeerr = appConfig.seerr?.enabled ?? appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
+      enableRecommendations = resolveRecommendationsEnabled();
 
       // Provider visibility: explicit whitelist from config
       const pv = appConfig.providers_visible;
@@ -999,6 +1047,7 @@ let allItems=[], categories=[], groups=[];
 
       _updateTypeFilterVisibility();
       applyScoreFeatureVisibility();
+      applyRecommendationsFeatureVisibility();
     } catch(e) {
       if (!String(e).includes('401')) console.warn('loadConfig error:', e);
     }
@@ -1020,6 +1069,34 @@ let allItems=[], categories=[], groups=[];
     } catch(e) {
       console.error('saveConfig error:', e);
       throw e;
+    }
+  }
+
+  async function loadRecommendations() {
+    if (!isRecommendationsEnabled()) {
+      recommendationsDoc = null;
+      return;
+    }
+    try {
+      const r = await fetch('/api/recommendations?_=' + Date.now());
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const doc = await r.json();
+      if (doc?.enabled === false) {
+        recommendationsDoc = { enabled: false, generated_at: null, version: doc?.version || 1, items: [], error: null };
+        enableRecommendations = false;
+        applyRecommendationsFeatureVisibility();
+        return;
+      }
+      recommendationsDoc = {
+        enabled: doc?.enabled !== false,
+        generated_at: doc?.generated_at || null,
+        version: doc?.version || 1,
+        items: Array.isArray(doc?.items) ? doc.items : [],
+        error: null,
+      };
+    } catch (e) {
+      console.warn('loadRecommendations error:', e);
+      recommendationsDoc = { enabled: true, generated_at: null, version: 1, items: [], error: true };
     }
   }
 
@@ -1152,8 +1229,11 @@ let allItems=[], categories=[], groups=[];
   });
 
   function hasActiveFilters() {
+    const hasRecommendationFilters = recommendationTypeFilters.size > 0
+      || recommendationPriorityFilters.size > 0
+      || !!window.MMLStats?.hasActiveRecommendationStatsFilters?.();
     if (window.MMLLogic?.hasActiveFilters) {
-      return window.MMLLogic.hasActiveFilters({
+      return hasRecommendationFilters || window.MMLLogic.hasActiveFilters({
         activeType,
         activeGroup,
         activeFolders,
@@ -1199,6 +1279,7 @@ let allItems=[], categories=[], groups=[];
       || audioCodecExclude
       || audioLanguageExclude
       || folderExclude
+      || hasRecommendationFilters
       || getSearchQuery().length > 0;
   }
 
@@ -1241,6 +1322,9 @@ let allItems=[], categories=[], groups=[];
     audioLanguageExclude = false;
     folderExclude = false;
     qualityExclude = false;
+    recommendationTypeFilters.clear();
+    recommendationPriorityFilters.clear();
+    window.MMLStats?.resetRecommendationStatsFilters?.({ render: false });
 
     const searchDesktop = document.getElementById('searchInput');
     if (searchDesktop) searchDesktop.value = '';
@@ -1464,6 +1548,70 @@ let allItems=[], categories=[], groups=[];
   }
   function clearQualityFilter() { activeQualityLevels.clear(); onFilter(); }
   function toggleQualityExclude() { qualityExclude = !qualityExclude; onFilter(); }
+
+  function applyStatsSetToggle(activeSet, key, isExcludeMode) {
+    if (!isExcludeMode && activeSet.has(key)) {
+      activeSet.delete(key);
+    } else {
+      activeSet.add(key);
+    }
+  }
+
+  function applyStatsFilter(kind, value, meta = {}) {
+    const key = normalizeFilterValue(value);
+    if (!key) return;
+    if (kind === 'folder') {
+      applyStatsSetToggle(activeFolders, key, folderExclude);
+      folderExclude = false;
+    } else if (kind === 'genre') {
+      applyStatsSetToggle(activeGenres, key, genreExclude);
+      genreExclude = false;
+    } else if (kind === 'provider') {
+      applyStatsSetToggle(activeProviders, _canonicalProviderFilterKey(key) || key, providerExclude);
+      providerExclude = false;
+    } else if (kind === 'resolution') {
+      applyStatsSetToggle(activeResolutions, key, resolutionExclude);
+      resolutionExclude = false;
+    } else if (kind === 'codec') {
+      applyStatsSetToggle(activeCodecs, key, videoCodecExclude);
+      videoCodecExclude = false;
+    } else if (kind === 'audioCodec') {
+      applyStatsSetToggle(activeAudioCodecs, key, audioCodecExclude);
+      audioCodecExclude = false;
+    } else if (kind === 'audioLanguage') {
+      applyStatsSetToggle(activeAudioLanguages, canonicalAudioLanguageFilterKey(key) || key, audioLanguageExclude);
+      audioLanguageExclude = false;
+    } else if (kind === 'audioChannels') {
+      applyStatsSetToggle(activeAudioChannels, key, audioChannelsExclude);
+      audioChannelsExclude = false;
+    } else if (kind === 'recommendationPriority') {
+      if (recommendationPriorityFilters.has(key)) recommendationPriorityFilters.delete(key);
+      else recommendationPriorityFilters.add(key);
+    } else if (kind === 'recommendationType') {
+      if (recommendationTypeFilters.has(key)) recommendationTypeFilters.delete(key);
+      else recommendationTypeFilters.add(key);
+    } else if (kind === 'scoreRange' && isScoreEnabled()) {
+      const min = Number(meta.min);
+      const max = Number(meta.max);
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      const nextMin = Math.max(0, Math.min(100, Math.min(min, max)));
+      const nextMax = Math.max(0, Math.min(100, Math.max(min, max)));
+      const isActiveIncludeRange = !qualityExclude && scoreMin === nextMin && scoreMax === nextMax && includeNoScore === false;
+      qualityExclude = false;
+      if (isActiveIncludeRange) {
+        scoreMin = 0;
+        scoreMax = 100;
+        includeNoScore = true;
+      } else {
+        scoreMin = nextMin;
+        scoreMax = nextMax;
+        includeNoScore = false;
+      }
+    } else {
+      return;
+    }
+    onFilter();
+  }
 
   function toggleTechnicalFilters(isMobile) {
     if (isMobile) technicalFiltersOpenMobile = !technicalFiltersOpenMobile;
@@ -1787,6 +1935,7 @@ let allItems=[], categories=[], groups=[];
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') window.MMLStats.renderStatsPanel();
+    else if (currentTab==='recommendations') renderRecommendationsPanel();
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
@@ -2047,27 +2196,347 @@ let allItems=[], categories=[], groups=[];
     return applySearch(items, q);
   }
 
+  // ── RECOMMENDATIONS ─────────────────────────────────
+  const RECOMMENDATION_TYPES = ['quality', 'space', 'languages', 'series', 'data'];
+  const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
+
+  function recText(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    const lang = CURRENT_LANG === 'en' ? 'en' : 'fr';
+    return obj[lang] || obj.fr || obj.en || '';
+  }
+
+  function recTypeLabel(type) {
+    return t('recommendations.types.' + type);
+  }
+
+  function recPriorityLabel(priority) {
+    return t('recommendations.priorities.' + priority);
+  }
+
+  function toggleRecommendationTypeFilter(type) {
+    if (recommendationTypeFilters.has(type)) recommendationTypeFilters.delete(type);
+    else recommendationTypeFilters.add(type);
+    if (currentTab === 'recommendations') renderRecommendationsPanel();
+    if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    updateGlobalResetButtons();
+  }
+
+  function toggleRecommendationPriorityFilter(priority) {
+    if (recommendationPriorityFilters.has(priority)) recommendationPriorityFilters.delete(priority);
+    else recommendationPriorityFilters.add(priority);
+    if (currentTab === 'recommendations') renderRecommendationsPanel();
+    if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    updateGlobalResetButtons();
+  }
+
+  function setRecommendationSort(key) {
+    const [sortKey, sortDir] = String(key || 'priority:desc').split(':');
+    recommendationSort = { key: sortKey || 'priority', dir: sortDir === 'asc' ? 'asc' : 'desc' };
+    renderRecommendationsPanel();
+  }
+
+  function visibleRecommendations() {
+    if (!isRecommendationsEnabled() || !recommendationsDoc) return [];
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const visibleMediaIds = new Set(filterItems().map((item) => String(item.id || '')));
+    return (recommendationsDoc.items || []).filter((rec) => {
+      const mid = String(rec?.media_ref?.id || '');
+      if (!mid || !mediaById.has(mid) || !visibleMediaIds.has(mid)) return false;
+      if (recommendationTypeFilters.size && !recommendationTypeFilters.has(rec.recommendation_type)) return false;
+      if (recommendationPriorityFilters.size && !recommendationPriorityFilters.has(rec.priority)) return false;
+      return true;
+    });
+  }
+
+  function recMedia(rec, mediaById) {
+    return mediaById.get(String(rec?.media_ref?.id || '')) || {};
+  }
+
+  function recMediaTitle(rec, media) {
+    return media?.title || rec?.display?.title || '-';
+  }
+
+  function recMediaYear(rec, media) {
+    return media?.year || rec?.display?.year || '';
+  }
+
+  function recScore(media) {
+    const score = Number(media?.quality?.score);
+    return Number.isFinite(score) ? Math.round(score) : '';
+  }
+
+  function recSizeBytes(media) {
+    return Number(media?.size_b || 0);
+  }
+
+  function recSizeLabel(media) {
+    return recSizeBytes(media) ? fmtSize(recSizeBytes(media)) : '';
+  }
+
+  function recSizeGb(media) {
+    const sizeGb = Number(media?.size_gb);
+    if (Number.isFinite(sizeGb) && sizeGb > 0) return Math.round(sizeGb * 100) / 100;
+    const sizeB = recSizeBytes(media);
+    return sizeB ? Math.round((sizeB / (1024 * 1024 * 1024)) * 100) / 100 : '';
+  }
+
+  function recResolution(media) {
+    return media?.resolution ? getFilterDisplayValue(media.resolution) : '';
+  }
+
+  function recCompactInfo(media) {
+    return [
+      recScore(media) !== '' ? t('recommendations.info_score', { value: recScore(media) }) : '',
+      recSizeLabel(media),
+      recResolution(media),
+      media?.codec ? getFilterDisplayValue(media.codec) : '',
+      media?.audio_codec ? getAudioCodecLabel(media) : '',
+      media?.audio_languages_simple ? getAudioLanguageSimpleDisplay(media.audio_languages_simple) : '',
+    ].filter(Boolean).join(' • ');
+  }
+
+  function recMobileMeta(media, fields) {
+    return fields.map((value) => String(value || '').trim()).filter(Boolean)
+      .map((value) => '<span>'+escH(value)+'</span>')
+      .join('<span class="rec-card-sep">•</span>');
+  }
+
+  function renderRecommendationFilterButtons(values, activeSet, fnName, labelPrefix, classPrefix) {
+    return values.map((value) => {
+      const active = activeSet.has(value) ? ' active' : '';
+      const extra = classPrefix ? ' '+classPrefix+' '+classPrefix+'-'+value : '';
+      return '<button class="rec-filter-btn'+extra+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
+    }).join('');
+  }
+
+  function recSortValue(rec, media, key) {
+    if (key === 'priority') return { high: 3, medium: 2, low: 1 }[rec.priority] ?? 0;
+    if (key === 'type') return recTypeLabel(rec.recommendation_type || 'data').toLowerCase();
+    if (key === 'title') return recMediaTitle(rec, media).toLowerCase();
+    if (key === 'score') return Number.isFinite(Number(media?.quality?.score)) ? Number(media.quality.score) : -1;
+    if (key === 'size') return recSizeBytes(media);
+    if (key === 'resolution') return recResolution(media).toLowerCase();
+    return '';
+  }
+
+  function sortedRecommendations(recs, mediaById) {
+    const dir = recommendationSort.dir === 'desc' ? -1 : 1;
+    const key = recommendationSort.key || 'priority';
+    return recs.slice().sort((a, b) => {
+      const ma = recMedia(a, mediaById);
+      const mb = recMedia(b, mediaById);
+      const av = recSortValue(a, ma, key);
+      const bv = recSortValue(b, mb, key);
+      let cmp = 0;
+      if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
+      if (cmp !== 0) return cmp * dir;
+      return recMediaTitle(a, ma).localeCompare(recMediaTitle(b, mb), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
+    });
+  }
+
+  function recSortControls() {
+    const options = [
+      ['priority:desc', t('recommendations.sort_options.priority_desc')],
+      ['priority:asc', t('recommendations.sort_options.priority_asc')],
+      ['type:desc', t('recommendations.sort_options.type_desc')],
+      ['type:asc', t('recommendations.sort_options.type_asc')],
+      ['title:asc', t('recommendations.sort_options.title_asc')],
+      ['title:desc', t('recommendations.sort_options.title_desc')],
+      ['score:desc', t('recommendations.sort_options.score_desc')],
+      ['score:asc', t('recommendations.sort_options.score_asc')],
+      ['size:desc', t('recommendations.sort_options.size_desc')],
+      ['size:asc', t('recommendations.sort_options.size_asc')],
+      ['resolution:desc', t('recommendations.sort_options.resolution_desc')],
+      ['resolution:asc', t('recommendations.sort_options.resolution_asc')],
+    ].map(([key, label]) => {
+      const selected = (recommendationSort.key + ':' + recommendationSort.dir) === key ? ' selected' : '';
+      return '<option value="'+escH(key)+'"'+selected+'>'+escH(label)+'</option>';
+    }).join('');
+    return '<div class="rec-filter-group rec-sort-group"><div class="rec-filter-label">'+t('recommendations.sort_by')+'</div>'
+      + '<select class="tab-sort-select rec-sort-select" onchange="setRecommendationSort(this.value)">'+options+'</select></div>';
+  }
+
+  function exportRecommendationsCSV() {
+    if (!isRecommendationsEnabled() || !recommendationsDoc) return;
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const recs = sortedRecommendations(visibleRecommendations(), mediaById);
+    const headers = [
+      'priority',
+      'type',
+      'title',
+      'year',
+      'score',
+      'size_gb',
+      'resolution',
+      'video_codec',
+      'audio_codec',
+      'audio_channels',
+      'audio_language_group',
+      'audio_languages',
+      'subtitle_languages',
+      'message',
+      'action',
+    ];
+    const rows = recs.map((rec) => {
+      const media = recMedia(rec, mediaById);
+      return [
+        csvC(rec.priority || ''),
+        csvC(rec.recommendation_type || ''),
+        csvC(recMediaTitle(rec, media)),
+        csvC(recMediaYear(rec, media)),
+        csvC(recScore(media)),
+        csvC(recSizeGb(media)),
+        csvC(media.resolution || ''),
+        csvC(media.codec || ''),
+        csvC(media.audio_codec || ''),
+        csvC(media.audio_channels || ''),
+        csvC(media.audio_languages_simple || ''),
+        csvC(Array.isArray(media.audio_languages) ? media.audio_languages.join(', ') : (media.audio_languages || '')),
+        csvC(Array.isArray(media.subtitle_languages) ? media.subtitle_languages.join(', ') : (media.subtitle_languages || '')),
+        csvC(recText(rec.message)),
+        csvC(recText(rec.suggested_action)),
+      ];
+    });
+    const csv = [headers.join(';'), ...rows.map((row) => row.join(';'))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const now = new Date();
+    a.href = url;
+    a.download = 'mymedialibrary-recommendations-' + now.toISOString().slice(0,10) + '_' + now.toTimeString().slice(0,8).replace(/:/g,'-') + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderRecommendationsPanel() {
+    const host = document.getElementById('recommendationsContent');
+    if (!host) return;
+    if (!isRecommendationsEnabled()) {
+      host.innerHTML = '';
+      return;
+    }
+    const allRecItems = recommendationsDoc?.items || [];
+    if (recommendationsDoc?.error) {
+      host.innerHTML = '<div class="empty rec-empty"><p>'+t('recommendations.empty_error')+'</p></div>';
+      return;
+    }
+    if (!recommendationsDoc || !allRecItems.length) {
+      host.innerHTML = '<div class="empty rec-empty"><p>'+t('recommendations.empty_run_scan')+'</p></div>';
+      return;
+    }
+    const recs = visibleRecommendations();
+    const counts = {
+      total: recs.length,
+      high: recs.filter((r) => r.priority === 'high').length,
+      quality: recs.filter((r) => r.recommendation_type === 'quality').length,
+      space: recs.filter((r) => r.recommendation_type === 'space').length,
+      languages: recs.filter((r) => r.recommendation_type === 'languages').length,
+      series: recs.filter((r) => r.recommendation_type === 'series').length,
+      data: recs.filter((r) => r.recommendation_type === 'data').length,
+    };
+    const kpis = [
+      ['total', t('recommendations.kpis.total')],
+      ['high', t('recommendations.kpis.high')],
+      ['quality', t('recommendations.kpis.quality')],
+      ['space', t('recommendations.kpis.space')],
+      ['languages', t('recommendations.kpis.languages')],
+      ['series', t('recommendations.kpis.series')],
+      ['data', t('recommendations.kpis.data')],
+    ].map(([key, label]) => '<div class="rec-kpi stat"><div class="rec-kpi-value stat-val">'+counts[key]+'</div><div class="rec-kpi-label stat-label">'+escH(label)+'</div></div>').join('');
+
+    const filters = '<div class="rec-filters">'
+      + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_PRIORITIES, recommendationPriorityFilters, 'toggleRecommendationPriorityFilter', recPriorityLabel, 'rec-priority-filter')
+      + '</div></div>'
+      + '<div class="rec-filter-group rec-filter-type"><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_TYPES, recommendationTypeFilters, 'toggleRecommendationTypeFilter', recTypeLabel, 'provider-pill')
+      + '</div></div>'
+      + recSortControls()
+      + '</div>';
+
+    if (!recs.length) {
+      host.innerHTML = '<div class="rec-page"><div class="rec-kpis stats-bar">'+kpis+'</div>'+filters+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
+      return;
+    }
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const sortedRecs = sortedRecommendations(recs, mediaById);
+    const rows = sortedRecs.map((rec) => {
+      const media = recMedia(rec, mediaById);
+      const title = recMediaTitle(rec, media);
+      const year = recMediaYear(rec, media);
+      return '<tr>'
+        + '<td><span class="rec-priority rec-priority-'+escH(rec.priority || 'medium')+'">'+escH(recPriorityLabel(rec.priority || 'medium'))+'</span></td>'
+        + '<td>'+escH(recTypeLabel(rec.recommendation_type || 'data'))+'</td>'
+        + '<td><strong>'+escH(title)+'</strong>'+(year ? '<span class="rec-muted"> ('+escH(year)+')</span>' : '')+'<div class="rec-info">'+escH(recCompactInfo(media))+'</div></td>'
+        + '<td>'+escH(recText(rec.message))+'</td>'
+        + '<td>'+escH(recText(rec.suggested_action))+'</td>'
+        + '</tr>';
+    }).join('');
+    const cards = sortedRecs.map((rec) => {
+      const media = recMedia(rec, mediaById);
+      const title = recMediaTitle(rec, media);
+      const year = recMediaYear(rec, media);
+      const mainMeta = recMobileMeta(media, [
+        recScore(media) !== '' ? t('recommendations.info_score', { value: recScore(media) }) : '',
+        recSizeLabel(media),
+        recResolution(media),
+      ]);
+      const techMeta = recMobileMeta(media, [
+        media?.codec ? getFilterDisplayValue(media.codec) : '',
+        media?.audio_codec ? getAudioCodecLabel(media) : '',
+        media?.audio_languages_simple ? getAudioLanguageSimpleDisplay(media.audio_languages_simple) : '',
+      ]);
+      return '<article class="rec-card">'
+        + '<div class="rec-card-badges">'
+          + '<span class="rec-priority rec-priority-'+escH(rec.priority || 'medium')+'">'+escH(recPriorityLabel(rec.priority || 'medium'))+'</span>'
+          + '<span class="rec-type-badge">'+escH(recTypeLabel(rec.recommendation_type || 'data'))+'</span>'
+        + '</div>'
+        + '<div class="rec-card-title">'+escH(title)+(year ? '<span class="rec-muted"> ('+escH(year)+')</span>' : '')+'</div>'
+        + (mainMeta ? '<div class="rec-card-meta">'+mainMeta+'</div>' : '')
+        + (techMeta ? '<div class="rec-card-meta">'+techMeta+'</div>' : '')
+        + '<div class="rec-card-text">'+escH(recText(rec.message))+'</div>'
+        + '<div class="rec-card-action">'+escH(recText(rec.suggested_action))+'</div>'
+        + '</article>';
+    }).join('');
+    host.innerHTML = '<div class="rec-page"><div class="rec-kpis stats-bar">'+kpis+'</div>'+filters
+      + '<div class="rec-table-wrap"><table class="rec-table"><thead><tr>'
+      + '<th>'+t('recommendations.table.priority')+'</th>'
+      + '<th>'+t('recommendations.table.type')+'</th>'
+      + '<th>'+t('recommendations.table.media')+'</th>'
+      + '<th>'+t('recommendations.table.recommendation')+'</th>'
+      + '<th>'+t('recommendations.table.action')+'</th>'
+      + '</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      + '<div class="rec-card-list">'+cards+'</div></div>';
+  }
+
   // ── TABS ─────────────────────────────────────────────
   function switchTab(tab) {
+    if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
     currentTab=tab;
     // Show/hide tab-bar controls depending on active tab
     const lc = document.getElementById('libraryControls');
     if (lc) lc.style.display = tab==='library' ? '' : 'none';
+    const rc = document.getElementById('recommendationsControls');
+    if (rc) rc.style.display = tab==='recommendations' ? '' : 'none';
     // Show/hide sort section in sidebar
     const ss = document.getElementById('sortSection');
     if (ss) ss.style.display = (tab==='library' && currentView==='grid') ? '' : 'none';
     // Panels
     document.getElementById('libraryPanel').classList.toggle('active',tab==='library');
     document.getElementById('statsPanel').classList.toggle('active',tab==='stats');
+    document.getElementById('recommendationsPanel')?.classList.toggle('active',tab==='recommendations');
     // Nav buttons
-    ['navLibrary','navStats'].forEach(id => {
+    ['navLibrary','navStats','navRecommendations'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      const t = id.replace('navLibrary','library').replace('navStats','stats');
+      const t = id.replace('navLibrary','library').replace('navStats','stats').replace('navRecommendations','recommendations');
       el.classList.toggle('active', t === tab);
     });
     if (tab==='library') render();
     else if (tab==='stats') window.MMLStats.renderStatsPanel();
+    else if (tab==='recommendations') renderRecommendationsPanel();
     saveState();
   }
 
@@ -2675,15 +3144,16 @@ let allItems=[], categories=[], groups=[];
   }
 
   function switchMobileTab(tab) {
+    if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
     currentMobileTab = tab;
     closeMobileFilters();
     // Update nav buttons
-    ['library','stats'].forEach(t => {
+    ['library','stats','recommendations'].forEach(t => {
       const btn = document.getElementById('mnav' + t.charAt(0).toUpperCase() + t.slice(1));
       if (btn) btn.classList.toggle('active', t === tab);
     });
     // Show/hide panels
-    ['libraryPanel','statsPanel'].forEach(id => {
+    ['libraryPanel','statsPanel','recommendationsPanel'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.classList.remove('active');
     });
@@ -2692,8 +3162,11 @@ let allItems=[], categories=[], groups=[];
     currentTab = tab;
     const lc2 = document.getElementById('libraryControls');
     if (lc2) lc2.style.display = tab==='library' ? '' : 'none';
+    const rc2 = document.getElementById('recommendationsControls');
+    if (rc2) rc2.style.display = tab==='recommendations' ? '' : 'none';
     if (tab === 'library') render();
     else if (tab === 'stats') window.MMLStats.renderStatsPanel();
+    else if (tab === 'recommendations') renderRecommendationsPanel();
   }
 
   function syncMobileFilters() {

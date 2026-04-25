@@ -13,8 +13,9 @@
 9. [Filters](#9-filters)
 10. [Streaming providers](#10-streaming-providers)
 11. [Quality Scoring](#11-quality-scoring)
-12. [Statistics](#12-statistics)
-13. [Settings](#13-settings)
+12. [Recommendations](#12-recommendations)
+13. [Statistics](#13-statistics)
+14. [Settings](#14-settings)
 
 ---
 
@@ -24,8 +25,9 @@
 
 **Flow:**
 1. The Python scanner reads subdirectories of `LIBRARY_PATH`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
-2. The web interface (vanilla JS) loads `library.json` and renders cards with filters, sorting, and statistics.
-3. Configuration is persisted in `data/config.json` (folders, Seerr, UI preferences).
+2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations.
+3. The web interface (vanilla JS) loads the generated JSON files and renders library, filters, statistics, and recommendations.
+4. Configuration is persisted in `data/config.json` (folders, Seerr, UI preferences).
 
 ---
 
@@ -175,6 +177,7 @@ The scanner (`scanner.py`) analyses the content of `LIBRARY_PATH` and generates:
 |---|---|
 | `/data/library.json` | Main index — loaded by the web interface |
 | `/data/library_inventory.json` | Media presence/absence tracking (optional, enable in Settings > System) |
+| `/data/recommendations.json` | Generated recommendations (optional, requires quality scoring) |
 
 The detailed format of these files is described in the [Data models](#7-data-models) chapter.
 
@@ -189,12 +192,13 @@ The detailed format of these files is described in the [Data models](#7-data-mod
 
 #### Full scan (default)
 
-Runs 4 phases in sequence:
+Runs enabled phases in sequence:
 
 1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
 2. **Seerr** — fetch FR streaming providers for each title
 3. **Scoring** — compute quality score (if enabled in settings)
 4. **Inventory** — update `library_inventory.json` (if enabled in settings)
+5. **Recommendations** — generate `recommendations.json` (if score and recommendations are enabled)
 
 > Each phase reads from the output of the previous phase on disk. Phases are fully independent.
 
@@ -340,6 +344,7 @@ An item becomes `"missing"` when its folder is no longer detected during a full 
 
 - **Library** — card grid (poster, title, year, resolution, codec, providers) + table view
 - **Statistics** — detailed charts
+- **Recommendations** — suggested actions to improve the library (when enabled)
 - **Scanner** — manual trigger + last scan log
 
 ### Sidebar (desktop) / mobile panel
@@ -508,7 +513,7 @@ After changing score settings, the backend runs a **targeted score recomputation
 
 The scoring system is designed to stay flexible and fully customizable.
 You can adapt it to your preferences while keeping robust behavior with incomplete metadata (default fallback values are used).
-Technical inconsistencies are no longer handled with score malus and can be surfaced later through dedicated recommendations.
+Technical inconsistencies are no longer handled with score malus and are surfaced through dedicated recommendations.
 
 ### Score filter (0–100 slider, when enabled)
 
@@ -702,9 +707,92 @@ Statistics include score distribution views to provide a global quality analysis
 
 ---
 
-## 12. Statistics
+## 12. Recommendations
 
-The Statistics page is now split into 3 subtabs:
+Recommendations turn library analysis into concrete actions: improve quality, optimize disk usage, detect data issues, or identify inconsistent seasons.
+
+### Activation
+
+- Requires **quality scoring**.
+- Enable it in **Settings > Configuration**.
+- If quality scoring is disabled, recommendations are automatically disabled.
+
+### Runtime behavior
+
+- Recommendations are generated during **scan phase 5**.
+- The scan writes `/data/recommendations.json`.
+- `library.json` is never modified by this phase.
+- The file is linked to `library.json` through each media's stable identifier (`media_ref.id`).
+
+### Engine
+
+- Deterministic rules, no generative AI.
+- Simple business rules configurable through `/data/recommendations_rules.json`.
+- Backend structural rules for missing data and series inconsistencies.
+
+### Structure
+
+Each recommendation contains:
+- the related media item
+- type
+- priority
+- message
+- suggested action
+
+### Recommendation types
+
+#### Quality
+
+Flags low scores, legacy codecs, or limited audio tracks.
+
+#### Space saving
+
+Identifies oversized files, high bitrates, or inefficient encodes. Displayed size is affected size, not guaranteed savings.
+
+#### Languages
+
+Detects missing French audio, original-version-only media, or missing French subtitles.
+
+#### Series
+
+Finds inconsistent seasons: resolution, codec, audio, languages, lower score, or unusually high size.
+
+#### Data
+
+Surfaces missing, unknown, or undetected fields (resolution, codecs, languages, size, score).
+
+### Recommendations Page
+
+The dedicated page provides:
+- local filters by **type** and **priority**
+- configurable sorting
+- compact media information
+- readable mobile cards
+- CSV export of visible recommendations
+
+Global library filters also apply to recommendations.
+
+### Recommendations Statistics
+
+The **Stats > Recommendations** tab shows:
+- distribution by priority
+- distribution by type
+- folder analysis
+- recommendations-per-media distribution
+- score distribution
+- size affected by space recommendations
+
+Charts update according to global filters and local recommendation filters.
+
+### `recommendations.json`
+
+Generated automatically in `/data`. It contains only recommendations and does not duplicate `library.json`. Each entry points to media via `media_ref.id`.
+
+---
+
+## 13. Statistics
+
+The Statistics page is split into subtabs:
 
 - **General**
   - Folders
@@ -720,6 +808,12 @@ The Statistics page is now split into 3 subtabs:
   - Audio channels
 - **Evolution**
   - Monthly additions timeline (full width)
+- **Recommendations** (if score + recommendations are enabled)
+  - Distribution by priority and type
+  - Folder analysis
+  - Media with recommendations by folder
+  - Recommendations per media
+  - Score distribution
 
 Genre chart specifics:
 - displayed in **item counts**
@@ -730,7 +824,7 @@ All charts are filtered by the active library filters.
 
 ---
 
-## 13. Settings
+## 14. Settings
 
 Accessible via the ⚙️ icon at the bottom of the sidebar.
 
@@ -752,6 +846,7 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 - Accent color (picker + reset)
 - Synopsis on hover (on/off, **disabled by default**)
 - Quality score (on/off, **disabled by default**)
+- Recommendations (on/off, requires quality score, **disabled by default**)
 - Raw inventory `library_inventory.json` (on/off, **disabled by default**)
 - Auto-scan (cron)
 - Log level

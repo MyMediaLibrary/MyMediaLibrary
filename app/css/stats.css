@@ -53,6 +53,20 @@
 .stats-subtab-content{display:none;flex-direction:column;gap:24px}
 .stats-subtab-content.active{display:flex}
 .stats-subtab-btn{min-width:110px}
+.stats-rec-filters{grid-template-columns:3fr 5fr}
+.stats-rec-filters.has-local-reset{grid-template-columns:3fr 5fr minmax(140px,1fr)}
+.stats-local-reset .rec-filter-row{justify-content:flex-end}
+.stats-row-full{grid-template-columns:1fr}
+.stats-clickable{cursor:pointer;transition:opacity .15s ease,filter .15s ease}
+.stats-clickable:hover{opacity:.86;filter:brightness(1.12)}
+.stats-clickable.active{filter:brightness(1.16)}
+path.stats-clickable.active,circle.stats-clickable.active{stroke:var(--accent);stroke-width:3px}
+.pie-leg-row.stats-clickable:hover,.hbar-item.stats-clickable:hover{background:var(--card-h)}
+.pie-leg-row.stats-clickable.active,.hbar-item.stats-clickable.active{
+  background:color-mix(in srgb,var(--accent) 14%,transparent);
+  outline:1px solid color-mix(in srgb,var(--accent) 55%,transparent);
+  border-radius:8px
+}
 
 /* ── Provider bars ────────────────────────────────────────────────────────── */
 .prov-bar-row{display:flex;align-items:center;gap:9px;margin-bottom:8px}
@@ -91,6 +105,8 @@
   .stats-row{grid-template-columns:1fr!important}
   #statsContent{padding:12px 10px 40px!important;gap:16px!important}
   .stats-subtab-content{gap:16px}
+  .stats-rec-filters,.stats-rec-filters.has-local-reset{display:flex!important;flex-direction:column!important;grid-template-columns:1fr!important;gap:10px!important}
+  .stats-rec-filters .rec-filter-group{width:100%!important}
   #statsPanel .stats-block{margin-bottom:12px}
   .pie-wrap{flex-direction:column!important;align-items:center!important;gap:10px!important}
   .pie-wrap svg{width:120px!important;height:120px!important}

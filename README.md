@@ -23,7 +23,21 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 - **Statistiques** : camemberts et courbe temporelle sur la composition de la bibliothèque (groupes, résolution, codecs, plateformes, langues audio)
 - **Scan configurable** : scan rapide (local uniquement) ou scan complet (avec Seerr), planifiable via cron, configurable depuis l'interface
 - **Score qualité (optionnel)** : activez un système de scoring configurable (poids, règles, pénalités) directement depuis les paramètres, avec des valeurs par défaut prêtes à l’emploi
+- **Recommandations intelligentes** : pistes concrètes pour améliorer qualité, espace disque et cohérence de la médiathèque
 - **Interface bilingue** : interface entièrement disponible en français et en anglais, thème clair/sombre, responsive
+
+### Recommandations
+
+MyMediaLibrary ne se limite plus à analyser votre médiathèque : il propose désormais des recommandations concrètes pour l'améliorer.
+
+Pipeline de scan : filesystem + NFO → enrichissement Seerr → score qualité → inventaire → recommandations.
+
+Types de recommandations :
+- **Qualité** : score faible, codecs anciens, audio insuffisant
+- **Gain de place** : fichiers trop lourds, bitrate élevé, encodage inefficace
+- **Langues** : absence de français, VO uniquement, sous-titres manquants
+- **Séries** : saisons incohérentes, saison de qualité inférieure, saison anormalement volumineuse
+- **Données** : champs manquants ou non détectés
 
 ### Démarrage rapide
 
@@ -93,7 +107,21 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 - **Statistics**: pie charts and timeline on library composition (groups, resolution, codecs, providers, audio languages)
 - **Configurable scan**: quick scan (local only) or full scan (with Seerr), schedulable via cron, configurable from the UI
 - **Quality score (optional)**: enable a fully configurable scoring system from settings (weights and rules for video/audio/languages/size), with ready-to-use default values
+- **Smart recommendations**: concrete suggestions to improve quality, disk usage, and library consistency
 - **Bilingual interface**: fully available in French and English, light/dark theme, responsive
+
+### Recommendations
+
+MyMediaLibrary no longer only analyzes your media library: it can now suggest concrete actions to improve it.
+
+Scan pipeline: filesystem + NFO → Seerr enrichment → quality score → inventory → recommendations.
+
+Recommendation types:
+- **Quality**: low score, legacy codecs, limited audio
+- **Space saving**: oversized files, high bitrate, inefficient encoding
+- **Languages**: missing French audio, original version only, missing subtitles
+- **Series**: inconsistent seasons, lower-quality season, abnormally large season
+- **Data**: missing or undetected fields
 
 ### Quick start
 

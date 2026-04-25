@@ -1,6 +1,8 @@
 import http.server
 import json
 import os
+import pathlib
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -130,3 +132,89 @@ class TestApiAuthSecurity(unittest.TestCase):
 
         status, _, _ = self._request("/api/auth/validate", headers={"Cookie": cookie_pair})
         self.assertEqual(status, 401)
+
+
+class TestRecommendationsApi(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._old_password = os.environ.get("APP_PASSWORD")
+        cls._old_config_path = scanner.CONFIG_PATH
+        cls._old_recommendations_output_path = scanner.RECOMMENDATIONS_OUTPUT_PATH
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(cls._tmp.name)
+        cls._config_path = root / "config.json"
+        cls._recommendations_path = root / "recommendations.json"
+
+        os.environ["APP_PASSWORD"] = ""
+        scanner.CONFIG_PATH = str(cls._config_path)
+        scanner.RECOMMENDATIONS_OUTPUT_PATH = str(cls._recommendations_path)
+
+        cls._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), scanner._ScanHandler)
+        cls._port = cls._server.server_address[1]
+        cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
+        cls._thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._server.shutdown()
+        cls._server.server_close()
+        cls._thread.join(timeout=2)
+
+        scanner.CONFIG_PATH = cls._old_config_path
+        scanner.RECOMMENDATIONS_OUTPUT_PATH = cls._old_recommendations_output_path
+        if cls._old_password is None:
+            os.environ.pop("APP_PASSWORD", None)
+        else:
+            os.environ["APP_PASSWORD"] = cls._old_password
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self._write_config(recommendations_enabled=True)
+        if self._recommendations_path.exists():
+            self._recommendations_path.unlink()
+
+    @classmethod
+    def _url(cls, path: str) -> str:
+        return f"http://127.0.0.1:{cls._port}{path}"
+
+    @classmethod
+    def _request(cls, path: str):
+        req = urllib.request.Request(cls._url(path), method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            return err.code, json.loads(err.read().decode("utf-8"))
+
+    def _write_config(self, *, recommendations_enabled: bool):
+        self._config_path.write_text(json.dumps({
+            "score": {"enabled": True},
+            "recommendations": {"enabled": recommendations_enabled},
+        }), encoding="utf-8")
+
+    def test_get_recommendations_returns_empty_state_when_file_is_absent(self):
+        status, payload = self._request("/api/recommendations")
+        self.assertEqual(status, 200)
+        self.assertIs(payload["enabled"], True)
+        self.assertEqual(payload["items"], [])
+        self.assertIsNone(payload["generated_at"])
+
+    def test_get_recommendations_returns_generated_items(self):
+        self._recommendations_path.write_text(json.dumps({
+            "generated_at": "2026-04-24T18:00:00Z",
+            "version": 1,
+            "items": [{"id": "rec:movie:test:low_score", "media_ref": {"id": "movie:test", "type": "movie"}}],
+        }), encoding="utf-8")
+
+        status, payload = self._request("/api/recommendations")
+        self.assertEqual(status, 200)
+        self.assertIs(payload["enabled"], True)
+        self.assertEqual(payload["generated_at"], "2026-04-24T18:00:00Z")
+        self.assertEqual(len(payload["items"]), 1)
+
+    def test_get_recommendations_returns_disabled_state_without_404(self):
+        self._write_config(recommendations_enabled=False)
+        status, payload = self._request("/api/recommendations")
+        self.assertEqual(status, 200)
+        self.assertIs(payload["enabled"], False)
+        self.assertEqual(payload["items"], [])

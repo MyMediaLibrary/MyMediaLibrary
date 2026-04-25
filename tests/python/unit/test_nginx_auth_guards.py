@@ -30,3 +30,9 @@ class TestNginxAuthGuards(unittest.TestCase):
         redirect = re.search(r"location @auth_redirect \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
         self.assertIsNotNone(redirect)
         self.assertIn("return 302", redirect.group("body"))
+
+    def test_recommendations_api_is_proxied_to_scanner(self):
+        block = re.search(r"location /api/recommendations \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
+        self.assertIsNotNone(block)
+        body = block.group("body")
+        self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
