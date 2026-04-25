@@ -13,8 +13,9 @@
 9. [Filtres](#9-filtres)
 10. [Plateformes de streaming](#10-plateformes-de-streaming)
 11. [Score de qualité](#11-score-de-qualité)
-12. [Statistiques](#12-statistiques)
-13. [Paramètres](#13-paramètres)
+12. [Recommandations](#12-recommandations)
+13. [Statistiques](#13-statistiques)
+14. [Paramètres](#14-paramètres)
 
 ---
 
@@ -24,8 +25,9 @@
 
 **Flux :**
 1. Le scanner Python lit les sous-dossiers de `LIBRARY_PATH`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
-2. L'interface web (vanilla JS) charge `library.json` et affiche les tuiles avec filtres, tri et statistiques.
-3. La configuration est persistée dans `data/config.json` (dossiers, Seerr, préférences UI).
+2. Les phases optionnelles enrichissent les données : Seerr, score qualité, inventaire et recommandations.
+3. L'interface web (vanilla JS) charge les fichiers JSON générés et affiche bibliothèque, filtres, statistiques et recommandations.
+4. La configuration est persistée dans `data/config.json` (dossiers, Seerr, préférences UI).
 
 ---
 
@@ -176,6 +178,7 @@ Le scanner (`scanner.py`) analyse le contenu de `LIBRARY_PATH` et génère :
 |---|---|
 | `/data/library.json` | Index principal — chargé par l'interface web |
 | `/data/library_inventory.json` | Suivi présence/absence des médias (optionnel, activable dans Paramètres > Système) |
+| `/data/recommendations.json` | Recommandations générées (optionnel, nécessite le score qualité) |
 
 Le format détaillé de ces fichiers est décrit dans le chapitre [Modèles de données](#7-modèles-de-données).
 
@@ -190,12 +193,13 @@ Le format détaillé de ces fichiers est décrit dans le chapitre [Modèles de d
 
 #### Scan complet (full)
 
-Enchaîne 4 phases dans l'ordre :
+Enchaîne les phases activées dans l'ordre :
 
 1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
 2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
 3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
 4. **Inventaire** — mise à jour de `library_inventory.json` (si activé dans les paramètres)
+5. **Recommandations** — génération de `recommendations.json` (si score et recommandations sont activés)
 
 > Chaque phase lit la sortie de la phase précédente depuis le disque. Les phases sont entièrement séparées.
 
@@ -341,6 +345,7 @@ Un item passe à `"missing"` lorsque son dossier n'est plus détecté lors d'un 
 
 - **Bibliothèque** — grille de tuiles (poster, titre, année, résolution, codec, plateformes) + vue tableau
 - **Statistiques** — graphiques détaillés
+- **Recommandations** — actions proposées pour améliorer la médiathèque (si activé)
 - **Scanner** — déclenchement manuel + log du dernier scan
 
 ### Barre latérale (desktop) / panneau mobile
@@ -509,7 +514,7 @@ Après modification des paramètres de score, un **recalcul ciblé** est lancé,
 
 Le système est volontairement flexible et personnalisable.
 Vous pouvez l’adapter à vos priorités, tout en conservant un comportement robuste même avec des données incomplètes (valeurs par défaut de repli).
-Les incohérences techniques ne sont plus gérées par des malus et pourront être traitées séparément par de futures recommandations.
+Les incohérences techniques ne sont plus gérées par des malus et sont traitées séparément par les recommandations.
 
 ### Filtre score (slider 0–100, si activé)
 
@@ -703,9 +708,92 @@ Les statistiques incluent une distribution des scores pour analyser la qualité 
 
 ---
 
-## 12. Statistiques
+## 12. Recommandations
 
-L'onglet Statistiques est organisé en 3 sous-onglets :
+Les recommandations transforment l'analyse de la bibliothèque en liste d'actions concrètes : améliorer la qualité, optimiser l'espace disque, détecter les problèmes de données ou repérer des saisons incohérentes.
+
+### Activation
+
+- Nécessite le **score qualité**.
+- Activable dans **Paramètres > Configuration**.
+- Si le score est désactivé, les recommandations sont automatiquement désactivées.
+
+### Fonctionnement
+
+- Les recommandations sont générées en **phase 5 du scan**.
+- Le scan écrit `/data/recommendations.json`.
+- `library.json` n'est jamais modifié par cette phase.
+- Le fichier est relié à `library.json` via l'identifiant stable du média (`media_ref.id`).
+
+### Moteur
+
+- Règles déterministes, sans IA générative.
+- Règles métier simples configurables via `/data/recommendations_rules.json`.
+- Règles structurelles côté backend pour les données manquantes et les incohérences de séries.
+
+### Structure
+
+Chaque recommandation contient :
+- le média concerné
+- le type
+- la priorité
+- un message
+- une action suggérée
+
+### Types de recommandations
+
+#### Qualité
+
+Signale les scores faibles, codecs anciens ou pistes audio limitées.
+
+#### Gain de place
+
+Repère les fichiers très lourds, les bitrates élevés ou les encodages peu efficaces. La taille affichée est une taille concernée, pas un gain garanti.
+
+#### Langues
+
+Détecte l'absence de français, les médias uniquement en VO ou les sous-titres français manquants.
+
+#### Séries
+
+Repère les saisons incohérentes : résolution, codec, audio, langues, score inférieur ou taille anormalement élevée.
+
+#### Données
+
+Remonte les champs absents, inconnus ou non détectés (résolution, codecs, langues, taille, score).
+
+### Page Recommandations
+
+La page dédiée affiche :
+- filtres locaux par **type** et **priorité**
+- tri configurable
+- affichage compact des infos média
+- cartes lisibles sur mobile
+- export CSV des recommandations visibles
+
+Les filtres globaux de la bibliothèque s'appliquent aussi aux recommandations.
+
+### Stats Recommandations
+
+L'onglet **Stats > Recommandations** affiche :
+- répartition par priorité
+- répartition par type
+- analyse par dossier
+- distribution du nombre de recommandations par média
+- distribution des scores
+- taille concernée par les recommandations d'espace
+
+Les graphes se recalculent selon les filtres globaux et les filtres locaux recommandations.
+
+### `recommendations.json`
+
+Fichier généré automatiquement dans `/data`. Il contient uniquement les recommandations et ne duplique pas `library.json`. Chaque entrée pointe vers le média via `media_ref.id`.
+
+---
+
+## 13. Statistiques
+
+L'onglet Statistiques est organisé en sous-onglets :
 
 - **Générales**
   - Dossiers
@@ -721,6 +809,12 @@ L'onglet Statistiques est organisé en 3 sous-onglets :
   - Channels audio
 - **Évolution**
   - Évolution mensuelle des ajouts (pleine largeur)
+- **Recommandations** (si score + recommandations activés)
+  - Répartition par priorité et type
+  - Analyse par dossier
+  - Médias avec recommandations par dossier
+  - Nombre de recommandations par média
+  - Distribution des scores
 
 Spécificité du graphe **Genres** :
 - affichage en **nombre d'éléments**
@@ -731,7 +825,7 @@ Tous les graphiques sont filtrés selon les filtres actifs de la bibliothèque.
 
 ---
 
-## 13. Paramètres
+## 14. Paramètres
 
 Accessible via l'icône ⚙️ en bas de la barre latérale.
 
@@ -753,6 +847,7 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 - Couleur d'accent (sélecteur + reset)
 - Synopsis au survol (on/off, **désactivé par défaut**)
 - Score de qualité (on/off, **désactivé par défaut**)
+- Recommandations (on/off, nécessite le score qualité, **désactivé par défaut**)
 - Inventaire brut `library_inventory.json` (on/off, **désactivé par défaut**)
 - Scan automatique (cron)
 - Niveau de log
