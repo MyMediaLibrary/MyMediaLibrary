@@ -225,6 +225,10 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.doesNotMatch(appSource, /toggleRecommendationSortDir/, 'recommendations should not render a separate sort direction toggle');
   assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
   assert.match(renderBlock, /rec-filter-priority[\s\S]*rec-filter-type[\s\S]*recSortControls\(\)/, 'recommendations filters should render priority, type, then sort');
+  assert.match(appSource, /function recMobileMeta\(media, fields\)/, 'recommendations should build compact mobile metadata rows');
+  assert.match(renderBlock, /const cards = sortedRecs\.map/, 'recommendations should render mobile cards from the same sorted recommendations');
+  assert.match(renderBlock, /class="rec-card"[\s\S]*rec-card-badges[\s\S]*rec-card-title[\s\S]*rec-card-meta[\s\S]*rec-card-text[\s\S]*rec-card-action/, 'mobile recommendation cards should include badges, media metadata, message, and action');
+  assert.match(renderBlock, /'<div class="rec-card-list">'\+cards\+'<\/div><\/div>'/, 'mobile recommendation cards should be rendered alongside the desktop table');
   assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
   assert.match(appSource, /'subtitle_languages'[\s\S]*'message'[\s\S]*'action'/, 'recommendations CSV should export one localized message/action pair');
   assert.doesNotMatch(appSource, /'message_fr'|'message_en'|'action_fr'|'action_en'/, 'recommendations CSV should not export both languages');

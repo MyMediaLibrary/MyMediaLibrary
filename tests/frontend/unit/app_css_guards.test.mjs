@@ -34,7 +34,14 @@ test('score weights use 2-column desktop grid and 1-column mobile fallback', () 
 
 test('recommendation filters use priority type sort proportions and priority colors', () => {
   assert.match(cssSource, /\.rec-filters\{display:grid;grid-template-columns:3fr 5fr 2fr/, 'recommendation filters should follow 30/50/20 desktop proportions');
-  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{grid-template-columns:1fr\}/, 'recommendation filters should stack on mobile');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{grid-template-columns:1fr;gap:8px\}/, 'recommendation filters should stack compactly on mobile');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-row\{gap:5px;flex-wrap:nowrap;overflow-x:auto/, 'mobile recommendation filter rows should stay compact and scrollable');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-type \.rec-filter-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, 'mobile recommendation type filters should use a compact grid');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-kpis\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:6px\}/, 'mobile recommendation KPIs should use compact quick-stat layout');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-table-wrap\{display:none!important\}/, 'mobile recommendations should hide the desktop table');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-card-list\{display:flex!important;flex-direction:column;gap:10px\}/, 'mobile recommendations should display cards');
+  assert.match(cssSource, /\.rec-card-list\{display:none\}/, 'desktop recommendations should keep mobile cards hidden');
+  assert.doesNotMatch(cssSource, /\.rec-table\{min-width:760px\}/, 'mobile recommendations should avoid forced horizontal table scrolling');
   assert.match(cssSource, /\.rec-filter-btn\.provider-pill/, 'recommendation type filters should reuse provider/type pill styling');
   assert.match(cssSource, /--priority-high-bg:#dc2626[\s\S]*--priority-low-bg:#15803d/, 'dark theme should define strong priority colors');
   assert.match(cssSource, /\[data-theme="light"\][\s\S]*--priority-high-bg:#b91c1c[\s\S]*--priority-low-bg:#15803d/, 'light theme should define high-contrast priority colors');

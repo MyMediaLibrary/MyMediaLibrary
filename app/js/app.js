@@ -2296,6 +2296,12 @@ let allItems=[], categories=[], groups=[];
     ].filter(Boolean).join(' • ');
   }
 
+  function recMobileMeta(media, fields) {
+    return fields.map((value) => String(value || '').trim()).filter(Boolean)
+      .map((value) => '<span>'+escH(value)+'</span>')
+      .join('<span class="rec-card-sep">•</span>');
+  }
+
   function renderRecommendationFilterButtons(values, activeSet, fnName, labelPrefix, classPrefix) {
     return values.map((value) => {
       const active = activeSet.has(value) ? ' active' : '';
@@ -2455,7 +2461,8 @@ let allItems=[], categories=[], groups=[];
       return;
     }
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
-    const rows = sortedRecommendations(recs, mediaById).map((rec) => {
+    const sortedRecs = sortedRecommendations(recs, mediaById);
+    const rows = sortedRecs.map((rec) => {
       const media = recMedia(rec, mediaById);
       const title = recMediaTitle(rec, media);
       const year = recMediaYear(rec, media);
@@ -2467,6 +2474,32 @@ let allItems=[], categories=[], groups=[];
         + '<td>'+escH(recText(rec.suggested_action))+'</td>'
         + '</tr>';
     }).join('');
+    const cards = sortedRecs.map((rec) => {
+      const media = recMedia(rec, mediaById);
+      const title = recMediaTitle(rec, media);
+      const year = recMediaYear(rec, media);
+      const mainMeta = recMobileMeta(media, [
+        recScore(media) !== '' ? t('recommendations.info_score', { value: recScore(media) }) : '',
+        recSizeLabel(media),
+        recResolution(media),
+      ]);
+      const techMeta = recMobileMeta(media, [
+        media?.codec ? getFilterDisplayValue(media.codec) : '',
+        media?.audio_codec ? getAudioCodecLabel(media) : '',
+        media?.audio_languages_simple ? getAudioLanguageSimpleDisplay(media.audio_languages_simple) : '',
+      ]);
+      return '<article class="rec-card">'
+        + '<div class="rec-card-badges">'
+          + '<span class="rec-priority rec-priority-'+escH(rec.priority || 'medium')+'">'+escH(recPriorityLabel(rec.priority || 'medium'))+'</span>'
+          + '<span class="rec-type-badge">'+escH(recTypeLabel(rec.recommendation_type || 'data'))+'</span>'
+        + '</div>'
+        + '<div class="rec-card-title">'+escH(title)+(year ? '<span class="rec-muted"> ('+escH(year)+')</span>' : '')+'</div>'
+        + (mainMeta ? '<div class="rec-card-meta">'+mainMeta+'</div>' : '')
+        + (techMeta ? '<div class="rec-card-meta">'+techMeta+'</div>' : '')
+        + '<div class="rec-card-text">'+escH(recText(rec.message))+'</div>'
+        + '<div class="rec-card-action">'+escH(recText(rec.suggested_action))+'</div>'
+        + '</article>';
+    }).join('');
     host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters
       + '<div class="rec-table-wrap"><table class="rec-table"><thead><tr>'
       + '<th>'+t('recommendations.table.priority')+'</th>'
@@ -2474,7 +2507,8 @@ let allItems=[], categories=[], groups=[];
       + '<th>'+t('recommendations.table.media')+'</th>'
       + '<th>'+t('recommendations.table.recommendation')+'</th>'
       + '<th>'+t('recommendations.table.action')+'</th>'
-      + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+      + '</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      + '<div class="rec-card-list">'+cards+'</div></div>';
   }
 
   // ── TABS ─────────────────────────────────────────────
