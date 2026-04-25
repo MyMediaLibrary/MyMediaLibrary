@@ -49,6 +49,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
+    from backend import runtime_paths
+except Exception:
+    import runtime_paths  # type: ignore
+
+try:
     from backend.inventory_helpers import (
         apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
@@ -126,19 +131,21 @@ except Exception:
 # Configuration
 # ---------------------------------------------------------------------------
 
-LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
-OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
-INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
-RECOMMENDATIONS_OUTPUT_PATH = os.environ.get("RECOMMENDATIONS_OUTPUT_PATH", "/data/recommendations.json")
-RECOMMENDATIONS_DEFAULT_RULES_PATH = os.environ.get("RECOMMENDATIONS_DEFAULT_RULES_PATH", "/app/recommendations_rules.json")
-RECOMMENDATIONS_RULES_PATH = os.environ.get("RECOMMENDATIONS_RULES_PATH", "/data/recommendations_rules.json")
-CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
+LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
+OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
+INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
+RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
+DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
+RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
+RECOMMENDATIONS_RULES_PATH = str(runtime_paths.RECOMMENDATIONS_RULES_JSON)
+CONFIG_PATH = str(runtime_paths.CONFIG_JSON)
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
-SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
-SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
-PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
-PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
-PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
+SECRETS_PATH = str(runtime_paths.SECRETS_FILE)
+SCAN_LOCK_PATH = str(runtime_paths.SCAN_LOCK)
+PROVIDERS_MAPPING_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON)
+PROVIDERS_MAPPING_RUNTIME_PATH = str(runtime_paths.PROVIDERS_MAPPING_JSON)
+PROVIDERS_LOGO_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON)
+PROVIDERS_LOGO_PATH = str(runtime_paths.PROVIDERS_LOGO_JSON)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -157,7 +164,7 @@ def _set_global_log_level(raw_level: str | None) -> None:
         handler.setLevel(level)
 # Apply log_level from config.json if available (may be adjusted later via API too)
 try:
-    with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
+    with open(CONFIG_PATH, encoding="utf-8") as _cfg_f:
         _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
     _set_global_log_level(_cfg_loglevel)
 except Exception:
@@ -262,7 +269,7 @@ except ImportError:
     )
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
-_log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
+_log_file = str(runtime_paths.SCANNER_LOG)
 try:
     _fh = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=3)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -281,7 +288,7 @@ _JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — it
 
 
 def _load_secrets() -> dict:
-    """Load /app/.secrets (JSON). Returns {} if missing or unreadable."""
+    """Load the Seerr secrets JSON file. Returns {} if missing or unreadable."""
     try:
         with open(SECRETS_PATH, encoding="utf-8") as f:
             return json.load(f)
@@ -387,7 +394,7 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
 
 
 def _jsr_cfg() -> dict:
-    """Read Seerr settings. API key comes from /app/.secrets, rest from config.json."""
+    """Read Seerr settings. API key comes from the secrets file, rest from config.json."""
     cfg = load_config()
     jsr = cfg.get("seerr", {}) or cfg.get("jellyseerr", {})
     secrets = _load_secrets()
@@ -437,7 +444,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
 
 
 def _ensure_runtime_provider_mapping() -> None:
-    """Bootstrap /data providers mapping once: copy bundled file only if runtime file is absent."""
+    """Bootstrap providers mapping once: copy bundled file only if runtime file is absent."""
     runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
     if runtime_path.exists():
         return
@@ -450,6 +457,22 @@ def _ensure_runtime_provider_mapping() -> None:
             runtime_path.write_text("{}", encoding="utf-8")
     except Exception as e:
         log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
+
+
+def _ensure_runtime_providers_logo() -> None:
+    """Bootstrap providers logo mapping once without overwriting user config."""
+    runtime_path = Path(PROVIDERS_LOGO_PATH)
+    if runtime_path.exists():
+        return
+    try:
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path = Path(PROVIDERS_LOGO_SOURCE_PATH)
+        if source_path.exists():
+            shutil.copyfile(source_path, runtime_path)
+        else:
+            runtime_path.write_text("{}", encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[providers] Could not bootstrap providers logo file: {e}")
 
 
 def _load_runtime_provider_mapping() -> dict:
@@ -852,7 +875,7 @@ def migrate_env_to_config() -> None:
     if env_apikey and not secrets.get("seerr_apikey") and not jsr.get("apikey"):
         secrets["seerr_apikey"] = env_apikey
         _save_secrets(secrets)
-        log.info("[migrate] Seerr API key migrated to /app/.secrets")
+        log.info("[migrate] Seerr API key migrated to %s", SECRETS_PATH)
     # Remove apikey from config.json if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
@@ -912,6 +935,8 @@ def migrate_env_to_config() -> None:
         log.info("[MIGRATION] Env vars migrated to config.json")
     # Bootstrap runtime providers mapping once (non-destructive).
     _ensure_runtime_provider_mapping()
+    # Bootstrap runtime providers logo mapping once (non-destructive).
+    _ensure_runtime_providers_logo()
     # Bootstrap editable recommendations rules once (non-destructive).
     try:
         ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
@@ -1967,18 +1992,33 @@ _DEFAULT_CONFIG: dict = {
 }
 
 
+def _load_default_config() -> dict:
+    try:
+        with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return copy.deepcopy(payload)
+    except Exception:
+        pass
+    return copy.deepcopy(_DEFAULT_CONFIG)
+
+
 def load_config() -> dict:
+    config_exists = Path(CONFIG_PATH).exists()
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception:
-        cfg = copy.deepcopy(_DEFAULT_CONFIG)
+        cfg = _load_default_config()
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
         cfg, rec_changed = normalize_recommendations_configuration(cfg)
-        if seerr_changed or changed or rec_changed:
-            save_config(cfg)
+        if seerr_changed or changed or rec_changed or not config_exists:
+            try:
+                save_config(cfg)
+            except Exception as e:
+                log.warning("[config] Could not initialize %s: %s", CONFIG_PATH, e)
     return cfg
 
 
@@ -4251,8 +4291,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 version = resp.get("applicationVersion") or resp.get("version") or "?"
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
         elif path == "/health":
-            output = os.environ.get("OUTPUT_PATH", "/data/library.json")
-            ok = os.path.exists(output)
+            ok = os.path.exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {
                 "status": "ok" if ok else "degraded",
                 "library_json": ok,

@@ -1,0 +1,29 @@
+{
+  "system": {
+    "scan_cron": "0 3 * * *",
+    "log_level": "INFO",
+    "needs_onboarding": true,
+    "inventory_enabled": false
+  },
+  "folders": [],
+  "enable_movies": true,
+  "enable_series": true,
+  "seerr": {
+    "enabled": false,
+    "url": ""
+  },
+  "providers_visible": [],
+  "ui": {
+    "synopsis_on_hover": false,
+    "default_view": "grid",
+    "default_sort": "title-asc",
+    "theme": "dark",
+    "accent_color": "#7c6aff"
+  },
+  "score": {
+    "enabled": false
+  },
+  "recommendations": {
+    "enabled": false
+  }
+}

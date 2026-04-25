@@ -18,6 +18,10 @@ RUN mkdir -p /app/backend
 COPY backend/scanner.py /app/scanner.py
 COPY backend/runtime_paths.py /app/backend/runtime_paths.py
 COPY backend/storage_migration.py /app/backend/storage_migration.py
+COPY backend/default_config.json /app/defaults/conf/config.json
+COPY app/providers_mapping.json /app/defaults/conf/providers_mapping.json
+COPY app/providers_logo.json /app/defaults/conf/providers_logo.json
+COPY backend/recommendations_rules.json /app/defaults/conf/recommendations_rules.json
 COPY backend/scoring.py /app/scoring.py
 COPY backend/score_defaults.json /app/score_defaults.json
 COPY backend/recommendations.py /app/recommendations.py

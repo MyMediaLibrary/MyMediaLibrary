@@ -3,11 +3,12 @@
 
 OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 LOG_PATH="${LOG_PATH:-/data/scanner.log}"
+LIBRARY_PATH="${LIBRARY_PATH:-/library}"
 TZ="${TZ:-UTC}"
-export TZ
+export LIBRARY_PATH TZ
 
 echo "=== MyMediaLibrary ==="
-echo "LIBRARY_PATH : ${LIBRARY_PATH:-/mnt/media/library}"
+echo "LIBRARY_PATH : ${LIBRARY_PATH}"
 echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "LOG_PATH     : ${LOG_PATH}"
 echo ""
@@ -36,18 +37,6 @@ echo "[entrypoint] Nginx started (pid $NGINX_PID)"
 python3 /app/scanner.py --serve &
 SCANSERVER_PID=$!
 echo "[entrypoint] Scan server started (pid $SCANSERVER_PID)"
-
-# Bootstrap editable providers mapping in /data (copy-once, never overwrite)
-PROVIDERS_MAPPING_SRC="${PROVIDERS_MAPPING_SOURCE_PATH:-/usr/share/nginx/html/providers_mapping.json}"
-PROVIDERS_MAPPING_DST="${PROVIDERS_MAPPING_RUNTIME_PATH:-/data/providers_mapping.json}"
-if [ ! -f "$PROVIDERS_MAPPING_DST" ]; then
-  if [ -f "$PROVIDERS_MAPPING_SRC" ]; then
-    cp "$PROVIDERS_MAPPING_SRC" "$PROVIDERS_MAPPING_DST"
-  else
-    echo '{}' > "$PROVIDERS_MAPPING_DST"
-  fi
-  echo "[entrypoint] Bootstrapped providers mapping: $PROVIDERS_MAPPING_DST"
-fi
 
 # Initial scan on startup (phases decided by scanner startup rules)
 echo "[entrypoint] Running initial scan..."
