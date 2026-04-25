@@ -190,6 +190,7 @@
       "dedupe_group": "missing_french_audio",
       "severity": 1,
       "conditions": [
+        { "field": "audio_languages", "operator": "exists" },
         { "field": "audio_languages", "operator": "not_contains", "value": "fra" },
         { "field": "audio_languages", "operator": "not_contains", "value": "fre" },
         { "field": "audio_languages", "operator": "not_contains", "value": "fr" }
@@ -219,6 +220,7 @@
       "severity": 1,
       "conditions": [
         { "field": "audio_language_group", "operator": "=", "value": "VO" },
+        { "field": "subtitle_languages", "operator": "exists" },
         { "field": "subtitle_languages", "operator": "not_contains", "value": "fra" },
         { "field": "subtitle_languages", "operator": "not_contains", "value": "fre" },
         { "field": "subtitle_languages", "operator": "not_contains", "value": "fr" }

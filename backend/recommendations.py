@@ -150,6 +150,8 @@ def _is_missing(value: Any) -> bool:
         return True
     if isinstance(value, str):
         return value.strip().casefold() in UNKNOWN_VALUES
+    if isinstance(value, list):
+        return len(value) == 0 or all(_is_missing(v) for v in value)
     return False
 
 
@@ -180,7 +182,7 @@ def data_recommendations(item: dict) -> list[dict]:
         add("missing_audio_codec", "medium", 1, "Codec audio non détecté.", "Audio codec was not detected.", "Vérifier les informations audio du fichier.", "Check the audio metadata of the file.")
     if _is_unknown(item.get("audio_channels")):
         add("missing_audio_channels", "medium", 1, "Nombre de canaux audio non détecté.", "Audio channel count was not detected.", "Vérifier les informations audio du fichier.", "Check the audio metadata of the file.")
-    if not isinstance(item.get("audio_languages"), list) or not item.get("audio_languages"):
+    if not isinstance(item.get("audio_languages"), list) or _is_missing(item.get("audio_languages")):
         add("missing_audio_languages", "medium", 1, "Langues audio non détectées.", "Audio languages were not detected.", "Vérifier les pistes audio ou le fichier NFO.", "Check the audio tracks or the NFO file.")
     if _is_unknown(item.get("audio_languages_simple")):
         add("unknown_language", "medium", 1, "Langue audio impossible à classifier.", "Audio language could not be classified.", "Vérifier les métadonnées de langues audio.", "Check the audio language metadata.")
@@ -327,7 +329,7 @@ def series_recommendations(item: dict) -> list[dict]:
                 item,
                 rule_id=f"series_low_score_season:s{sn}",
                 recommendation_type="series",
-                priority="high",
+                priority="medium",
                 dedupe_group=f"series_low_score_season:s{sn}",
                 severity=2,
                 message={
@@ -409,7 +411,7 @@ def condition_matches(item: dict, condition: dict) -> bool:
         return exists and not missing
     if operator == "missing":
         return missing
-    if not exists:
+    if missing:
         return False
     if operator == "=":
         return value == expected

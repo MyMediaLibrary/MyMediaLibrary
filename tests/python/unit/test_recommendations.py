@@ -60,7 +60,13 @@ class RecommendationsTest(unittest.TestCase):
             ({"field": "quality.video_details.codec", "operator": "exists"}, True),
             ({"field": "missing.field", "operator": "missing"}, True),
             ({"field": "missing.field", "operator": "=", "value": 1}, False),
+            ({"field": "unknown_field", "operator": "not_contains", "value": "fr"}, False),
+            ({"field": "unknown_field", "operator": "!=", "value": "VO"}, False),
+            ({"field": "empty_list", "operator": "exists"}, False),
+            ({"field": "empty_list", "operator": "missing"}, True),
         ]
+        sample["unknown_field"] = "UNKNOWN"
+        sample["empty_list"] = []
         for condition, expected in cases:
             with self.subTest(condition=condition):
                 self.assertEqual(recommendations.condition_matches(sample, condition), expected)
@@ -130,6 +136,7 @@ class RecommendationsTest(unittest.TestCase):
             ],
         )
         rec = next(r for r in recommendations.series_recommendations(tv) if r["rule_id"].startswith("series_low_score_season:s6"))
+        self.assertEqual(rec["priority"], "medium")
         self.assertEqual(rec["context"], {"season": 6, "season_score": 35, "series_average_score": 70, "delta": 35})
         self.assertIn("score qualité de 35", rec["message"]["fr"])
         self.assertIn("(70)", rec["message"]["fr"])
@@ -271,6 +278,49 @@ class RecommendationsTest(unittest.TestCase):
             doc = recommendations.write_recommendations([], out)
             self.assertEqual(doc["version"], 1)
             self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["items"], [])
+
+    def test_low_score_default_rule_is_medium(self):
+        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        rec = next(r for r in recommendations.json_rule_recommendations(item(quality={"score": 50}), rules) if r["rule_id"] == "low_score")
+        self.assertEqual(rec["priority"], "medium")
+
+    def test_language_rules_require_reliable_audio_languages(self):
+        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        no_languages = item(audio_languages=None, audio_languages_simple="VF")
+        known_without_french = item(audio_languages=["eng"], audio_languages_simple="VO")
+
+        missing_recs = recommendations.json_rule_recommendations(no_languages, rules)
+        known_recs = recommendations.json_rule_recommendations(known_without_french, rules)
+
+        self.assertFalse(any(r["rule_id"] == "missing_french_audio" for r in missing_recs))
+        self.assertTrue(any(r["rule_id"] == "missing_french_audio" for r in known_recs))
+
+    def test_vo_only_requires_known_language_group(self):
+        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        unknown_group = item(audio_language_group=None, audio_languages_simple="UNKNOWN")
+        vo_group = item(audio_language_group="VO", audio_languages_simple="VF")
+
+        unknown_recs = recommendations.json_rule_recommendations(unknown_group, rules)
+        vo_recs = recommendations.json_rule_recommendations(vo_group, rules)
+
+        self.assertFalse(any(r["rule_id"] == "vo_only" for r in unknown_recs))
+        self.assertTrue(any(r["rule_id"] == "vo_only" for r in vo_recs))
+
+    def test_missing_french_subtitles_requires_known_subtitles(self):
+        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        unknown_subtitles = item(audio_language_group="VO", subtitle_languages=[])
+        known_without_french = item(audio_language_group="VO", subtitle_languages=["eng"])
+
+        unknown_recs = recommendations.json_rule_recommendations(unknown_subtitles, rules)
+        known_recs = recommendations.json_rule_recommendations(known_without_french, rules)
+
+        self.assertFalse(any(r["rule_id"] == "missing_french_subtitles_for_vo" for r in unknown_recs))
+        self.assertTrue(any(r["rule_id"] == "missing_french_subtitles_for_vo" for r in known_recs))
+
+    def test_unknown_language_is_data(self):
+        recs = recommendations.data_recommendations(item(audio_languages_simple="UNKNOWN"))
+        rec = next(r for r in recs if r["rule_id"] == "unknown_language")
+        self.assertEqual(rec["recommendation_type"], "data")
 
 
 if __name__ == "__main__":
