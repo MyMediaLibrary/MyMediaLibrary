@@ -33,7 +33,11 @@ test('recommendation filters use priority type sort proportions and priority col
   assert.match(cssSource, /\.rec-filters\{display:grid;grid-template-columns:3fr 5fr 2fr/, 'recommendation filters should follow 30/50/20 desktop proportions');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{grid-template-columns:1fr\}/, 'recommendation filters should stack on mobile');
   assert.match(cssSource, /\.rec-filter-btn\.provider-pill/, 'recommendation type filters should reuse provider/type pill styling');
-  assert.match(cssSource, /\.rec-priority-filter-high[\s\S]*#f87171/, 'high priority filters should use high badge color');
-  assert.match(cssSource, /\.rec-priority-filter-medium[\s\S]*#facc15/, 'medium priority filters should use medium badge color');
-  assert.match(cssSource, /\.rec-priority-filter-low[\s\S]*#cbd5e1/, 'low priority filters should use low badge color');
+  assert.match(cssSource, /--priority-high-bg:#dc2626[\s\S]*--priority-low-bg:#15803d/, 'dark theme should define strong priority colors');
+  assert.match(cssSource, /\[data-theme="light"\][\s\S]*--priority-high-bg:#b91c1c[\s\S]*--priority-low-bg:#15803d/, 'light theme should define high-contrast priority colors');
+  assert.match(cssSource, /\.rec-priority-filter\{[\s\S]*--priority-filter-idle-bg[\s\S]*--priority-filter-idle-border/, 'priority filters should have a neutral inactive state');
+  assert.match(cssSource, /\.rec-priority-filter\.active\{[\s\S]*box-shadow/, 'priority filters should have a visible active outline');
+  assert.match(cssSource, /\.rec-priority-high\{background:var\(--priority-high-bg\)[\s\S]*color:var\(--priority-high-text\)/, 'priority badges should use shared high priority palette');
+  assert.match(cssSource, /\.rec-priority-medium\{background:var\(--priority-medium-bg\)[\s\S]*color:var\(--priority-medium-text\)/, 'priority badges should use shared medium priority palette');
+  assert.match(cssSource, /\.rec-priority-low\{background:var\(--priority-low-bg\)[\s\S]*color:var\(--priority-low-text\)/, 'priority badges should use shared low priority palette');
 });
