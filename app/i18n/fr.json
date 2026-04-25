@@ -418,7 +418,7 @@
         "recommendations_per_media_0": "0 recommandation",
         "recommendations_per_media_1": "1 recommandation",
         "recommendations_per_media_2": "2 recommandations",
-        "recommendations_per_media_3plus": "3+ recommandations",
+        "recommendations_per_media_3plus": "3 recommandations",
         "recommendations_reset_local": "Réinitialiser ces filtres",
         "recommendations_empty": "Aucune donnée de recommandation pour les filtres actuels.",
         "providers_by_group": "Fournisseurs par groupe",

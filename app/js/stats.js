@@ -40,6 +40,7 @@
     fmtSize: null,
     escH: null,
     MMLLogic: null,
+    renderStats: null,
     applyStatsFilter: null,
     isRecommendationsEnabled: null,
     visibleRecommendations: null,
@@ -120,12 +121,14 @@
       if (kind === 'recommendationCountBucket') {
         recommendationCountBucketFilter = recommendationCountBucketFilter === value ? null : value;
         renderStatsPanel();
+        syncRecommendationStatsSummary();
         updateResetButtons();
         return;
       }
       if (kind === 'recommendationScoreBucket') {
         recommendationScoreBucketFilter = recommendationScoreBucketFilter === value ? null : value;
         renderStatsPanel();
+        syncRecommendationStatsSummary();
         updateResetButtons();
         return;
       }
@@ -163,6 +166,7 @@
     recommendationCountBucketFilter = null;
     recommendationScoreBucketFilter = null;
     if (changed && options.render !== false) renderStatsPanel();
+    if (changed) syncRecommendationStatsSummary();
     updateResetButtons();
     return changed;
   }
@@ -855,6 +859,22 @@
     };
   }
 
+  function getRecommendationStatsVisibleMedia() {
+    return buildRecommendationStatsData().visibleMedia;
+  }
+
+  function syncRecommendationStatsSummary() {
+    const renderStats = getDep('renderStats');
+    if (typeof renderStats !== 'function') return;
+    if (activeStatsSubtab === 'recommendations' && hasActiveRecommendationStatsFilters()) {
+      renderStats(getRecommendationStatsVisibleMedia());
+      return;
+    }
+    const filterItems = getDep('filterItems');
+    const allItems = getDep('allItems') || [];
+    renderStats(typeof filterItems === 'function' ? filterItems() : allItems);
+  }
+
   function recommendationStatsFilters() {
     const renderButtons = getDep('renderRecommendationFilterButtons');
     if (typeof renderButtons !== 'function') return '';
@@ -887,7 +907,10 @@
     }
 
     const priorityEntries = RECOMMENDATION_PRIORITIES.map((key) => [key, data.byPriority[key] || 0]).filter(([, value]) => value > 0);
-    const typeEntries = RECOMMENDATION_TYPES.map((key) => [key, data.byType[key] || 0]).filter(([, value]) => value > 0);
+    const typeEntries = RECOMMENDATION_TYPES
+      .map((key) => [key, data.byType[key] || 0])
+      .filter(([, value]) => value > 0)
+      .sort((a, b) => b[1] - a[1]);
     const folderEntries = Object.entries(data.byFolder).sort((a,b) => b[1]-a[1]).slice(0, 10);
     const perMediaEntries = ['0', '1', '2', '3plus'].map((key) => [key, data.perMediaBuckets[key] || 0]);
     const scoreEntries = ['0-20', '21-40', '41-60', '61-80', '81-100', 'unknown'].map((key) => [key, data.byScore[key] || 0]).filter(([, value]) => value > 0);
@@ -1089,6 +1112,9 @@
     const items       = filterItems ? filterItems() : allItems;
     const el = document.getElementById('statsContent');
     if (el) el.innerHTML = buildStats(items);
+    if (activeStatsSubtab === 'recommendations' && hasActiveRecommendationStatsFilters()) {
+      syncRecommendationStatsSummary();
+    }
   }
 
   // ── INTERACTIONS ──────────────────────────────────────────
@@ -1132,10 +1158,17 @@
       const section = document.getElementById('statsSubtab-' + tab);
       if (section) section.classList.toggle('active', tab === next);
     });
+    syncRecommendationStatsSummary();
   }
 
   // ── EXPORT API ────────────────────────────────────────────
-  window.MMLStats = { renderStatsPanel, init, resetRecommendationStatsFilters, hasActiveRecommendationStatsFilters };
+  window.MMLStats = {
+    renderStatsPanel,
+    init,
+    resetRecommendationStatsFilters,
+    hasActiveRecommendationStatsFilters,
+    getRecommendationStatsVisibleMedia,
+  };
 
   initializeEventHandlers();
 })();

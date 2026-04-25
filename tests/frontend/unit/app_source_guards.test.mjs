@@ -11,6 +11,8 @@ const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css
 const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
 const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
+const frI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/fr.json'), 'utf8'));
+const enI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/en.json'), 'utf8'));
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
@@ -100,7 +102,7 @@ test('global reset clears sidebar, recommendations, and stats-local filters', ()
   assert.match(resetBlock, /recommendationPriorityFilters\.clear\(\)/, 'global reset should clear recommendation priority filters');
   assert.match(resetBlock, /resetRecommendationStatsFilters\?\.\(\{ render: false \}\)/, 'global reset should clear stats recommendation local filters before rerendering');
   assert.match(statsSource, /function resetRecommendationStatsFilters\(options = \{\}\)/, 'stats module should expose a reset helper for local recommendation filters');
-  assert.match(statsSource, /window\.MMLStats = \{ renderStatsPanel, init, resetRecommendationStatsFilters, hasActiveRecommendationStatsFilters \}/, 'stats reset helper should be exported through MMLStats');
+  assert.match(statsSource, /window\.MMLStats = \{[\s\S]*resetRecommendationStatsFilters[\s\S]*hasActiveRecommendationStatsFilters/, 'stats reset helper should be exported through MMLStats');
 });
 
 test('quality filter hard-disables itself when score feature is disabled', () => {
@@ -398,6 +400,7 @@ test('stats recommendations subtab reuses visible recommendations and renders re
   assert.match(renderBlock, /recommendations_space_size/, 'recommendations stats should render affected space size KPI');
   assert.doesNotMatch(renderBlock, /recommendations_most_affected_media|recommendations_inconsistent_series/, 'recommendations stats should omit removed charts');
   assert.match(renderBlock, /makeRecommendationPie\(t\('stats\.recommendations_per_media'\)/, 'recommendations per media should render as a pie chart');
+  assert.match(renderBlock, /typeEntries = RECOMMENDATION_TYPES[\s\S]*\.sort\(\(a, b\) => b\[1\] - a\[1\]\)/, 'type distribution should be sorted dynamically by descending count');
   assert.match(statsSource, /recommendations_priority_distribution[\s\S]*'recommendationPriority'/, 'priority pie should toggle recommendation priority filters');
   assert.match(statsSource, /recommendations_type_distribution[\s\S]*'recommendationType'/, 'type pie should toggle recommendation type filters');
   const folderImpactBlock = functionBlock(statsSource, 'makeFolderImpactBars', 'makeScoreBucketBars');
@@ -406,10 +409,17 @@ test('stats recommendations subtab reuses visible recommendations and renders re
   assert.match(renderBlock, /makeScoreBucketBars\(t\('stats\.recommendations_score_distribution'\)/, 'score distribution should use interactive score bucket bars');
   assert.match(statsSource, /filterKindForKey:\s*k => k === 'unknown' \? 'recommendationScoreBucket' : 'scoreRange'/, 'score buckets should use global score ranges when possible and local filter for unknown');
   assert.match(statsSource, /data-stats-rec-reset="1"/, 'local stats recommendation filters should be resettable');
+  assert.match(statsSource, /syncRecommendationStatsSummary\(\)/, 'local stats recommendation filters should update the summary stats bar');
+  assert.match(statsSource, /getRecommendationStatsVisibleMedia/, 'stats should expose the locally filtered media set');
+  const statsPanelBlock = functionBlock(statsSource, 'renderStatsPanel', 'statSwitchPie');
+  assert.match(statsPanelBlock, /activeStatsSubtab === 'recommendations'[\s\S]*syncRecommendationStatsSummary\(\)/, 'stats panel rerenders should keep summary stats aligned with recommendation bucket filters');
+  assert.match(appSource, /renderStats,\s*\n\s*applyStatsFilter/, 'stats module should receive the quick stats renderer');
   const filterBlock = functionBlock(appSource, 'applyStatsFilter', 'toggleTechnicalFilters');
   assert.match(filterBlock, /kind === 'recommendationPriority'/, 'stats filter applier should toggle recommendation priority');
   assert.match(filterBlock, /kind === 'recommendationType'/, 'stats filter applier should toggle recommendation type');
   assert.match(appSource, /getStatsScoreRangeState:\s*\(\) => \(\{ scoreMin, scoreMax, includeNoScore, qualityExclude \}\)/, 'stats should receive score range state for active bucket styling');
+  assert.equal(frI18n.stats.recommendations_per_media_3plus, '3 recommandations');
+  assert.equal(enI18n.stats.recommendations_per_media_3plus, '3 recommendations');
 });
 
 test('provider count chart displays raw counts without "media" unit suffix', () => {

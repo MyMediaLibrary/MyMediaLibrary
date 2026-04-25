@@ -418,7 +418,7 @@
         "recommendations_per_media_0": "0 recommendations",
         "recommendations_per_media_1": "1 recommendation",
         "recommendations_per_media_2": "2 recommendations",
-        "recommendations_per_media_3plus": "3+ recommendations",
+        "recommendations_per_media_3plus": "3 recommendations",
         "recommendations_reset_local": "Reset these filters",
         "recommendations_empty": "No recommendation data for the current filters.",
         "providers_by_group": "Providers by group",

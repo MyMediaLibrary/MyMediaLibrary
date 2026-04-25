@@ -858,6 +858,7 @@ let allItems=[], categories=[], groups=[];
         fmtSize,
         escH,
         MMLLogic,
+        renderStats,
         applyStatsFilter,
         isRecommendationsEnabled,
         visibleRecommendations,
