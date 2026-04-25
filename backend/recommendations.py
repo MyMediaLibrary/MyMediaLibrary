@@ -66,7 +66,9 @@ def generate_recommendations(
         recs.extend(data_recommendations(item))
         recs.extend(series_recommendations(item))
         recs.extend(json_rule_recommendations(item, rules))
-    return limit_noise(dedupe_recommendations(recs), max_per_media=max_per_media)
+    deduped = dedupe_recommendations(recs)
+    grouped = group_series_recommendations(deduped)
+    return limit_noise(grouped, max_per_media=max_per_media)
 
 
 def media_id(item: dict) -> str:
@@ -231,6 +233,20 @@ def _fmt_value(value: Any, *, lang: str = "en") -> str:
         value = _round_clean(value)
     text = str(value)
     return text.replace(".", ",") if lang == "fr" and numeric else text
+
+
+def _join_seasons_fr(seasons: list[int]) -> str:
+    parts = [str(s) for s in seasons]
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " et " + parts[-1]
+
+
+def _join_seasons_en(seasons: list[int]) -> str:
+    parts = [str(s) for s in seasons]
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def _series_msg(field_name: str, season: int | None, season_value: Any = None, dominant_value: Any = None) -> tuple[dict, dict]:
@@ -469,6 +485,144 @@ def dedupe_recommendations(recs: list[dict]) -> list[dict]:
         if current is None or _rec_sort_key(rec) > _rec_sort_key(current):
             by_group[key] = rec
     return sorted(by_group.values(), key=lambda r: (str(r.get("media_ref", {}).get("id")), tuple(-v for v in _rec_sort_key(r)), str(r.get("rule_id"))))
+
+
+SERIES_GROUP_FIELDS = {
+    "series_mixed_resolution": ("season_resolution", "dominant_resolution"),
+    "series_mixed_video_codec": ("season_video_codec", "dominant_video_codec"),
+    "series_mixed_audio_channels": ("season_audio_channels", "dominant_audio_channels"),
+    "series_mixed_languages": ("season_audio_language_group", "dominant_audio_language_group"),
+}
+
+
+def _base_series_rule_id(rule_id: str) -> str:
+    return str(rule_id or "").split(":s", 1)[0]
+
+
+def _series_group_key(rec: dict) -> tuple[str, str] | None:
+    if rec.get("recommendation_type") != "series":
+        return None
+    base = _base_series_rule_id(str(rec.get("rule_id") or ""))
+    if base not in SERIES_GROUP_FIELDS and base not in {"series_low_score_season", "series_large_season"}:
+        return None
+    media = rec.get("media_ref") or {}
+    mid = media.get("id")
+    if not mid:
+        return None
+    return str(mid), base
+
+
+def _details_for_group(group: list[dict]) -> list[dict]:
+    details = []
+    for rec in group:
+        ctx = rec.get("context") if isinstance(rec.get("context"), dict) else {}
+        season = ctx.get("season")
+        if season is None:
+            continue
+        detail = {"season": season}
+        for key, value in ctx.items():
+            if key != "season":
+                detail[key] = value
+        details.append(detail)
+    return sorted(details, key=lambda d: (d.get("season") is None, d.get("season")))
+
+
+def _same_context_value(details: list[dict], key: str) -> Any:
+    values = [d.get(key) for d in details if d.get(key) is not None]
+    if not values:
+        return None
+    first = values[0]
+    return first if all(v == first for v in values) else None
+
+
+def _grouped_series_message(base: str, seasons: list[int], details: list[dict]) -> tuple[dict, dict]:
+    fr_seasons = _join_seasons_fr(seasons)
+    en_seasons = _join_seasons_en(seasons)
+    if base in SERIES_GROUP_FIELDS:
+        season_key, dominant_key = SERIES_GROUP_FIELDS[base]
+        season_value = _same_context_value(details, season_key)
+        dominant_value = _same_context_value(details, dominant_key)
+        if season_value is not None and dominant_value is not None:
+            if base == "series_mixed_resolution":
+                return {
+                    "fr": f"Les saisons {fr_seasons} sont en {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+                    "en": f"Seasons {en_seasons} are in {_fmt_value(season_value)} while most of the series is in {_fmt_value(dominant_value)}.",
+                }, {}
+            if base == "series_mixed_video_codec":
+                return {
+                    "fr": f"Les saisons {fr_seasons} utilisent le codec {_fmt_value(season_value, lang='fr')} alors que la majorité de la série utilise {_fmt_value(dominant_value, lang='fr')}.",
+                    "en": f"Seasons {en_seasons} use {_fmt_value(season_value)} while most of the series uses {_fmt_value(dominant_value)}.",
+                }, {}
+            if base == "series_mixed_audio_channels":
+                return {
+                    "fr": f"Les saisons {fr_seasons} sont en audio {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+                    "en": f"Seasons {en_seasons} use {_fmt_value(season_value)} audio while most of the series uses {_fmt_value(dominant_value)}.",
+                }, {}
+            if base == "series_mixed_languages":
+                return {
+                    "fr": f"Les saisons {fr_seasons} sont en {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+                    "en": f"Seasons {en_seasons} are {_fmt_value(season_value)} while most of the series is {_fmt_value(dominant_value)}.",
+                }, {}
+        return {
+            "fr": f"Les saisons {fr_seasons} diffèrent du profil majoritaire de la série.",
+            "en": f"Seasons {en_seasons} differ from the dominant series profile.",
+        }, {}
+    if base == "series_low_score_season":
+        return {
+            "fr": f"Les saisons {fr_seasons} ont un score qualité nettement inférieur au score moyen de la série.",
+            "en": f"Seasons {en_seasons} have a quality score significantly lower than the series average.",
+        }, {}
+    if base == "series_large_season":
+        return {
+            "fr": f"Les saisons {fr_seasons} sont beaucoup plus lourdes que les autres saisons.",
+            "en": f"Seasons {en_seasons} are much larger than the other seasons.",
+        }, {}
+    return {"fr": "", "en": ""}, {}
+
+
+def _grouped_series_action(base: str, seasons: list[int]) -> dict:
+    fr_seasons = _join_seasons_fr(seasons)
+    en_seasons = _join_seasons_en(seasons)
+    if base == "series_low_score_season":
+        return {"fr": f"Chercher de meilleures versions des saisons {fr_seasons}.", "en": f"Look for better versions of seasons {en_seasons}."}
+    if base == "series_large_season":
+        return {"fr": f"Vérifier si les saisons {fr_seasons} peuvent être optimisées.", "en": f"Check whether seasons {en_seasons} can be optimized."}
+    return {"fr": f"Vérifier les saisons {fr_seasons}.", "en": f"Review seasons {en_seasons}."}
+
+
+def group_series_recommendations(recs: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    passthrough = []
+    for rec in recs:
+        key = _series_group_key(rec)
+        if key is None:
+            passthrough.append(rec)
+        else:
+            groups[key].append(rec)
+
+    grouped = list(passthrough)
+    for (_mid, base), group in groups.items():
+        if len(group) == 1:
+            grouped.extend(group)
+            continue
+        details = _details_for_group(group)
+        seasons = [d.get("season") for d in details if d.get("season") is not None]
+        if len(seasons) <= 1:
+            grouped.extend(group)
+            continue
+        best = sorted(group, key=_rec_sort_key, reverse=True)[0]
+        rec = dict(best)
+        rec["rule_id"] = base
+        rec["dedupe_group"] = base
+        rec["severity"] = max(int(r.get("severity") or 0) for r in group)
+        rec["priority"] = sorted(group, key=lambda r: PRIORITY_RANK.get(r.get("priority"), 0), reverse=True)[0].get("priority", best.get("priority"))
+        msg, _ = _grouped_series_message(base, seasons, details)
+        if msg.get("fr") and msg.get("en"):
+            rec["message"] = msg
+        rec["suggested_action"] = _grouped_series_action(base, seasons)
+        rec["context"] = {"seasons": seasons, "details": details}
+        grouped.append(rec)
+    return sorted(grouped, key=lambda r: (str(r.get("media_ref", {}).get("id")), tuple(-v for v in _rec_sort_key(r)), str(r.get("rule_id"))))
 
 
 def limit_noise(recs: list[dict], *, max_per_media: int = 3) -> list[dict]:

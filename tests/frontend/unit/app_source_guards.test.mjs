@@ -204,10 +204,15 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(renderBlock, /recommendations\.empty_error/, 'recommendations should render API error state');
   assert.match(renderBlock, /rec-filter-group/, 'recommendations local filters should be visually split into groups');
   assert.match(renderBlock, /recSortControls\(\)/, 'recommendations sort controls should render with local filters');
+  assert.match(appSource, /recommendationSort = \{ key: 'priority', dir: 'desc' \}/, 'recommendations default sort should be priority descending');
+  assert.match(appSource, /priority:desc[\s\S]*title:asc[\s\S]*resolution:asc/, 'recommendations sort select should include direction variants directly');
+  assert.doesNotMatch(appSource, /toggleRecommendationSortDir/, 'recommendations should not render a separate sort direction toggle');
   assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
+  assert.match(renderBlock, /rec-filter-priority[\s\S]*rec-filter-type[\s\S]*recSortControls\(\)/, 'recommendations filters should render priority, type, then sort');
   assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
   assert.match(appSource, /'message_fr'[\s\S]*'action_en'/, 'recommendations CSV should export split message and action columns');
-  assert.match(appSource, /'context_season'[\s\S]*'context_dominant_audio_language_group'/, 'recommendations CSV should export useful series context columns');
+  assert.match(appSource, /'context_season'[\s\S]*'context_dominant_audio_language_group'[\s\S]*'context_seasons'[\s\S]*'context_details'/, 'recommendations CSV should export useful series context columns');
+  assert.match(indexSource, /id="recommendationsControls"[\s\S]*exportRecommendationsCSV\(\)[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 

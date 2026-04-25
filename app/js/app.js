@@ -2200,12 +2200,8 @@ let allItems=[], categories=[], groups=[];
   }
 
   function setRecommendationSort(key) {
-    recommendationSort = { key: key || 'priority', dir: recommendationSort.dir || 'desc' };
-    renderRecommendationsPanel();
-  }
-
-  function toggleRecommendationSortDir() {
-    recommendationSort.dir = recommendationSort.dir === 'asc' ? 'desc' : 'asc';
+    const [sortKey, sortDir] = String(key || 'priority:desc').split(':');
+    recommendationSort = { key: sortKey || 'priority', dir: sortDir === 'asc' ? 'asc' : 'desc' };
     renderRecommendationsPanel();
   }
 
@@ -2269,10 +2265,11 @@ let allItems=[], categories=[], groups=[];
     ].filter(Boolean).join(' • ');
   }
 
-  function renderRecommendationFilterButtons(values, activeSet, fnName, labelPrefix) {
+  function renderRecommendationFilterButtons(values, activeSet, fnName, labelPrefix, classPrefix) {
     return values.map((value) => {
       const active = activeSet.has(value) ? ' active' : '';
-      return '<button class="rec-filter-btn'+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
+      const extra = classPrefix ? ' '+classPrefix+' '+classPrefix+'-'+value : '';
+      return '<button class="rec-filter-btn'+extra+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
     }).join('');
   }
 
@@ -2306,16 +2303,24 @@ let allItems=[], categories=[], groups=[];
 
   function recSortControls() {
     const options = [
-      ['priority', t('recommendations.table.priority')],
-      ['type', t('recommendations.table.type')],
-      ['title', t('table.title')],
-      ['score', t('recommendations.table.score')],
-      ['size', t('recommendations.table.size')],
-      ['resolution', t('recommendations.table.resolution')],
-    ].map(([key, label]) => '<option value="'+escH(key)+'"'+(recommendationSort.key === key ? ' selected' : '')+'>'+escH(label)+'</option>').join('');
+      ['priority:desc', t('recommendations.sort_options.priority_desc')],
+      ['priority:asc', t('recommendations.sort_options.priority_asc')],
+      ['type:desc', t('recommendations.sort_options.type_desc')],
+      ['type:asc', t('recommendations.sort_options.type_asc')],
+      ['title:asc', t('recommendations.sort_options.title_asc')],
+      ['title:desc', t('recommendations.sort_options.title_desc')],
+      ['score:desc', t('recommendations.sort_options.score_desc')],
+      ['score:asc', t('recommendations.sort_options.score_asc')],
+      ['size:desc', t('recommendations.sort_options.size_desc')],
+      ['size:asc', t('recommendations.sort_options.size_asc')],
+      ['resolution:desc', t('recommendations.sort_options.resolution_desc')],
+      ['resolution:asc', t('recommendations.sort_options.resolution_asc')],
+    ].map(([key, label]) => {
+      const selected = (recommendationSort.key + ':' + recommendationSort.dir) === key ? ' selected' : '';
+      return '<option value="'+escH(key)+'"'+selected+'>'+escH(label)+'</option>';
+    }).join('');
     return '<div class="rec-filter-group rec-sort-group"><div class="rec-filter-label">'+t('recommendations.sort_by')+'</div>'
-      + '<div class="rec-sort-row"><select class="tab-sort-select rec-sort-select" onchange="setRecommendationSort(this.value)">'+options+'</select>'
-      + '<button class="view-btn rec-sort-dir active" onclick="toggleRecommendationSortDir()" title="'+escH(t('recommendations.sort_by'))+'">'+(recommendationSort.dir === 'asc' ? '↑' : '↓')+'</button></div></div>';
+      + '<select class="tab-sort-select rec-sort-select" onchange="setRecommendationSort(this.value)">'+options+'</select></div>';
   }
 
   function exportRecommendationsCSV() {
@@ -2355,6 +2360,8 @@ let allItems=[], categories=[], groups=[];
       'context_dominant_audio_channels',
       'context_season_audio_language_group',
       'context_dominant_audio_language_group',
+      'context_seasons',
+      'context_details',
     ];
     const rows = recs.map((rec) => {
       const media = recMedia(rec, mediaById);
@@ -2392,6 +2399,8 @@ let allItems=[], categories=[], groups=[];
         csvC(ctx.dominant_audio_channels ?? ''),
         csvC(ctx.season_audio_language_group ?? ''),
         csvC(ctx.dominant_audio_language_group ?? ''),
+        csvC(Array.isArray(ctx.seasons) ? ctx.seasons.join(',') : ''),
+        csvC(Array.isArray(ctx.details) ? JSON.stringify(ctx.details) : ''),
       ];
     });
     const csv = [headers.join(';'), ...rows.map((row) => row.join(';'))].join('\n');
@@ -2442,11 +2451,11 @@ let allItems=[], categories=[], groups=[];
     ].map(([key, label]) => '<div class="rec-kpi"><div class="rec-kpi-value">'+counts[key]+'</div><div class="rec-kpi-label">'+escH(label)+'</div></div>').join('');
 
     const filters = '<div class="rec-filters">'
-      + '<div class="rec-filter-group"><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
-      + renderRecommendationFilterButtons(RECOMMENDATION_TYPES, recommendationTypeFilters, 'toggleRecommendationTypeFilter', recTypeLabel)
+      + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_PRIORITIES, recommendationPriorityFilters, 'toggleRecommendationPriorityFilter', recPriorityLabel, 'rec-priority-filter')
       + '</div></div>'
-      + '<div class="rec-filter-group"><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
-      + renderRecommendationFilterButtons(RECOMMENDATION_PRIORITIES, recommendationPriorityFilters, 'toggleRecommendationPriorityFilter', recPriorityLabel)
+      + '<div class="rec-filter-group rec-filter-type"><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_TYPES, recommendationTypeFilters, 'toggleRecommendationTypeFilter', recTypeLabel, 'provider-pill')
       + '</div></div>'
       + recSortControls()
       + '</div>';

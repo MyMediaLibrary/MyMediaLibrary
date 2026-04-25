@@ -28,3 +28,12 @@ test('score weights use 2-column desktop grid and 1-column mobile fallback', () 
   assert.match(cssSource, /\.score-weights-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/, 'score weights should render in 2 columns on desktop');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.score-weights-grid\{grid-template-columns:1fr\}/, 'score weights should collapse to 1 column on mobile');
 });
+
+test('recommendation filters use priority type sort proportions and priority colors', () => {
+  assert.match(cssSource, /\.rec-filters\{display:grid;grid-template-columns:3fr 5fr 2fr/, 'recommendation filters should follow 30/50/20 desktop proportions');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{grid-template-columns:1fr\}/, 'recommendation filters should stack on mobile');
+  assert.match(cssSource, /\.rec-filter-btn\.provider-pill/, 'recommendation type filters should reuse provider/type pill styling');
+  assert.match(cssSource, /\.rec-priority-filter-high[\s\S]*#f87171/, 'high priority filters should use high badge color');
+  assert.match(cssSource, /\.rec-priority-filter-medium[\s\S]*#facc15/, 'medium priority filters should use medium badge color');
+  assert.match(cssSource, /\.rec-priority-filter-low[\s\S]*#cbd5e1/, 'low priority filters should use low badge color');
+});

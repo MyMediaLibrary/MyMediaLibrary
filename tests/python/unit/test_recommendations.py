@@ -199,6 +199,57 @@ class RecommendationsTest(unittest.TestCase):
         self.assertIn("VO", languages["message"]["fr"])
         self.assertIn("MULTI", languages["message"]["en"])
 
+    def test_series_recommendations_group_same_rule_before_noise_limit(self):
+        tv = item(
+            id="tv:Series:Grouped",
+            type="tv",
+            resolution="1080p",
+            codec="HEVC",
+            audio_channels="5.1",
+            audio_languages_simple="MULTI",
+            size_gb=10,
+            quality={"score": 80},
+            seasons=[
+                {"season": 1, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 2, "resolution": "720p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 3, "resolution": "720p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 4, "resolution": "720p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 5, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 6, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 7, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+            ],
+        )
+        recs = recommendations.generate_recommendations({"items": [tv]}, [], max_per_media=3)
+        resolution = next(r for r in recs if r["rule_id"] == "series_mixed_resolution")
+        self.assertEqual(resolution["context"]["seasons"], [2, 3, 4])
+        self.assertEqual([d["season"] for d in resolution["context"]["details"]], [2, 3, 4])
+        self.assertIn("Les saisons 2, 3 et 4", resolution["message"]["fr"])
+        self.assertIn("Seasons 2, 3 and 4", resolution["message"]["en"])
+        self.assertLessEqual(len(recs), 3)
+
+    def test_series_low_score_and_large_seasons_group_plural_messages(self):
+        tv = item(
+            id="tv:Series:GroupedScores",
+            type="tv",
+            seasons=[
+                {"season": 1, "size_gb": 10, "quality": {"score": 80}},
+                {"season": 2, "size_gb": 10, "quality": {"score": 80}},
+                {"season": 4, "size_gb": 10, "quality": {"score": 40}},
+                {"season": 5, "size_gb": 35, "quality": {"score": 80}},
+                {"season": 6, "size_gb": 10, "quality": {"score": 40}},
+                {"season": 7, "size_gb": 35, "quality": {"score": 80}},
+            ],
+        )
+        grouped = recommendations.group_series_recommendations(recommendations.dedupe_recommendations(recommendations.series_recommendations(tv)))
+        low = next(r for r in grouped if r["rule_id"] == "series_low_score_season")
+        large = next(r for r in grouped if r["rule_id"] == "series_large_season")
+        self.assertEqual(low["context"]["seasons"], [4, 6])
+        self.assertIn("Les saisons 4 et 6", low["message"]["fr"])
+        self.assertIn("Seasons 4 and 6", low["message"]["en"])
+        self.assertEqual(large["context"]["seasons"], [5, 7])
+        self.assertIn("beaucoup plus lourdes", large["message"]["fr"])
+        self.assertIn("much larger", large["message"]["en"])
+
     def test_dedupe_and_limit_noise(self):
         sample = item()
         recs = [

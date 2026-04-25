@@ -429,6 +429,20 @@
       "type": "Recommendation type",
       "priority": "Priority"
     },
+    "sort_options": {
+      "priority_desc": "Priority ↓",
+      "priority_asc": "Priority ↑",
+      "type_desc": "Type ↓",
+      "type_asc": "Type ↑",
+      "title_asc": "Title A → Z",
+      "title_desc": "Title Z → A",
+      "score_desc": "Score ↓",
+      "score_asc": "Score ↑",
+      "size_desc": "Size ↓",
+      "size_asc": "Size ↑",
+      "resolution_desc": "Resolution ↓",
+      "resolution_asc": "Resolution ↑"
+    },
     "types": {
       "quality": "Quality",
       "space": "Space",
