@@ -414,6 +414,8 @@
     "empty_filters": "Aucune recommandation pour les filtres actuels.",
     "empty_error": "Impossible de charger les recommandations.",
     "info_score": "Score {value}",
+    "export_csv": "Exporter CSV",
+    "sort_by": "Trier par",
     "kpis": {
       "total": "Total recommandations",
       "high": "Priorité haute",
@@ -444,6 +446,10 @@
       "type": "Type",
       "media": "Média",
       "info": "Infos principales",
+      "score": "Score",
+      "size": "Taille",
+      "resolution": "Résolution",
+      "audio_channels": "Channels audio",
       "recommendation": "Recommandation",
       "action": "Action"
     }

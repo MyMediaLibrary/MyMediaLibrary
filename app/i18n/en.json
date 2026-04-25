@@ -414,6 +414,8 @@
     "empty_filters": "No recommendations for the current filters.",
     "empty_error": "Unable to load recommendations.",
     "info_score": "Score {value}",
+    "export_csv": "Export CSV",
+    "sort_by": "Sort by",
     "kpis": {
       "total": "Total recommendations",
       "high": "High priority",
@@ -444,6 +446,10 @@
       "type": "Type",
       "media": "Media",
       "info": "Main info",
+      "score": "Score",
+      "size": "Size",
+      "resolution": "Resolution",
+      "audio_channels": "Audio channels",
       "recommendation": "Recommendation",
       "action": "Action"
     }

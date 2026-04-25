@@ -525,6 +525,7 @@ let allItems=[], categories=[], groups=[];
   let recommendationsDoc = null;
   let recommendationTypeFilters = new Set();
   let recommendationPriorityFilters = new Set();
+  let recommendationSort = { key: 'priority', dir: 'asc' };
 
   function resolveScoreEnabled() {
     const configScoreEnabled = appConfig?.score?.enabled;
@@ -2196,6 +2197,15 @@ let allItems=[], categories=[], groups=[];
     renderRecommendationsPanel();
   }
 
+  function setRecommendationSort(key) {
+    if (recommendationSort.key === key) {
+      recommendationSort.dir = recommendationSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      recommendationSort = { key, dir: 'asc' };
+    }
+    renderRecommendationsPanel();
+  }
+
   function visibleRecommendations() {
     if (!isRecommendationsEnabled() || !recommendationsDoc) return [];
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
@@ -2207,6 +2217,35 @@ let allItems=[], categories=[], groups=[];
       if (recommendationPriorityFilters.size && !recommendationPriorityFilters.has(rec.priority)) return false;
       return true;
     });
+  }
+
+  function recMedia(rec, mediaById) {
+    return mediaById.get(String(rec?.media_ref?.id || '')) || {};
+  }
+
+  function recMediaTitle(rec, media) {
+    return media?.title || rec?.display?.title || '-';
+  }
+
+  function recMediaYear(rec, media) {
+    return media?.year || rec?.display?.year || '';
+  }
+
+  function recScore(media) {
+    const score = Number(media?.quality?.score);
+    return Number.isFinite(score) ? Math.round(score) : '';
+  }
+
+  function recSizeBytes(media) {
+    return Number(media?.size_b || 0);
+  }
+
+  function recSizeLabel(media) {
+    return recSizeBytes(media) ? fmtSize(recSizeBytes(media)) : '';
+  }
+
+  function recResolution(media) {
+    return media?.resolution ? getFilterDisplayValue(media.resolution) : '';
   }
 
   function recInfo(media) {
@@ -2227,6 +2266,88 @@ let allItems=[], categories=[], groups=[];
       const active = activeSet.has(value) ? ' active' : '';
       return '<button class="rec-filter-btn'+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
     }).join('');
+  }
+
+  function recSortValue(rec, media, key) {
+    if (key === 'priority') return { high: 0, medium: 1, low: 2 }[rec.priority] ?? 9;
+    if (key === 'type') return recTypeLabel(rec.recommendation_type || 'data').toLowerCase();
+    if (key === 'media') return recMediaTitle(rec, media).toLowerCase();
+    if (key === 'score') return Number.isFinite(Number(media?.quality?.score)) ? Number(media.quality.score) : -1;
+    if (key === 'size') return recSizeBytes(media);
+    if (key === 'resolution') return recResolution(media).toLowerCase();
+    return '';
+  }
+
+  function sortedRecommendations(recs, mediaById) {
+    const dir = recommendationSort.dir === 'desc' ? -1 : 1;
+    const key = recommendationSort.key || 'priority';
+    return recs.slice().sort((a, b) => {
+      const ma = recMedia(a, mediaById);
+      const mb = recMedia(b, mediaById);
+      const av = recSortValue(a, ma, key);
+      const bv = recSortValue(b, mb, key);
+      let cmp = 0;
+      if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
+      if (cmp === 0) {
+        cmp = recMediaTitle(a, ma).localeCompare(recMediaTitle(b, mb), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
+      }
+      return cmp * dir;
+    });
+  }
+
+  function recSortHeader(key, label) {
+    const active = recommendationSort.key === key;
+    const mark = active ? (recommendationSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return '<button class="rec-sort-btn'+(active ? ' active' : '')+'" onclick="setRecommendationSort(\''+escH(key)+'\')" title="'+escH(t('recommendations.sort_by'))+'">'+escH(label)+mark+'</button>';
+  }
+
+  function exportRecommendationsCSV() {
+    if (!isRecommendationsEnabled() || !recommendationsDoc) return;
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const recs = sortedRecommendations(visibleRecommendations(), mediaById);
+    const headers = [
+      t('recommendations.table.priority'),
+      t('recommendations.table.type'),
+      t('table.title'),
+      t('table.year'),
+      t('table.category'),
+      t('recommendations.table.score'),
+      t('recommendations.table.size'),
+      t('recommendations.table.resolution'),
+      t('table.codec'),
+      t('table.audio_codec'),
+      t('recommendations.table.audio_channels'),
+      t('recommendations.table.recommendation'),
+      t('recommendations.table.action'),
+    ];
+    const rows = recs.map((rec) => {
+      const media = recMedia(rec, mediaById);
+      return [
+        csvC(recPriorityLabel(rec.priority || 'medium')),
+        csvC(recTypeLabel(rec.recommendation_type || 'data')),
+        csvC(recMediaTitle(rec, media)),
+        csvC(recMediaYear(rec, media)),
+        csvC(media.category || ''),
+        csvC(recScore(media)),
+        csvC(recSizeLabel(media)),
+        csvC(recResolution(media)),
+        csvC(media.codec || ''),
+        csvC(getAudioCodecLabel(media)),
+        csvC(media.audio_channels || ''),
+        csvC(recText(rec.message)),
+        csvC(recText(rec.suggested_action)),
+      ];
+    });
+    const csv = [headers.map(csvC).join(';'), ...rows.map((row) => row.join(';'))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const now = new Date();
+    a.href = url;
+    a.download = 'mymedialibrary-recommendations-' + now.toISOString().slice(0,10) + '_' + now.toTimeString().slice(0,8).replace(/:/g,'-') + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function renderRecommendationsPanel() {
@@ -2266,37 +2387,42 @@ let allItems=[], categories=[], groups=[];
     ].map(([key, label]) => '<div class="rec-kpi"><div class="rec-kpi-value">'+counts[key]+'</div><div class="rec-kpi-label">'+escH(label)+'</div></div>').join('');
 
     const filters = '<div class="rec-filters">'
-      + '<div><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + '<div class="rec-filter-group"><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
       + renderRecommendationFilterButtons(RECOMMENDATION_TYPES, recommendationTypeFilters, 'toggleRecommendationTypeFilter', recTypeLabel)
       + '</div></div>'
-      + '<div><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + '<div class="rec-filter-group"><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
       + renderRecommendationFilterButtons(RECOMMENDATION_PRIORITIES, recommendationPriorityFilters, 'toggleRecommendationPriorityFilter', recPriorityLabel)
       + '</div></div></div>';
+    const actions = '<div class="rec-actions"><button class="export-btn rec-export-btn" onclick="exportRecommendationsCSV()">'+t('recommendations.export_csv')+'</button></div>';
 
     if (!recs.length) {
-      host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
+      host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters+actions+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
       return;
     }
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
-    const rows = recs.map((rec) => {
-      const media = mediaById.get(String(rec.media_ref?.id || '')) || {};
-      const title = media.title || rec.display?.title || '-';
-      const year = media.year || rec.display?.year || '';
+    const rows = sortedRecommendations(recs, mediaById).map((rec) => {
+      const media = recMedia(rec, mediaById);
+      const title = recMediaTitle(rec, media);
+      const year = recMediaYear(rec, media);
       return '<tr>'
         + '<td><span class="rec-priority rec-priority-'+escH(rec.priority || 'medium')+'">'+escH(recPriorityLabel(rec.priority || 'medium'))+'</span></td>'
         + '<td>'+escH(recTypeLabel(rec.recommendation_type || 'data'))+'</td>'
         + '<td><strong>'+escH(title)+'</strong>'+(year ? '<div class="rec-muted">'+escH(year)+'</div>' : '')+'</td>'
-        + '<td class="rec-info">'+escH(recInfo(media))+'</td>'
+        + '<td>'+escH(recScore(media))+'</td>'
+        + '<td>'+escH(recSizeLabel(media))+'</td>'
+        + '<td>'+escH(recResolution(media))+'</td>'
         + '<td>'+escH(recText(rec.message))+'</td>'
         + '<td>'+escH(recText(rec.suggested_action))+'</td>'
         + '</tr>';
     }).join('');
-    host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters
+    host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters+actions
       + '<div class="rec-table-wrap"><table class="rec-table"><thead><tr>'
-      + '<th>'+t('recommendations.table.priority')+'</th>'
-      + '<th>'+t('recommendations.table.type')+'</th>'
-      + '<th>'+t('recommendations.table.media')+'</th>'
-      + '<th>'+t('recommendations.table.info')+'</th>'
+      + '<th>'+recSortHeader('priority', t('recommendations.table.priority'))+'</th>'
+      + '<th>'+recSortHeader('type', t('recommendations.table.type'))+'</th>'
+      + '<th>'+recSortHeader('media', t('recommendations.table.media'))+'</th>'
+      + '<th>'+recSortHeader('score', t('recommendations.table.score'))+'</th>'
+      + '<th>'+recSortHeader('size', t('recommendations.table.size'))+'</th>'
+      + '<th>'+recSortHeader('resolution', t('recommendations.table.resolution'))+'</th>'
       + '<th>'+t('recommendations.table.recommendation')+'</th>'
       + '<th>'+t('recommendations.table.action')+'</th>'
       + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';

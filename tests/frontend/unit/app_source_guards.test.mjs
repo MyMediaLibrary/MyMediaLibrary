@@ -202,6 +202,10 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(renderBlock, /recommendations\.empty_run_scan/, 'recommendations should render empty scan state');
   assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
   assert.match(renderBlock, /recommendations\.empty_error/, 'recommendations should render API error state');
+  assert.match(renderBlock, /rec-filter-group/, 'recommendations local filters should be visually split into groups');
+  assert.match(renderBlock, /recSortHeader\('priority'/, 'recommendations table should expose sortable priority header');
+  assert.match(renderBlock, /recSortHeader\('score'/, 'recommendations table should expose sortable score header');
+  assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 
