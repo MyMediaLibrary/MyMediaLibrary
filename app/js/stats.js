@@ -53,6 +53,7 @@
     recommendationTypeFilters: null,
     activeFolders: null,
     getStatsScoreRangeState: null,
+    updateGlobalResetButtons: null,
   };
   const STATS_SUBTABS = ['general', 'technical', 'evolution', 'recommendations'];
   const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
@@ -104,9 +105,7 @@
       if (resetTarget) {
         const statsHost = document.getElementById('statsContent');
         if (statsHost?.contains(resetTarget)) {
-          recommendationCountBucketFilter = null;
-          recommendationScoreBucketFilter = null;
-          renderStatsPanel();
+          resetRecommendationStatsFilters();
         }
         return;
       }
@@ -121,11 +120,13 @@
       if (kind === 'recommendationCountBucket') {
         recommendationCountBucketFilter = recommendationCountBucketFilter === value ? null : value;
         renderStatsPanel();
+        updateResetButtons();
         return;
       }
       if (kind === 'recommendationScoreBucket') {
         recommendationScoreBucketFilter = recommendationScoreBucketFilter === value ? null : value;
         renderStatsPanel();
+        updateResetButtons();
         return;
       }
       const applyStatsFilter = getDep('applyStatsFilter');
@@ -146,6 +147,24 @@
       target.click();
     });
 
+  }
+
+  function updateResetButtons() {
+    const update = getDep('updateGlobalResetButtons');
+    if (typeof update === 'function') update();
+  }
+
+  function hasActiveRecommendationStatsFilters() {
+    return !!(recommendationCountBucketFilter || recommendationScoreBucketFilter);
+  }
+
+  function resetRecommendationStatsFilters(options = {}) {
+    const changed = hasActiveRecommendationStatsFilters();
+    recommendationCountBucketFilter = null;
+    recommendationScoreBucketFilter = null;
+    if (changed && options.render !== false) renderStatsPanel();
+    updateResetButtons();
+    return changed;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1116,7 +1135,7 @@
   }
 
   // ── EXPORT API ────────────────────────────────────────────
-  window.MMLStats = { renderStatsPanel, init };
+  window.MMLStats = { renderStatsPanel, init, resetRecommendationStatsFilters, hasActiveRecommendationStatsFilters };
 
   initializeEventHandlers();
 })();

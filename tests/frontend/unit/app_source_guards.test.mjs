@@ -90,6 +90,19 @@ test('score feature visibility is centrally applied and sanitizes stale score st
   assert.match(block, /option\.style\.display = scoreOn \? '' : 'none'/, 'score sort options should be hidden when score is disabled');
 });
 
+test('global reset clears sidebar, recommendations, and stats-local filters', () => {
+  const hasActiveBlock = functionBlock(appSource, 'hasActiveFilters', 'updateGlobalResetButtons');
+  assert.match(hasActiveBlock, /recommendationTypeFilters\.size > 0/, 'global active-filter state should include recommendation type filters');
+  assert.match(hasActiveBlock, /recommendationPriorityFilters\.size > 0/, 'global active-filter state should include recommendation priority filters');
+  assert.match(hasActiveBlock, /hasActiveRecommendationStatsFilters/, 'global active-filter state should include stats recommendation local filters');
+  const resetBlock = functionBlock(appSource, 'resetAllFilters', 'sortFilterOptionsByCount');
+  assert.match(resetBlock, /recommendationTypeFilters\.clear\(\)/, 'global reset should clear recommendation type filters');
+  assert.match(resetBlock, /recommendationPriorityFilters\.clear\(\)/, 'global reset should clear recommendation priority filters');
+  assert.match(resetBlock, /resetRecommendationStatsFilters\?\.\(\{ render: false \}\)/, 'global reset should clear stats recommendation local filters before rerendering');
+  assert.match(statsSource, /function resetRecommendationStatsFilters\(options = \{\}\)/, 'stats module should expose a reset helper for local recommendation filters');
+  assert.match(statsSource, /window\.MMLStats = \{ renderStatsPanel, init, resetRecommendationStatsFilters, hasActiveRecommendationStatsFilters \}/, 'stats reset helper should be exported through MMLStats');
+});
+
 test('quality filter hard-disables itself when score feature is disabled', () => {
   const block = functionBlock(appSource, 'renderQualityFilter', 'renderResolutionFilter');
   assert.match(block, /if\s*\(!isScoreEnabled\(\)\)\s*\{/, 'renderQualityFilter should early-return when score is disabled');

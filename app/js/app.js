@@ -870,7 +870,8 @@ let allItems=[], categories=[], groups=[];
         recommendationPriorityFilters,
         recommendationTypeFilters,
         activeFolders,
-        getStatsScoreRangeState: () => ({ scoreMin, scoreMax, includeNoScore, qualityExclude })
+        getStatsScoreRangeState: () => ({ scoreMin, scoreMax, includeNoScore, qualityExclude }),
+        updateGlobalResetButtons
       });
 
       const d=new Date(data.scanned_at);
@@ -1227,8 +1228,11 @@ let allItems=[], categories=[], groups=[];
   });
 
   function hasActiveFilters() {
+    const hasRecommendationFilters = recommendationTypeFilters.size > 0
+      || recommendationPriorityFilters.size > 0
+      || !!window.MMLStats?.hasActiveRecommendationStatsFilters?.();
     if (window.MMLLogic?.hasActiveFilters) {
-      return window.MMLLogic.hasActiveFilters({
+      return hasRecommendationFilters || window.MMLLogic.hasActiveFilters({
         activeType,
         activeGroup,
         activeFolders,
@@ -1274,6 +1278,7 @@ let allItems=[], categories=[], groups=[];
       || audioCodecExclude
       || audioLanguageExclude
       || folderExclude
+      || hasRecommendationFilters
       || getSearchQuery().length > 0;
   }
 
@@ -1316,6 +1321,9 @@ let allItems=[], categories=[], groups=[];
     audioLanguageExclude = false;
     folderExclude = false;
     qualityExclude = false;
+    recommendationTypeFilters.clear();
+    recommendationPriorityFilters.clear();
+    window.MMLStats?.resetRecommendationStatsFilters?.({ render: false });
 
     const searchDesktop = document.getElementById('searchInput');
     if (searchDesktop) searchDesktop.value = '';
@@ -2210,6 +2218,7 @@ let allItems=[], categories=[], groups=[];
     else recommendationTypeFilters.add(type);
     if (currentTab === 'recommendations') renderRecommendationsPanel();
     if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    updateGlobalResetButtons();
   }
 
   function toggleRecommendationPriorityFilter(priority) {
@@ -2217,6 +2226,7 @@ let allItems=[], categories=[], groups=[];
     else recommendationPriorityFilters.add(priority);
     if (currentTab === 'recommendations') renderRecommendationsPanel();
     if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    updateGlobalResetButtons();
   }
 
   function setRecommendationSort(key) {
