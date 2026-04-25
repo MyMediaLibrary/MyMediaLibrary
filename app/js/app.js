@@ -2294,10 +2294,8 @@ let allItems=[], categories=[], groups=[];
       let cmp = 0;
       if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
       else cmp = String(av).localeCompare(String(bv), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
-      if (cmp === 0) {
-        cmp = recMediaTitle(a, ma).localeCompare(recMediaTitle(b, mb), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
-      }
-      return cmp * dir;
+      if (cmp !== 0) return cmp * dir;
+      return recMediaTitle(a, ma).localeCompare(recMediaTitle(b, mb), CURRENT_LANG === 'en' ? 'en' : 'fr', { sensitivity: 'base' });
     });
   }
 

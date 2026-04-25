@@ -205,6 +205,7 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(renderBlock, /rec-filter-group/, 'recommendations local filters should be visually split into groups');
   assert.match(renderBlock, /recSortControls\(\)/, 'recommendations sort controls should render with local filters');
   assert.match(appSource, /recommendationSort = \{ key: 'priority', dir: 'desc' \}/, 'recommendations default sort should be priority descending');
+  assert.match(appSource, /if \(cmp !== 0\) return cmp \* dir;[\s\S]*return recMediaTitle\(a, ma\)\.localeCompare/, 'recommendations sort should use title ascending as secondary sort');
   assert.match(appSource, /priority:desc[\s\S]*title:asc[\s\S]*resolution:asc/, 'recommendations sort select should include direction variants directly');
   assert.doesNotMatch(appSource, /toggleRecommendationSortDir/, 'recommendations should not render a separate sort direction toggle');
   assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
