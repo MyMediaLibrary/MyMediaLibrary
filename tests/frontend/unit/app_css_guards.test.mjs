@@ -34,9 +34,12 @@ test('score weights use 2-column desktop grid and 1-column mobile fallback', () 
 
 test('recommendation filters use priority type sort proportions and priority colors', () => {
   assert.match(cssSource, /\.rec-filters\{display:grid;grid-template-columns:3fr 5fr 2fr/, 'recommendation filters should follow 30/50/20 desktop proportions');
-  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{grid-template-columns:1fr;gap:8px\}/, 'recommendation filters should stack compactly on mobile');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filters\{display:flex;flex-direction:column;gap:10px\}/, 'recommendation filters should stack vertically on mobile');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-group\{width:100%;padding:8px;border-radius:8px\}/, 'mobile recommendation filter groups should take full width');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-row\{gap:5px;flex-wrap:nowrap;overflow-x:auto/, 'mobile recommendation filter rows should stay compact and scrollable');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-priority \.rec-filter-row\{flex-wrap:wrap;overflow:visible;padding-bottom:0\}/, 'mobile priority filters should wrap cleanly instead of forcing a crowded row');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-filter-type \.rec-filter-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, 'mobile recommendation type filters should use a compact grid');
+  assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-sort-select\{width:100%;height:36px;font-size:12px\}/, 'mobile recommendation sort dropdown should be full width');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-kpis\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:6px\}/, 'mobile recommendation KPIs should use compact quick-stat layout');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-table-wrap\{display:none!important\}/, 'mobile recommendations should hide the desktop table');
   assert.match(cssSource, /@media\(max-width:768px\)\{[\s\S]*\.rec-card-list\{display:flex!important;flex-direction:column;gap:10px\}/, 'mobile recommendations should display cards');
