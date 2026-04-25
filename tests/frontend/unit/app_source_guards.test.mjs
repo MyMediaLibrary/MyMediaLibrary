@@ -356,9 +356,35 @@ test('stats layout is organized into 3 subtabs and renders new genre/audio-chann
   assert.match(block, /data-stats-subtab="general"/, 'general subtab should be present');
   assert.match(block, /data-stats-subtab="technical"/, 'technical subtab should be present');
   assert.match(block, /data-stats-subtab="evolution"/, 'evolution subtab should be present');
+  assert.match(block, /recommendationsAvailable \? '<button[\s\S]*data-stats-subtab="recommendations"/, 'recommendations subtab should be conditional');
   assert.match(block, /renderGenresBlock\(data\.genres\)/, 'general subtab should render genres chart');
   assert.match(block, /switchablePie\('audioChannels', getDep\('t'\)\('stats\.audio_channels_chart_title'\)/, 'technical subtab should render audio channels pie chart');
   assert.doesNotMatch(block, /genreModeControls|data-genre-unit/, 'genre chart should not expose multi-mode toggle controls');
+});
+
+test('stats recommendations subtab reuses visible recommendations and renders requested charts', () => {
+  assert.match(statsSource, /function recommendationStatsEnabled\(\)[\s\S]*isRecommendationsEnabled/, 'recommendations stats should be gated by recommendations feature');
+  const dataBlock = functionBlock(statsSource, 'buildRecommendationStatsData', 'recommendationStatsFilters');
+  assert.match(dataBlock, /visibleRecommendations\(\)/, 'recommendations stats should reuse visibleRecommendations');
+  assert.match(dataBlock, /filterItems\(\)/, 'recommendations per-media buckets should use sidebar-filtered media');
+  assert.match(dataBlock, /mediaById = new Map\(allItems\.map/, 'recommendations stats should join recommendations to library media');
+  assert.match(dataBlock, /perMediaBuckets = \{ '0': 0, '1': 0, '2': 0, '3plus': 0 \}/, 'recommendations stats should include zero-recommendation media buckets');
+  assert.match(dataBlock, /spaceMediaIds\.add\(mid\)/, 'space affected size should be based on media with visible space recommendations');
+  assert.match(statsSource, /if \(score === '' \|\| score === null \|\| score === undefined\) return 'unknown'/, 'score distribution should keep missing scores in unknown bucket');
+  const renderBlock = functionBlock(statsSource, 'buildRecommendationsStatsTab', 'renderQualityChart');
+  assert.match(renderBlock, /recommendations_priority_distribution/, 'recommendations stats should render priority distribution');
+  assert.match(renderBlock, /recommendations_type_distribution/, 'recommendations stats should render type distribution');
+  assert.match(renderBlock, /recommendations_folder_distribution/, 'recommendations stats should render folder distribution');
+  assert.match(renderBlock, /recommendations_most_affected_media/, 'recommendations stats should render most affected media');
+  assert.match(renderBlock, /recommendations_per_media/, 'recommendations stats should render recommendations per media');
+  assert.match(renderBlock, /recommendations_score_distribution/, 'recommendations stats should render score distribution');
+  assert.match(renderBlock, /recommendations_space_size/, 'recommendations stats should render affected space size KPI');
+  assert.match(renderBlock, /recommendations_inconsistent_series/, 'recommendations stats should render inconsistent series chart');
+  assert.match(statsSource, /recommendations_priority_distribution[\s\S]*'recommendationPriority'/, 'priority pie should toggle recommendation priority filters');
+  assert.match(statsSource, /recommendations_type_distribution[\s\S]*'recommendationType'/, 'type pie should toggle recommendation type filters');
+  const filterBlock = functionBlock(appSource, 'applyStatsFilter', 'toggleTechnicalFilters');
+  assert.match(filterBlock, /kind === 'recommendationPriority'/, 'stats filter applier should toggle recommendation priority');
+  assert.match(filterBlock, /kind === 'recommendationType'/, 'stats filter applier should toggle recommendation type');
 });
 
 test('provider count chart displays raw counts without "media" unit suffix', () => {

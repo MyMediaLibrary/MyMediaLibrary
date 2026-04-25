@@ -858,7 +858,18 @@ let allItems=[], categories=[], groups=[];
         fmtSize,
         escH,
         MMLLogic,
-        applyStatsFilter
+        applyStatsFilter,
+        isRecommendationsEnabled,
+        visibleRecommendations,
+        renderRecommendationFilterButtons,
+        recPriorityLabel,
+        recTypeLabel,
+        recMedia,
+        recMediaTitle,
+        recScore,
+        recSizeBytes,
+        recommendationPriorityFilters,
+        recommendationTypeFilters
       });
 
       const d=new Date(data.scanned_at);
@@ -1563,6 +1574,12 @@ let allItems=[], categories=[], groups=[];
     } else if (kind === 'audioChannels') {
       applyStatsSetToggle(activeAudioChannels, key, audioChannelsExclude);
       audioChannelsExclude = false;
+    } else if (kind === 'recommendationPriority') {
+      if (recommendationPriorityFilters.has(key)) recommendationPriorityFilters.delete(key);
+      else recommendationPriorityFilters.add(key);
+    } else if (kind === 'recommendationType') {
+      if (recommendationTypeFilters.has(key)) recommendationTypeFilters.delete(key);
+      else recommendationTypeFilters.add(key);
     } else if (kind === 'scoreRange' && isScoreEnabled()) {
       const min = Number(meta.min);
       const max = Number(meta.max);
@@ -2190,13 +2207,15 @@ let allItems=[], categories=[], groups=[];
   function toggleRecommendationTypeFilter(type) {
     if (recommendationTypeFilters.has(type)) recommendationTypeFilters.delete(type);
     else recommendationTypeFilters.add(type);
-    renderRecommendationsPanel();
+    if (currentTab === 'recommendations') renderRecommendationsPanel();
+    if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
   }
 
   function toggleRecommendationPriorityFilter(priority) {
     if (recommendationPriorityFilters.has(priority)) recommendationPriorityFilters.delete(priority);
     else recommendationPriorityFilters.add(priority);
-    renderRecommendationsPanel();
+    if (currentTab === 'recommendations') renderRecommendationsPanel();
+    if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
   }
 
   function setRecommendationSort(key) {

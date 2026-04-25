@@ -41,8 +41,21 @@
     escH: null,
     MMLLogic: null,
     applyStatsFilter: null,
+    isRecommendationsEnabled: null,
+    visibleRecommendations: null,
+    renderRecommendationFilterButtons: null,
+    recPriorityLabel: null,
+    recTypeLabel: null,
+    recMedia: null,
+    recMediaTitle: null,
+    recScore: null,
+    recSizeBytes: null,
+    recommendationPriorityFilters: null,
+    recommendationTypeFilters: null,
   };
-  const STATS_SUBTABS = ['general', 'technical', 'evolution'];
+  const STATS_SUBTABS = ['general', 'technical', 'evolution', 'recommendations'];
+  const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
+  const RECOMMENDATION_TYPES = ['quality', 'space', 'languages', 'series', 'data'];
   const STATS_GENRE_OTHERS_KEY = '__genre_others__';
   let activeStatsSubtab = 'general';
 
@@ -576,6 +589,186 @@
       +makeCurve(curveKeys, sizeVals, '#ef4444', 'gradSize', getDep('fmtSize'), getDep('fmtSize'));
   }
 
+  function recommendationStatsEnabled() {
+    const fn = getDep('isRecommendationsEnabled');
+    return typeof fn === 'function' && fn();
+  }
+
+  function recommendationPriorityColor(priority) {
+    if (priority === 'high') return 'var(--priority-high-bg)';
+    if (priority === 'medium') return 'var(--priority-medium-bg)';
+    if (priority === 'low') return 'var(--priority-low-bg)';
+    return '#64748b';
+  }
+
+  function recommendationTypeColor(type, idx) {
+    const colors = {
+      quality: '#7c6aff',
+      space: '#16a34a',
+      languages: '#0ea5e9',
+      series: '#f97316',
+      data: '#64748b',
+    };
+    return colors[type] || getDep('PALETTE')[idx % getDep('PALETTE').length];
+  }
+
+  function scoreBucket(score) {
+    if (score === '' || score === null || score === undefined) return 'unknown';
+    const n = Number(score);
+    if (!Number.isFinite(n)) return 'unknown';
+    if (n <= 20) return '0-20';
+    if (n <= 40) return '21-40';
+    if (n <= 60) return '41-60';
+    if (n <= 80) return '61-80';
+    return '81-100';
+  }
+
+  function recommendationCountBucket(count) {
+    if (count <= 0) return '0';
+    if (count === 1) return '1';
+    if (count === 2) return '2';
+    return '3plus';
+  }
+
+  function recCountBucketLabel(bucket) {
+    return getDep('t')('stats.recommendations_per_media_' + bucket);
+  }
+
+  function increment(map, key, by = 1) {
+    map[key] = (map[key] || 0) + by;
+  }
+
+  function makeStatsBlock(title, body) {
+    return '<div class="stats-block"><div class="stats-block-title">'+getDep('escH')(title)+'</div>'+body+'</div>';
+  }
+
+  function makeRecommendationPie(title, entries, colorFn, labelFn, filterKind) {
+    if (!entries.length) return '';
+    return makeStatsBlock(title, makePie(entries, colorFn, v=>v, labelFn, v=>String(v), { filterKind }));
+  }
+
+  function makeRecommendationHBar(title, entries, labelFn, colorFn, options = {}) {
+    if (!entries.length) return '';
+    const total = Number(options.percentBase || entries.reduce((sum, [, value]) => sum + (Number(value) || 0), 0));
+    return makeStatsBlock(title, makeHorizontalBars(entries, labelFn, v=>String(v), total, colorFn, options));
+  }
+
+  function buildRecommendationStatsData() {
+    const visibleRecommendations = getDep('visibleRecommendations');
+    const filterItems = getDep('filterItems');
+    const allItems = getDep('allItems') || [];
+    const recs = typeof visibleRecommendations === 'function' ? visibleRecommendations() : [];
+    const visibleMedia = typeof filterItems === 'function' ? filterItems() : allItems;
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const recMedia = getDep('recMedia');
+    const recMediaTitle = getDep('recMediaTitle');
+    const recScore = getDep('recScore');
+    const recSizeBytes = getDep('recSizeBytes');
+
+    const byPriority = {}, byType = {}, byFolder = {}, byMedia = {}, byScore = {};
+    const recCountByMedia = {};
+    const spaceMediaIds = new Set();
+    const seriesCounts = {};
+
+    recs.forEach((rec) => {
+      const media = typeof recMedia === 'function' ? recMedia(rec, mediaById) : mediaById.get(String(rec?.media_ref?.id || '')) || {};
+      const mid = String(rec?.media_ref?.id || '');
+      increment(byPriority, rec.priority || 'medium');
+      increment(byType, rec.recommendation_type || 'data');
+      increment(byFolder, media.category || media.group || '?');
+      increment(byMedia, mid);
+      increment(recCountByMedia, mid);
+      increment(byScore, scoreBucket(typeof recScore === 'function' ? recScore(media) : media?.quality?.score));
+      if (rec.recommendation_type === 'space') spaceMediaIds.add(mid);
+      if (rec.recommendation_type === 'series') increment(seriesCounts, mid);
+    });
+
+    const perMediaBuckets = { '0': 0, '1': 0, '2': 0, '3plus': 0 };
+    visibleMedia.forEach((media) => {
+      const bucket = recommendationCountBucket(recCountByMedia[String(media.id || '')] || 0);
+      perMediaBuckets[bucket] += 1;
+    });
+
+    const mediaTitle = (mid) => {
+      const media = mediaById.get(String(mid)) || {};
+      return typeof recMediaTitle === 'function' ? recMediaTitle(null, media) : (media.title || String(mid));
+    };
+    const spaceSizeBytes = [...spaceMediaIds].reduce((sum, mid) => {
+      const media = mediaById.get(String(mid)) || {};
+      return sum + (typeof recSizeBytes === 'function' ? recSizeBytes(media) : Number(media.size_b || 0));
+    }, 0);
+
+    return {
+      recs,
+      visibleMedia,
+      byPriority,
+      byType,
+      byFolder,
+      byMedia,
+      byScore,
+      perMediaBuckets,
+      spaceSizeBytes,
+      spaceMediaCount: spaceMediaIds.size,
+      seriesCounts,
+      mediaTitle,
+    };
+  }
+
+  function recommendationStatsFilters() {
+    const renderButtons = getDep('renderRecommendationFilterButtons');
+    if (typeof renderButtons !== 'function') return '';
+    const priorityLabel = getDep('recPriorityLabel');
+    const typeLabel = getDep('recTypeLabel');
+    return '<div class="rec-filters stats-rec-filters">'
+      + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + renderButtons(RECOMMENDATION_PRIORITIES, getDep('recommendationPriorityFilters'), 'toggleRecommendationPriorityFilter', priorityLabel, 'rec-priority-filter')
+      + '</div></div>'
+      + '<div class="rec-filter-group rec-filter-type"><div class="rec-filter-label">'+getDep('t')('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + renderButtons(RECOMMENDATION_TYPES, getDep('recommendationTypeFilters'), 'toggleRecommendationTypeFilter', typeLabel, 'provider-pill')
+      + '</div></div>'
+      + '</div>';
+  }
+
+  function buildRecommendationsStatsTab() {
+    const data = buildRecommendationStatsData();
+    const t = getDep('t');
+    const escH = getDep('escH');
+    const fmtSize = getDep('fmtSize');
+    const recPriorityLabel = getDep('recPriorityLabel');
+    const recTypeLabel = getDep('recTypeLabel');
+    const filters = recommendationStatsFilters();
+    if (!data.recs.length) {
+      return filters + '<div class="empty rec-empty"><p>'+t('stats.recommendations_empty')+'</p></div>';
+    }
+
+    const priorityEntries = RECOMMENDATION_PRIORITIES.map((key) => [key, data.byPriority[key] || 0]).filter(([, value]) => value > 0);
+    const typeEntries = RECOMMENDATION_TYPES.map((key) => [key, data.byType[key] || 0]).filter(([, value]) => value > 0);
+    const folderEntries = Object.entries(data.byFolder).sort((a,b) => b[1]-a[1]).slice(0, 10);
+    const mediaEntries = Object.entries(data.byMedia).sort((a,b) => b[1]-a[1]).slice(0, 10);
+    const perMediaEntries = ['0', '1', '2', '3plus'].map((key) => [key, data.perMediaBuckets[key] || 0]);
+    const scoreEntries = ['0-20', '21-40', '41-60', '61-80', '81-100', 'unknown'].map((key) => [key, data.byScore[key] || 0]).filter(([, value]) => value > 0);
+    const seriesEntries = Object.entries(data.seriesCounts).sort((a,b) => b[1]-a[1]).slice(0, 10);
+
+    const spaceKpi = '<div class="stat-kpi-grid">'
+      + '<div class="stat-kpi"><div class="stat-kpi-label">'+escH(t('table.size'))+'</div><div class="stat-kpi-val">'+escH(fmtSize(data.spaceSizeBytes))+'</div><div class="stat-kpi-sub">'+escH(t('stats.recommendations_space_size_sub'))+'</div></div>'
+      + '<div class="stat-kpi"><div class="stat-kpi-label">'+escH(t('stats.media_count'))+'</div><div class="stat-kpi-val">'+data.spaceMediaCount+'</div></div>'
+      + '</div>';
+
+    return filters
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_priority_distribution'), priorityEntries, recommendationPriorityColor, recPriorityLabel, 'recommendationPriority')+'</div>'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_type_distribution'), typeEntries, recommendationTypeColor, recTypeLabel, 'recommendationType')+'</div>'
+      + '</div>'
+      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_folder_distribution'), folderEntries, k=>k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { filterKind: 'folder', percentBase: data.recs.length })+'</div></div>'
+      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_most_affected_media'), mediaEntries, data.mediaTitle, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>'
+      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_per_media'), perMediaEntries, recCountBucketLabel, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.visibleMedia.length })+'</div></div>'
+      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>'
+      + '<div class="stats-row">'
+        + '<div>'+makeStatsBlock(t('stats.recommendations_space_size'), spaceKpi)+'</div>'
+        + '<div>'+makeRecommendationHBar(t('stats.recommendations_inconsistent_series'), seriesEntries, data.mediaTitle, (k,i)=>recommendationTypeColor('series', i), { percentBase: data.recs.length })+'</div>'
+      + '</div>';
+  }
+
   function renderQualityChart(quality) {
     if (!quality.hasData || !quality.scoredCount) return '';
     let html = '<div class="stats-block"><div class="stats-block-title">'+getDep('t')('stats.quality_score')+'</div>';
@@ -713,19 +906,25 @@
           + '<div></div>'
         + '</div>';
 
+    const recommendationsAvailable = recommendationStatsEnabled();
+    if (!recommendationsAvailable && activeStatsSubtab === 'recommendations') activeStatsSubtab = 'general';
     const evolutionTabHtml = curveHtml;
+    const recommendationsTabHtml = recommendationsAvailable ? buildRecommendationsStatsTab() : '';
     const activeGeneral = activeStatsSubtab === 'general' ? ' active' : '';
     const activeTechnical = activeStatsSubtab === 'technical' ? ' active' : '';
     const activeEvolution = activeStatsSubtab === 'evolution' ? ' active' : '';
+    const activeRecommendations = activeStatsSubtab === 'recommendations' ? ' active' : '';
     return ''
       + '<div id="statsSubtabs" class="stats-subtabs">'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeGeneral+'" data-stats-subtab="general">'+getDep('t')('stats.subtab_general')+'</button>'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeTechnical+'" data-stats-subtab="technical">'+getDep('t')('stats.subtab_technical')+'</button>'
         + '<button class="pie-switch-btn stats-subtab-btn'+activeEvolution+'" data-stats-subtab="evolution">'+getDep('t')('stats.subtab_evolution')+'</button>'
+        + (recommendationsAvailable ? '<button class="pie-switch-btn stats-subtab-btn'+activeRecommendations+'" data-stats-subtab="recommendations">'+getDep('t')('stats.subtab_recommendations')+'</button>' : '')
       + '</div>'
       + '<div id="statsSubtab-general" class="stats-subtab-content'+activeGeneral+'">'+generalTabHtml+'</div>'
       + '<div id="statsSubtab-technical" class="stats-subtab-content'+activeTechnical+'">'+technicalTabHtml+'</div>'
-      + '<div id="statsSubtab-evolution" class="stats-subtab-content'+activeEvolution+'">'+evolutionTabHtml+'</div>';
+      + '<div id="statsSubtab-evolution" class="stats-subtab-content'+activeEvolution+'">'+evolutionTabHtml+'</div>'
+      + (recommendationsAvailable ? '<div id="statsSubtab-recommendations" class="stats-subtab-content'+activeRecommendations+'">'+recommendationsTabHtml+'</div>' : '');
   }
 
   // ── STATS PANEL ENTRY POINT ───────────────────────────────

@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const cssSource = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
+const cssSource = [
+  '../../../app/css/app.css',
+  '../../../app/css/stats.css',
+].map((file) => fs.readFileSync(path.resolve(__dirname, file), 'utf8')).join('\n');
 
 function cssBlock(source, selector, nextSelector) {
   const start = source.indexOf(selector);
@@ -40,4 +43,9 @@ test('recommendation filters use priority type sort proportions and priority col
   assert.match(cssSource, /\.rec-priority-high\{background:var\(--priority-high-bg\)[\s\S]*color:var\(--priority-high-text\)/, 'priority badges should use shared high priority palette');
   assert.match(cssSource, /\.rec-priority-medium\{background:var\(--priority-medium-bg\)[\s\S]*color:var\(--priority-medium-text\)/, 'priority badges should use shared medium priority palette');
   assert.match(cssSource, /\.rec-priority-low\{background:var\(--priority-low-bg\)[\s\S]*color:var\(--priority-low-text\)/, 'priority badges should use shared low priority palette');
+});
+
+test('stats recommendations layout supports local filters and full-width rows', () => {
+  assert.match(cssSource, /\.stats-rec-filters\{grid-template-columns:3fr 5fr\}/, 'stats recommendations filters should keep priority/type proportions without sort');
+  assert.match(cssSource, /\.stats-row-full\{grid-template-columns:1fr\}/, 'stats recommendations full-width rows should span one column');
 });
