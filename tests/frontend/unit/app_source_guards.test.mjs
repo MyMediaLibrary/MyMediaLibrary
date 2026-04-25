@@ -210,8 +210,9 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
   assert.match(renderBlock, /rec-filter-priority[\s\S]*rec-filter-type[\s\S]*recSortControls\(\)/, 'recommendations filters should render priority, type, then sort');
   assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
-  assert.match(appSource, /'message_fr'[\s\S]*'action_en'/, 'recommendations CSV should export split message and action columns');
-  assert.match(appSource, /'context_season'[\s\S]*'context_dominant_audio_language_group'[\s\S]*'context_seasons'[\s\S]*'context_details'/, 'recommendations CSV should export useful series context columns');
+  assert.match(appSource, /'subtitle_languages'[\s\S]*'message'[\s\S]*'action'/, 'recommendations CSV should export one localized message/action pair');
+  assert.doesNotMatch(appSource, /'message_fr'|'message_en'|'action_fr'|'action_en'/, 'recommendations CSV should not export both languages');
+  assert.match(appSource, /csvC\(recText\(rec\.message\)\)[\s\S]*csvC\(recText\(rec\.suggested_action\)\)/, 'recommendations CSV should use the current UI language fallback');
   assert.match(indexSource, /id="recommendationsControls"[\s\S]*exportRecommendationsCSV\(\)[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
