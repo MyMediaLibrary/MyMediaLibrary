@@ -862,6 +862,7 @@ let allItems=[], categories=[], groups=[];
         applyStatsFilter,
         isRecommendationsEnabled,
         visibleRecommendations,
+        recommendationSummaryItems,
         renderRecommendationFilterButtons,
         recPriorityLabel,
         recTypeLabel,
@@ -1935,7 +1936,10 @@ let allItems=[], categories=[], groups=[];
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') window.MMLStats.renderStatsPanel();
-    else if (currentTab==='recommendations') renderRecommendationsPanel();
+    else if (currentTab==='recommendations') {
+      renderRecommendationsPanel();
+      syncRecommendationSummaryStats();
+    }
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
@@ -2219,6 +2223,7 @@ let allItems=[], categories=[], groups=[];
     else recommendationTypeFilters.add(type);
     if (currentTab === 'recommendations') renderRecommendationsPanel();
     if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    syncRecommendationSummaryStats();
     updateGlobalResetButtons();
   }
 
@@ -2227,6 +2232,7 @@ let allItems=[], categories=[], groups=[];
     else recommendationPriorityFilters.add(priority);
     if (currentTab === 'recommendations') renderRecommendationsPanel();
     if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+    syncRecommendationSummaryStats();
     updateGlobalResetButtons();
   }
 
@@ -2247,6 +2253,24 @@ let allItems=[], categories=[], groups=[];
       if (recommendationPriorityFilters.size && !recommendationPriorityFilters.has(rec.priority)) return false;
       return true;
     });
+  }
+
+  function hasRecommendationContentFilters() {
+    return recommendationTypeFilters.size > 0 || recommendationPriorityFilters.size > 0;
+  }
+
+  function recommendationSummaryItems() {
+    if (!isRecommendationsEnabled()) return filterItems();
+    const visibleMediaIds = new Set(visibleRecommendations().map((rec) => String(rec?.media_ref?.id || '')).filter(Boolean));
+    return filterItems().filter((item) => visibleMediaIds.has(String(item.id || '')));
+  }
+
+  function syncRecommendationSummaryStats() {
+    if (currentTab === 'recommendations') {
+      renderStats(hasRecommendationContentFilters() ? recommendationSummaryItems() : filterItems());
+    } else if (currentTab === 'stats') {
+      window.MMLStats?.syncRecommendationStatsSummary?.();
+    }
   }
 
   function recMedia(rec, mediaById) {
@@ -2536,7 +2560,10 @@ let allItems=[], categories=[], groups=[];
     });
     if (tab==='library') render();
     else if (tab==='stats') window.MMLStats.renderStatsPanel();
-    else if (tab==='recommendations') renderRecommendationsPanel();
+    else if (tab==='recommendations') {
+      renderRecommendationsPanel();
+      syncRecommendationSummaryStats();
+    }
     saveState();
   }
 

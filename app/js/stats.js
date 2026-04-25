@@ -44,6 +44,7 @@
     applyStatsFilter: null,
     isRecommendationsEnabled: null,
     visibleRecommendations: null,
+    recommendationSummaryItems: null,
     renderRecommendationFilterButtons: null,
     recPriorityLabel: null,
     recTypeLabel: null,
@@ -870,6 +871,16 @@
       renderStats(getRecommendationStatsVisibleMedia());
       return;
     }
+    if (activeStatsSubtab === 'recommendations') {
+      const recommendationSummaryItems = getDep('recommendationSummaryItems');
+      const priorityFilters = getDep('recommendationPriorityFilters');
+      const typeFilters = getDep('recommendationTypeFilters');
+      const hasRecommendationFilters = !!(priorityFilters?.size || typeFilters?.size);
+      if (hasRecommendationFilters && typeof recommendationSummaryItems === 'function') {
+        renderStats(recommendationSummaryItems());
+        return;
+      }
+    }
     const filterItems = getDep('filterItems');
     const allItems = getDep('allItems') || [];
     renderStats(typeof filterItems === 'function' ? filterItems() : allItems);
@@ -1112,7 +1123,7 @@
     const items       = filterItems ? filterItems() : allItems;
     const el = document.getElementById('statsContent');
     if (el) el.innerHTML = buildStats(items);
-    if (activeStatsSubtab === 'recommendations' && hasActiveRecommendationStatsFilters()) {
+    if (activeStatsSubtab === 'recommendations') {
       syncRecommendationStatsSummary();
     }
   }
@@ -1168,6 +1179,7 @@
     resetRecommendationStatsFilters,
     hasActiveRecommendationStatsFilters,
     getRecommendationStatsVisibleMedia,
+    syncRecommendationStatsSummary,
   };
 
   initializeEventHandlers();
