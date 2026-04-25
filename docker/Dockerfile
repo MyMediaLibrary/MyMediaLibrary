@@ -14,7 +14,10 @@ WORKDIR /app
 COPY app/ /usr/share/nginx/html/
 COPY docs/ /usr/share/nginx/html/docs/
 COPY docker/nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /app/backend
 COPY backend/scanner.py /app/scanner.py
+COPY backend/runtime_paths.py /app/backend/runtime_paths.py
+COPY backend/storage_migration.py /app/backend/storage_migration.py
 COPY backend/scoring.py /app/scoring.py
 COPY backend/score_defaults.json /app/score_defaults.json
 COPY backend/recommendations.py /app/recommendations.py

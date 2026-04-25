@@ -12,12 +12,8 @@ echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "LOG_PATH     : ${LOG_PATH}"
 echo ""
 
-# Create /app/.secrets if missing (stores Seerr API key securely)
-if [ ! -f /app/.secrets ]; then
-  echo '{}' > /app/.secrets
-  chmod 600 /app/.secrets
-  echo "[entrypoint] Created /app/.secrets"
-fi
+# Migrate legacy runtime files before any service starts.
+PYTHONPATH=/app python3 -m backend.storage_migration || exit 1
 
 # Generate nginx.conf with env vars substituted
 envsubst '${LIBRARY_PATH}' < /etc/nginx/nginx.conf > /tmp/nginx_rendered.conf
