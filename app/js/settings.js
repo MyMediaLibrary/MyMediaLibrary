@@ -5,7 +5,7 @@
  * Seerr, cron hints, mobile layout) and the first-run onboarding flow.
  *
  * Depends on globals populated by app.js at runtime:
- *   appConfig, libraryPathLabel, allItems, enablePlot, enableScore,
+ *   appConfig, allItems, enablePlot, enableScore,
  *   CURRENT_LANG, PROVIDER_OTHERS_KEY,
  *   t(), escH(), isMobile(), isScoreEnabled(),
  *   saveConfig(), loadVersion(), loadTranslations(), applyTranslations(),
@@ -781,8 +781,6 @@
 
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
-    if (!_field('cfgLibraryPath')) return;
-
     // Accent color — from appConfig (persisted in config.json)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
@@ -792,9 +790,6 @@
     // enablePlot — from appConfig
     const epEl = _field('cfgEnablePlot');
     if (epEl) { epEl.checked = enablePlot; epEl.disabled = false; }
-
-    // Library path — readonly, from library.json root field.
-    _ro('cfgLibraryPath', libraryPathLabel || '');
 
     // Enable flags — editable, from appConfig
     _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);

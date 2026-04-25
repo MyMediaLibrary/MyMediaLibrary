@@ -192,6 +192,15 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('frontend does not expose or persist library root path settings', () => {
+  assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
+  assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');
+  assert.doesNotMatch(settingsSource, /cfgLibraryPath|libraryPathLabel|library_path/, 'settings logic should not read or write library root path state');
+  assert.doesNotMatch(appSource, /libraryPathLabel|data\.library_path|brandSub.*library/i, 'app shell should not display library root path from library.json');
+  assert.equal(enI18n.settings.library.path, undefined, 'English library path label should be removed');
+  assert.equal(frI18n.settings.library.path, undefined, 'French library path label should be removed');
+});
+
 test('recommendations feature is gated by score and avoids fetch when disabled', () => {
   assert.match(indexSource, /id="navRecommendations"[\s\S]*display:none/, 'recommendations desktop nav should start hidden');
   assert.match(indexSource, /id="mnavRecommendations"[\s\S]*display:none/, 'recommendations mobile nav should start hidden');

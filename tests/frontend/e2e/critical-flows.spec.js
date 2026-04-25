@@ -7,6 +7,7 @@ const items = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../fixtures
 function configuredPayload() {
   return {
     needs_onboarding: false,
+    library_path: '/legacy-ignored',
     ui: { language: 'fr' },
     score: { enabled: true },
     seerr: { enabled: true },
@@ -229,6 +230,39 @@ test('configured app stays on main screen across reloads', async ({ page }) => {
   await expect(page.locator('#onboardingOverlay')).toBeHidden();
 });
 
+test('settings do not expose or persist library root path', async ({ page }) => {
+  let capturedPayload = null;
+
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    capturedPayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/library.json**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+
+  await page.goto('/index.html');
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await page.evaluate(() => openSettings());
+
+  await expect(page.locator('#cfgLibraryPath')).toHaveCount(0);
+  await expect(page.locator('#stab-library')).not.toContainText('Library path');
+  await expect(page.locator('#stab-library')).not.toContainText('Chemin bibliothèque');
+  await expect(page.locator('#cfgFoldersContainer')).toContainText('Cinema');
+
+  await page.click('#settingsSaveBtn');
+
+  await expect.poll(() => capturedPayload).not.toBeNull();
+  expect(capturedPayload.library_path).toBeUndefined();
+});
+
 test('inventory toggle is in settings and persists via /api/config', async ({ page }) => {
   let capturedPayload = null;
 
@@ -269,6 +303,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.system.inventory_enabled).toBe(true);
+  expect(capturedPayload.library_path).toBeUndefined();
 });
 
 test('folder active toggle persists using enabled without visible persistence', async ({ page }) => {
@@ -306,6 +341,7 @@ test('folder active toggle persists using enabled without visible persistence', 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.folders[0].enabled).toBe(false);
   expect(capturedPayload.folders[0].visible).toBeUndefined();
+  expect(capturedPayload.library_path).toBeUndefined();
 });
 
 test('resetting persisted config makes onboarding visible again', async ({ page }) => {

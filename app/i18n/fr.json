@@ -5,7 +5,7 @@
     "start": "Commencer →",
     "step_folders_title": "Configurez vos dossiers",
     "step_folders_desc": "Assignez un type à chaque dossier de la bibliothèque.",
-    "no_folders": "Aucun dossier détecté dans LIBRARY_PATH.",
+    "no_folders": "Aucun dossier détecté.",
     "unconfigured": "{n} dossier{s} non configuré{s} — seront ignorés au scan.",
     "folder_missing": "Introuvable",
     "folder_choose": "— choisir —",
@@ -237,7 +237,6 @@
       "enable_seerr": "Activer Seerr"
     },
     "library": {
-      "path": "Chemin bibliothèque",
       "enable_movies": "Afficher les Films",
       "enable_series": "Afficher les Séries",
       "folders": "Dossiers détectés",
