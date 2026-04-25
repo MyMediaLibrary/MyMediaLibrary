@@ -785,7 +785,10 @@
         + '<div>'+makeRecommendationPie(t('stats.recommendations_per_media'), perMediaEntries, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], recCountBucketLabel)+'</div>'
         + '<div>'+makeStatsBlock(t('stats.recommendations_space_size'), spaceKpi)+'</div>'
       + '</div>'
-      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>';
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div>'
+        + '<div></div>'
+      + '</div>';
   }
 
   function renderQualityChart(quality) {
