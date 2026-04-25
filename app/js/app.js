@@ -2444,7 +2444,7 @@ let allItems=[], categories=[], groups=[];
       ['languages', t('recommendations.kpis.languages')],
       ['series', t('recommendations.kpis.series')],
       ['data', t('recommendations.kpis.data')],
-    ].map(([key, label]) => '<div class="rec-kpi"><div class="rec-kpi-value">'+counts[key]+'</div><div class="rec-kpi-label">'+escH(label)+'</div></div>').join('');
+    ].map(([key, label]) => '<div class="rec-kpi stat"><div class="rec-kpi-value stat-val">'+counts[key]+'</div><div class="rec-kpi-label stat-label">'+escH(label)+'</div></div>').join('');
 
     const filters = '<div class="rec-filters">'
       + '<div class="rec-filter-group rec-filter-priority"><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
@@ -2457,7 +2457,7 @@ let allItems=[], categories=[], groups=[];
       + '</div>';
 
     if (!recs.length) {
-      host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
+      host.innerHTML = '<div class="rec-page"><div class="rec-kpis stats-bar">'+kpis+'</div>'+filters+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
       return;
     }
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
@@ -2500,7 +2500,7 @@ let allItems=[], categories=[], groups=[];
         + '<div class="rec-card-action">'+escH(recText(rec.suggested_action))+'</div>'
         + '</article>';
     }).join('');
-    host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters
+    host.innerHTML = '<div class="rec-page"><div class="rec-kpis stats-bar">'+kpis+'</div>'+filters
       + '<div class="rec-table-wrap"><table class="rec-table"><thead><tr>'
       + '<th>'+t('recommendations.table.priority')+'</th>'
       + '<th>'+t('recommendations.table.type')+'</th>'

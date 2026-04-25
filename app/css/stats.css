@@ -105,6 +105,8 @@ path.stats-clickable.active,circle.stats-clickable.active{stroke:var(--accent);s
   .stats-row{grid-template-columns:1fr!important}
   #statsContent{padding:12px 10px 40px!important;gap:16px!important}
   .stats-subtab-content{gap:16px}
+  .stats-rec-filters,.stats-rec-filters.has-local-reset{display:flex!important;flex-direction:column!important;grid-template-columns:1fr!important;gap:10px!important}
+  .stats-rec-filters .rec-filter-group{width:100%!important}
   #statsPanel .stats-block{margin-bottom:12px}
   .pie-wrap{flex-direction:column!important;align-items:center!important;gap:10px!important}
   .pie-wrap svg{width:120px!important;height:120px!important}

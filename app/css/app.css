@@ -130,20 +130,19 @@
       .tab-panel{padding:8px 10px 80px}
       .recommendations-content{padding:8px 0 40px}
       .rec-page{gap:10px}
-      .rec-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-      .rec-kpi{background:var(--bg);border-radius:var(--radius);padding:5px 8px;min-height:40px}
-      .rec-kpi-value{font-size:13px;line-height:1.15}
-      .rec-kpi-label{font-size:9px;line-height:1.15;letter-spacing:.04em}
-      .rec-filters{display:flex;flex-direction:column;gap:10px}
-      .rec-filter-group{width:100%;padding:8px;border-radius:8px}
+      .rec-kpis.stats-bar{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;margin-bottom:0!important}
+      .rec-kpi.stat{background:var(--bg)!important;border:1px solid var(--border)!important;border-radius:var(--radius)!important;padding:4px 7px!important;min-height:40px!important}
+      .rec-kpi-value.stat-val{font-size:13px!important;line-height:1.15}
+      .rec-kpi-label.stat-label{font-size:9px!important;line-height:1.15;letter-spacing:.04em}
+      .rec-filters{display:flex!important;flex-direction:column!important;grid-template-columns:1fr!important;gap:10px!important}
+      .rec-filter-group{width:100%!important;padding:8px!important;border-radius:8px}
       .rec-filter-label{font-size:9px;margin-bottom:6px}
-      .rec-filter-row{gap:5px;flex-wrap:nowrap;overflow-x:auto;padding:2px 2px 5px;scrollbar-width:thin}
-      .rec-filter-priority .rec-filter-row{flex-wrap:wrap;overflow:visible;padding-bottom:0}
+      .rec-filter-row{gap:5px;flex-wrap:wrap;overflow:visible;padding:2px 2px 0;scrollbar-width:thin}
       .rec-filter-btn{min-height:34px;padding:5px 9px;font-size:11px;white-space:nowrap;flex:0 0 auto}
       .rec-filter-type .rec-filter-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;padding-bottom:0}
       .rec-filter-type .rec-filter-btn{width:100%;min-width:0;padding-left:6px;padding-right:6px}
-      .rec-sort-group{width:100%}
-      .rec-sort-select{width:100%;height:36px;font-size:12px}
+      .rec-sort-group{width:100%!important}
+      .rec-sort-select{width:100%!important;height:36px;font-size:12px}
       .rec-table-wrap{display:none!important}
       .rec-card-list{display:flex!important;flex-direction:column;gap:10px}
       .rec-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px}

@@ -218,6 +218,8 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
   assert.match(renderBlock, /recommendations\.empty_error/, 'recommendations should render API error state');
   assert.match(renderBlock, /rec-filter-group/, 'recommendations local filters should be visually split into groups');
+  assert.match(renderBlock, /class="rec-kpis stats-bar"/, 'recommendations KPIs should reuse the quick stats bar structure');
+  assert.match(renderBlock, /class="rec-kpi stat"[\s\S]*class="rec-kpi-value stat-val"[\s\S]*class="rec-kpi-label stat-label"/, 'recommendations KPI cards should reuse stat card classes');
   assert.match(renderBlock, /recSortControls\(\)/, 'recommendations sort controls should render with local filters');
   assert.match(appSource, /recommendationSort = \{ key: 'priority', dir: 'desc' \}/, 'recommendations default sort should be priority descending');
   assert.match(appSource, /if \(cmp !== 0\) return cmp \* dir;[\s\S]*return recMediaTitle\(a, ma\)\.localeCompare/, 'recommendations sort should use title ascending as secondary sort');
