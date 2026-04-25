@@ -213,6 +213,14 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(visibleBlock, /const visibleMediaIds = new Set\(filterItems\(\)\.map/, 'recommendations should respect sidebar filters');
   assert.match(visibleBlock, /recommendationTypeFilters\.size/, 'recommendations should support local type filters');
   assert.match(visibleBlock, /recommendationPriorityFilters\.size/, 'recommendations should support local priority filters');
+  const summaryBlock = functionBlock(appSource, 'recommendationSummaryItems', 'syncRecommendationSummaryStats');
+  assert.match(summaryBlock, /visibleRecommendations\(\)\.map/, 'recommendations summary media should derive from visible recommendations');
+  assert.match(summaryBlock, /filterItems\(\)\.filter/, 'recommendations summary media should preserve sidebar filtering');
+  const syncBlock = functionBlock(appSource, 'syncRecommendationSummaryStats', 'recMedia');
+  assert.match(syncBlock, /hasRecommendationContentFilters\(\) \? recommendationSummaryItems\(\) : filterItems\(\)/, 'recommendations page should update sidebar stats from recommendation media when local filters are active');
+  assert.match(syncBlock, /syncRecommendationStatsSummary/, 'stats recommendations should be able to sync the global summary');
+  assert.match(appSource, /toggleRecommendationTypeFilter[\s\S]*syncRecommendationSummaryStats\(\)/, 'type filter toggles should refresh sidebar stats');
+  assert.match(appSource, /toggleRecommendationPriorityFilter[\s\S]*syncRecommendationSummaryStats\(\)/, 'priority filter toggles should refresh sidebar stats');
   const renderBlock = functionBlock(appSource, 'renderRecommendationsPanel', 'switchTab');
   assert.match(renderBlock, /recommendations\.empty_run_scan/, 'recommendations should render empty scan state');
   assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
@@ -416,6 +424,10 @@ test('stats recommendations subtab reuses visible recommendations and renders re
   assert.match(statsSource, /filterKindForKey:\s*k => k === 'unknown' \? 'recommendationScoreBucket' : 'scoreRange'/, 'score buckets should use global score ranges when possible and local filter for unknown');
   assert.match(statsSource, /data-stats-rec-reset="1"/, 'local stats recommendation filters should be resettable');
   assert.match(statsSource, /syncRecommendationStatsSummary\(\)/, 'local stats recommendation filters should update the summary stats bar');
+  const summaryBlock = functionBlock(statsSource, 'syncRecommendationStatsSummary', 'recommendationStatsFilters');
+  assert.match(summaryBlock, /recommendationPriorityFilters/, 'stats summary sync should observe recommendation priority filters');
+  assert.match(summaryBlock, /recommendationTypeFilters/, 'stats summary sync should observe recommendation type filters');
+  assert.match(summaryBlock, /recommendationSummaryItems\(\)/, 'stats recommendation type/priority filters should update global summary stats from recommendation media');
   assert.match(statsSource, /getRecommendationStatsVisibleMedia/, 'stats should expose the locally filtered media set');
   const statsPanelBlock = functionBlock(statsSource, 'renderStatsPanel', 'statSwitchPie');
   assert.match(statsPanelBlock, /activeStatsSubtab === 'recommendations'[\s\S]*syncRecommendationStatsSummary\(\)/, 'stats panel rerenders should keep summary stats aligned with recommendation bucket filters');
