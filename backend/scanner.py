@@ -89,6 +89,39 @@ except Exception:
             e,
         )
 
+try:
+    from backend.recommendations import (
+        ensure_user_rules,
+        generate_recommendations,
+        load_rules as load_recommendation_rules,
+        write_recommendations,
+    )
+except Exception:
+    try:
+        from recommendations import (
+            ensure_user_rules,
+            generate_recommendations,
+            load_rules as load_recommendation_rules,
+            write_recommendations,
+        )
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] recommendations import failed (%s). Recommendations disabled; continuing non-blocking.",
+            e,
+        )
+
+        def ensure_user_rules(default_rules_path, user_rules_path):
+            return False
+
+        def load_recommendation_rules(path):
+            return []
+
+        def generate_recommendations(library_doc, rules, *, max_per_media=3):
+            return []
+
+        def write_recommendations(items, output_path, now=None):
+            return {"generated_at": None, "version": 1, "items": items}
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -96,6 +129,9 @@ except Exception:
 LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
 OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
 INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
+RECOMMENDATIONS_OUTPUT_PATH = os.environ.get("RECOMMENDATIONS_OUTPUT_PATH", "/data/recommendations.json")
+RECOMMENDATIONS_DEFAULT_RULES_PATH = os.environ.get("RECOMMENDATIONS_DEFAULT_RULES_PATH", "/app/recommendations_rules.json")
+RECOMMENDATIONS_RULES_PATH = os.environ.get("RECOMMENDATIONS_RULES_PATH", "/data/recommendations_rules.json")
 CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
 SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
@@ -863,6 +899,8 @@ def migrate_env_to_config() -> None:
 
     cfg, score_changed, score_status = normalize_score_configuration_sections(cfg)
     changed = changed or score_changed
+    cfg, rec_changed = normalize_recommendations_configuration(cfg)
+    changed = changed or rec_changed
     if not score_status.get("weights_valid", False):
         log.warning(
             "[score] Weight total is %s (expected 100) in effective score config",
@@ -874,6 +912,11 @@ def migrate_env_to_config() -> None:
         log.info("[MIGRATION] Env vars migrated to config.json")
     # Bootstrap runtime providers mapping once (non-destructive).
     _ensure_runtime_provider_mapping()
+    # Bootstrap editable recommendations rules once (non-destructive).
+    try:
+        ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
+    except Exception as e:
+        log.warning("[recommendations] Could not bootstrap rules file: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -1917,6 +1960,9 @@ _DEFAULT_CONFIG: dict = {
     "score": {
         "enabled": False,
     },
+    "recommendations": {
+        "enabled": False,
+    },
     "score_configuration": get_builtin_score_defaults(),
 }
 
@@ -1930,7 +1976,8 @@ def load_config() -> dict:
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
-        if seerr_changed or changed:
+        cfg, rec_changed = normalize_recommendations_configuration(cfg)
+        if seerr_changed or changed or rec_changed:
             save_config(cfg)
     return cfg
 
@@ -1997,6 +2044,24 @@ def _is_score_enabled(cfg: dict | None) -> bool:
         return score.get("enabled") is True
     system = (cfg or {}).get("system") or {}
     return system.get("enable_score") is True
+
+
+def _is_recommendations_enabled(cfg: dict | None) -> bool:
+    if not _is_score_enabled(cfg):
+        return False
+    rec = (cfg or {}).get("recommendations")
+    return isinstance(rec, dict) and rec.get("enabled") is True
+
+
+def normalize_recommendations_configuration(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    rec = cfg.get("recommendations")
+    enabled = isinstance(rec, dict) and rec.get("enabled") is True
+    normalized = {"enabled": bool(enabled and _is_score_enabled(cfg))}
+    if rec != normalized:
+        cfg["recommendations"] = normalized
+        changed = True
+    return cfg, changed
 
 
 def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> bool:
@@ -3413,6 +3478,36 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     )
 
 
+# ---------------------------------------------------------------------------
+# RECOMMENDATIONS PHASE
+# ---------------------------------------------------------------------------
+
+def run_recommendations() -> int:
+    cfg = load_config()
+    if not _is_score_enabled(cfg):
+        log.info("[SCAN] Recommendations disabled — score required")
+        return 0
+    if not _is_recommendations_enabled(cfg):
+        log.info("[SCAN] Recommendations disabled — skipping phase")
+        return 0
+
+    log.info("[SCAN] Phase 5: recommendations")
+    ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
+    try:
+        with open(OUTPUT_PATH, encoding="utf-8") as f:
+            lib_data = json.load(f)
+    except Exception as e:
+        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
+        return 0
+
+    rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+    recs = generate_recommendations(lib_data, rules)
+    write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
+    log.info("[SCAN] Recommendations generated: %s recommendation(s)", len(recs))
+    return len(recs)
+
+
 def _prepare_startup_configuration() -> dict:
     """Bootstrap config on startup without forcing a media scan."""
     migrate_env_to_config()
@@ -3458,6 +3553,8 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
         elif phase == PHASE_INVENTORY:
             scan_mode = "full" if PHASE_SCAN in ordered else "partial"
             run_inventory(scan_mode=scan_mode, only_category=only_category)
+        elif phase == PHASE_RECOMMENDATIONS:
+            run_recommendations()
 
 
 # ---------------------------------------------------------------------------
@@ -3597,7 +3694,8 @@ PHASE_SCAN = 1
 PHASE_ENRICH = 2
 PHASE_SCORE = 3
 PHASE_INVENTORY = 4
-_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY]
+PHASE_RECOMMENDATIONS = 5
+_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 
 
@@ -3692,6 +3790,8 @@ def _phase_plan_from_config(
         phases.append(PHASE_SCORE)
     if _is_inventory_enabled(cfg):
         phases.append(PHASE_INVENTORY)
+    if _is_recommendations_enabled(cfg):
+        phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
 
 
@@ -3728,6 +3828,7 @@ def _compute_phases_for_config_change(
     seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
     score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
     inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
+    recommendations_changed = _is_recommendations_enabled(prev_cfg) != _is_recommendations_enabled(new_cfg)
 
     phases: list[int] = []
     if folders_changed:
@@ -3743,6 +3844,10 @@ def _compute_phases_for_config_change(
             phases.append(PHASE_SCORE)
         if inventory_changed:
             phases.append(PHASE_INVENTORY)
+        if recommendations_changed:
+            if _is_score_enabled(new_cfg):
+                phases.append(PHASE_SCORE)
+            phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
 
 
@@ -4164,6 +4269,26 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 })
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
+        elif path == "/api/recommendations":
+            cfg = load_config()
+            if not _is_recommendations_enabled(cfg):
+                self._json(200, {"generated_at": None, "version": 1, "items": []})
+                return
+            rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
+            if not rec_path.exists():
+                self._json(200, {"generated_at": None, "version": 1, "items": []})
+                return
+            try:
+                with open(rec_path, encoding="utf-8") as f:
+                    payload = json.load(f)
+                if not isinstance(payload, dict):
+                    payload = {"generated_at": None, "version": 1, "items": []}
+                payload.setdefault("version", 1)
+                payload.setdefault("items", [])
+                self._json(200, payload)
+            except Exception as e:
+                log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
+                self._json(200, {"generated_at": None, "version": 1, "items": []})
         else:
             self._json(404, {"error": "not found"})
 
@@ -4408,6 +4533,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             normalize_folder_enabled_flags(merged, drop_visible=True)
             merged, _ = normalize_seerr_config(merged)
             merged, _, _ = normalize_score_configuration_sections(merged)
+            merged, _ = normalize_recommendations_configuration(merged)
             _finalize_needs_onboarding_after_config_update(merged)
             # Ensure apikey never persists in config.json
             if "seerr" in merged:

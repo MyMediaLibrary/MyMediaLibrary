@@ -50,6 +50,7 @@
     "prev": "← Précédent",
     "library": "📚 Bibliothèque",
     "stats": "📊 Statistiques",
+    "recommendations": "💡 Recommandations",
     "scan": "Scanner"
   },
   "filters": {
@@ -319,7 +320,9 @@
       "export_json_btn": "Télécharger l'export",
       "export_unavailable": "Bibliothèque non chargée : impossible d'exporter.",
       "enable_score": "Activer le score de qualité",
-      "enable_score_hint": "Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats."
+      "enable_score_hint": "Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.",
+      "enable_recommendations": "Activer les recommandations",
+      "enable_recommendations_hint": "Nécessite le score qualité"
     },
     "env_note": "⚙️ Les valeurs en lecture seule sont configurées via compose.yaml.",
     "github_link": "Projet GitHub",
@@ -406,6 +409,44 @@
     "providers_by_group": "Fournisseurs par groupe",
     "providers_by_category": "Fournisseurs par dossier"
   },
+  "recommendations": {
+    "empty_run_scan": "Aucune recommandation disponible. Lancez un scan.",
+    "empty_filters": "Aucune recommandation pour les filtres actuels.",
+    "info_score": "Score {value}",
+    "kpis": {
+      "total": "Total recommandations",
+      "high": "Priorité haute",
+      "quality": "Qualité",
+      "space": "Gain de place",
+      "languages": "Langues",
+      "series": "Séries",
+      "data": "Données"
+    },
+    "filters": {
+      "type": "Type de recommandation",
+      "priority": "Priorité"
+    },
+    "types": {
+      "quality": "Qualité",
+      "space": "Espace",
+      "languages": "Langues",
+      "series": "Séries",
+      "data": "Données"
+    },
+    "priorities": {
+      "high": "Haute",
+      "medium": "Moyenne",
+      "low": "Basse"
+    },
+    "table": {
+      "priority": "Priorité",
+      "type": "Type",
+      "media": "Média",
+      "info": "Infos principales",
+      "recommendation": "Recommandation",
+      "action": "Action"
+    }
+  },
   "quality_level": {
     "0": "Très bas",
     "1": "Bas",
@@ -436,6 +477,7 @@
     "settings_short": "Paramètres",
     "library": "Biblio",
     "stats": "Stats",
+    "recommendations": "Recos",
     "scan_library": "Scanner la bibliothèque",
     "scan_quick_desc": "Détecte rapidement les changements récents.",
     "scan_full_desc": "Relance une analyse complète de la médiathèque.",

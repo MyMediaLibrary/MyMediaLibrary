@@ -770,6 +770,15 @@
     return {};
   }
 
+  function syncRecommendationsToggle() {
+    const scoreEl = _field('cfgEnableScore');
+    const recEl = _field('cfgEnableRecommendations');
+    if (!recEl) return;
+    const scoreEnabled = scoreEl ? scoreEl.checked === true : isScoreEnabled();
+    recEl.disabled = !scoreEnabled;
+    if (!scoreEnabled) recEl.checked = false;
+  }
+
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
     if (!_field('cfgLibraryPath')) return;
@@ -798,6 +807,8 @@
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     _rw('cfgEnableScore', isScoreEnabled());
+    _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
+    syncRecommendationsToggle();
     updateCronHint();
 
     // Seerr — editable from appConfig
@@ -879,6 +890,7 @@
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
     const enableScoreCfg = get('cfgEnableScore');
+    const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
@@ -890,6 +902,10 @@
         partial.score.enabled = enableScoreCfg;
       }
       if (!Object.keys(partial.system).length) delete partial.system;
+    }
+    if (recommendationsEnabled !== null || enableScoreCfg === false) {
+      partial.recommendations = partial.recommendations || {};
+      partial.recommendations.enabled = enableScoreCfg === false ? false : recommendationsEnabled === true;
     }
 
     try {
@@ -1894,6 +1910,7 @@
       if (_scoreSettingsMeta && typeof _scoreSettingsMeta === 'object') {
         _scoreSettingsMeta.enabled = _scoreEnabledLocalOverride;
       }
+      syncRecommendationsToggle();
       _renderScoreSettings();
       _syncGlobalSaveAvailability();
     });

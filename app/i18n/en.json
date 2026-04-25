@@ -50,6 +50,7 @@
     "prev": "← Back",
     "library": "📚 Library",
     "stats": "📊 Statistics",
+    "recommendations": "💡 Recommendations",
     "scan": "Scan"
   },
   "filters": {
@@ -319,7 +320,9 @@
       "export_json_btn": "Download export",
       "export_unavailable": "Library not loaded: export unavailable.",
       "enable_score": "Enable quality score",
-      "enable_score_hint": "When disabled, score is no longer computed during scan and is removed from sort/filter/stats."
+      "enable_score_hint": "When disabled, score is no longer computed during scan and is removed from sort/filter/stats.",
+      "enable_recommendations": "Enable recommendations",
+      "enable_recommendations_hint": "Requires quality score"
     },
     "env_note": "⚙️ Read-only values are configured via compose.yaml.",
     "github_link": "GitHub project",
@@ -406,6 +409,44 @@
     "providers_by_group": "Providers by group",
     "providers_by_category": "Providers by folder"
   },
+  "recommendations": {
+    "empty_run_scan": "No recommendations available. Run a scan.",
+    "empty_filters": "No recommendations for the current filters.",
+    "info_score": "Score {value}",
+    "kpis": {
+      "total": "Total recommendations",
+      "high": "High priority",
+      "quality": "Quality",
+      "space": "Space saving",
+      "languages": "Languages",
+      "series": "Series",
+      "data": "Data"
+    },
+    "filters": {
+      "type": "Recommendation type",
+      "priority": "Priority"
+    },
+    "types": {
+      "quality": "Quality",
+      "space": "Space",
+      "languages": "Languages",
+      "series": "Series",
+      "data": "Data"
+    },
+    "priorities": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "table": {
+      "priority": "Priority",
+      "type": "Type",
+      "media": "Media",
+      "info": "Main info",
+      "recommendation": "Recommendation",
+      "action": "Action"
+    }
+  },
   "quality_level": {
     "0": "Very low",
     "1": "Low",
@@ -436,6 +477,7 @@
     "settings_short": "Settings",
     "library": "Library",
     "stats": "Stats",
+    "recommendations": "Recos",
     "scan_library": "Scan library",
     "scan_quick_desc": "Quickly detects recent changes.",
     "scan_full_desc": "Reruns a full media library analysis.",

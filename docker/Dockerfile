@@ -17,6 +17,8 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY backend/scanner.py /app/scanner.py
 COPY backend/scoring.py /app/scoring.py
 COPY backend/score_defaults.json /app/score_defaults.json
+COPY backend/recommendations.py /app/recommendations.py
+COPY backend/recommendations_rules.json /app/recommendations_rules.json
 COPY backend/inventory_helpers.py /app/inventory_helpers.py
 COPY backend/nfo.py /app/nfo.py
 COPY docker/entrypoint.sh /app/entrypoint.sh

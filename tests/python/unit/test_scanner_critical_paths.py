@@ -215,6 +215,20 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         self.assertTrue(scanner._is_score_enabled({"system": {"enable_score": True}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": False}}))
 
+    def test_recommendations_require_score_flag(self):
+        cfg = {"score": {"enabled": False}, "recommendations": {"enabled": True}}
+        normalized, changed = scanner.normalize_recommendations_configuration(cfg)
+        self.assertTrue(changed)
+        self.assertFalse(normalized["recommendations"]["enabled"])
+        self.assertFalse(scanner._is_recommendations_enabled(normalized))
+
+        cfg = {
+            "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+            "score": {"enabled": True},
+            "recommendations": {"enabled": True},
+        }
+        self.assertIn(scanner.PHASE_RECOMMENDATIONS, scanner._phase_plan_from_config(cfg, include_phase1=True))
+
     def test_scan_media_item_skips_quality_payload_when_score_is_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)

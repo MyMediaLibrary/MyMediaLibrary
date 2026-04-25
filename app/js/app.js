@@ -476,7 +476,7 @@ let allItems=[], categories=[], groups=[];
   // Returns only the providers of an item that are currently visible
   function _itemVisProviders(item){ return getDisplayedProviders(item, { visibleOnly: true }); }
 
-  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false;
+  let enablePlot=false, enableMovies=true, enableSeries=true, enableSeerr=true, enableScore=false, enableRecommendations=false;
   let activeGroup='all', activeType='all';
   let activeFolders = new Set();
   let activeResolutions = new Set();
@@ -522,6 +522,9 @@ let allItems=[], categories=[], groups=[];
   let appConfig = {};            // loaded from /api/config
   let libraryPathLabel = '';     // from library.json root field: library_path
   let appVersionInfo = null;     // loaded from /version.json
+  let recommendationsDoc = null;
+  let recommendationTypeFilters = new Set();
+  let recommendationPriorityFilters = new Set();
 
   function resolveScoreEnabled() {
     const configScoreEnabled = appConfig?.score?.enabled;
@@ -537,6 +540,14 @@ let allItems=[], categories=[], groups=[];
 
   function isScoreEnabled() {
     return enableScore === true;
+  }
+
+  function resolveRecommendationsEnabled() {
+    return isScoreEnabled() && appConfig?.recommendations?.enabled === true;
+  }
+
+  function isRecommendationsEnabled() {
+    return enableRecommendations === true;
   }
 
   function sanitizeScoreState() {
@@ -574,6 +585,21 @@ let allItems=[], categories=[], groups=[];
         sec.innerHTML = '';
       }
     });
+  }
+
+  function applyRecommendationsFeatureVisibility() {
+    const show = isRecommendationsEnabled();
+    ['navRecommendations', 'mnavRecommendations'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+    if (!show) {
+      recommendationsDoc = null;
+      recommendationTypeFilters.clear();
+      recommendationPriorityFilters.clear();
+      if (currentTab === 'recommendations') currentTab = 'library';
+      if (currentMobileTab === 'recommendations') currentMobileTab = 'library';
+    }
   }
 
   function saveState() {
@@ -670,7 +696,7 @@ let allItems=[], categories=[], groups=[];
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
-      if (s.currentTab === 'library' || s.currentTab === 'stats') {
+      if (s.currentTab === 'library' || s.currentTab === 'stats' || (s.currentTab === 'recommendations' && isRecommendationsEnabled())) {
         currentTab = s.currentTab;
       }
       updateGlobalResetButtons();
@@ -840,7 +866,10 @@ let allItems=[], categories=[], groups=[];
       libraryPathLabel = typeof data.library_path === 'string' ? data.library_path : '';
       if (libraryPathLabel) document.getElementById('brandSub').textContent = libraryPathLabel;
       enableScore = resolveScoreEnabled();
+      enableRecommendations = resolveRecommendationsEnabled();
       applyScoreFeatureVisibility();
+      applyRecommendationsFeatureVisibility();
+      await loadRecommendations();
       renderStorageBar();
       renderFolderFilter();
       renderGenreFilter();
@@ -980,6 +1009,7 @@ let allItems=[], categories=[], groups=[];
       enableSeries     = appConfig.enable_series ?? true;
       enableSeerr = appConfig.seerr?.enabled ?? appConfig.jellyseerr?.enabled ?? false;
       enableScore      = resolveScoreEnabled();
+      enableRecommendations = resolveRecommendationsEnabled();
 
       // Provider visibility: explicit whitelist from config
       const pv = appConfig.providers_visible;
@@ -1000,6 +1030,7 @@ let allItems=[], categories=[], groups=[];
 
       _updateTypeFilterVisibility();
       applyScoreFeatureVisibility();
+      applyRecommendationsFeatureVisibility();
     } catch(e) {
       if (!String(e).includes('401')) console.warn('loadConfig error:', e);
     }
@@ -1021,6 +1052,26 @@ let allItems=[], categories=[], groups=[];
     } catch(e) {
       console.error('saveConfig error:', e);
       throw e;
+    }
+  }
+
+  async function loadRecommendations() {
+    if (!isRecommendationsEnabled()) {
+      recommendationsDoc = null;
+      return;
+    }
+    try {
+      const r = await fetch('/api/recommendations?_=' + Date.now());
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const doc = await r.json();
+      recommendationsDoc = {
+        generated_at: doc?.generated_at || null,
+        version: doc?.version || 1,
+        items: Array.isArray(doc?.items) ? doc.items : [],
+      };
+    } catch (e) {
+      console.warn('loadRecommendations error:', e);
+      recommendationsDoc = { generated_at: null, version: 1, items: [] };
     }
   }
 
@@ -1846,6 +1897,7 @@ let allItems=[], categories=[], groups=[];
     renderStats(filterItems());
     if (currentTab==='library') render();
     else if (currentTab==='stats') window.MMLStats.renderStatsPanel();
+    else if (currentTab==='recommendations') renderRecommendationsPanel();
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
@@ -2106,8 +2158,141 @@ let allItems=[], categories=[], groups=[];
     return applySearch(items, q);
   }
 
+  // ── RECOMMENDATIONS ─────────────────────────────────
+  const RECOMMENDATION_TYPES = ['quality', 'space', 'languages', 'series', 'data'];
+  const RECOMMENDATION_PRIORITIES = ['high', 'medium', 'low'];
+
+  function recText(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    const lang = CURRENT_LANG === 'en' ? 'en' : 'fr';
+    return obj[lang] || obj.fr || obj.en || '';
+  }
+
+  function recTypeLabel(type) {
+    return t('recommendations.types.' + type);
+  }
+
+  function recPriorityLabel(priority) {
+    return t('recommendations.priorities.' + priority);
+  }
+
+  function toggleRecommendationTypeFilter(type) {
+    if (recommendationTypeFilters.has(type)) recommendationTypeFilters.delete(type);
+    else recommendationTypeFilters.add(type);
+    renderRecommendationsPanel();
+  }
+
+  function toggleRecommendationPriorityFilter(priority) {
+    if (recommendationPriorityFilters.has(priority)) recommendationPriorityFilters.delete(priority);
+    else recommendationPriorityFilters.add(priority);
+    renderRecommendationsPanel();
+  }
+
+  function visibleRecommendations() {
+    if (!isRecommendationsEnabled() || !recommendationsDoc) return [];
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const visibleMediaIds = new Set(filterItems().map((item) => String(item.id || '')));
+    return (recommendationsDoc.items || []).filter((rec) => {
+      const mid = String(rec?.media_ref?.id || '');
+      if (!mid || !mediaById.has(mid) || !visibleMediaIds.has(mid)) return false;
+      if (recommendationTypeFilters.size && !recommendationTypeFilters.has(rec.recommendation_type)) return false;
+      if (recommendationPriorityFilters.size && !recommendationPriorityFilters.has(rec.priority)) return false;
+      return true;
+    });
+  }
+
+  function recInfo(media) {
+    const parts = [];
+    const score = Number(media?.quality?.score);
+    if (Number.isFinite(score)) parts.push(t('recommendations.info_score', { value: Math.round(score) }));
+    if (media?.size_b) parts.push(fmtSize(media.size_b));
+    if (media?.resolution) parts.push(getFilterDisplayValue(media.resolution));
+    if (media?.codec) parts.push(getFilterDisplayValue(media.codec));
+    if (media?.audio_codec) parts.push(getAudioCodecDisplay(media.audio_codec));
+    if (media?.audio_channels) parts.push(getFilterDisplayValue(media.audio_channels, 'filters.none'));
+    if (media?.audio_languages_simple) parts.push(getAudioLanguageSimpleDisplay(media.audio_languages_simple));
+    return parts.join(' • ');
+  }
+
+  function renderRecommendationFilterButtons(values, activeSet, fnName, labelPrefix) {
+    return values.map((value) => {
+      const active = activeSet.has(value) ? ' active' : '';
+      return '<button class="rec-filter-btn'+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
+    }).join('');
+  }
+
+  function renderRecommendationsPanel() {
+    const host = document.getElementById('recommendationsContent');
+    if (!host) return;
+    if (!isRecommendationsEnabled()) {
+      host.innerHTML = '';
+      return;
+    }
+    const allRecItems = recommendationsDoc?.items || [];
+    if (!recommendationsDoc || !allRecItems.length) {
+      host.innerHTML = '<div class="empty rec-empty"><p>'+t('recommendations.empty_run_scan')+'</p></div>';
+      return;
+    }
+    const recs = visibleRecommendations();
+    const counts = {
+      total: recs.length,
+      high: recs.filter((r) => r.priority === 'high').length,
+      quality: recs.filter((r) => r.recommendation_type === 'quality').length,
+      space: recs.filter((r) => r.recommendation_type === 'space').length,
+      languages: recs.filter((r) => r.recommendation_type === 'languages').length,
+      series: recs.filter((r) => r.recommendation_type === 'series').length,
+      data: recs.filter((r) => r.recommendation_type === 'data').length,
+    };
+    const kpis = [
+      ['total', t('recommendations.kpis.total')],
+      ['high', t('recommendations.kpis.high')],
+      ['quality', t('recommendations.kpis.quality')],
+      ['space', t('recommendations.kpis.space')],
+      ['languages', t('recommendations.kpis.languages')],
+      ['series', t('recommendations.kpis.series')],
+      ['data', t('recommendations.kpis.data')],
+    ].map(([key, label]) => '<div class="rec-kpi"><div class="rec-kpi-value">'+counts[key]+'</div><div class="rec-kpi-label">'+escH(label)+'</div></div>').join('');
+
+    const filters = '<div class="rec-filters">'
+      + '<div><div class="rec-filter-label">'+t('recommendations.filters.type')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_TYPES, recommendationTypeFilters, 'toggleRecommendationTypeFilter', recTypeLabel)
+      + '</div></div>'
+      + '<div><div class="rec-filter-label">'+t('recommendations.filters.priority')+'</div><div class="rec-filter-row">'
+      + renderRecommendationFilterButtons(RECOMMENDATION_PRIORITIES, recommendationPriorityFilters, 'toggleRecommendationPriorityFilter', recPriorityLabel)
+      + '</div></div></div>';
+
+    if (!recs.length) {
+      host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters+'<div class="empty rec-empty"><p>'+t('recommendations.empty_filters')+'</p></div></div>';
+      return;
+    }
+    const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
+    const rows = recs.map((rec) => {
+      const media = mediaById.get(String(rec.media_ref?.id || '')) || {};
+      const title = media.title || rec.display?.title || '-';
+      const year = media.year || rec.display?.year || '';
+      return '<tr>'
+        + '<td><span class="rec-priority rec-priority-'+escH(rec.priority || 'medium')+'">'+escH(recPriorityLabel(rec.priority || 'medium'))+'</span></td>'
+        + '<td>'+escH(recTypeLabel(rec.recommendation_type || 'data'))+'</td>'
+        + '<td><strong>'+escH(title)+'</strong>'+(year ? '<div class="rec-muted">'+escH(year)+'</div>' : '')+'</td>'
+        + '<td class="rec-info">'+escH(recInfo(media))+'</td>'
+        + '<td>'+escH(recText(rec.message))+'</td>'
+        + '<td>'+escH(recText(rec.suggested_action))+'</td>'
+        + '</tr>';
+    }).join('');
+    host.innerHTML = '<div class="rec-page"><div class="rec-kpis">'+kpis+'</div>'+filters
+      + '<div class="rec-table-wrap"><table class="rec-table"><thead><tr>'
+      + '<th>'+t('recommendations.table.priority')+'</th>'
+      + '<th>'+t('recommendations.table.type')+'</th>'
+      + '<th>'+t('recommendations.table.media')+'</th>'
+      + '<th>'+t('recommendations.table.info')+'</th>'
+      + '<th>'+t('recommendations.table.recommendation')+'</th>'
+      + '<th>'+t('recommendations.table.action')+'</th>'
+      + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }
+
   // ── TABS ─────────────────────────────────────────────
   function switchTab(tab) {
+    if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
     currentTab=tab;
     // Show/hide tab-bar controls depending on active tab
     const lc = document.getElementById('libraryControls');
@@ -2118,15 +2303,17 @@ let allItems=[], categories=[], groups=[];
     // Panels
     document.getElementById('libraryPanel').classList.toggle('active',tab==='library');
     document.getElementById('statsPanel').classList.toggle('active',tab==='stats');
+    document.getElementById('recommendationsPanel')?.classList.toggle('active',tab==='recommendations');
     // Nav buttons
-    ['navLibrary','navStats'].forEach(id => {
+    ['navLibrary','navStats','navRecommendations'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      const t = id.replace('navLibrary','library').replace('navStats','stats');
+      const t = id.replace('navLibrary','library').replace('navStats','stats').replace('navRecommendations','recommendations');
       el.classList.toggle('active', t === tab);
     });
     if (tab==='library') render();
     else if (tab==='stats') window.MMLStats.renderStatsPanel();
+    else if (tab==='recommendations') renderRecommendationsPanel();
     saveState();
   }
 
@@ -2734,15 +2921,16 @@ let allItems=[], categories=[], groups=[];
   }
 
   function switchMobileTab(tab) {
+    if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
     currentMobileTab = tab;
     closeMobileFilters();
     // Update nav buttons
-    ['library','stats'].forEach(t => {
+    ['library','stats','recommendations'].forEach(t => {
       const btn = document.getElementById('mnav' + t.charAt(0).toUpperCase() + t.slice(1));
       if (btn) btn.classList.toggle('active', t === tab);
     });
     // Show/hide panels
-    ['libraryPanel','statsPanel'].forEach(id => {
+    ['libraryPanel','statsPanel','recommendationsPanel'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.classList.remove('active');
     });
@@ -2753,6 +2941,7 @@ let allItems=[], categories=[], groups=[];
     if (lc2) lc2.style.display = tab==='library' ? '' : 'none';
     if (tab === 'library') render();
     else if (tab === 'stats') window.MMLStats.renderStatsPanel();
+    else if (tab === 'recommendations') renderRecommendationsPanel();
   }
 
   function syncMobileFilters() {

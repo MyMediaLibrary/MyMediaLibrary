@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "very_low_score",
+      "enabled": true,
+      "type": "quality",
+      "priority": "high",
+      "dedupe_group": "score_low",
+      "severity": 2,
+      "conditions": [
+        { "field": "score", "operator": "<", "value": 40 }
+      ],
+      "message": { "fr": "Score qualité très faible.", "en": "Very low quality score." },
+      "suggested_action": { "fr": "Chercher une version de meilleure qualité.", "en": "Look for a better quality version." }
+    },
+    {
+      "id": "low_score",
+      "enabled": true,
+      "type": "quality",
+      "priority": "medium",
+      "dedupe_group": "score_low",
+      "severity": 1,
+      "conditions": [
+        { "field": "score", "operator": ">=", "value": 40 },
+        { "field": "score", "operator": "<", "value": 60 }
+      ],
+      "message": { "fr": "Score qualité faible.", "en": "Low quality score." },
+      "suggested_action": { "fr": "Vérifier si une meilleure version est disponible.", "en": "Check whether a better version is available." }
+    },
+    {
+      "id": "old_codec_hd",
+      "enabled": true,
+      "type": "quality",
+      "priority": "medium",
+      "dedupe_group": "old_codec_hd",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "in", "value": ["720p", "1080p", "2160p", "4K"] },
+        { "field": "video_codec", "operator": "in", "value": ["Xvid", "DivX", "MPEG-2", "VC-1", "MPEG-4 Visual"] }
+      ],
+      "message": { "fr": "Vidéo HD/UHD encodée avec un ancien codec.", "en": "HD/UHD video encoded with an old codec." },
+      "suggested_action": { "fr": "Chercher une version plus récente, idéalement en HEVC ou AV1.", "en": "Look for a newer version, ideally in HEVC or AV1." }
+    },
+    {
+      "id": "poor_audio_channels_hd",
+      "enabled": true,
+      "type": "quality",
+      "priority": "medium",
+      "dedupe_group": "poor_audio_channels_hd",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "in", "value": ["1080p", "2160p", "4K"] },
+        { "field": "audio_channels", "operator": "in", "value": ["1.0", "2.0"] }
+      ],
+      "message": { "fr": "Audio limité pour un média en haute qualité vidéo.", "en": "Limited audio for a high video quality media." },
+      "suggested_action": { "fr": "Chercher une version avec une piste audio multicanal.", "en": "Look for a version with a multichannel audio track." }
+    },
+    {
+      "id": "large_720p_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "large_720p",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "=", "value": "720p" },
+        { "field": "size_gb", "operator": ">", "value": 8 }
+      ],
+      "message": { "fr": "Fichier 720p très lourd.", "en": "Very large 720p file." },
+      "suggested_action": { "fr": "Chercher une version 720p plus optimisée ou une version 1080p plus cohérente.", "en": "Look for a more optimized 720p version or a more consistent 1080p version." }
+    },
+    {
+      "id": "very_large_720p_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "high",
+      "dedupe_group": "large_720p",
+      "severity": 2,
+      "conditions": [
+        { "field": "resolution", "operator": "=", "value": "720p" },
+        { "field": "size_gb", "operator": ">", "value": 12 }
+      ],
+      "message": { "fr": "Fichier 720p excessivement lourd.", "en": "Extremely large 720p file." },
+      "suggested_action": { "fr": "Chercher une version plus légère ou remplacer par une version 1080p mieux optimisée.", "en": "Look for a lighter version or replace it with a better optimized 1080p version." }
+    },
+    {
+      "id": "large_1080p_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "large_1080p",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "=", "value": "1080p" },
+        { "field": "size_gb", "operator": ">", "value": 15 }
+      ],
+      "message": { "fr": "Fichier 1080p très lourd.", "en": "Very large 1080p file." },
+      "suggested_action": { "fr": "Chercher une version 1080p plus optimisée.", "en": "Look for a more optimized 1080p version." }
+    },
+    {
+      "id": "very_large_1080p_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "high",
+      "dedupe_group": "large_1080p",
+      "severity": 2,
+      "conditions": [
+        { "field": "resolution", "operator": "=", "value": "1080p" },
+        { "field": "size_gb", "operator": ">", "value": 25 }
+      ],
+      "message": { "fr": "Fichier 1080p excessivement lourd.", "en": "Extremely large 1080p file." },
+      "suggested_action": { "fr": "Chercher une version plus légère sans perte visible importante.", "en": "Look for a lighter version without major visible quality loss." }
+    },
+    {
+      "id": "large_4k_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "large_4k",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "in", "value": ["2160p", "4K"] },
+        { "field": "size_gb", "operator": ">", "value": 50 }
+      ],
+      "message": { "fr": "Fichier 4K très lourd.", "en": "Very large 4K file." },
+      "suggested_action": { "fr": "Chercher une version 4K plus optimisée.", "en": "Look for a more optimized 4K version." }
+    },
+    {
+      "id": "very_large_4k_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "high",
+      "dedupe_group": "large_4k",
+      "severity": 2,
+      "conditions": [
+        { "field": "resolution", "operator": "in", "value": ["2160p", "4K"] },
+        { "field": "size_gb", "operator": ">", "value": 80 }
+      ],
+      "message": { "fr": "Fichier 4K excessivement lourd.", "en": "Extremely large 4K file." },
+      "suggested_action": { "fr": "Vérifier si une version 4K plus légère existe.", "en": "Check whether a lighter 4K version exists." }
+    },
+    {
+      "id": "legacy_codec_large_file",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "legacy_codec_large",
+      "severity": 1,
+      "conditions": [
+        { "field": "video_codec", "operator": "in", "value": ["Xvid", "DivX", "MPEG-2", "VC-1", "MPEG-4 Visual"] },
+        { "field": "size_gb", "operator": ">", "value": 8 }
+      ],
+      "message": { "fr": "Fichier lourd encodé avec un ancien codec.", "en": "Large file encoded with an old codec." },
+      "suggested_action": { "fr": "Chercher une version plus récente et plus efficace.", "en": "Look for a newer and more efficient version." }
+    },
+    {
+      "id": "high_bitrate_1080p",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "high_bitrate_1080p",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "=", "value": "1080p" },
+        { "field": "video_bitrate", "operator": ">", "value": 25000000 }
+      ],
+      "message": { "fr": "Bitrate vidéo élevé pour du 1080p.", "en": "High video bitrate for 1080p." },
+      "suggested_action": { "fr": "Vérifier si une version plus optimisée est suffisante.", "en": "Check whether a more optimized version is sufficient." }
+    },
+    {
+      "id": "high_bitrate_4k",
+      "enabled": true,
+      "type": "space",
+      "priority": "medium",
+      "dedupe_group": "high_bitrate_4k",
+      "severity": 1,
+      "conditions": [
+        { "field": "resolution", "operator": "in", "value": ["2160p", "4K"] },
+        { "field": "video_bitrate", "operator": ">", "value": 60000000 }
+      ],
+      "message": { "fr": "Bitrate vidéo très élevé pour du 4K.", "en": "Very high video bitrate for 4K." },
+      "suggested_action": { "fr": "Vérifier si une version 4K plus optimisée existe.", "en": "Check whether a more optimized 4K version exists." }
+    },
+    {
+      "id": "missing_french_audio",
+      "enabled": true,
+      "type": "languages",
+      "priority": "high",
+      "dedupe_group": "missing_french_audio",
+      "severity": 1,
+      "conditions": [
+        { "field": "audio_languages", "operator": "not_contains", "value": "fra" },
+        { "field": "audio_languages", "operator": "not_contains", "value": "fre" },
+        { "field": "audio_languages", "operator": "not_contains", "value": "fr" }
+      ],
+      "message": { "fr": "Aucune piste audio française détectée.", "en": "No French audio track detected." },
+      "suggested_action": { "fr": "Chercher une version avec audio français.", "en": "Look for a version with French audio." }
+    },
+    {
+      "id": "vo_only",
+      "enabled": true,
+      "type": "languages",
+      "priority": "medium",
+      "dedupe_group": "vo_only",
+      "severity": 1,
+      "conditions": [
+        { "field": "audio_language_group", "operator": "=", "value": "VO" }
+      ],
+      "message": { "fr": "Média disponible uniquement en VO.", "en": "Media available in original version only." },
+      "suggested_action": { "fr": "Vérifier si une version VF ou MULTI existe.", "en": "Check whether a French or MULTI version exists." }
+    },
+    {
+      "id": "missing_french_subtitles_for_vo",
+      "enabled": true,
+      "type": "languages",
+      "priority": "medium",
+      "dedupe_group": "missing_french_subtitles_for_vo",
+      "severity": 1,
+      "conditions": [
+        { "field": "audio_language_group", "operator": "=", "value": "VO" },
+        { "field": "subtitle_languages", "operator": "not_contains", "value": "fra" },
+        { "field": "subtitle_languages", "operator": "not_contains", "value": "fre" },
+        { "field": "subtitle_languages", "operator": "not_contains", "value": "fr" }
+      ],
+      "message": { "fr": "VO sans sous-titres français détectés.", "en": "Original version detected without French subtitles." },
+      "suggested_action": { "fr": "Ajouter ou rechercher une version avec sous-titres français.", "en": "Add or look for a version with French subtitles." }
+    }
+  ]
+}

@@ -10,6 +10,7 @@ const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.j
 const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
 const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
 const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
+const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
@@ -174,6 +175,31 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
+});
+
+test('recommendations feature is gated by score and avoids fetch when disabled', () => {
+  assert.match(indexSource, /id="navRecommendations"[\s\S]*display:none/, 'recommendations desktop nav should start hidden');
+  assert.match(indexSource, /id="mnavRecommendations"[\s\S]*display:none/, 'recommendations mobile nav should start hidden');
+  assert.match(indexSource, /id="cfgEnableRecommendations"/, 'settings should expose a recommendations toggle');
+  const resolveBlock = functionBlock(appSource, 'resolveRecommendationsEnabled', 'isRecommendationsEnabled');
+  assert.match(resolveBlock, /isScoreEnabled\(\) && appConfig\?\.recommendations\?\.enabled === true/, 'recommendations should require score enabled');
+  assert.match(appSource, /async function loadRecommendations\(\)[\s\S]*if \(!isRecommendationsEnabled\(\)\)/, 'recommendations fetch should be skipped when feature is disabled');
+  assert.match(appSource, /fetch\('\/api\/recommendations\?_=' \+ Date\.now\(\)\)/, 'recommendations should load from dedicated API');
+  const settingsBlock = functionBlock(settingsSource, 'syncRecommendationsToggle', 'loadSettings');
+  assert.match(settingsBlock, /recEl\.disabled = !scoreEnabled;/, 'settings recommendations toggle should be disabled when score is off');
+  assert.match(settingsBlock, /if \(!scoreEnabled\) recEl\.checked = false;/, 'settings should clear recommendations when score is off');
+});
+
+test('recommendations page joins recommendations to filtered library items', () => {
+  const visibleBlock = functionBlock(appSource, 'visibleRecommendations', 'recInfo');
+  assert.match(visibleBlock, /const mediaById = new Map\(allItems\.map/, 'recommendations should join by library item id');
+  assert.match(visibleBlock, /const visibleMediaIds = new Set\(filterItems\(\)\.map/, 'recommendations should respect sidebar filters');
+  assert.match(visibleBlock, /recommendationTypeFilters\.size/, 'recommendations should support local type filters');
+  assert.match(visibleBlock, /recommendationPriorityFilters\.size/, 'recommendations should support local priority filters');
+  const renderBlock = functionBlock(appSource, 'renderRecommendationsPanel', 'switchTab');
+  assert.match(renderBlock, /recommendations\.empty_run_scan/, 'recommendations should render empty scan state');
+  assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
+  assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 
 test('score settings tab loads schema dynamically from dedicated API', () => {
