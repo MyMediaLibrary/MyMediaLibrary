@@ -3922,6 +3922,17 @@ def _cron_field_matches(field: str, value: int, *, min_value: int, max_value: in
     return False
 
 
+def _cron_field_is_wildcard(field: str) -> bool:
+    return str(field or "").strip() == "*"
+
+
+def _cron_dow_matches(field: str, cron_dow: int) -> bool:
+    return (
+        _cron_field_matches(field, cron_dow, min_value=0, max_value=7)
+        or (cron_dow == 0 and _cron_field_matches(field, 7, min_value=0, max_value=7))
+    )
+
+
 def _cron_matches(expr: str, when: datetime) -> bool:
     parts = expr.split()
     if len(parts) != 5:
@@ -3929,15 +3940,21 @@ def _cron_matches(expr: str, when: datetime) -> bool:
     minute, hour, dom, month, dow = parts
     # Cron uses Sunday as 0 or 7; Python weekday uses Monday=0.
     cron_dow = (when.weekday() + 1) % 7
+    dom_match = _cron_field_matches(dom, when.day, min_value=1, max_value=31)
+    dow_match = _cron_dow_matches(dow, cron_dow)
+    if _cron_field_is_wildcard(dom) and _cron_field_is_wildcard(dow):
+        day_match = True
+    elif _cron_field_is_wildcard(dom):
+        day_match = dow_match
+    elif _cron_field_is_wildcard(dow):
+        day_match = dom_match
+    else:
+        day_match = dom_match or dow_match
     return (
         _cron_field_matches(minute, when.minute, min_value=0, max_value=59)
         and _cron_field_matches(hour, when.hour, min_value=0, max_value=23)
-        and _cron_field_matches(dom, when.day, min_value=1, max_value=31)
         and _cron_field_matches(month, when.month, min_value=1, max_value=12)
-        and (
-            _cron_field_matches(dow, cron_dow, min_value=0, max_value=7)
-            or (cron_dow == 0 and _cron_field_matches(dow, 7, min_value=0, max_value=7))
-        )
+        and day_match
     )
 
 

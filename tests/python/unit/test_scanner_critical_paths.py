@@ -136,6 +136,37 @@ class InventoryFlagCriticalTest(unittest.TestCase):
 
 
 class ScheduledScanCronCriticalTest(unittest.TestCase):
+    def test_cron_matches_every_minute_wildcards(self):
+        when = scanner.datetime(2026, 4, 24, 12, 34)
+        self.assertTrue(scanner._cron_matches("* * * * *", when))
+
+    def test_cron_matches_dom_only_when_day_matches(self):
+        first = scanner.datetime(2026, 4, 1, 0, 0)
+        second = scanner.datetime(2026, 4, 2, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 1 * *", first))
+        self.assertFalse(scanner._cron_matches("0 0 1 * *", second))
+
+    def test_cron_matches_dow_only_when_day_matches(self):
+        monday = scanner.datetime(2026, 4, 6, 0, 0)
+        tuesday = scanner.datetime(2026, 4, 7, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 * * 1", monday))
+        self.assertFalse(scanner._cron_matches("0 0 * * 1", tuesday))
+
+    def test_cron_matches_dom_or_dow_when_both_are_constrained(self):
+        first_not_monday = scanner.datetime(2026, 4, 1, 0, 0)
+        monday_not_first = scanner.datetime(2026, 4, 6, 0, 0)
+        neither = scanner.datetime(2026, 4, 7, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 1 * 1", first_not_monday))
+        self.assertTrue(scanner._cron_matches("0 0 1 * 1", monday_not_first))
+        self.assertFalse(scanner._cron_matches("0 0 1 * 1", neither))
+
+    def test_cron_matches_sunday_as_zero_or_seven(self):
+        sunday = scanner.datetime(2026, 4, 5, 0, 0)
+        monday = scanner.datetime(2026, 4, 6, 0, 0)
+        self.assertTrue(scanner._cron_matches("0 0 * * 0", sunday))
+        self.assertTrue(scanner._cron_matches("0 0 * * 7", sunday))
+        self.assertFalse(scanner._cron_matches("0 0 * * 0", monday))
+
     def test_default_scan_command_uses_dynamic_pipeline_without_legacy_full_arg(self):
         cmd = scanner._scanner_cmd("default", origin="cron")
         self.assertIn("--origin", cmd)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from typing import Any
 
 
 VERSION = 1
+log = logging.getLogger(__name__)
 PRIORITY_RANK = {"high": 3, "medium": 2, "low": 1}
 TYPE_RANK = {"data": 5, "quality": 4, "space": 3, "languages": 2, "series": 1}
 UNKNOWN_VALUES = {"", "unknown", "inconnu", "none", "null", "n/a", "na", "?"}
@@ -86,6 +88,17 @@ def _safe_float(value: Any) -> float | None:
     except Exception:
         return None
     return number
+
+
+def _safe_int(value: Any, default: int = 1, *, field_name: str = "value", rule_id: str | None = None) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        suffix = f" for rule {rule_id}" if rule_id else ""
+        log.warning("[recommendations] Invalid %s%s: %r; using %s", field_name, suffix, value, default)
+        return default
 
 
 def _score(item: dict) -> int | None:
@@ -451,13 +464,14 @@ def json_rule_recommendations(item: dict, rules: list[dict]) -> list[dict]:
         action = rule.get("suggested_action")
         if not (isinstance(msg, dict) and msg.get("fr") and msg.get("en") and isinstance(action, dict) and action.get("fr") and action.get("en")):
             continue
+        rule_id = str(rule.get("id") or "json_rule")
         recs.append(make_rec(
             item,
-            rule_id=str(rule.get("id") or "json_rule"),
+            rule_id=rule_id,
             recommendation_type=str(rule.get("type") or "quality"),
             priority=str(rule.get("priority") or "medium"),
             dedupe_group=str(rule.get("dedupe_group") or rule.get("id") or "json_rule"),
-            severity=int(rule.get("severity") or 1),
+            severity=_safe_int(rule.get("severity"), default=1, field_name="severity", rule_id=rule_id),
             message={"fr": msg.get("fr"), "en": msg.get("en")},
             suggested_action={"fr": action.get("fr"), "en": action.get("en")},
         ))

@@ -1,4 +1,5 @@
 import json
+import contextlib
 import pathlib
 import sys
 import tempfile
@@ -86,6 +87,36 @@ class RecommendationsTest(unittest.TestCase):
         recs = recommendations.json_rule_recommendations(item(), rules)
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["recommendation_type"], "space")
+
+    def test_json_rule_severity_parsing_is_robust(self):
+        base_rule = {
+            "id": "severity",
+            "enabled": True,
+            "type": "space",
+            "priority": "medium",
+            "dedupe_group": "severity",
+            "conditions": [{"field": "size_gb", "operator": ">", "value": 8}],
+            "message": {"fr": "Lourd.", "en": "Large."},
+            "suggested_action": {"fr": "Optimiser.", "en": "Optimize."},
+        }
+        cases = [
+            (2, 2),
+            ("2", 2),
+            (None, 1),
+            ("high", 1),
+        ]
+        for raw, expected in cases:
+            with self.subTest(severity=raw):
+                rule = dict(base_rule)
+                if raw is not None:
+                    rule["severity"] = raw
+                log_context = self.assertLogs("recommendations", level="WARNING") if raw == "high" else contextlib.nullcontext()
+                with log_context as logs_cm:
+                    recs = recommendations.json_rule_recommendations(item(), [rule])
+                self.assertEqual(len(recs), 1)
+                self.assertEqual(recs[0]["severity"], expected)
+                if raw == "high":
+                    self.assertIn("Invalid severity for rule severity", "\n".join(logs_cm.output))
 
     def test_data_rules_detect_missing_values(self):
         recs = recommendations.data_recommendations(item(
