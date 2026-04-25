@@ -412,6 +412,7 @@
   "recommendations": {
     "empty_run_scan": "Aucune recommandation disponible. Lancez un scan.",
     "empty_filters": "Aucune recommandation pour les filtres actuels.",
+    "empty_error": "Impossible de charger les recommandations.",
     "info_score": "Score {value}",
     "kpis": {
       "total": "Total recommandations",

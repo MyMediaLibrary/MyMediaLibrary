@@ -412,6 +412,7 @@
   "recommendations": {
     "empty_run_scan": "No recommendations available. Run a scan.",
     "empty_filters": "No recommendations for the current filters.",
+    "empty_error": "Unable to load recommendations.",
     "info_score": "Score {value}",
     "kpis": {
       "total": "Total recommendations",

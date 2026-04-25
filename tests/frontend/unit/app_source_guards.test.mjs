@@ -185,6 +185,8 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
   assert.match(resolveBlock, /isScoreEnabled\(\) && appConfig\?\.recommendations\?\.enabled === true/, 'recommendations should require score enabled');
   assert.match(appSource, /async function loadRecommendations\(\)[\s\S]*if \(!isRecommendationsEnabled\(\)\)/, 'recommendations fetch should be skipped when feature is disabled');
   assert.match(appSource, /fetch\('\/api\/recommendations\?_=' \+ Date\.now\(\)\)/, 'recommendations should load from dedicated API');
+  assert.match(appSource, /enabled: doc\?\.enabled !== false/, 'recommendations should accept API payloads with enabled state');
+  assert.match(appSource, /if \(doc\?\.enabled === false\)[\s\S]*applyRecommendationsFeatureVisibility\(\);/, 'recommendations API disabled state should hide the feature cleanly');
   const settingsBlock = functionBlock(settingsSource, 'syncRecommendationsToggle', 'loadSettings');
   assert.match(settingsBlock, /recEl\.disabled = !scoreEnabled;/, 'settings recommendations toggle should be disabled when score is off');
   assert.match(settingsBlock, /if \(!scoreEnabled\) recEl\.checked = false;/, 'settings should clear recommendations when score is off');
@@ -199,6 +201,7 @@ test('recommendations page joins recommendations to filtered library items', () 
   const renderBlock = functionBlock(appSource, 'renderRecommendationsPanel', 'switchTab');
   assert.match(renderBlock, /recommendations\.empty_run_scan/, 'recommendations should render empty scan state');
   assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
+  assert.match(renderBlock, /recommendations\.empty_error/, 'recommendations should render API error state');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 

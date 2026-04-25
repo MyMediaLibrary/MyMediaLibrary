@@ -4057,6 +4057,36 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
+def _empty_recommendations_payload(enabled: bool) -> dict:
+    return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
+
+
+def _recommendations_api_payload(cfg: dict | None = None) -> dict:
+    current_cfg = cfg if isinstance(cfg, dict) else load_config()
+    enabled = _is_recommendations_enabled(current_cfg)
+    if not enabled:
+        return _empty_recommendations_payload(False)
+
+    rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
+    if not rec_path.exists():
+        return _empty_recommendations_payload(True)
+
+    try:
+        with open(rec_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return _empty_recommendations_payload(True)
+        payload["enabled"] = True
+        payload.setdefault("generated_at", None)
+        payload.setdefault("version", 1)
+        if not isinstance(payload.get("items"), list):
+            payload["items"] = []
+        return payload
+    except Exception as e:
+        log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
+        return _empty_recommendations_payload(True)
+
+
 def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
     global _srv_proc
     cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
@@ -4270,25 +4300,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
         elif path == "/api/recommendations":
-            cfg = load_config()
-            if not _is_recommendations_enabled(cfg):
-                self._json(200, {"generated_at": None, "version": 1, "items": []})
-                return
-            rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
-            if not rec_path.exists():
-                self._json(200, {"generated_at": None, "version": 1, "items": []})
-                return
-            try:
-                with open(rec_path, encoding="utf-8") as f:
-                    payload = json.load(f)
-                if not isinstance(payload, dict):
-                    payload = {"generated_at": None, "version": 1, "items": []}
-                payload.setdefault("version", 1)
-                payload.setdefault("items", [])
-                self._json(200, payload)
-            except Exception as e:
-                log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
-                self._json(200, {"generated_at": None, "version": 1, "items": []})
+            self._json(200, _recommendations_api_payload())
         else:
             self._json(404, {"error": "not found"})
 

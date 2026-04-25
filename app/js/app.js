@@ -1064,14 +1064,22 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/api/recommendations?_=' + Date.now());
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const doc = await r.json();
+      if (doc?.enabled === false) {
+        recommendationsDoc = { enabled: false, generated_at: null, version: doc?.version || 1, items: [], error: null };
+        enableRecommendations = false;
+        applyRecommendationsFeatureVisibility();
+        return;
+      }
       recommendationsDoc = {
+        enabled: doc?.enabled !== false,
         generated_at: doc?.generated_at || null,
         version: doc?.version || 1,
         items: Array.isArray(doc?.items) ? doc.items : [],
+        error: null,
       };
     } catch (e) {
       console.warn('loadRecommendations error:', e);
-      recommendationsDoc = { generated_at: null, version: 1, items: [] };
+      recommendationsDoc = { enabled: true, generated_at: null, version: 1, items: [], error: true };
     }
   }
 
@@ -2229,6 +2237,10 @@ let allItems=[], categories=[], groups=[];
       return;
     }
     const allRecItems = recommendationsDoc?.items || [];
+    if (recommendationsDoc?.error) {
+      host.innerHTML = '<div class="empty rec-empty"><p>'+t('recommendations.empty_error')+'</p></div>';
+      return;
+    }
     if (!recommendationsDoc || !allRecItems.length) {
       host.innerHTML = '<div class="empty rec-empty"><p>'+t('recommendations.empty_run_scan')+'</p></div>';
       return;
