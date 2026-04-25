@@ -2,11 +2,10 @@ FROM nginx:alpine3.23
 
 # Keep runtime packages minimal:
 # - python3: scanner + API
-# - gettext-envsubst: render nginx config from env vars
 # - tzdata: timezone support for scanner scheduler logs
 RUN apk update \
     && apk upgrade --no-cache \
-    && apk add --no-cache python3 gettext-envsubst tzdata
+    && apk add --no-cache python3 tzdata
 
 WORKDIR /app
 
@@ -32,8 +31,8 @@ COPY docker/entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
 
-# /data est le seul volume persistant — config.json, library.json, scanner.log
-VOLUME ["/data"]
+# Persistent runtime volumes: generated data and user configuration.
+VOLUME ["/data", "/conf"]
 
 EXPOSE 80
 

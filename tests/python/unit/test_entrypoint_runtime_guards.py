@@ -9,15 +9,17 @@ ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 class EntrypointRuntimeGuardsTest(unittest.TestCase):
     def test_tz_fallback_is_exported_before_scanner_processes_start(self):
         source = ENTRYPOINT.read_text(encoding="utf-8")
-        tz_idx = source.index('export LIBRARY_PATH TZ')
+        tz_idx = source.index('export TZ')
         scan_server_idx = source.index('python3 /app/scanner.py --serve &')
         initial_scan_idx = source.index('python3 /app/scanner.py')
         self.assertLess(tz_idx, scan_server_idx)
         self.assertLess(tz_idx, initial_scan_idx)
 
-    def test_library_path_defaults_to_canonical_library(self):
+    def test_entrypoint_uses_fixed_library_mount_without_env_option(self):
         source = ENTRYPOINT.read_text(encoding="utf-8")
-        self.assertIn('LIBRARY_PATH="${LIBRARY_PATH:-/library}"', source)
+        self.assertIn('LIBRARY_DIR  : /library', source)
+        self.assertNotIn('LIBRARY_PATH=', source)
+        self.assertNotIn('envsubst', source)
         self.assertNotIn("/mnt/media/library", source)
 
     def test_storage_migration_runs_before_scanner_processes_start(self):
