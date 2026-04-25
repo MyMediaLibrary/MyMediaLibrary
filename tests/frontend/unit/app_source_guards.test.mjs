@@ -193,7 +193,7 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
 });
 
 test('recommendations page joins recommendations to filtered library items', () => {
-  const visibleBlock = functionBlock(appSource, 'visibleRecommendations', 'recInfo');
+  const visibleBlock = functionBlock(appSource, 'visibleRecommendations', 'recMedia');
   assert.match(visibleBlock, /const mediaById = new Map\(allItems\.map/, 'recommendations should join by library item id');
   assert.match(visibleBlock, /const visibleMediaIds = new Set\(filterItems\(\)\.map/, 'recommendations should respect sidebar filters');
   assert.match(visibleBlock, /recommendationTypeFilters\.size/, 'recommendations should support local type filters');
@@ -203,9 +203,10 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(renderBlock, /recommendations\.empty_filters/, 'recommendations should render empty filtered state');
   assert.match(renderBlock, /recommendations\.empty_error/, 'recommendations should render API error state');
   assert.match(renderBlock, /rec-filter-group/, 'recommendations local filters should be visually split into groups');
-  assert.match(renderBlock, /recSortHeader\('priority'/, 'recommendations table should expose sortable priority header');
-  assert.match(renderBlock, /recSortHeader\('score'/, 'recommendations table should expose sortable score header');
+  assert.match(renderBlock, /recSortControls\(\)/, 'recommendations sort controls should render with local filters');
+  assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
   assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
+  assert.match(appSource, /'message_fr'[\s\S]*'action_en'/, 'recommendations CSV should export split message and action columns');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 
