@@ -30,12 +30,6 @@ Tableau de bord auto-hébergé pour visualiser votre bibliothèque de films et s
 
 MyMediaLibrary ne se limite plus à analyser votre médiathèque : il propose désormais des recommandations concrètes pour l'améliorer.
 
-Le moteur de recommandations :
-- s'appuie sur les données déjà analysées (`.nfo`, score qualité, langues, taille, codecs...)
-- reste déterministe, sans IA générative
-- s'active dans les paramètres
-- s'intègre au pipeline de scan
-
 Pipeline de scan : filesystem + NFO → enrichissement Seerr → score qualité → inventaire → recommandations.
 
 Types de recommandations :
@@ -44,14 +38,6 @@ Types de recommandations :
 - **Langues** : absence de français, VO uniquement, sous-titres manquants
 - **Séries** : saisons incohérentes, saison de qualité inférieure, saison anormalement volumineuse
 - **Données** : champs manquants ou non détectés
-
-#### Page Recommandations
-
-La page Recommandations liste les actions à réaliser avec des filtres dédiés (type / priorité), un tri configurable, un export CSV et l'intégration avec les filtres globaux de la bibliothèque.
-
-#### Statistiques Recommandations
-
-L'onglet Stats > Recommandations visualise les problèmes globalement : répartition par type et priorité, impact sur la médiathèque, proportion de médias concernés et analyse par dossier.
 
 ### Démarrage rapide
 
@@ -128,12 +114,6 @@ Self-hosted dashboard for visualizing your movie and TV library. Scans `.nfo` fi
 
 MyMediaLibrary no longer only analyzes your media library: it can now suggest concrete actions to improve it.
 
-The recommendations engine:
-- relies on already analyzed data (`.nfo`, quality score, languages, size, codecs...)
-- is deterministic, with no generative AI
-- can be enabled from settings
-- is integrated into the scan pipeline
-
 Scan pipeline: filesystem + NFO → Seerr enrichment → quality score → inventory → recommendations.
 
 Recommendation types:
@@ -142,14 +122,6 @@ Recommendation types:
 - **Languages**: missing French audio, original version only, missing subtitles
 - **Series**: inconsistent seasons, lower-quality season, abnormally large season
 - **Data**: missing or undetected fields
-
-#### Recommendations Page
-
-The Recommendations page lists actionable items with dedicated filters (type / priority), configurable sorting, CSV export, and integration with global library filters.
-
-#### Recommendations Statistics
-
-Stats > Recommendations provides a global view of issues: distribution by type and priority, library impact, proportion of affected media, and folder-level analysis.
 
 ### Quick start
 
