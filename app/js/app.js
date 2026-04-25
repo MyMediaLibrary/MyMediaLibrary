@@ -865,7 +865,6 @@ let allItems=[], categories=[], groups=[];
         recPriorityLabel,
         recTypeLabel,
         recMedia,
-        recMediaTitle,
         recScore,
         recSizeBytes,
         recommendationPriorityFilters,

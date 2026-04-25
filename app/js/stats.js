@@ -47,7 +47,6 @@
     recPriorityLabel: null,
     recTypeLabel: null,
     recMedia: null,
-    recMediaTitle: null,
     recScore: null,
     recSizeBytes: null,
     recommendationPriorityFilters: null,
@@ -653,6 +652,22 @@
     return makeStatsBlock(title, makeHorizontalBars(entries, labelFn, v=>String(v), total, colorFn, options));
   }
 
+  function makeFolderImpactBars(title, entries) {
+    if (!entries.length) return '';
+    const colorFn = (key, index) => getDep('PALETTE')[index % getDep('PALETTE').length];
+    const body = '<div class="hbar-list">'
+      + entries.map(([folder, info], index) => {
+        const pct = Number(info.percent) || 0;
+        return '<div class="hbar-item">'
+          + '<div class="hbar-label" title="'+getDep('escH')(folder)+'">'+getDep('escH')(folder)+'</div>'
+          + '<div class="hbar-track"><div class="hbar-fill" style="width:'+pct.toFixed(2)+'%;background:'+colorFn(folder, index)+'"></div></div>'
+          + '<div class="hbar-val">'+Math.round(pct)+'% <span class="stat-row-sub">('+info.withRecommendations+'/'+info.total+')</span></div>'
+          + '</div>';
+      }).join('')
+      + '</div>';
+    return makeStatsBlock(title, body);
+  }
+
   function buildRecommendationStatsData() {
     const visibleRecommendations = getDep('visibleRecommendations');
     const filterItems = getDep('filterItems');
@@ -661,38 +676,45 @@
     const visibleMedia = typeof filterItems === 'function' ? filterItems() : allItems;
     const mediaById = new Map(allItems.map((item) => [String(item.id || ''), item]));
     const recMedia = getDep('recMedia');
-    const recMediaTitle = getDep('recMediaTitle');
     const recScore = getDep('recScore');
     const recSizeBytes = getDep('recSizeBytes');
 
-    const byPriority = {}, byType = {}, byFolder = {}, byMedia = {}, byScore = {};
+    const byPriority = {}, byType = {}, byFolder = {}, byScore = {};
     const recCountByMedia = {};
+    const folderMediaTotals = {};
+    const folderMediaWithRecommendations = {};
     const spaceMediaIds = new Set();
-    const seriesCounts = {};
 
     recs.forEach((rec) => {
       const media = typeof recMedia === 'function' ? recMedia(rec, mediaById) : mediaById.get(String(rec?.media_ref?.id || '')) || {};
       const mid = String(rec?.media_ref?.id || '');
+      const folder = media.category || media.group || '?';
       increment(byPriority, rec.priority || 'medium');
       increment(byType, rec.recommendation_type || 'data');
-      increment(byFolder, media.category || media.group || '?');
-      increment(byMedia, mid);
+      increment(byFolder, folder);
       increment(recCountByMedia, mid);
       increment(byScore, scoreBucket(typeof recScore === 'function' ? recScore(media) : media?.quality?.score));
+      if (!folderMediaWithRecommendations[folder]) folderMediaWithRecommendations[folder] = new Set();
+      folderMediaWithRecommendations[folder].add(mid);
       if (rec.recommendation_type === 'space') spaceMediaIds.add(mid);
-      if (rec.recommendation_type === 'series') increment(seriesCounts, mid);
     });
 
     const perMediaBuckets = { '0': 0, '1': 0, '2': 0, '3plus': 0 };
     visibleMedia.forEach((media) => {
+      increment(folderMediaTotals, media.category || media.group || '?');
       const bucket = recommendationCountBucket(recCountByMedia[String(media.id || '')] || 0);
       perMediaBuckets[bucket] += 1;
     });
 
-    const mediaTitle = (mid) => {
-      const media = mediaById.get(String(mid)) || {};
-      return typeof recMediaTitle === 'function' ? recMediaTitle(null, media) : (media.title || String(mid));
-    };
+    const folderImpact = Object.entries(folderMediaTotals).map(([folder, total]) => {
+      const withRecommendations = folderMediaWithRecommendations[folder]?.size || 0;
+      return [folder, {
+        total,
+        withRecommendations,
+        percent: total > 0 ? (withRecommendations / total) * 100 : 0,
+      }];
+    }).sort((a, b) => b[1].percent - a[1].percent || b[1].withRecommendations - a[1].withRecommendations).slice(0, 10);
+
     const spaceSizeBytes = [...spaceMediaIds].reduce((sum, mid) => {
       const media = mediaById.get(String(mid)) || {};
       return sum + (typeof recSizeBytes === 'function' ? recSizeBytes(media) : Number(media.size_b || 0));
@@ -704,13 +726,11 @@
       byPriority,
       byType,
       byFolder,
-      byMedia,
       byScore,
       perMediaBuckets,
+      folderImpact,
       spaceSizeBytes,
       spaceMediaCount: spaceMediaIds.size,
-      seriesCounts,
-      mediaTitle,
     };
   }
 
@@ -744,10 +764,8 @@
     const priorityEntries = RECOMMENDATION_PRIORITIES.map((key) => [key, data.byPriority[key] || 0]).filter(([, value]) => value > 0);
     const typeEntries = RECOMMENDATION_TYPES.map((key) => [key, data.byType[key] || 0]).filter(([, value]) => value > 0);
     const folderEntries = Object.entries(data.byFolder).sort((a,b) => b[1]-a[1]).slice(0, 10);
-    const mediaEntries = Object.entries(data.byMedia).sort((a,b) => b[1]-a[1]).slice(0, 10);
     const perMediaEntries = ['0', '1', '2', '3plus'].map((key) => [key, data.perMediaBuckets[key] || 0]);
     const scoreEntries = ['0-20', '21-40', '41-60', '61-80', '81-100', 'unknown'].map((key) => [key, data.byScore[key] || 0]).filter(([, value]) => value > 0);
-    const seriesEntries = Object.entries(data.seriesCounts).sort((a,b) => b[1]-a[1]).slice(0, 10);
 
     const spaceKpi = '<div class="stat-kpi-grid">'
       + '<div class="stat-kpi"><div class="stat-kpi-label">'+escH(t('table.size'))+'</div><div class="stat-kpi-val">'+escH(fmtSize(data.spaceSizeBytes))+'</div><div class="stat-kpi-sub">'+escH(t('stats.recommendations_space_size_sub'))+'</div></div>'
@@ -759,14 +777,15 @@
         + '<div>'+makeRecommendationPie(t('stats.recommendations_priority_distribution'), priorityEntries, recommendationPriorityColor, recPriorityLabel, 'recommendationPriority')+'</div>'
         + '<div>'+makeRecommendationPie(t('stats.recommendations_type_distribution'), typeEntries, recommendationTypeColor, recTypeLabel, 'recommendationType')+'</div>'
       + '</div>'
-      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_folder_distribution'), folderEntries, k=>k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { filterKind: 'folder', percentBase: data.recs.length })+'</div></div>'
-      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_most_affected_media'), mediaEntries, data.mediaTitle, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>'
-      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_per_media'), perMediaEntries, recCountBucketLabel, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.visibleMedia.length })+'</div></div>'
-      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>'
       + '<div class="stats-row">'
+        + '<div>'+makeRecommendationHBar(t('stats.recommendations_folder_distribution'), folderEntries, k=>k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { filterKind: 'folder', percentBase: data.recs.length })+'</div>'
+        + '<div>'+makeFolderImpactBars(t('stats.recommendations_media_by_folder'), data.folderImpact)+'</div>'
+      + '</div>'
+      + '<div class="stats-row">'
+        + '<div>'+makeRecommendationPie(t('stats.recommendations_per_media'), perMediaEntries, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], recCountBucketLabel)+'</div>'
         + '<div>'+makeStatsBlock(t('stats.recommendations_space_size'), spaceKpi)+'</div>'
-        + '<div>'+makeRecommendationHBar(t('stats.recommendations_inconsistent_series'), seriesEntries, data.mediaTitle, (k,i)=>recommendationTypeColor('series', i), { percentBase: data.recs.length })+'</div>'
-      + '</div>';
+      + '</div>'
+      + '<div class="stats-row stats-row-full"><div>'+makeRecommendationHBar(t('stats.recommendations_score_distribution'), scoreEntries, k=>k === 'unknown' ? t('filters.unknown') : k, (k,i)=>getDep('PALETTE')[i%getDep('PALETTE').length], { percentBase: data.recs.length })+'</div></div>';
   }
 
   function renderQualityChart(quality) {
