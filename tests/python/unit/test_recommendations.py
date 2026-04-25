@@ -119,6 +119,86 @@ class RecommendationsTest(unittest.TestCase):
         self.assertTrue(any(r["context"].get("season") == 2 for r in recs))
         self.assertTrue(any(r["rule_id"].startswith("series_low_score_season") for r in recs))
 
+    def test_series_low_score_message_includes_compared_scores(self):
+        tv = item(
+            id="tv:Series:Demo",
+            type="tv",
+            seasons=[
+                {"season": 1, "quality": {"score": 70}, "size_gb": 10},
+                {"season": 6, "quality": {"score": 35}, "size_gb": 10},
+                {"season": 7, "quality": {"score": 70}, "size_gb": 10},
+            ],
+        )
+        rec = next(r for r in recommendations.series_recommendations(tv) if r["rule_id"].startswith("series_low_score_season:s6"))
+        self.assertEqual(rec["context"], {"season": 6, "season_score": 35, "series_average_score": 70, "delta": 35})
+        self.assertIn("score qualité de 35", rec["message"]["fr"])
+        self.assertIn("(70)", rec["message"]["fr"])
+        self.assertIn("quality score of 35", rec["message"]["en"])
+        self.assertIn("average score (70)", rec["message"]["en"])
+
+    def test_series_large_season_message_uses_season_size_not_series_size(self):
+        tv = item(
+            id="tv:Series:Demo",
+            type="tv",
+            size_gb=400,
+            seasons=[
+                {"season": 1, "size_gb": 35, "quality": {"score": 80}},
+                {"season": 5, "size_gb": 84, "quality": {"score": 80}},
+                {"season": 6, "size_gb": 35, "quality": {"score": 80}},
+            ],
+        )
+        rec = next(r for r in recommendations.series_recommendations(tv) if r["rule_id"].startswith("series_large_season:s5"))
+        self.assertEqual(rec["context"], {
+            "season": 5,
+            "season_size_gb": 84,
+            "average_other_seasons_size_gb": 35,
+            "ratio": 2.4,
+        })
+        self.assertIn("84 Go", rec["message"]["fr"])
+        self.assertNotIn("400", rec["message"]["fr"])
+        self.assertIn("2,4x", rec["message"]["fr"])
+        self.assertIn("84 GB", rec["message"]["en"])
+        self.assertIn("2.4x", rec["message"]["en"])
+
+    def test_series_mixed_messages_include_compared_values(self):
+        tv = item(
+            id="tv:Series:Demo",
+            type="tv",
+            seasons=[
+                {"season": 1, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 2, "resolution": "720p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 3, "resolution": "1080p", "codec": "Xvid", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 4, "resolution": "1080p", "codec": "HEVC", "audio_channels": "2.0", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 5, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "VO", "size_gb": 10, "quality": {"score": 80}},
+                {"season": 6, "resolution": "1080p", "codec": "HEVC", "audio_channels": "5.1", "audio_languages_simple": "MULTI", "size_gb": 10, "quality": {"score": 80}},
+            ],
+        )
+        recs = recommendations.series_recommendations(tv)
+
+        resolution = next(r for r in recs if r["rule_id"].startswith("series_mixed_resolution:s2"))
+        self.assertEqual(resolution["context"]["season_resolution"], "720p")
+        self.assertEqual(resolution["context"]["dominant_resolution"], "1080p")
+        self.assertIn("720p", resolution["message"]["fr"])
+        self.assertIn("1080p", resolution["message"]["en"])
+
+        codec = next(r for r in recs if r["rule_id"].startswith("series_mixed_video_codec:s3"))
+        self.assertEqual(codec["context"]["season_video_codec"], "Xvid")
+        self.assertEqual(codec["context"]["dominant_video_codec"], "HEVC")
+        self.assertIn("Xvid", codec["message"]["fr"])
+        self.assertIn("HEVC", codec["message"]["en"])
+
+        channels = next(r for r in recs if r["rule_id"].startswith("series_mixed_audio_channels:s4"))
+        self.assertEqual(channels["context"]["season_audio_channels"], "2.0")
+        self.assertEqual(channels["context"]["dominant_audio_channels"], "5.1")
+        self.assertIn("2.0", channels["message"]["fr"])
+        self.assertIn("5.1", channels["message"]["en"])
+
+        languages = next(r for r in recs if r["rule_id"].startswith("series_mixed_languages:s5"))
+        self.assertEqual(languages["context"]["season_audio_language_group"], "VO")
+        self.assertEqual(languages["context"]["dominant_audio_language_group"], "MULTI")
+        self.assertIn("VO", languages["message"]["fr"])
+        self.assertIn("MULTI", languages["message"]["en"])
+
     def test_dedupe_and_limit_noise(self):
         sample = item()
         recs = [

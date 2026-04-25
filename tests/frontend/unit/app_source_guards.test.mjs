@@ -207,6 +207,7 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.doesNotMatch(renderBlock, /recSortHeader\(/, 'recommendations table headers should not own sorting');
   assert.match(appSource, /function exportRecommendationsCSV\(\)[\s\S]*visibleRecommendations\(\)/, 'recommendations CSV export should use only visible recommendations');
   assert.match(appSource, /'message_fr'[\s\S]*'action_en'/, 'recommendations CSV should export split message and action columns');
+  assert.match(appSource, /'context_season'[\s\S]*'context_dominant_audio_language_group'/, 'recommendations CSV should export useful series context columns');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 

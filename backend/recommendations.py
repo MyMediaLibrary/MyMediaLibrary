@@ -216,30 +216,47 @@ def _minority_seasons(seasons: list[dict], field: str) -> tuple[Any, list[dict]]
     return dominant, out
 
 
-def _series_msg(field_name: str, season: int | None) -> tuple[dict, dict]:
+def _round_clean(value: float | int | None, digits: int = 1) -> float | int | None:
+    if value is None:
+        return None
+    rounded = round(float(value), digits)
+    return int(rounded) if rounded.is_integer() else rounded
+
+
+def _fmt_value(value: Any, *, lang: str = "en") -> str:
+    if value is None:
+        return "?"
+    numeric = isinstance(value, float)
+    if isinstance(value, float):
+        value = _round_clean(value)
+    text = str(value)
+    return text.replace(".", ",") if lang == "fr" and numeric else text
+
+
+def _series_msg(field_name: str, season: int | None, season_value: Any = None, dominant_value: Any = None) -> tuple[dict, dict]:
     s = season if season is not None else "?"
     messages = {
         "resolution": (
-            f"La saison {s} n’a pas la même résolution que la majorité de la série.",
-            f"Season {s} does not use the same resolution as most of the series.",
+            f"La saison {s} est en {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+            f"Season {s} is in {_fmt_value(season_value)} while most of the series is in {_fmt_value(dominant_value)}.",
             f"Identifier la saison {s} et chercher une version alignée avec le reste de la série.",
             f"Review season {s} and look for a version aligned with the rest of the series.",
         ),
         "codec": (
-            f"La saison {s} utilise un codec vidéo différent du reste de la série.",
-            f"Season {s} uses a different video codec than the rest of the series.",
+            f"La saison {s} utilise le codec {_fmt_value(season_value, lang='fr')} alors que la majorité de la série utilise {_fmt_value(dominant_value, lang='fr')}.",
+            f"Season {s} uses {_fmt_value(season_value)} while most of the series uses {_fmt_value(dominant_value)}.",
             f"Vérifier la saison {s}, surtout si elle utilise un codec ancien.",
             f"Review season {s}, especially if it uses an older codec.",
         ),
         "audio_channels": (
-            f"La saison {s} n’a pas le même format audio que la majorité de la série.",
-            f"Season {s} does not use the same audio format as most of the series.",
+            f"La saison {s} est en audio {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+            f"Season {s} uses {_fmt_value(season_value)} audio while most of the series uses {_fmt_value(dominant_value)}.",
             f"Identifier la saison {s} avec un audio moins homogène.",
             f"Review season {s} for less consistent audio quality.",
         ),
         "audio_languages_simple": (
-            f"La saison {s} n’a pas les mêmes langues audio que la majorité de la série.",
-            f"Season {s} does not have the same audio languages as most of the series.",
+            f"La saison {s} est en {_fmt_value(season_value, lang='fr')} alors que la majorité de la série est en {_fmt_value(dominant_value, lang='fr')}.",
+            f"Season {s} is {_fmt_value(season_value)} while most of the series is {_fmt_value(dominant_value)}.",
             f"Vérifier la saison {s}, notamment la présence du français.",
             f"Review season {s}, especially French audio availability.",
         ),
@@ -264,7 +281,7 @@ def series_recommendations(item: dict) -> list[dict]:
         dominant, outliers = _minority_seasons(seasons, field)
         for season in outliers:
             sn = _season_number(season)
-            msg, action = _series_msg(field, sn)
+            msg, action = _series_msg(field, sn, season.get(field), dominant)
             recs.append(make_rec(
                 item,
                 rule_id=f"{rule_id}:s{sn}",
@@ -287,6 +304,9 @@ def series_recommendations(item: dict) -> list[dict]:
         delta = avg - score
         if delta >= 20:
             sn = _season_number(season)
+            season_score = _round_clean(score)
+            average_score = _round_clean(avg)
+            delta_score = _round_clean(delta)
             recs.append(make_rec(
                 item,
                 rule_id=f"series_low_score_season:s{sn}",
@@ -294,9 +314,12 @@ def series_recommendations(item: dict) -> list[dict]:
                 priority="high",
                 dedupe_group=f"series_low_score_season:s{sn}",
                 severity=2,
-                message={"fr": f"La saison {sn} a une qualité nettement inférieure au reste de la série.", "en": f"Season {sn} has noticeably lower quality than the rest of the series."},
+                message={
+                    "fr": f"La saison {sn} a un score qualité de {_fmt_value(season_score, lang='fr')}, largement inférieur au score moyen de la série ({_fmt_value(average_score, lang='fr')}).",
+                    "en": f"Season {sn} has a quality score of {_fmt_value(season_score)}, significantly lower than the series average score ({_fmt_value(average_score)}).",
+                },
                 suggested_action={"fr": f"Chercher une meilleure version de la saison {sn}.", "en": f"Look for a better version of season {sn}."},
-                context={"season": sn, "season_score": round(score, 1), "series_average_score": round(avg, 1), "delta": round(delta, 1)},
+                context={"season": sn, "season_score": season_score, "series_average_score": average_score, "delta": delta_score},
             ))
 
     sized = [(s, _safe_float(s.get("size_gb")) if s.get("size_gb") is not None else (_safe_float(s.get("size_b")) or 0) / (1024 ** 3)) for s in seasons]
@@ -308,6 +331,9 @@ def series_recommendations(item: dict) -> list[dict]:
         avg = sum(others) / len(others)
         if avg > 0 and size >= avg * 2:
             sn = _season_number(season)
+            season_size = _round_clean(size)
+            average_size = _round_clean(avg)
+            ratio = _round_clean(size / avg)
             recs.append(make_rec(
                 item,
                 rule_id=f"series_large_season:s{sn}",
@@ -315,9 +341,12 @@ def series_recommendations(item: dict) -> list[dict]:
                 priority="medium",
                 dedupe_group=f"series_large_season:s{sn}",
                 severity=1,
-                message={"fr": f"La saison {sn} est beaucoup plus lourde que les autres.", "en": f"Season {sn} is much larger than the other seasons."},
+                message={
+                    "fr": f"La saison {sn} pèse {_fmt_value(season_size, lang='fr')} Go, soit environ {_fmt_value(ratio, lang='fr')}x la taille moyenne des autres saisons ({_fmt_value(average_size, lang='fr')} Go).",
+                    "en": f"Season {sn} is {_fmt_value(season_size)} GB, about {_fmt_value(ratio)}x the average size of the other seasons ({_fmt_value(average_size)} GB).",
+                },
                 suggested_action={"fr": f"Vérifier si la saison {sn} peut être optimisée.", "en": f"Check whether season {sn} can be optimized."},
-                context={"season": sn, "season_size_gb": round(size, 1), "average_other_seasons_size_gb": round(avg, 1), "ratio": round(size / avg, 2)},
+                context={"season": sn, "season_size_gb": season_size, "average_other_seasons_size_gb": average_size, "ratio": ratio},
             ))
     return recs
 

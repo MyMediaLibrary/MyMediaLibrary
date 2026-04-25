@@ -2340,9 +2340,25 @@ let allItems=[], categories=[], groups=[];
       'message_en',
       'action_fr',
       'action_en',
+      'context_season',
+      'context_season_score',
+      'context_series_average_score',
+      'context_delta',
+      'context_season_size_gb',
+      'context_average_other_seasons_size_gb',
+      'context_ratio',
+      'context_season_resolution',
+      'context_dominant_resolution',
+      'context_season_video_codec',
+      'context_dominant_video_codec',
+      'context_season_audio_channels',
+      'context_dominant_audio_channels',
+      'context_season_audio_language_group',
+      'context_dominant_audio_language_group',
     ];
     const rows = recs.map((rec) => {
       const media = recMedia(rec, mediaById);
+      const ctx = rec.context || {};
       return [
         csvC(rec.priority || ''),
         csvC(rec.recommendation_type || ''),
@@ -2361,6 +2377,21 @@ let allItems=[], categories=[], groups=[];
         csvC(rec.message?.en || ''),
         csvC(rec.suggested_action?.fr || ''),
         csvC(rec.suggested_action?.en || ''),
+        csvC(ctx.season ?? ''),
+        csvC(ctx.season_score ?? ''),
+        csvC(ctx.series_average_score ?? ''),
+        csvC(ctx.delta ?? ''),
+        csvC(ctx.season_size_gb ?? ''),
+        csvC(ctx.average_other_seasons_size_gb ?? ''),
+        csvC(ctx.ratio ?? ''),
+        csvC(ctx.season_resolution ?? ''),
+        csvC(ctx.dominant_resolution ?? ''),
+        csvC(ctx.season_video_codec ?? ''),
+        csvC(ctx.dominant_video_codec ?? ''),
+        csvC(ctx.season_audio_channels ?? ''),
+        csvC(ctx.dominant_audio_channels ?? ''),
+        csvC(ctx.season_audio_language_group ?? ''),
+        csvC(ctx.dominant_audio_language_group ?? ''),
       ];
     });
     const csv = [headers.join(';'), ...rows.map((row) => row.join(';'))].join('\n');
