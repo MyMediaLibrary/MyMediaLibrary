@@ -127,12 +127,27 @@ except Exception:
         def write_recommendations(items, output_path, now=None):
             return {"generated_at": None, "version": 1, "items": items}
 
+try:
+    from backend.media_probe import run_media_probe_if_enabled
+except Exception:
+    try:
+        from media_probe import run_media_probe_if_enabled
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[MEDIA_PROBE] media_probe import failed (%s). ffprobe comparison disabled.",
+            e,
+        )
+
+        def run_media_probe_if_enabled(*args, **kwargs):
+            return None
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
+LIBRARY_PROBE_OUTPUT_PATH = str(runtime_paths.LIBRARY_PROBE_JSON)
 INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
 RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
 DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
@@ -1988,6 +2003,10 @@ _DEFAULT_CONFIG: dict = {
     "recommendations": {
         "enabled": False,
     },
+    "media_probe": {
+        "enabled": False,
+        "mode": "compare",
+    },
     "score_configuration": get_builtin_score_defaults(),
 }
 
@@ -2014,7 +2033,8 @@ def load_config() -> dict:
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
         cfg, rec_changed = normalize_recommendations_configuration(cfg)
-        if seerr_changed or changed or rec_changed or not config_exists:
+        cfg, probe_changed = normalize_media_probe_configuration(cfg)
+        if seerr_changed or changed or rec_changed or probe_changed or not config_exists:
             try:
                 save_config(cfg)
             except Exception as e:
@@ -2091,6 +2111,18 @@ def _is_recommendations_enabled(cfg: dict | None) -> bool:
         return False
     rec = (cfg or {}).get("recommendations")
     return isinstance(rec, dict) and rec.get("enabled") is True
+
+
+def normalize_media_probe_configuration(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    probe = cfg.get("media_probe")
+    enabled = isinstance(probe, dict) and probe.get("enabled") is True
+    mode = (probe or {}).get("mode") if isinstance(probe, dict) else None
+    normalized = {"enabled": bool(enabled), "mode": "compare" if mode in (None, "", "compare") else str(mode)}
+    if probe != normalized:
+        cfg["media_probe"] = normalized
+        changed = True
+    return cfg, changed
 
 
 def normalize_recommendations_configuration(cfg: dict) -> tuple[dict, bool]:
@@ -3595,6 +3627,31 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
             run_inventory(scan_mode=scan_mode, only_category=only_category)
         elif phase == PHASE_RECOMMENDATIONS:
             run_recommendations()
+    _run_media_probe_post_scan()
+
+
+def _run_media_probe_post_scan() -> None:
+    cfg = load_config()
+    if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
+        return
+    if cfg["media_probe"].get("mode", "compare") != "compare":
+        log.warning("[MEDIA_PROBE] Unsupported mode %r — skipping", cfg["media_probe"].get("mode"))
+        return
+    if not Path(OUTPUT_PATH).exists():
+        log.info("[MEDIA_PROBE] Skipping — library.json does not exist")
+        return
+    _, effective_score_config, _ = get_effective_score_config(cfg)
+    try:
+        run_media_probe_if_enabled(
+            cfg,
+            library_json_path=OUTPUT_PATH,
+            output_path=LIBRARY_PROBE_OUTPUT_PATH,
+            library_root=LIBRARY_PATH,
+            score_enabled=_is_score_enabled(cfg),
+            score_config=effective_score_config,
+        )
+    except Exception as e:
+        log.exception("[MEDIA_PROBE] Failed to generate library_probe.json: %s", e)
 
 
 # ---------------------------------------------------------------------------

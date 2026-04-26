@@ -238,6 +238,37 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
     def test_default_config_score_flag_is_disabled(self):
         self.assertIs(scanner._DEFAULT_CONFIG["score"]["enabled"], False)
 
+    def test_default_config_media_probe_is_disabled_compare_mode(self):
+        self.assertEqual(scanner._DEFAULT_CONFIG["media_probe"], {"enabled": False, "mode": "compare"})
+
+    def test_media_probe_post_scan_disabled_does_not_run(self):
+        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
+             patch.object(scanner, "run_media_probe_if_enabled") as run_probe:
+            scanner._run_media_probe_post_scan()
+        run_probe.assert_not_called()
+
+    def test_media_probe_post_scan_enabled_writes_probe_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            library_json = root / "data" / "library.json"
+            probe_json = root / "data" / "library_probe.json"
+            library_json.parent.mkdir()
+            library_json.write_text('{"items":[]}', encoding="utf-8")
+            cfg = {"media_probe": {"enabled": True, "mode": "compare"}, "score": {"enabled": True}}
+            with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
+                 patch.object(scanner, "LIBRARY_PROBE_OUTPUT_PATH", str(probe_json)), \
+                 patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
+                 patch.object(scanner, "load_config", return_value=cfg), \
+                 patch.object(scanner, "get_effective_score_config", return_value=({}, {"weights": {}}, {})), \
+                 patch.object(scanner, "run_media_probe_if_enabled") as run_probe:
+                scanner._run_media_probe_post_scan()
+
+            run_probe.assert_called_once()
+            kwargs = run_probe.call_args.kwargs
+            self.assertEqual(kwargs["library_json_path"], str(library_json))
+            self.assertEqual(kwargs["output_path"], str(probe_json))
+            self.assertTrue(kwargs["score_enabled"])
+
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": "true"}}))

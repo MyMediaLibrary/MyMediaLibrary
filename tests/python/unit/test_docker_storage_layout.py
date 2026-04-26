@@ -29,6 +29,8 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertIn("/app/defaults/conf/providers_mapping.json", self.dockerfile)
         self.assertIn("/app/defaults/conf/providers_logo.json", self.dockerfile)
         self.assertIn("/app/defaults/conf/recommendations_rules.json", self.dockerfile)
+        self.assertIn("ffmpeg", self.dockerfile)
+        self.assertIn("/app/backend/media_probe.py", self.dockerfile)
         self.assertIn('VOLUME ["/data", "/conf"]', self.dockerfile)
         self.assertNotIn("/app/.secrets", self.dockerfile)
         self.assertNotIn("/data/config.json", self.dockerfile)

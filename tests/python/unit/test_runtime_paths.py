@@ -18,11 +18,13 @@ class RuntimePathsTest(unittest.TestCase):
 
     def test_generated_files_stay_under_data(self):
         self.assertEqual(paths.LIBRARY_JSON, pathlib.Path("/data/library.json"))
+        self.assertEqual(paths.LIBRARY_PROBE_JSON, pathlib.Path("/data/library_probe.json"))
         self.assertEqual(paths.INVENTORY_JSON, pathlib.Path("/data/library_inventory.json"))
         self.assertEqual(paths.RECOMMENDATIONS_JSON, pathlib.Path("/data/recommendations.json"))
         self.assertEqual(paths.SCANNER_LOG, pathlib.Path("/data/scanner.log"))
         self.assertEqual(set(paths.GENERATED_FILES), {
             pathlib.Path("/data/library.json"),
+            pathlib.Path("/data/library_probe.json"),
             pathlib.Path("/data/library_inventory.json"),
             pathlib.Path("/data/recommendations.json"),
             pathlib.Path("/data/scanner.log"),

@@ -25,5 +25,9 @@
   },
   "recommendations": {
     "enabled": false
+  },
+  "media_probe": {
+    "enabled": false,
+    "mode": "compare"
   }
 }

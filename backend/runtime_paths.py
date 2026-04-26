@@ -18,6 +18,7 @@ LIBRARY_DIR = Path("/library")
 APP_DIR = Path("/app")
 
 LIBRARY_JSON = DATA_DIR / "library.json"
+LIBRARY_PROBE_JSON = DATA_DIR / "library_probe.json"
 INVENTORY_JSON = DATA_DIR / "library_inventory.json"
 RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
 SCANNER_LOG = DATA_DIR / "scanner.log"
@@ -57,6 +58,7 @@ class LegacyMigration:
 
 GENERATED_FILES = (
     LIBRARY_JSON,
+    LIBRARY_PROBE_JSON,
     INVENTORY_JSON,
     RECOMMENDATIONS_JSON,
     SCANNER_LOG,
@@ -77,4 +79,3 @@ LEGACY_MIGRATIONS = (
     LegacyMigration(DATA_DIR / "recommendations_rules.json", RECOMMENDATIONS_RULES_JSON),
     LegacyMigration(APP_DIR / ".secrets", SECRETS_FILE),
 )
-
