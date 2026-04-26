@@ -277,6 +277,8 @@
       "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
       "inventory_enabled": "Générer l'inventaire brut",
       "inventory_enabled_hint": "Génère library_inventory.json en plus de library.json lors des scans.",
+      "media_probe_enabled": "Analyse technique ffprobe",
+      "media_probe_enabled_hint": "Génère un fichier de comparaison avec les données techniques extraites par ffprobe.",
       "cron": "Scan automatique (cron)",
       "cron_placeholder": "0 3 * * *",
       "cron_hint_invalid": "Format invalide (5 champs requis)",

@@ -801,6 +801,7 @@
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
+    _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
     _rw('cfgEnableScore', isScoreEnabled());
     _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
     syncRecommendationsToggle();
@@ -884,6 +885,7 @@
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
+    const mediaProbeEnabled = get('cfgMediaProbeEnabled');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
@@ -901,6 +903,12 @@
     if (recommendationsEnabled !== null || enableScoreCfg === false) {
       partial.recommendations = partial.recommendations || {};
       partial.recommendations.enabled = enableScoreCfg === false ? false : recommendationsEnabled === true;
+    }
+    if (mediaProbeEnabled !== null) {
+      partial.media_probe = {
+        enabled: mediaProbeEnabled === true,
+        mode: 'compare',
+      };
     }
 
     try {

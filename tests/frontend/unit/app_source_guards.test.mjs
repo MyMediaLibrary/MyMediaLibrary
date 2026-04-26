@@ -192,6 +192,24 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('settings exposes media probe toggle without using probe output as UI data', () => {
+  assert.match(indexSource, /id="cfgMediaProbeEnabled"/, 'settings should expose the ffprobe analysis toggle');
+  assert.match(indexSource, /settings\.system\.media_probe_enabled/, 'settings should use i18n for the media probe label');
+  assert.equal(frI18n.settings.system.media_probe_enabled, 'Analyse technique ffprobe');
+  assert.equal(frI18n.settings.system.media_probe_enabled_hint, 'Génère un fichier de comparaison avec les données techniques extraites par ffprobe.');
+  assert.equal(enI18n.settings.system.media_probe_enabled, 'ffprobe technical analysis');
+  assert.equal(enI18n.settings.system.media_probe_enabled_hint, 'Generates a comparison file with technical data extracted by ffprobe.');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgMediaProbeEnabled', appConfig\.media_probe\?\.enabled === true\);/, 'loadSettings should default missing media_probe config to disabled');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /const mediaProbeEnabled = get\('cfgMediaProbeEnabled'\);/, 'settings save should read the media probe toggle');
+  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*\};/, 'settings save should persist compare mode only');
+  assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
+  assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
+});
+
 test('frontend does not expose or persist library root path settings', () => {
   assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
   assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');
