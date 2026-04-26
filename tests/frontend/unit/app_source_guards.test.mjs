@@ -335,6 +335,24 @@ test('settings trigger scan only when folders changed', () => {
   assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
 });
 
+test('settings save treats scan-skipped responses as successful saves', () => {
+  const saveStart = appSource.indexOf('async function saveConfig(');
+  const saveEnd = appSource.indexOf('\n  async function loadRecommendations(', saveStart);
+  assert.notEqual(saveStart, -1, 'saveConfig should be defined');
+  assert.notEqual(saveEnd, -1, 'loadRecommendations should follow saveConfig');
+  const saveConfigBlock = appSource.slice(saveStart, saveEnd);
+  assert.match(saveConfigBlock, /if \(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/, 'config save should only fail on non-2xx HTTP responses');
+  assert.doesNotMatch(saveConfigBlock, /scan_skipped|SCAN_RUNNING/, 'config save should not surface scan-skipped responses as errors');
+
+  const scoreStart = settingsSource.indexOf('async function _persistScoreSettings(');
+  const scoreEnd = settingsSource.indexOf('\n  async function resetScoreSettings(', scoreStart);
+  assert.notEqual(scoreStart, -1, '_persistScoreSettings should be defined');
+  assert.notEqual(scoreEnd, -1, 'resetScoreSettings should follow _persistScoreSettings');
+  const scorePersistBlock = settingsSource.slice(scoreStart, scoreEnd);
+  assert.match(scorePersistBlock, /if \(!res\.ok\) throw new Error/, 'score save should only fail on non-2xx HTTP before reading payload');
+  assert.doesNotMatch(scorePersistBlock, /scan_skipped|SCAN_RUNNING/, 'score settings save should not show a special error for skipped post-save scans');
+});
+
 test('restoreState defers stats tab render until library load is complete', () => {
   const block = functionBlock(appSource, 'restoreState');
   assert.match(block, /currentTab = s\.currentTab;/, 'restoreState should persist desired tab');

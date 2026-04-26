@@ -4114,6 +4114,24 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
+def _is_scan_running() -> bool:
+    with _srv_lock:
+        running = _srv_state["status"] == "running"
+    return running or _is_scan_locked()
+
+
+def _log_post_save_scan_skipped() -> None:
+    log.info("[SETTINGS] Settings saved; post-save scan skipped because a scan is already running")
+
+
+def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
+    if _is_scan_running():
+        _log_post_save_scan_skipped()
+        return False
+    threading.Thread(target=_run_scan_bg, args=(mode, phases, None, "manual"), daemon=True).start()
+    return True
+
+
 def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
@@ -4372,10 +4390,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_update(self, payload: dict) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             valid, err = validate_score_payload(payload, defaults, strict=True)
             if not valid:
@@ -4393,25 +4407,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] PUT /api/settings/score failed: %s", e)
             self._json(500, {
@@ -4425,10 +4449,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_reset(self) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             cfg = load_config()
             cfg["score_configuration"] = copy.deepcopy(defaults)
@@ -4439,25 +4459,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] POST /api/settings/score/reset failed: %s", e)
             self._json(500, {
@@ -4547,10 +4577,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running", "phases": _srv_state.get("phases", [])}); return
+                    log.info("[SCAN] Scan already running — refusing new scan request")
+                    self._json(409, self._scan_running_error_payload()); return
             if _is_scan_locked():
                 log.info("[SCAN] Scan already running — refusing new scan request")
-                self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running"}); return
+                self._json(409, self._scan_running_error_payload()); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
@@ -4638,12 +4669,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             )
             response = {"ok": True, "phases": phases}
             if phases:
-                if _is_scan_locked():
-                    log.info("[config] Phase plan %s skipped — scan already running", phases)
+                if not _start_post_save_scan_if_idle("phased", phases):
                     response["scan_skipped"] = "running"
                 else:
                     log.info("[config] Triggering phased scan from config save: %s", phases)
-                    threading.Thread(target=_run_scan_bg, args=("phased", phases, None, "manual"), daemon=True).start()
             self._json(200, response)
 
         elif path == "/api/settings/score":
