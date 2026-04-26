@@ -235,7 +235,7 @@ def _probe_video_file(path: Path, cache: dict[str, dict], *, timeout: float) -> 
         "-v",
         "error",
         "-show_entries",
-        "format=duration,bit_rate:stream=index,codec_type,codec_name,width,height,duration,bit_rate,channels,channel_layout,tags,disposition,color_transfer,color_primaries,color_space,pix_fmt,profile",
+        "format=duration:stream=index,codec_type,codec_name,width,height,duration,bit_rate,channels,channel_layout,tags,disposition,color_transfer,color_primaries,color_space,pix_fmt,profile",
         "-of",
         "json",
         str(path),
@@ -284,7 +284,7 @@ def _technical_from_ffprobe(payload: dict) -> dict:
     codec = normalize_codec(raw_codec)
     if _is_unknown(codec):
         codec = None
-    audio_norm = normalize_audio_codec(_clean_str(audio.get("codec_name")))
+    audio_norm = _normalize_ffprobe_audio_codec(_clean_str(audio.get("codec_name")))
     audio_codec = audio_norm.get("normalized")
     if _is_unknown(audio_codec):
         audio_codec = None
@@ -298,7 +298,7 @@ def _technical_from_ffprobe(payload: dict) -> dict:
         for s in subtitle_streams
     )
     runtime_min = _runtime_minutes(video.get("duration")) or _runtime_minutes((payload.get("format") or {}).get("duration") if isinstance(payload.get("format"), dict) else None)
-    video_bitrate = _positive_int(video.get("bit_rate")) or _positive_int((payload.get("format") or {}).get("bit_rate") if isinstance(payload.get("format"), dict) else None)
+    video_bitrate = _video_bitrate_from_stream(video)
     hdr_type = _detect_hdr_type(video)
     tech = {
         "width": width,
@@ -412,16 +412,18 @@ def _merge_technical_fields(target: dict, source: dict) -> list[str]:
             continue
         val = source.get(field)
         if _valid_probe_value(val):
+            if _field_value_changed(field, target.get(field), val):
+                overwritten.append(field)
             target[field] = val
-            overwritten.append(field)
     if isinstance(source.get("seasons"), list):
         target["seasons"] = source["seasons"]
         overwritten.append("seasons")
         for field in ("season_count", "episode_count"):
             val = source.get(field)
             if _valid_probe_value(val):
+                if _field_value_changed(field, target.get(field), val):
+                    overwritten.append(field)
                 target[field] = val
-                overwritten.append(field)
     return sorted(set(overwritten))
 
 
@@ -608,6 +610,123 @@ def _dominant_audio_channels(values: list) -> str | None:
         return None
     priority = {"1.0": 1, "2.0": 2, "5.1": 3, "7.1": 4}
     return sorted(counter.items(), key=lambda entry: (-entry[1], -priority.get(entry[0], 0), str(entry[0])))[0][0]
+
+
+def _video_bitrate_from_stream(video: dict) -> int | None:
+    bitrate = _positive_int(video.get("bit_rate"))
+    if bitrate:
+        return bitrate
+    tags = video.get("tags") if isinstance(video.get("tags"), dict) else {}
+    bitrate = _positive_int(tags.get("BPS"))
+    if bitrate:
+        return bitrate
+    for key, value in tags.items():
+        if isinstance(key, str) and key.upper().startswith("BPS-"):
+            bitrate = _positive_int(value)
+            if bitrate:
+                return bitrate
+    return _video_bitrate_from_byte_duration_tags(tags)
+
+
+def _video_bitrate_from_byte_duration_tags(tags: dict) -> int | None:
+    byte_tags = [
+        (str(key), _positive_int(value))
+        for key, value in tags.items()
+        if isinstance(key, str) and key.upper().startswith("NUMBER_OF_BYTES-")
+    ]
+    for byte_key, bytes_count in byte_tags:
+        if not bytes_count:
+            continue
+        suffix = byte_key[len("NUMBER_OF_BYTES-"):]
+        duration = _duration_seconds_from_tag(tags.get(f"DURATION-{suffix}"))
+        if duration:
+            return int(round(bytes_count * 8 / duration))
+    return None
+
+
+def _duration_seconds_from_tag(value) -> float | None:
+    cleaned = _clean_str(value)
+    if not cleaned:
+        return None
+    try:
+        seconds = float(cleaned)
+        return seconds if seconds > 0 else None
+    except Exception:
+        pass
+    match = re.match(r"^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$", cleaned)
+    if not match:
+        return None
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    seconds = float(match.group(3))
+    total = hours * 3600 + minutes * 60 + seconds
+    return total if total > 0 else None
+
+
+_FFPROBE_AUDIO_CODEC_LABELS = {
+    "aac": "AAC",
+    "ac3": "Dolby Digital",
+    "eac3": "Dolby Digital Plus",
+    "eac-3": "Dolby Digital Plus",
+    "dts": "DTS",
+    "truehd": "Dolby TrueHD",
+    "flac": "FLAC",
+    "mp3": "MP3",
+    "opus": "Opus",
+}
+
+
+def _normalize_ffprobe_audio_codec(raw: str | None) -> dict:
+    norm = normalize_audio_codec(raw)
+    key = _audio_codec_key(raw)
+    label = _FFPROBE_AUDIO_CODEC_LABELS.get(key)
+    if label:
+        return {"raw": raw, "normalized": label, "display": label}
+    return norm
+
+
+def _audio_codec_key(value) -> str:
+    cleaned = _clean_str(str(value)) if value is not None else None
+    if not cleaned:
+        return ""
+    return re.sub(r"[\s_]", "", cleaned.lower())
+
+
+def _field_value_changed(field: str, current, candidate) -> bool:
+    if not _valid_probe_value(current):
+        return True
+    if field == "codec":
+        return _casefold(normalize_codec(str(current))) != _casefold(normalize_codec(str(candidate)))
+    if field in {"audio_codec", "audio_codec_raw"}:
+        return _audio_equivalence_key(current) != _audio_equivalence_key(candidate)
+    if field in {"audio_languages", "subtitle_languages"}:
+        return _language_list_key(current) != _language_list_key(candidate)
+    if isinstance(current, str) and isinstance(candidate, str):
+        return _casefold(current) != _casefold(candidate)
+    return current != candidate
+
+
+def _audio_equivalence_key(value) -> str:
+    raw_key = _audio_codec_key(value)
+    if raw_key in _FFPROBE_AUDIO_CODEC_LABELS:
+        return _casefold(_FFPROBE_AUDIO_CODEC_LABELS[raw_key])
+    norm = normalize_audio_codec(str(value) if value is not None else None)
+    label = norm.get("normalized") if isinstance(norm, dict) else None
+    if _valid_probe_value(label):
+        return _casefold(label)
+    return _casefold(str(value) if value is not None else "")
+
+
+def _language_list_key(value) -> tuple[str, ...]:
+    if isinstance(value, list):
+        return tuple(sorted(_casefold(v) for v in value if isinstance(v, str) and v.strip()))
+    if isinstance(value, str) and value.strip():
+        return (_casefold(value),)
+    return tuple()
+
+
+def _casefold(value) -> str:
+    return str(value or "").strip().casefold()
 
 
 def _average_positive_int(values: list) -> int | None:

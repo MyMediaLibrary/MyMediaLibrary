@@ -76,6 +76,32 @@ class MediaProbeTest(unittest.TestCase):
         self.library_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return payload
 
+    def write_movie_fixture(self, item=None):
+        movie_dir = self.library_root / "Movies" / "Film"
+        movie_dir.mkdir(parents=True, exist_ok=True)
+        (movie_dir / "main.mkv").write_bytes(b"1")
+        payload_item = {
+            "id": "movie:Movies:Film",
+            "path": "Movies/Film",
+            "title": "Film",
+            "category": "Movies",
+            "type": "movie",
+        }
+        if item:
+            payload_item.update(item)
+        self.write_library([payload_item])
+        return payload_item
+
+    def generate_movie_probe(self, payload, item=None):
+        self.write_movie_fixture(item)
+        with patch.object(media_probe.subprocess, "run", return_value=completed(payload)):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+            )
+        return json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+
     def test_disabled_does_not_write_or_call_ffprobe(self):
         self.write_library([])
         with patch.object(media_probe.subprocess, "run") as run:
@@ -178,6 +204,110 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["resolution"], "1080p")
         self.assertEqual(item["codec"], "H.265")
         self.assertEqual(item["audio_languages"], ["fra"])
+
+    def test_video_bitrate_uses_stream_bit_rate(self):
+        payload = ffprobe_payload(bitrate=5_108_632)
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["video_bitrate"], 5_108_632)
+
+    def test_video_bitrate_uses_bps_tag(self):
+        payload = ffprobe_payload()
+        payload["streams"][0].pop("bit_rate", None)
+        payload["streams"][0]["tags"] = {"BPS": "5108632"}
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["video_bitrate"], 5_108_632)
+
+    def test_video_bitrate_uses_first_bps_dash_tag(self):
+        payload = ffprobe_payload()
+        payload["streams"][0].pop("bit_rate", None)
+        payload["streams"][0]["tags"] = {"BPS-eng": "5108632"}
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["video_bitrate"], 5_108_632)
+
+    def test_video_bitrate_ignores_format_bit_rate(self):
+        payload = ffprobe_payload()
+        payload["streams"][0].pop("bit_rate", None)
+        payload["format"]["bit_rate"] = "9999999"
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertNotIn("video_bitrate", item)
+        self.assertNotIn("video_bitrate", item["media_probe"]["overwritten_fields"])
+
+    def test_video_bitrate_existing_value_not_overwritten_when_probe_has_no_reliable_bitrate(self):
+        payload = ffprobe_payload()
+        payload["streams"][0].pop("bit_rate", None)
+        payload["format"]["bit_rate"] = "9999999"
+
+        item = self.generate_movie_probe(payload, {"video_bitrate": 1_234_567})
+
+        self.assertEqual(item["video_bitrate"], 1_234_567)
+        self.assertNotIn("video_bitrate", item["media_probe"]["overwritten_fields"])
+
+    def test_video_bitrate_can_be_computed_from_byte_duration_tags(self):
+        payload = ffprobe_payload()
+        payload["streams"][0].pop("bit_rate", None)
+        payload["streams"][0]["tags"] = {
+            "NUMBER_OF_BYTES-eng": "600000000",
+            "DURATION-eng": "00:20:00.000000000",
+        }
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["video_bitrate"], 4_000_000)
+
+    def test_ffprobe_codecs_are_normalized_to_display_labels(self):
+        cases = [
+            ("h264", "aac", "H.264", "AAC"),
+            ("hevc", "eac3", "H.265", "Dolby Digital Plus"),
+            ("avc1", "ac3", "H.264", "Dolby Digital"),
+            ("mpeg2video", "dts", "MPEG-2", "DTS"),
+            ("vc1", "truehd", "VC-1", "Dolby TrueHD"),
+            ("av1", "flac", "AV1", "FLAC"),
+            ("h265", "opus", "H.265", "Opus"),
+        ]
+        for video_codec, audio_codec, expected_video, expected_audio in cases:
+            with self.subTest(video_codec=video_codec, audio_codec=audio_codec):
+                item = self.generate_movie_probe(ffprobe_payload(video_codec=video_codec, audio_codec=audio_codec))
+                self.assertEqual(item["codec"], expected_video)
+                self.assertEqual(item["audio_codec"], expected_audio)
+
+    def test_overwritten_fields_ignore_case_only_equivalent_values(self):
+        item = self.generate_movie_probe(
+            ffprobe_payload(video_codec="hevc", audio_codec="dts", audio_lang="FRA", subtitle_lang="ENG"),
+            {
+                "codec": "h265",
+                "audio_codec": "dts",
+                "audio_codec_raw": "DTS",
+                "audio_languages": ["fra"],
+                "subtitle_languages": ["eng"],
+            },
+        )
+
+        overwritten = item["media_probe"]["overwritten_fields"]
+        self.assertEqual(item["codec"], "H.265")
+        self.assertEqual(item["audio_codec"], "DTS")
+        self.assertNotIn("codec", overwritten)
+        self.assertNotIn("audio_codec", overwritten)
+        self.assertNotIn("audio_codec_raw", overwritten)
+        self.assertNotIn("audio_languages", overwritten)
+        self.assertNotIn("subtitle_languages", overwritten)
+
+    def test_overwritten_fields_include_true_codec_difference(self):
+        item = self.generate_movie_probe(
+            ffprobe_payload(video_codec="hevc", audio_codec="eac3"),
+            {"codec": "H.264", "audio_codec": "DTS"},
+        )
+
+        overwritten = item["media_probe"]["overwritten_fields"]
+        self.assertIn("codec", overwritten)
+        self.assertIn("audio_codec", overwritten)
 
     def test_score_enabled_recomputes_quality_and_diagnostics(self):
         movie_dir = self.library_root / "Movies" / "Film"
