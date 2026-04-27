@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import math
 import re
 import subprocess
 from collections import Counter, defaultdict
@@ -28,6 +27,7 @@ try:
         normalize_audio_channels,
         normalize_audio_codec,
         normalize_codec,
+        _parse_lang_raw,
         simplify_audio_languages,
     )
 except Exception:
@@ -36,6 +36,7 @@ except Exception:
         normalize_audio_channels,
         normalize_audio_codec,
         normalize_codec,
+        _parse_lang_raw,
         simplify_audio_languages,
     )
 
@@ -80,6 +81,7 @@ _TV_SEASON_HINT_RE = re.compile(r"(?:season|saison)[\s._-]*(\d{1,2})", re.IGNORE
 _TV_EP_TOKEN_RE = re.compile(r"(?:^|[\s._\-])(?:e|ep|episode)[\s._\-]*(\d{1,3})(?=$|[\s._\-])", re.IGNORECASE)
 _TV_TRAILING_NUM_RE = re.compile(r"(?:^|[\s._\-])(\d{2,3})$")
 _TV_COMMON_TECH_NUMBERS = {2160, 1080, 720, 576, 540, 480}
+_RUNTIME_DIFF_TOLERANCE_MIN = 2
 
 
 def is_enabled(cfg: dict | None) -> bool:
@@ -289,14 +291,8 @@ def _technical_from_ffprobe(payload: dict) -> dict:
     if _is_unknown(audio_codec):
         audio_codec = None
 
-    audio_languages = _dedupe_sorted(
-        _clean_language((((s.get("tags") or {}) if isinstance(s.get("tags"), dict) else {}).get("language")))
-        for s in audio_streams
-    )
-    subtitle_languages = _dedupe_sorted(
-        _clean_language((((s.get("tags") or {}) if isinstance(s.get("tags"), dict) else {}).get("language")))
-        for s in subtitle_streams
-    )
+    audio_languages = _languages_from_streams(audio_streams)
+    subtitle_languages = _languages_from_streams(subtitle_streams)
     runtime_min = _runtime_minutes(video.get("duration")) or _runtime_minutes((payload.get("format") or {}).get("duration") if isinstance(payload.get("format"), dict) else None)
     video_bitrate = _video_bitrate_from_stream(video)
     hdr_type = _detect_hdr_type(video)
@@ -569,17 +565,12 @@ def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int |
 
 
 def _aggregate_audio_languages_from_groups(groups: list[dict]) -> list[str]:
-    counter: Counter = Counter()
-    total = len(groups)
-    threshold = 1 if total <= 2 else max(2, int(math.ceil(total * 0.20)))
+    values = set()
     for group in groups:
-        for lang in set(group.get("audio_languages") or []):
-            if lang:
-                counter[lang] += 1
-    selected = [lang for lang, count in counter.items() if count >= threshold]
-    if not selected and counter:
-        selected = [lang for lang, _ in sorted(counter.items(), key=lambda entry: (-entry[1], entry[0]))[:2]]
-    return sorted(selected)
+        for lang in group.get("audio_languages") or []:
+            if isinstance(lang, str) and lang.strip():
+                values.add(lang.strip())
+    return sorted(values)
 
 
 def _aggregate_subtitle_languages(groups: list[dict]) -> list[str]:
@@ -610,6 +601,38 @@ def _dominant_audio_channels(values: list) -> str | None:
         return None
     priority = {"1.0": 1, "2.0": 2, "5.1": 3, "7.1": 4}
     return sorted(counter.items(), key=lambda entry: (-entry[1], -priority.get(entry[0], 0), str(entry[0])))[0][0]
+
+
+def _languages_from_streams(streams: list[dict]) -> list[str]:
+    values = set()
+    for stream in streams:
+        tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
+        for raw in _language_tag_values(tags):
+            for lang in _parse_probe_language(raw):
+                values.add(lang)
+    return sorted(values)
+
+
+def _language_tag_values(tags: dict) -> list:
+    values = []
+    for key, value in tags.items():
+        if not isinstance(key, str):
+            continue
+        normalized_key = key.strip().casefold()
+        if normalized_key == "language" or normalized_key.endswith(".language") or normalized_key.endswith(":language"):
+            values.append(value)
+    return values
+
+
+def _parse_probe_language(value) -> list[str]:
+    cleaned = _clean_str(str(value)) if value is not None else None
+    if not cleaned or cleaned.casefold() in {"und", "unknown"}:
+        return []
+    try:
+        parsed = _parse_lang_raw(cleaned)
+    except Exception:
+        parsed = []
+    return [lang for lang in parsed if isinstance(lang, str) and lang.strip() and lang.casefold() not in {"und", "unknown"}]
 
 
 def _video_bitrate_from_stream(video: dict) -> int | None:
@@ -695,6 +718,8 @@ def _audio_codec_key(value) -> str:
 def _field_value_changed(field: str, current, candidate) -> bool:
     if not _valid_probe_value(current):
         return True
+    if field in {"runtime_min", "runtime_min_avg", "runtime_min_total"}:
+        return _runtime_value_changed(current, candidate)
     if field == "codec":
         return _casefold(normalize_codec(str(current))) != _casefold(normalize_codec(str(candidate)))
     if field in {"audio_codec", "audio_codec_raw"}:
@@ -723,6 +748,14 @@ def _language_list_key(value) -> tuple[str, ...]:
     if isinstance(value, str) and value.strip():
         return (_casefold(value),)
     return tuple()
+
+
+def _runtime_value_changed(current, candidate) -> bool:
+    current_num = _positive_int(current)
+    candidate_num = _positive_int(candidate)
+    if current_num is None or candidate_num is None:
+        return current != candidate
+    return abs(current_num - candidate_num) > _RUNTIME_DIFF_TOLERANCE_MIN
 
 
 def _casefold(value) -> str:
@@ -787,17 +820,6 @@ def _clean_str(value) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
-
-
-def _clean_language(value) -> str | None:
-    cleaned = _clean_str(value)
-    if not cleaned or cleaned.lower() in {"und", "unknown"}:
-        return None
-    return cleaned.lower()
-
-
-def _dedupe_sorted(values) -> list[str]:
-    return sorted({value for value in values if isinstance(value, str) and value.strip()})
 
 
 def _valid_probe_value(value) -> bool:

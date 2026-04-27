@@ -309,6 +309,73 @@ class MediaProbeTest(unittest.TestCase):
         self.assertIn("codec", overwritten)
         self.assertIn("audio_codec", overwritten)
 
+    def test_audio_language_tags_are_case_insensitive_and_normalized(self):
+        payload = ffprobe_payload(audio_lang="fre")
+        payload["streams"].append({
+            "codec_type": "audio",
+            "codec_name": "dts",
+            "channels": 6,
+            "tags": {"LANGUAGE": "en"},
+        })
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["audio_languages"], ["eng", "fra"])
+        self.assertEqual(item["audio_languages_simple"], "MULTI")
+
+    def test_audio_language_short_french_code_is_normalized(self):
+        item = self.generate_movie_probe(ffprobe_payload(audio_lang="fr"))
+
+        self.assertEqual(item["audio_languages"], ["fra"])
+        self.assertEqual(item["audio_languages_simple"], "VF")
+
+    def test_subtitle_languages_are_case_insensitive_and_normalized(self):
+        payload = ffprobe_payload(subtitle_lang="fre")
+        payload["streams"][-1]["tags"] = {"Language": "fre"}
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["subtitle_languages"], ["fra"])
+
+    def test_und_and_unknown_languages_are_ignored(self):
+        payload = ffprobe_payload(audio_lang="und", subtitle_lang="unknown")
+        payload["streams"].append({
+            "codec_type": "audio",
+            "codec_name": "aac",
+            "channels": 2,
+            "tags": {"LANGUAGE": "english"},
+        })
+        payload["streams"].append({
+            "codec_type": "subtitle",
+            "codec_name": "subrip",
+            "tags": {"language": ""},
+        })
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertEqual(item["audio_languages"], ["eng"])
+        self.assertNotIn("subtitle_languages", item)
+
+    def test_runtime_micro_differences_are_not_reported_as_overwritten(self):
+        item = self.generate_movie_probe(
+            ffprobe_payload(duration=62 * 60),
+            {"runtime_min": 60, "runtime_min_avg": 60},
+        )
+
+        self.assertEqual(item["runtime_min"], 62)
+        self.assertEqual(item["runtime_min_avg"], 62)
+        self.assertNotIn("runtime_min", item["media_probe"]["overwritten_fields"])
+        self.assertNotIn("runtime_min_avg", item["media_probe"]["overwritten_fields"])
+
+    def test_runtime_large_differences_are_reported_as_overwritten(self):
+        item = self.generate_movie_probe(
+            ffprobe_payload(duration=63 * 60),
+            {"runtime_min": 60, "runtime_min_avg": 60},
+        )
+
+        self.assertIn("runtime_min", item["media_probe"]["overwritten_fields"])
+        self.assertIn("runtime_min_avg", item["media_probe"]["overwritten_fields"])
+
     def test_score_enabled_recomputes_quality_and_diagnostics(self):
         movie_dir = self.library_root / "Movies" / "Film"
         movie_dir.mkdir(parents=True)
@@ -468,6 +535,52 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["seasons"][1]["resolution"], "4K")
         self.assertIn("quality", item)
         self.assertEqual(item["media_probe"]["status"], "ok")
+
+    def test_series_language_and_subtitle_aggregation_uses_episode_unions(self):
+        series_dir = self.library_root / "Series" / "Show"
+        (series_dir / "Season 01").mkdir(parents=True)
+        (series_dir / "Season 02").mkdir(parents=True)
+        (series_dir / "Season 01" / "Show.S01E01.mkv").write_bytes(b"1")
+        (series_dir / "Season 01" / "Show.S01E02.mkv").write_bytes(b"1")
+        (series_dir / "Season 02" / "Show.S02E01.mkv").write_bytes(b"1")
+        self.write_library([
+            {
+                "id": "tv:Series:Show",
+                "path": "Series/Show",
+                "title": "Show",
+                "category": "Series",
+                "type": "tv",
+            }
+        ])
+
+        def fake_run(cmd, **kwargs):
+            path = cmd[-1]
+            if "S01E01" in path:
+                return completed(ffprobe_payload(audio_lang="fre", subtitle_lang="eng"))
+            if "S01E02" in path:
+                payload = ffprobe_payload(audio_lang="en", subtitle_lang="fre")
+                payload["streams"][1]["tags"] = {"LANGUAGE": "en"}
+                payload["streams"][2]["tags"] = {"Language": "fre"}
+                return completed(payload)
+            return completed(ffprobe_payload(audio_lang="es", subtitle_lang="japanese"))
+
+        with patch.object(media_probe.subprocess, "run", side_effect=fake_run):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+            )
+
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["seasons"][0]["audio_languages"], ["eng", "fra"])
+        self.assertEqual(item["seasons"][0]["audio_languages_simple"], "MULTI")
+        self.assertEqual(item["seasons"][0]["subtitle_languages"], ["eng", "fra"])
+        self.assertEqual(item["seasons"][1]["audio_languages"], ["spa"])
+        self.assertEqual(item["seasons"][1]["audio_languages_simple"], "VO")
+        self.assertEqual(item["seasons"][1]["subtitle_languages"], ["jpn"])
+        self.assertEqual(item["audio_languages"], ["eng", "fra", "spa"])
+        self.assertEqual(item["audio_languages_simple"], "MULTI")
+        self.assertEqual(item["subtitle_languages"], ["eng", "fra", "jpn"])
 
 
 if __name__ == "__main__":
