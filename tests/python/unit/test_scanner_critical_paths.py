@@ -239,7 +239,12 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         self.assertIs(scanner._DEFAULT_CONFIG["score"]["enabled"], False)
 
     def test_default_config_media_probe_is_disabled_compare_mode(self):
-        self.assertEqual(scanner._DEFAULT_CONFIG["media_probe"], {"enabled": False, "mode": "compare"})
+        self.assertEqual(scanner._DEFAULT_CONFIG["media_probe"], {
+            "enabled": False,
+            "mode": "compare",
+            "workers": 4,
+            "cache_enabled": True,
+        })
 
     def test_media_probe_post_scan_disabled_does_not_run(self):
         with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \

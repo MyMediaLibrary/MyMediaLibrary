@@ -205,7 +205,7 @@ test('settings exposes media probe toggle without using probe output as UI data'
 
   const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
   assert.match(saveBlock, /const mediaProbeEnabled = get\('cfgMediaProbeEnabled'\);/, 'settings save should read the media probe toggle');
-  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*\};/, 'settings save should persist compare mode only');
+  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*workers: currentMediaProbe\.workers \|\| 4,[\s\S]*cache_enabled: currentMediaProbe\.cache_enabled !== false[\s\S]*\};/, 'settings save should persist compare mode and preserve backend performance defaults');
   assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
   assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
 });

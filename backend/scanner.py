@@ -2006,6 +2006,8 @@ _DEFAULT_CONFIG: dict = {
     "media_probe": {
         "enabled": False,
         "mode": "compare",
+        "workers": 4,
+        "cache_enabled": True,
     },
     "score_configuration": get_builtin_score_defaults(),
 }
@@ -2118,7 +2120,14 @@ def normalize_media_probe_configuration(cfg: dict) -> tuple[dict, bool]:
     probe = cfg.get("media_probe")
     enabled = isinstance(probe, dict) and probe.get("enabled") is True
     mode = (probe or {}).get("mode") if isinstance(probe, dict) else None
-    normalized = {"enabled": bool(enabled), "mode": "compare" if mode in (None, "", "compare") else str(mode)}
+    workers = _clamp_int(_as_int(probe.get("workers") if isinstance(probe, dict) else None, 4), 1, 8)
+    cache_enabled = True if not isinstance(probe, dict) else probe.get("cache_enabled") is not False
+    normalized = {
+        "enabled": bool(enabled),
+        "mode": "compare" if mode in (None, "", "compare") else str(mode),
+        "workers": workers,
+        "cache_enabled": bool(cache_enabled),
+    }
     if probe != normalized:
         cfg["media_probe"] = normalized
         changed = True

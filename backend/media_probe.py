@@ -13,7 +13,9 @@ import logging
 import re
 import subprocess
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import time
 from typing import Any
 
 try:
@@ -50,6 +52,7 @@ log = logging.getLogger("scanner")
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 LIBRARY_PROBE_OUTPUT_PATH = str(runtime_paths.LIBRARY_PROBE_JSON)
+MEDIA_PROBE_CACHE_PATH = str(runtime_paths.MEDIA_PROBE_CACHE_JSON)
 
 MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v",
@@ -108,6 +111,8 @@ def run_media_probe_if_enabled(
         score_enabled=score_enabled,
         score_config=score_config,
         timeout=timeout,
+        workers=_media_probe_workers(cfg),
+        cache_enabled=_media_probe_cache_enabled(cfg),
     )
 
 
@@ -119,12 +124,22 @@ def generate_library_probe(
     score_enabled: bool = False,
     score_config: dict | None = None,
     timeout: float = 5.0,
+    workers: int = 4,
+    cache_enabled: bool = True,
+    cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
 ) -> dict[str, int]:
+    started_at = time.monotonic()
     source_path = Path(library_json_path)
     out_path = Path(output_path)
     root = Path(library_root)
-    cache: dict[str, dict] = {}
-    stats = {"items": 0, "files_probed": 0, "errors": 0}
+    workers = _normalize_workers(workers)
+    stats = {"items": 0, "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
+
+    log.info(
+        "[MEDIA_PROBE] Starting compare probe: workers=%s, cache=%s",
+        workers,
+        "enabled" if cache_enabled else "disabled",
+    )
 
     with open(source_path, encoding="utf-8") as f:
         original_doc = json.load(f)
@@ -135,13 +150,36 @@ def generate_library_probe(
         items = []
         probe_doc["items"] = items
 
+    plans = []
+    files_to_resolve: list[Path] = []
     for item in items:
         if not isinstance(item, dict):
             continue
         stats["items"] += 1
         try:
-            item_stats = _probe_item(item, root, cache, score_enabled=score_enabled, score_config=score_config, timeout=timeout)
-            stats["files_probed"] += item_stats.get("files_probed", 0)
+            plan = _plan_item_probe(item, root)
+            plans.append(plan)
+            files_to_resolve.extend(plan.get("files") or [])
+        except Exception as exc:
+            _set_error_diagnostic(item, str(exc))
+            stats["errors"] += 1
+            log.debug("[MEDIA_PROBE] Item planning failed for %s: %s", item.get("path"), exc)
+
+    stats["files_total"] = len(files_to_resolve)
+    probe_results, probe_stats = _resolve_probe_results(
+        files_to_resolve,
+        cache_path=cache_path,
+        cache_enabled=cache_enabled,
+        workers=workers,
+        timeout=timeout,
+    )
+    stats["files_probed"] = probe_stats["files_probed"]
+    stats["files_cached"] = probe_stats["files_cached"]
+
+    for plan in plans:
+        item = plan["item"]
+        try:
+            item_stats = _apply_item_probe(plan, probe_results, score_enabled=score_enabled, score_config=score_config)
             stats["errors"] += item_stats.get("errors", 0)
             if item.get("media_probe", {}).get("status") == "error" and item_stats.get("errors", 0) == 0:
                 stats["errors"] += 1
@@ -154,43 +192,61 @@ def generate_library_probe(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(probe_doc, f, ensure_ascii=False, indent=2)
 
+    duration = time.monotonic() - started_at
     log.info(
-        "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files probed, %s errors",
+        "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
         stats["items"],
+        stats["files_total"],
         stats["files_probed"],
+        stats["files_cached"],
         stats["errors"],
+        duration,
     )
     return stats
 
 
-def _probe_item(
-    item: dict,
-    library_root: Path,
-    cache: dict[str, dict],
-    *,
-    score_enabled: bool,
-    score_config: dict | None,
-    timeout: float,
-) -> dict[str, int]:
-    original = copy.deepcopy(item)
-    original_score = _score_value(original)
+def _plan_item_probe(item: dict, library_root: Path) -> dict:
     media_dir = library_root / str(item.get("path") or "")
     if not media_dir.exists():
-        _set_error_diagnostic(item, f"media path not found: {media_dir}")
-        return {"files_probed": 0, "errors": 1}
+        return {"item": item, "kind": "missing", "media_dir": media_dir, "files": [], "error": f"media path not found: {media_dir}"}
 
     if item.get("type") == "tv":
         files = _video_files_recursive(media_dir)
         if not files:
-            _set_skipped_diagnostic(item, "no video file found")
-            return {"files_probed": 0, "errors": 0}
+            return {"item": item, "kind": "skipped", "media_dir": media_dir, "files": [], "error": "no video file found"}
+        return {"item": item, "kind": "tv", "media_dir": media_dir, "files": files}
+
+    video_path = _select_main_video_file(media_dir)
+    if not video_path:
+        return {"item": item, "kind": "skipped", "media_dir": media_dir, "files": [], "error": "no video file found"}
+    return {"item": item, "kind": "movie", "media_dir": media_dir, "files": [video_path]}
+
+
+def _apply_item_probe(
+    plan: dict,
+    probe_results: dict[str, dict],
+    *,
+    score_enabled: bool,
+    score_config: dict | None,
+) -> dict[str, int]:
+    item = plan["item"]
+    original = copy.deepcopy(item)
+    original_score = _score_value(original)
+    kind = plan.get("kind")
+    if kind == "missing":
+        _set_error_diagnostic(item, str(plan.get("error") or "media path not found"))
+        return {"errors": 1}
+    if kind == "skipped":
+        _set_skipped_diagnostic(item, str(plan.get("error") or "no video file found"))
+        return {"errors": 0}
+
+    if kind == "tv":
+        media_dir = plan["media_dir"]
         episodes = []
         errors = []
-        files_probed = 0
-        for video_path in files:
-            probe = _probe_video_file(video_path, cache, timeout=timeout)
+        for video_path in plan.get("files") or []:
+            probe = probe_results.get(str(video_path)) or {"ok": False, "error": "missing probe result"}
             if probe.get("ok"):
-                files_probed += 1
                 ep = dict(probe.get("technical") or {})
                 season, episode = _extract_season_episode_from_name(str(video_path.relative_to(media_dir)))
                 ep["season"] = season if season is not None else 1
@@ -201,23 +257,22 @@ def _probe_item(
                 errors.append(str(probe.get("error") or "ffprobe failed"))
         if not episodes:
             _set_error_diagnostic(item, "; ".join(errors[:3]) or "no probe data")
-            return {"files_probed": files_probed, "errors": len(errors) or 1}
+            return {"errors": len(errors) or 1}
         agg = _aggregate_series_metadata(episodes, score_enabled=score_enabled, score_config=score_config)
         overwritten = _merge_technical_fields(item, agg)
         if score_enabled:
             _recompute_item_quality(item, score_config)
             overwritten = _append_field(overwritten, "quality")
         _set_ok_diagnostic(item, overwritten, original_score, _score_value(item), errors[0] if errors else None)
-        return {"files_probed": files_probed, "errors": len(errors)}
+        return {"errors": len(errors)}
 
-    video_path = _select_main_video_file(media_dir)
-    if not video_path:
-        _set_skipped_diagnostic(item, "no video file found")
-        return {"files_probed": 0, "errors": 0}
-    probe = _probe_video_file(video_path, cache, timeout=timeout)
+    video_path = (plan.get("files") or [None])[0]
+    probe = probe_results.get(str(video_path)) if video_path else None
+    if not probe:
+        probe = {"ok": False, "error": "missing probe result"}
     if not probe.get("ok"):
         _set_error_diagnostic(item, str(probe.get("error") or "ffprobe failed"))
-        return {"files_probed": 0, "errors": 1}
+        return {"errors": 1}
 
     tech = dict(probe.get("technical") or {})
     overwritten = _merge_technical_fields(item, tech)
@@ -225,13 +280,10 @@ def _probe_item(
         _recompute_item_quality(item, score_config)
         overwritten = _append_field(overwritten, "quality")
     _set_ok_diagnostic(item, overwritten, original_score, _score_value(item), None)
-    return {"files_probed": 1, "errors": 0}
+    return {"errors": 0}
 
 
-def _probe_video_file(path: Path, cache: dict[str, dict], *, timeout: float) -> dict:
-    key = str(path)
-    if key in cache:
-        return cache[key]
+def _probe_video_file(path: Path, *, timeout: float) -> dict:
     cmd = [
         "ffprobe",
         "-v",
@@ -245,30 +297,139 @@ def _probe_video_file(path: Path, cache: dict[str, dict], *, timeout: float) -> 
     try:
         completed = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except FileNotFoundError as exc:
-        result = {"ok": False, "error": f"ffprobe not found: {exc}"}
-        cache[key] = result
-        return result
+        return {"ok": False, "error": f"ffprobe not found: {exc}"}
     except subprocess.TimeoutExpired:
-        result = {"ok": False, "error": "ffprobe timeout"}
-        cache[key] = result
-        return result
+        return {"ok": False, "error": "ffprobe timeout"}
     except Exception as exc:
-        result = {"ok": False, "error": str(exc)}
-        cache[key] = result
-        return result
+        return {"ok": False, "error": str(exc)}
     if completed.returncode != 0:
-        result = {"ok": False, "error": (completed.stderr or "ffprobe failed").strip()}
-        cache[key] = result
-        return result
+        return {"ok": False, "error": (completed.stderr or "ffprobe failed").strip()}
     try:
         payload = json.loads(completed.stdout or "{}")
     except Exception as exc:
-        result = {"ok": False, "error": f"invalid ffprobe json: {exc}"}
-        cache[key] = result
-        return result
-    result = {"ok": True, "technical": _technical_from_ffprobe(payload)}
-    cache[key] = result
-    return result
+        return {"ok": False, "error": f"invalid ffprobe json: {exc}"}
+    return {"ok": True, "technical": _technical_from_ffprobe(payload)}
+
+
+def _resolve_probe_results(
+    files: list[Path],
+    *,
+    cache_path: str | Path,
+    cache_enabled: bool,
+    workers: int,
+    timeout: float,
+) -> tuple[dict[str, dict], dict[str, int]]:
+    unique_files = sorted({Path(path) for path in files}, key=lambda p: str(p))
+    stats = {"files_probed": 0, "files_cached": 0}
+    results: dict[str, dict] = {}
+    disk_cache = _load_probe_cache(cache_path) if cache_enabled else {}
+    next_cache: dict[str, dict] = {}
+    to_probe: list[Path] = []
+
+    for path in unique_files:
+        key = str(path)
+        entry = disk_cache.get(key) if cache_enabled else None
+        if entry and _cache_entry_matches(path, entry):
+            probe = entry.get("probe")
+            if isinstance(probe, dict):
+                results[key] = copy.deepcopy(probe)
+                next_cache[key] = _cache_entry_for(path, probe)
+                stats["files_cached"] += 1
+                log.debug("[MEDIA_PROBE] Cache hit: %s", path)
+                continue
+        if cache_enabled:
+            log.debug("[MEDIA_PROBE] Cache miss: %s", path)
+        to_probe.append(path)
+
+    if to_probe:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_probe_video_file, path, timeout=timeout): path for path in to_probe}
+            for future in as_completed(futures):
+                path = futures[future]
+                key = str(path)
+                try:
+                    probe = future.result()
+                except Exception as exc:
+                    probe = {"ok": False, "error": str(exc)}
+                results[key] = probe
+                stats["files_probed"] += 1
+                if probe.get("ok") and cache_enabled:
+                    next_cache[key] = _cache_entry_for(path, probe)
+                elif not probe.get("ok"):
+                    log.debug("[MEDIA_PROBE] ffprobe failed for %s: %s", path, probe.get("error"))
+
+    if cache_enabled:
+        _write_probe_cache(cache_path, next_cache)
+    return results, stats
+
+
+def _load_probe_cache(cache_path: str | Path) -> dict[str, dict]:
+    path = Path(cache_path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return {}
+    files = payload.get("files") if isinstance(payload, dict) else None
+    return files if isinstance(files, dict) else {}
+
+
+def _write_probe_cache(cache_path: str | Path, files: dict[str, dict]) -> None:
+    path = Path(cache_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "files": files}, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception as exc:
+        log.warning("[MEDIA_PROBE] Could not write cache %s: %s", path, exc)
+
+
+def _cache_entry_matches(path: Path, entry: dict) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    try:
+        stat = path.stat()
+    except Exception:
+        return False
+    return (
+        entry.get("path") == str(path)
+        and int(entry.get("size_b") or -1) == int(stat.st_size)
+        and abs(float(entry.get("mtime") or -1) - float(stat.st_mtime)) < 0.000001
+    )
+
+
+def _cache_entry_for(path: Path, probe: dict) -> dict:
+    try:
+        stat = path.stat()
+        size_b = int(stat.st_size)
+        mtime = float(stat.st_mtime)
+    except Exception:
+        size_b = 0
+        mtime = 0.0
+    return {
+        "path": str(path),
+        "size_b": size_b,
+        "mtime": mtime,
+        "probe": copy.deepcopy(probe),
+    }
+
+
+def _normalize_workers(value) -> int:
+    try:
+        workers = int(value)
+    except Exception:
+        workers = 4
+    return max(1, min(8, workers))
+
+
+def _media_probe_workers(cfg: dict | None) -> int:
+    probe = (cfg or {}).get("media_probe")
+    return _normalize_workers(probe.get("workers") if isinstance(probe, dict) else 4)
+
+
+def _media_probe_cache_enabled(cfg: dict | None) -> bool:
+    probe = (cfg or {}).get("media_probe")
+    return not (isinstance(probe, dict) and probe.get("cache_enabled") is False)
 
 
 def _technical_from_ffprobe(payload: dict) -> dict:

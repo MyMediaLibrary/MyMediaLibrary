@@ -905,9 +905,12 @@
       partial.recommendations.enabled = enableScoreCfg === false ? false : recommendationsEnabled === true;
     }
     if (mediaProbeEnabled !== null) {
+      const currentMediaProbe = appConfig.media_probe || {};
       partial.media_probe = {
         enabled: mediaProbeEnabled === true,
         mode: 'compare',
+        workers: currentMediaProbe.workers || 4,
+        cache_enabled: currentMediaProbe.cache_enabled !== false,
       };
     }
 

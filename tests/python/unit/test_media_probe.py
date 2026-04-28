@@ -67,6 +67,7 @@ class MediaProbeTest(unittest.TestCase):
         self.data_dir.mkdir()
         self.library_json = self.data_dir / "library.json"
         self.probe_json = self.data_dir / "library_probe.json"
+        self.cache_json = self.data_dir / "media_probe_cache.json"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -92,13 +93,15 @@ class MediaProbeTest(unittest.TestCase):
         self.write_library([payload_item])
         return payload_item
 
-    def generate_movie_probe(self, payload, item=None):
+    def generate_movie_probe(self, payload, item=None, **kwargs):
         self.write_movie_fixture(item)
         with patch.object(media_probe.subprocess, "run", return_value=completed(payload)):
             media_probe.generate_library_probe(
                 library_json_path=self.library_json,
                 output_path=self.probe_json,
                 library_root=self.library_root,
+                cache_path=self.cache_json,
+                **kwargs,
             )
         return json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
 
@@ -151,7 +154,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        self.assertEqual(stats, {"items": 1, "files_probed": 1, "errors": 0})
+        self.assertEqual(stats, {"items": 1, "files_total": 1, "files_probed": 1, "files_cached": 0, "errors": 0})
         self.assertIn("main.mkv", run.call_args.args[0][-1])
         self.assertEqual(json.loads(self.library_json.read_text(encoding="utf-8")), original)
         out = json.loads(self.probe_json.read_text(encoding="utf-8"))
@@ -211,6 +214,146 @@ class MediaProbeTest(unittest.TestCase):
         item = self.generate_movie_probe(payload)
 
         self.assertEqual(item["video_bitrate"], 5_108_632)
+
+    def test_cache_hit_reuses_probe_without_calling_ffprobe(self):
+        self.write_movie_fixture()
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
+        self.cache_json.write_text(
+            json.dumps({"version": 1, "files": {str(movie_path): media_probe._cache_entry_for(movie_path, cached_probe)}}),
+            encoding="utf-8",
+        )
+
+        with patch.object(media_probe.subprocess, "run") as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_not_called()
+        self.assertEqual(stats["files_cached"], 1)
+        self.assertEqual(stats["files_probed"], 0)
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["codec"], "H.265")
+
+    def test_cache_miss_calls_ffprobe_and_writes_cache(self):
+        self.write_movie_fixture()
+
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_called_once()
+        self.assertEqual(stats["files_probed"], 1)
+        self.assertEqual(stats["files_cached"], 0)
+        cache = json.loads(self.cache_json.read_text(encoding="utf-8"))
+        self.assertEqual(len(cache["files"]), 1)
+
+    def test_cache_reprobes_when_size_or_mtime_changes(self):
+        self.write_movie_fixture()
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="h264"))):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+        movie_path.write_bytes(b"changed")
+
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_called_once()
+        self.assertEqual(stats["files_probed"], 1)
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["codec"], "H.265")
+
+    def test_cache_disabled_always_calls_ffprobe(self):
+        self.write_movie_fixture()
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
+        self.cache_json.write_text(
+            json.dumps({"version": 1, "files": {str(movie_path): media_probe._cache_entry_for(movie_path, cached_probe)}}),
+            encoding="utf-8",
+        )
+
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="h264"))) as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_enabled=False,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_called_once()
+        self.assertEqual(stats["files_cached"], 0)
+        self.assertEqual(stats["files_probed"], 1)
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["codec"], "H.264")
+
+    def test_workers_are_bounded_for_thread_pool(self):
+        self.write_movie_fixture()
+        with patch.object(media_probe, "ThreadPoolExecutor", wraps=media_probe.ThreadPoolExecutor) as executor, \
+             patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload())):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                workers=99,
+                cache_enabled=False,
+                cache_path=self.cache_json,
+            )
+
+        self.assertEqual(executor.call_args.kwargs["max_workers"], 8)
+        self.assertEqual(media_probe._normalize_workers(0), 1)
+        self.assertEqual(media_probe._normalize_workers("bad"), 4)
+
+    def test_ffprobe_error_in_worker_continues(self):
+        self.write_movie_fixture()
+        failed = Mock(returncode=1, stdout="", stderr="broken file")
+
+        with patch.object(media_probe.subprocess, "run", return_value=failed):
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        self.assertEqual(stats["errors"], 1)
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["media_probe"]["status"], "error")
+
+    def test_summary_log_includes_cache_counts_and_duration(self):
+        self.write_movie_fixture()
+
+        with self.assertLogs("scanner", level="INFO") as logs, \
+             patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload())):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_enabled=False,
+                cache_path=self.cache_json,
+            )
+
+        joined = "\n".join(logs.output)
+        self.assertIn("Starting compare probe: workers=4, cache=disabled", joined)
+        self.assertIn("1 files total, 1 probed, 0 cached, 0 errors", joined)
+        self.assertIn("duration:", joined)
 
     def test_video_bitrate_uses_bps_tag(self):
         payload = ffprobe_payload()

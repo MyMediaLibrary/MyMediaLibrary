@@ -28,6 +28,8 @@
   },
   "media_probe": {
     "enabled": false,
-    "mode": "compare"
+    "mode": "compare",
+    "workers": 4,
+    "cache_enabled": true
   }
 }
