@@ -608,9 +608,13 @@ def _aggregate_series_metadata(episodes: list[dict], *, score_enabled: bool, sco
         for ep in seasonless_episodes
     )
     episode_count = sum(int(s.get("episodes_found") or 0) for s in seasons) + len(seasonless_episodes)
-    audio_languages = sorted(
-        set(_aggregate_audio_languages_from_groups(seasons))
-        | set(_aggregate_audio_languages_from_groups(seasonless_episodes))
+    audio_languages = _merge_language_lists(
+        _aggregate_audio_languages_from_groups(seasons),
+        _aggregate_audio_languages_from_groups(seasonless_episodes),
+    )
+    subtitle_languages = _merge_language_lists(
+        _aggregate_subtitle_languages(seasons),
+        _aggregate_subtitle_languages(seasonless_episodes),
     )
     all_groups = [*episodes]
     agg = {
@@ -626,7 +630,7 @@ def _aggregate_series_metadata(episodes: list[dict], *, score_enabled: bool, sco
         "audio_channels": _dominant_audio_channels([s.get("audio_channels") for s in all_groups]),
         "audio_languages": audio_languages,
         "audio_languages_simple": simplify_audio_languages(audio_languages),
-        "subtitle_languages": _aggregate_subtitle_languages(all_groups) or None,
+        "subtitle_languages": subtitle_languages or None,
         "video_bitrate": _average_positive_int([ep.get("video_bitrate") for ep in episodes]),
         "hdr_type": _dominant_from_groups(seasons, "hdr_type") or _dominant_from_groups(all_groups, "hdr_type"),
         "runtime_min": runtime_min,
@@ -674,16 +678,27 @@ def _aggregate_season_metadata(season: int, episodes: list[dict], *, item_id: st
 
 def _merge_technical_fields(target: dict, source: dict) -> list[str]:
     overwritten = []
+    source_values = dict(source)
+    merged_seasons = None
+    if isinstance(source.get("seasons"), list):
+        merged_seasons = _merge_probe_seasons(target.get("seasons"), source["seasons"])
+        season_audio_languages = _aggregate_audio_languages_from_groups(merged_seasons)
+        season_subtitle_languages = _aggregate_subtitle_languages(merged_seasons)
+        source_values["audio_languages"] = _merge_language_lists(source.get("audio_languages"), season_audio_languages)
+        source_values["subtitle_languages"] = _merge_language_lists(source.get("subtitle_languages"), season_subtitle_languages)
+        source_values["audio_languages_simple"] = simplify_audio_languages(source_values["audio_languages"])
+        if _is_unknown(source_values["audio_languages_simple"]):
+            source_values["audio_languages_simple"] = None
     for field in TECHNICAL_FIELDS:
         if field == "quality":
             continue
-        val = source.get(field)
+        val = source_values.get(field)
         if _valid_probe_value(val):
             if _field_value_changed(field, target.get(field), val):
                 overwritten.append(field)
             target[field] = val
-    if isinstance(source.get("seasons"), list):
-        target["seasons"] = source["seasons"]
+    if merged_seasons is not None:
+        target["seasons"] = merged_seasons
         overwritten.append("seasons")
         for field in ("season_count", "episode_count"):
             val = source.get(field)
@@ -853,21 +868,64 @@ def build_episode_id(item_id: str, season=None, episode=None) -> str | None:
 
 
 def _aggregate_audio_languages_from_groups(groups: list[dict]) -> list[str]:
-    values = set()
+    values: list[str] = []
     for group in groups:
         for lang in group.get("audio_languages") or []:
-            if isinstance(lang, str) and lang.strip():
-                values.add(lang.strip())
-    return sorted(values)
+            values.extend(_parse_probe_language(lang))
+    return _merge_language_lists(values)
 
 
 def _aggregate_subtitle_languages(groups: list[dict]) -> list[str]:
-    values = set()
+    values: list[str] = []
     for group in groups:
         for lang in group.get("subtitle_languages") or []:
-            if isinstance(lang, str) and lang.strip():
-                values.add(lang.strip())
-    return sorted(values)
+            values.extend(_parse_probe_language(lang))
+    return _merge_language_lists(values)
+
+
+def _merge_language_lists(*values: list[str] | tuple[str, ...] | None) -> list[str]:
+    merged = set()
+    for value in values:
+        if not isinstance(value, (list, tuple)):
+            continue
+        for lang in value:
+            for parsed in _parse_probe_language(lang):
+                merged.add(parsed)
+    return sorted(merged)
+
+
+def _merge_probe_seasons(existing, probed: list[dict]) -> list[dict]:
+    if not isinstance(existing, list):
+        existing = []
+    existing_by_season = {
+        int(season.get("season")): season
+        for season in existing
+        if isinstance(season, dict) and _positive_int(season.get("season")) is not None
+    }
+    merged = []
+    for season in probed:
+        if not isinstance(season, dict):
+            continue
+        season_copy = dict(season)
+        season_number = _positive_int(season_copy.get("season"))
+        previous = existing_by_season.get(season_number) if season_number is not None else None
+        if isinstance(previous, dict):
+            _preserve_missing_language_fields(season_copy, previous)
+        merged.append(season_copy)
+    return merged
+
+
+def _preserve_missing_language_fields(target: dict, previous: dict) -> None:
+    for field in ("audio_languages", "subtitle_languages"):
+        if not _valid_probe_value(target.get(field)) and _valid_probe_value(previous.get(field)):
+            target[field] = copy.deepcopy(previous.get(field))
+    if not _valid_probe_value(target.get("audio_languages_simple")):
+        if _valid_probe_value(target.get("audio_languages")):
+            simple = simplify_audio_languages(target.get("audio_languages") or [])
+            if _valid_probe_value(simple):
+                target["audio_languages_simple"] = simple
+        elif _valid_probe_value(previous.get("audio_languages_simple")):
+            target["audio_languages_simple"] = previous.get("audio_languages_simple")
 
 
 def _dominant_from_groups(groups: list[dict], field: str):
