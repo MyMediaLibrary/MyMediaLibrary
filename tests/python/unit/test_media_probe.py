@@ -352,8 +352,56 @@ class MediaProbeTest(unittest.TestCase):
 
         joined = "\n".join(logs.output)
         self.assertIn("Starting compare probe: workers=4, cache=disabled", joined)
-        self.assertIn("1 files total, 1 probed, 0 cached, 0 errors", joined)
+        self.assertIn("Folder 1/1: Movies", joined)
+        self.assertIn("Movies completed: 1 items, 1 files, 0 errors", joined)
+        self.assertIn("Generated library_probe.json: 1 items, 1 files probed, 0 errors", joined)
         self.assertIn("duration:", joined)
+
+    def test_category_progress_logs_include_cache_counts_and_duration(self):
+        movie_dir = self.library_root / "Movies" / "Film"
+        movie_dir.mkdir(parents=True)
+        (movie_dir / "main.mkv").write_bytes(b"1")
+        series_dir = self.library_root / "Series" / "Show"
+        series_dir.mkdir(parents=True)
+        (series_dir / "Show.S01E01.mkv").write_bytes(b"1")
+        self.write_library([
+            {"id": "movie:Movies:Film", "path": "Movies/Film", "title": "Film", "category": "Movies", "type": "movie"},
+            {"id": "tv:Series:Show", "path": "Series/Show", "title": "Show", "category": "Series", "type": "tv"},
+        ])
+
+        with self.assertLogs("scanner", level="INFO") as logs, \
+             patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload())):
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_enabled=True,
+                cache_path=self.cache_json,
+            )
+
+        self.assertEqual(stats, {"items": 2, "files_total": 2, "files_probed": 2, "files_cached": 0, "errors": 0})
+        joined = "\n".join(logs.output)
+        self.assertIn("[MEDIA_PROBE] Starting compare probe", joined)
+        self.assertIn("[MEDIA_PROBE] Folder 1/2: Movies", joined)
+        self.assertIn("[MEDIA_PROBE] Folder 2/2: Series", joined)
+        self.assertIn("Movies completed: 1 items, 1 files, 1 probed, 0 cached, 0 errors (duration:", joined)
+        self.assertIn("Series completed: 1 items, 1 files, 1 probed, 0 cached, 0 errors (duration:", joined)
+        self.assertIn("Generated library_probe.json: 2 items, 2 files total, 2 probed, 0 cached, 0 errors (duration:", joined)
+
+    def test_disabled_probe_does_not_emit_media_probe_logs(self):
+        self.write_library([])
+        with patch.object(media_probe.log, "info") as info, \
+             patch.object(media_probe.subprocess, "run") as run:
+            result = media_probe.run_media_probe_if_enabled(
+                {"media_probe": {"enabled": False, "mode": "compare"}},
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+            )
+
+        self.assertIsNone(result)
+        info.assert_not_called()
+        run.assert_not_called()
 
     def test_video_bitrate_uses_bps_tag(self):
         payload = ffprobe_payload()

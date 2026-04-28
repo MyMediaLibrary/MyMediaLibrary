@@ -151,7 +151,6 @@ def generate_library_probe(
         probe_doc["items"] = items
 
     plans = []
-    files_to_resolve: list[Path] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -159,50 +158,130 @@ def generate_library_probe(
         try:
             plan = _plan_item_probe(item, root)
             plans.append(plan)
-            files_to_resolve.extend(plan.get("files") or [])
         except Exception as exc:
             _set_error_diagnostic(item, str(exc))
             stats["errors"] += 1
             log.debug("[MEDIA_PROBE] Item planning failed for %s: %s", item.get("path"), exc)
 
-    stats["files_total"] = len(files_to_resolve)
-    probe_results, probe_stats = _resolve_probe_results(
-        files_to_resolve,
-        cache_path=cache_path,
-        cache_enabled=cache_enabled,
-        workers=workers,
-        timeout=timeout,
-    )
-    stats["files_probed"] = probe_stats["files_probed"]
-    stats["files_cached"] = probe_stats["files_cached"]
+    disk_cache = _load_probe_cache(cache_path) if cache_enabled else {}
+    next_cache: dict[str, dict] = {}
+    grouped_plans = _group_plans_by_category(plans)
+    total_groups = len(grouped_plans)
+    for index, (category, category_plans) in enumerate(grouped_plans, start=1):
+        category_started_at = time.monotonic()
+        category_stats = {"items": len(category_plans), "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
+        files_to_resolve: list[Path] = []
+        for plan in category_plans:
+            files_to_resolve.extend(plan.get("files") or [])
+        category_stats["files_total"] = len(files_to_resolve)
+        stats["files_total"] += category_stats["files_total"]
 
-    for plan in plans:
-        item = plan["item"]
-        try:
-            item_stats = _apply_item_probe(plan, probe_results, score_enabled=score_enabled, score_config=score_config)
-            stats["errors"] += item_stats.get("errors", 0)
-            if item.get("media_probe", {}).get("status") == "error" and item_stats.get("errors", 0) == 0:
-                stats["errors"] += 1
-        except Exception as exc:
-            _set_error_diagnostic(item, str(exc))
-            stats["errors"] += 1
-            log.debug("[MEDIA_PROBE] Item probe failed for %s: %s", item.get("path"), exc)
+        log.info("[MEDIA_PROBE] Folder %s/%s: %s", index, total_groups, category)
+        probe_results, probe_stats = _resolve_probe_results(
+            files_to_resolve,
+            cache_path=cache_path,
+            cache_enabled=cache_enabled,
+            workers=workers,
+            timeout=timeout,
+            disk_cache=disk_cache,
+            next_cache=next_cache,
+            write_cache=False,
+        )
+        category_stats["files_probed"] = probe_stats["files_probed"]
+        category_stats["files_cached"] = probe_stats["files_cached"]
+        stats["files_probed"] += category_stats["files_probed"]
+        stats["files_cached"] += category_stats["files_cached"]
+
+        for plan in category_plans:
+            item = plan["item"]
+            try:
+                item_stats = _apply_item_probe(plan, probe_results, score_enabled=score_enabled, score_config=score_config)
+                category_stats["errors"] += item_stats.get("errors", 0)
+                if item.get("media_probe", {}).get("status") == "error" and item_stats.get("errors", 0) == 0:
+                    category_stats["errors"] += 1
+            except Exception as exc:
+                _set_error_diagnostic(item, str(exc))
+                category_stats["errors"] += 1
+                log.debug("[MEDIA_PROBE] Item probe failed for %s: %s", item.get("path"), exc)
+
+        stats["errors"] += category_stats["errors"]
+        _log_category_summary(category, category_stats, time.monotonic() - category_started_at, cache_enabled)
+
+    if cache_enabled:
+        _write_probe_cache(cache_path, next_cache)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(probe_doc, f, ensure_ascii=False, indent=2)
 
     duration = time.monotonic() - started_at
+    _log_final_summary(stats, duration, cache_enabled)
+    return stats
+
+
+def _group_plans_by_category(plans: list[dict]) -> list[tuple[str, list[dict]]]:
+    grouped: dict[str, list[dict]] = {}
+    for plan in plans:
+        item = plan.get("item") if isinstance(plan, dict) else None
+        category = _category_label(item if isinstance(item, dict) else {})
+        grouped.setdefault(category, []).append(plan)
+    return list(grouped.items())
+
+
+def _category_label(item: dict) -> str:
+    category = item.get("category")
+    if isinstance(category, str) and category.strip():
+        return category.strip()
+    path = item.get("path")
+    if isinstance(path, str) and path.strip():
+        first = Path(path).parts[0] if Path(path).parts else ""
+        if first:
+            return first
+    return "Uncategorized"
+
+
+def _log_category_summary(category: str, stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
+    if cache_enabled:
+        log.info(
+            "[MEDIA_PROBE] %s completed: %s items, %s files, %s probed, %s cached, %s errors (duration: %.1fs)",
+            category,
+            stats["items"],
+            stats["files_total"],
+            stats["files_probed"],
+            stats["files_cached"],
+            stats["errors"],
+            duration,
+        )
+        return
     log.info(
-        "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
+        "[MEDIA_PROBE] %s completed: %s items, %s files, %s errors (duration: %.1fs)",
+        category,
         stats["items"],
         stats["files_total"],
-        stats["files_probed"],
-        stats["files_cached"],
         stats["errors"],
         duration,
     )
-    return stats
+
+
+def _log_final_summary(stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
+    if cache_enabled:
+        log.info(
+            "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
+            stats["items"],
+            stats["files_total"],
+            stats["files_probed"],
+            stats["files_cached"],
+            stats["errors"],
+            duration,
+        )
+        return
+    log.info(
+        "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files probed, %s errors (duration: %.1fs)",
+        stats["items"],
+        stats["files_probed"],
+        stats["errors"],
+        duration,
+    )
 
 
 def _plan_item_probe(item: dict, library_root: Path) -> dict:
@@ -326,12 +405,15 @@ def _resolve_probe_results(
     cache_enabled: bool,
     workers: int,
     timeout: float,
+    disk_cache: dict[str, dict] | None = None,
+    next_cache: dict[str, dict] | None = None,
+    write_cache: bool = True,
 ) -> tuple[dict[str, dict], dict[str, int]]:
     unique_files = sorted({Path(path) for path in files}, key=lambda p: str(p))
     stats = {"files_probed": 0, "files_cached": 0}
     results: dict[str, dict] = {}
-    disk_cache = _load_probe_cache(cache_path) if cache_enabled else {}
-    next_cache: dict[str, dict] = {}
+    disk_cache = disk_cache if disk_cache is not None else (_load_probe_cache(cache_path) if cache_enabled else {})
+    next_cache = next_cache if next_cache is not None else {}
     to_probe: list[Path] = []
 
     for path in unique_files:
@@ -366,7 +448,7 @@ def _resolve_probe_results(
                 elif not probe.get("ok"):
                     log.debug("[MEDIA_PROBE] ffprobe failed for %s: %s", path, probe.get("error"))
 
-    if cache_enabled:
+    if cache_enabled and write_cache:
         _write_probe_cache(cache_path, next_cache)
     return results, stats
 
