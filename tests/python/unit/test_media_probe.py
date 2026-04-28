@@ -673,11 +673,39 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["runtime_min"], 180)
         self.assertEqual(item["runtime_min_avg"], 60)
         self.assertEqual(item["resolution"], "1080p")
+        self.assertEqual(item["seasons"][0]["season_id"], "tv:Series:Show:s01")
+        self.assertEqual(item["seasons"][1]["season_id"], "tv:Series:Show:s02")
         self.assertEqual(item["seasons"][0]["episodes_found"], 2)
         self.assertEqual(item["seasons"][0]["resolution"], "1080p")
         self.assertEqual(item["seasons"][1]["resolution"], "4K")
         self.assertIn("quality", item)
         self.assertEqual(item["media_probe"]["status"], "ok")
+
+    def test_series_probe_keeps_seasonless_anime_without_artificial_season(self):
+        series_dir = self.library_root / "Anime" / "One Piece"
+        series_dir.mkdir(parents=True)
+        (series_dir / "One Piece.E123.mkv").write_bytes(b"1")
+        self.write_library([
+            {
+                "id": "tv:Anime:One.Piece",
+                "path": "Anime/One Piece",
+                "title": "One Piece",
+                "category": "Anime",
+                "type": "tv",
+            }
+        ])
+
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload())):
+            media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+            )
+
+        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["episode_count"], 1)
+        self.assertEqual(item["season_count"], 0)
+        self.assertEqual(item["seasons"], [])
 
     def test_series_language_and_subtitle_aggregation_uses_episode_unions(self):
         series_dir = self.library_root / "Series" / "Show"

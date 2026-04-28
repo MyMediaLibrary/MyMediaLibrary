@@ -249,8 +249,16 @@ def _apply_item_probe(
             if probe.get("ok"):
                 ep = dict(probe.get("technical") or {})
                 season, episode = _extract_season_episode_from_name(str(video_path.relative_to(media_dir)))
-                ep["season"] = season if season is not None else 1
+                ep["season"] = season
                 ep["episode"] = episode
+                episode_id = build_episode_id(
+                    str(item.get("id") or ""),
+                    season=season,
+                    episode=episode,
+                )
+                if episode_id:
+                    ep["episode_id"] = episode_id
+                ep["_item_id"] = str(item.get("id") or "")
                 ep["size_b"] = _file_size(video_path)
                 episodes.append(ep)
             else:
@@ -495,43 +503,60 @@ def _detect_hdr_type(video: dict) -> str | None:
 
 def _aggregate_series_metadata(episodes: list[dict], *, score_enabled: bool, score_config: dict | None) -> dict:
     by_season: dict[int, list[dict]] = defaultdict(list)
+    seasonless_episodes: list[dict] = []
     for ep in episodes:
-        season = _positive_int(ep.get("season")) or 1
-        by_season[season].append(ep)
+        season = _positive_int(ep.get("season"))
+        if season is None:
+            seasonless_episodes.append(ep)
+        else:
+            by_season[season].append(ep)
 
     seasons = [
-        _aggregate_season_metadata(season, by_season[season], score_enabled=score_enabled, score_config=score_config)
+        _aggregate_season_metadata(
+            season,
+            by_season[season],
+            item_id=episodes[0].get("_item_id") if episodes else None,
+            score_enabled=score_enabled,
+            score_config=score_config,
+        )
         for season in sorted(by_season)
     ]
-    runtime_min = sum(int(s.get("runtime_min_total") or 0) for s in seasons)
-    episode_count = sum(int(s.get("episodes_found") or 0) for s in seasons)
-    audio_languages = _aggregate_audio_languages_from_groups(seasons)
+    runtime_min = sum(int(s.get("runtime_min_total") or 0) for s in seasons) + sum(
+        int(ep.get("runtime_min") or 0)
+        for ep in seasonless_episodes
+    )
+    episode_count = sum(int(s.get("episodes_found") or 0) for s in seasons) + len(seasonless_episodes)
+    audio_languages = sorted(
+        set(_aggregate_audio_languages_from_groups(seasons))
+        | set(_aggregate_audio_languages_from_groups(seasonless_episodes))
+    )
+    all_groups = [*episodes]
     agg = {
         "seasons": seasons,
         "season_count": len(seasons),
         "episode_count": episode_count,
-        "resolution": _dominant_from_groups(seasons, "resolution"),
-        "width": _dominant_from_groups(seasons, "width"),
-        "height": _dominant_from_groups(seasons, "height"),
-        "codec": _dominant_from_groups(seasons, "codec"),
-        "audio_codec_raw": _dominant_from_groups(seasons, "audio_codec_raw"),
-        "audio_codec": _dominant_from_groups(seasons, "audio_codec"),
-        "audio_channels": _dominant_audio_channels([s.get("audio_channels") for s in seasons]),
+        "resolution": _dominant_from_groups(seasons, "resolution") or _dominant_from_groups(all_groups, "resolution"),
+        "width": _dominant_from_groups(seasons, "width") or _dominant_from_groups(all_groups, "width"),
+        "height": _dominant_from_groups(seasons, "height") or _dominant_from_groups(all_groups, "height"),
+        "codec": _dominant_from_groups(seasons, "codec") or _dominant_from_groups(all_groups, "codec"),
+        "audio_codec_raw": _dominant_from_groups(seasons, "audio_codec_raw") or _dominant_from_groups(all_groups, "audio_codec_raw"),
+        "audio_codec": _dominant_from_groups(seasons, "audio_codec") or _dominant_from_groups(all_groups, "audio_codec"),
+        "audio_channels": _dominant_audio_channels([s.get("audio_channels") for s in all_groups]),
         "audio_languages": audio_languages,
         "audio_languages_simple": simplify_audio_languages(audio_languages),
-        "subtitle_languages": _aggregate_subtitle_languages(episodes) or None,
+        "subtitle_languages": _aggregate_subtitle_languages(all_groups) or None,
         "video_bitrate": _average_positive_int([ep.get("video_bitrate") for ep in episodes]),
-        "hdr_type": _dominant_from_groups(seasons, "hdr_type"),
+        "hdr_type": _dominant_from_groups(seasons, "hdr_type") or _dominant_from_groups(all_groups, "hdr_type"),
         "runtime_min": runtime_min,
         "runtime_min_avg": int(round(runtime_min / episode_count)) if runtime_min > 0 and episode_count > 0 else None,
     }
-    agg["hdr"] = bool(agg["hdr_type"]) or any(bool(s.get("hdr")) for s in seasons)
+    agg["hdr"] = bool(agg["hdr_type"]) or any(bool(s.get("hdr")) for s in seasons) or any(bool(ep.get("hdr")) for ep in all_groups)
     if _is_unknown(agg["audio_languages_simple"]):
         agg["audio_languages_simple"] = None
     return agg
 
 
-def _aggregate_season_metadata(season: int, episodes: list[dict], *, score_enabled: bool, score_config: dict | None) -> dict:
+def _aggregate_season_metadata(season: int, episodes: list[dict], *, item_id: str | None = None, score_enabled: bool, score_config: dict | None) -> dict:
     runtime_total = sum(int(ep.get("runtime_min") or 0) for ep in episodes)
     known_runtime_count = len([ep for ep in episodes if int(ep.get("runtime_min") or 0) > 0])
     audio_languages = _aggregate_audio_languages_from_groups(episodes)
@@ -554,6 +579,9 @@ def _aggregate_season_metadata(season: int, episodes: list[dict], *, score_enabl
         "runtime_min_avg": int(round(runtime_total / known_runtime_count)) if runtime_total > 0 and known_runtime_count > 0 else None,
         "size_b": sum(int(ep.get("size_b") or 0) for ep in episodes),
     }
+    season_id = build_season_id(item_id or "", season)
+    if season_id:
+        out["season_id"] = season_id
     out["hdr"] = bool(out["hdr_type"]) or any(bool(ep.get("hdr")) for ep in episodes)
     if _is_unknown(out["audio_languages_simple"]):
         out["audio_languages_simple"] = None
@@ -723,6 +751,23 @@ def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int |
         if isinstance(ep_num, int) and ep_num not in _TV_COMMON_TECH_NUMBERS:
             return hinted_season, ep_num
     return hinted_season, None
+
+
+def build_season_id(item_id: str, season) -> str | None:
+    season_num = _positive_int(season)
+    if not item_id or season_num is None:
+        return None
+    return f"{item_id}:s{season_num:02d}"
+
+
+def build_episode_id(item_id: str, season=None, episode=None) -> str | None:
+    episode_num = _positive_int(episode)
+    if not item_id or episode_num is None:
+        return None
+    season_num = _positive_int(season)
+    if season_num is not None:
+        return f"{item_id}:s{season_num:02d}e{episode_num:02d}"
+    return f"{item_id}:e{episode_num:03d}"
 
 
 def _aggregate_audio_languages_from_groups(groups: list[dict]) -> list[str]:
