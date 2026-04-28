@@ -192,6 +192,33 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('settings exposes media probe toggle without using probe output as UI data', () => {
+  assert.match(indexSource, /id="cfgMediaProbeEnabled"/, 'settings should expose the ffprobe analysis toggle');
+  assert.match(indexSource, /settings\.system\.media_probe_enabled/, 'settings should use i18n for the media probe label');
+  assert.equal(frI18n.settings.system.media_probe_enabled, 'Analyse technique ffprobe');
+  assert.equal(frI18n.settings.system.media_probe_enabled_hint, 'Génère un fichier de comparaison avec les données techniques extraites par ffprobe.');
+  assert.equal(enI18n.settings.system.media_probe_enabled, 'ffprobe technical analysis');
+  assert.equal(enI18n.settings.system.media_probe_enabled_hint, 'Generates a comparison file with technical data extracted by ffprobe.');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgMediaProbeEnabled', appConfig\.media_probe\?\.enabled === true\);/, 'loadSettings should default missing media_probe config to disabled');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /const mediaProbeEnabled = get\('cfgMediaProbeEnabled'\);/, 'settings save should read the media probe toggle');
+  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*workers: currentMediaProbe\.workers \|\| 4,[\s\S]*cache_enabled: currentMediaProbe\.cache_enabled !== false[\s\S]*\};/, 'settings save should persist compare mode and preserve backend performance defaults');
+  assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
+  assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
+});
+
+test('frontend does not expose or persist library root path settings', () => {
+  assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
+  assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');
+  assert.doesNotMatch(settingsSource, /cfgLibraryPath|libraryPathLabel|library_path/, 'settings logic should not read or write library root path state');
+  assert.doesNotMatch(appSource, /libraryPathLabel|data\.library_path|brandSub.*library/i, 'app shell should not display library root path from library.json');
+  assert.equal(enI18n.settings.library.path, undefined, 'English library path label should be removed');
+  assert.equal(frI18n.settings.library.path, undefined, 'French library path label should be removed');
+});
+
 test('recommendations feature is gated by score and avoids fetch when disabled', () => {
   assert.match(indexSource, /id="navRecommendations"[\s\S]*display:none/, 'recommendations desktop nav should start hidden');
   assert.match(indexSource, /id="mnavRecommendations"[\s\S]*display:none/, 'recommendations mobile nav should start hidden');
@@ -324,6 +351,24 @@ test('settings trigger scan only when folders changed', () => {
 
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
   assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
+});
+
+test('settings save treats scan-skipped responses as successful saves', () => {
+  const saveStart = appSource.indexOf('async function saveConfig(');
+  const saveEnd = appSource.indexOf('\n  async function loadRecommendations(', saveStart);
+  assert.notEqual(saveStart, -1, 'saveConfig should be defined');
+  assert.notEqual(saveEnd, -1, 'loadRecommendations should follow saveConfig');
+  const saveConfigBlock = appSource.slice(saveStart, saveEnd);
+  assert.match(saveConfigBlock, /if \(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/, 'config save should only fail on non-2xx HTTP responses');
+  assert.doesNotMatch(saveConfigBlock, /scan_skipped|SCAN_RUNNING/, 'config save should not surface scan-skipped responses as errors');
+
+  const scoreStart = settingsSource.indexOf('async function _persistScoreSettings(');
+  const scoreEnd = settingsSource.indexOf('\n  async function resetScoreSettings(', scoreStart);
+  assert.notEqual(scoreStart, -1, '_persistScoreSettings should be defined');
+  assert.notEqual(scoreEnd, -1, 'resetScoreSettings should follow _persistScoreSettings');
+  const scorePersistBlock = settingsSource.slice(scoreStart, scoreEnd);
+  assert.match(scorePersistBlock, /if \(!res\.ok\) throw new Error/, 'score save should only fail on non-2xx HTTP before reading payload');
+  assert.doesNotMatch(scorePersistBlock, /scan_skipped|SCAN_RUNNING/, 'score settings save should not show a special error for skipped post-save scans');
 });
 
 test('restoreState defers stats tab render until library load is complete', () => {

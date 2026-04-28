@@ -24,10 +24,10 @@
 **MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker sans base de données.
 
 **Flux :**
-1. Le scanner Python lit les sous-dossiers de `LIBRARY_PATH`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
+1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
 2. Les phases optionnelles enrichissent les données : Seerr, score qualité, inventaire et recommandations.
 3. L'interface web (vanilla JS) charge les fichiers JSON générés et affiche bibliothèque, filtres, statistiques et recommandations.
-4. La configuration est persistée dans `data/config.json` (dossiers, Seerr, préférences UI).
+4. La configuration est persistée dans `conf/config.json` (dossiers, Seerr, préférences UI).
 
 ---
 
@@ -39,7 +39,7 @@
 - **Frontend** : HTML/CSS + vanilla JS (aucun framework)
 - **Backend** : serveur Python minimal (`backend/scanner.py`) — routes API REST + service des fichiers statiques
 - **Scanner** : Python (`backend/scanner.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
-- **Persistance** : `data/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
+- **Persistance** : `conf/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
 
 
 ### Internationalisation
@@ -62,7 +62,7 @@ Impacts principaux :
 **Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo`.
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data
+mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 # éditer compose.yaml — ajuster le chemin du volume
 docker compose up -d
@@ -80,10 +80,10 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                             # config.json, library.json, scanner.log
+      - ./data:/data                             # library.json, inventaire, recommandations, scanner.log
+      - ./conf:/conf                             # config.json, providers, règles, .secrets
       - /chemin/vers/ta/mediatheque:/library:ro  # médiathèque en lecture seule
     environment:
-      LIBRARY_PATH: /library
       # APP_PASSWORD: ""
     restart: unless-stopped
 ```
@@ -92,11 +92,27 @@ services:
 
 | Variable | Obligatoire | Défaut | Description |
 |---|---|---|---|
-| `LIBRARY_PATH` | ✅ | — | Chemin racine de la bibliothèque dans le conteneur |
 | `TZ` | ❌ | `UTC` | Fuseau horaire du conteneur (logs et timestamps) |
 | `APP_PASSWORD` | ❌ | — | Mot de passe (active l'écran de connexion) |
 
-Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
+Montez toujours vos médias dans `/library` en lecture seule. Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
+
+### Stockage runtime
+
+- `/data` contient les fichiers générés : `library.json`, `library_inventory.json`, `recommendations.json`, `scanner.log`.
+- `/conf` contient la configuration persistante : `config.json`, `providers_mapping.json`, `providers_logo.json`, `recommendations_rules.json`, `.secrets`.
+- `/library` est le point de montage fixe des médias.
+- `/tmp` est interne au conteneur et contient notamment `scan.lock`.
+
+Au démarrage, l'application migre automatiquement les anciens fichiers de configuration :
+
+- `/data/config.json` → `/conf/config.json`
+- `/data/providers_mapping.json` → `/conf/providers_mapping.json`
+- `/data/providers_logo.json` → `/conf/providers_logo.json`
+- `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`
+- `/app/.secrets` → `/conf/.secrets`
+
+Après migration réussie, les anciens fichiers sont supprimés. Si une source legacy et une destination existent avec un contenu différent, le démarrage est interrompu pour éviter d'écraser une configuration utilisateur.
 
 ### Mise à jour
 
@@ -108,12 +124,12 @@ docker compose pull && docker compose up -d
 
 ## 4. Structure de la bibliothèque
 
-Le scanner lit les **sous-dossiers directs** de `LIBRARY_PATH`. Chaque sous-dossier est un **dossier** auquel on assigne un type (Films, Séries, Ignorer) depuis l'interface.
+Le scanner lit les **sous-dossiers directs** de `/library`. Chaque sous-dossier est un **dossier** auquel on assigne un type (Films, Séries, Ignorer) depuis l'interface.
 
 ### Structure recommandée
 
 ```
-/library/                    ← LIBRARY_PATH
+/library/                    ← racine média fixe
 ├── movies/
 │   ├── Film (2010)/
 │   │   ├── Film.mkv
@@ -147,20 +163,19 @@ volumes:
   - /nas1/movies:/library/movies:ro
   - /nas2/series:/library/series:ro
   - ./data:/data
-environment:
-  LIBRARY_PATH: /library
+  - ./conf:/conf
 ```
 
 ---
 
 ## 5. Configuration initiale
 
-L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide).
+L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide dans `./conf`).
 
 **Étapes :**
 
 1. **Écran d'accueil** — description de l'application, choix de la langue, bouton "Commencer".
-2. **Dossiers** — liste des sous-dossiers de `LIBRARY_PATH`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'aucun dossier media (Films ou Séries) n'est configuré.
+2. **Dossiers** — liste des sous-dossiers de `/library`, assigner un type à chacun (Films / Séries / Ignorer). Les dossiers non configurés sont ignorés au scan. Le bouton "Suivant" est désactivé tant qu'aucun dossier media (Films ou Séries) n'est configuré.
 3. **Seerr** (optionnel) — URL + clé API, bouton de test de connexion.
 4. **Résumé + Scan** — affiche la configuration, bouton "Lancer le scan" qui démarre le scan initial et redirige vers la bibliothèque à la fin.
 
@@ -172,7 +187,7 @@ Le scanner est le composant central de MyMediaLibrary. Il lit le filesystem, par
 
 ### Vue d'ensemble
 
-Le scanner (`scanner.py`) analyse le contenu de `LIBRARY_PATH` et génère :
+Le scanner (`scanner.py`) analyse le contenu de `/library` et génère :
 
 | Fichier | Rôle |
 |---|---|
@@ -230,7 +245,7 @@ Les genres sont normalisés via un mapping externe : `app/mapping_genres.json`.
 
 ### Verrou anti-concurrence
 
-Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/data/.scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI) et éviter des écritures simultanées corrompant `library.json`.
+Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/tmp/scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI) et éviter des écritures simultanées corrompant `library.json`. `/tmp` reste interne au conteneur et ne doit pas être monté.
 
 Si un scan est déjà en cours :
 - Un scan déclenché via l'UI reçoit une réponse d'erreur (HTTP 409)
@@ -268,7 +283,7 @@ Fichier principal consommé par l'interface web. Structure globale :
 ```json
 {
   "scanned_at": "2025-04-14T20:00:00.000000",
-  "library_path": "/mnt/media/library",
+  "library_path": "/library",
   "total_items": 3289,
   "categories": ["Movies", "Series"],
   "items": [ ... ]
@@ -423,7 +438,7 @@ URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration i
 
 ### `providers_mapping.json` (fichier clé)
 
-- Le mapping runtime utilisé par l'application est `/data/providers_mapping.json`.
+- Le mapping runtime utilisé par l'application est `/conf/providers_mapping.json`.
 - Au premier démarrage, ce fichier est initialisé automatiquement depuis le fichier embarqué.
 - Ensuite, il n'est **jamais écrasé** automatiquement.
 - À la fin d'un enrichissement providers, les nouveaux providers bruts détectés sont ajoutés avec valeur `null`.
@@ -454,7 +469,7 @@ Interprétation :
 
 ### Personnaliser les providers affichés
 
-1. Ouvrir `/data/providers_mapping.json`.
+1. Ouvrir `/conf/providers_mapping.json`.
 2. Modifier les mappings.
 3. Recharger l'application (ou redémarrer le conteneur si nécessaire).
 
@@ -728,7 +743,7 @@ Les recommandations transforment l'analyse de la bibliothèque en liste d'action
 ### Moteur
 
 - Règles déterministes, sans IA générative.
-- Règles métier simples configurables via `/data/recommendations_rules.json`.
+- Règles métier simples configurables via `/conf/recommendations_rules.json`.
 - Règles structurelles côté backend pour les données manquantes et les incohérences de séries.
 
 ### Structure
@@ -831,7 +846,6 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 
 ### Onglet Bibliothèque
 
-- Chemin de la bibliothèque (`LIBRARY_PATH`, lecture seule si défini via compose.yaml)
 - Afficher/masquer Films ou Séries
 - Tableau des dossiers détectés : type (Films/Séries/Ignorer) + visibilité individuelle
 

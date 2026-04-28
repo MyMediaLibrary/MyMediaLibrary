@@ -36,3 +36,11 @@ class TestNginxAuthGuards(unittest.TestCase):
         self.assertIsNotNone(block)
         body = block.group("body")
         self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
+
+    def test_posters_use_fixed_library_root(self):
+        block = re.search(r"location /posters/ \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
+        self.assertIsNotNone(block)
+        body = block.group("body")
+        self.assertIn("root /library;", body)
+        self.assertNotIn("LIBRARY_PATH", self.conf)
+        self.assertNotIn("${", self.conf)

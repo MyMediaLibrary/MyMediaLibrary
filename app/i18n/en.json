@@ -5,7 +5,7 @@
     "start": "Get started →",
     "step_folders_title": "Configure your folders",
     "step_folders_desc": "Assign a type to each folder in your library.",
-    "no_folders": "No folders detected in LIBRARY_PATH.",
+    "no_folders": "No folders detected.",
     "unconfigured": "{n} unconfigured folder{s} — will be ignored during scan.",
     "folder_missing": "Not found",
     "folder_choose": "— choose —",
@@ -237,7 +237,6 @@
       "enable_seerr": "Enable Seerr"
     },
     "library": {
-      "path": "Library path",
       "enable_movies": "Show Movies",
       "enable_series": "Show Series",
       "folders": "Detected folders",
@@ -278,6 +277,8 @@
       "synopsis_hint": "Shows the synopsis when hovering over a card",
       "inventory_enabled": "Generate raw inventory",
       "inventory_enabled_hint": "Generates library_inventory.json in addition to library.json during scans.",
+      "media_probe_enabled": "ffprobe technical analysis",
+      "media_probe_enabled_hint": "Generates a comparison file with technical data extracted by ffprobe.",
       "cron": "Automatic scan (cron)",
       "cron_placeholder": "0 3 * * *",
       "cron_hint_invalid": "Invalid format (5 fields required)",

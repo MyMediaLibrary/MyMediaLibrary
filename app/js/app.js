@@ -520,7 +520,6 @@ let allItems=[], categories=[], groups=[];
     else console.info('[filters]', message);
   }
   let appConfig = {};            // loaded from /api/config
-  let libraryPathLabel = '';     // from library.json root field: library_path
   let appVersionInfo = null;     // loaded from /version.json
   let recommendationsDoc = null;
   let recommendationTypeFilters = new Set();
@@ -881,8 +880,6 @@ let allItems=[], categories=[], groups=[];
       document.getElementById('scanInfo').innerHTML=
         t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
-      libraryPathLabel = typeof data.library_path === 'string' ? data.library_path : '';
-      if (libraryPathLabel) document.getElementById('brandSub').textContent = libraryPathLabel;
       enableScore = resolveScoreEnabled();
       enableRecommendations = resolveRecommendationsEnabled();
       applyScoreFeatureVisibility();

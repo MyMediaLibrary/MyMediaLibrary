@@ -51,9 +51,9 @@ services:
       - "8094:80"
     volumes:
       - ./data:/data
+      - ./conf:/conf
       - /chemin/vers/ta/mediatheque:/library:ro
     environment:
-      LIBRARY_PATH: /library
       TZ: Europe/Paris
       # SEERR_URL: "http://seerr:5055"
       # SEERR_API_KEY: "your-seerr-api-key"
@@ -62,12 +62,21 @@ services:
 ```
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data
+mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
 # créer compose.yaml ci-dessus, puis :
 docker compose up -d
 ```
 
 Accéder à `http://localhost:8094` — un assistant de configuration s'affiche au premier démarrage.
+
+Stockage runtime :
+- `./data` contient les fichiers générés (`library.json`, inventaire, recommandations, `scanner.log`)
+- `./conf` contient la configuration persistante (`config.json`, providers, règles, `.secrets`)
+- `/library` est le point de montage fixe des médias dans le conteneur
+- `/tmp` reste interne au conteneur et n'est pas à monter
+
+Les anciens fichiers de configuration sont migrés automatiquement au démarrage :
+`/data/config.json` → `/conf/config.json`, `/data/providers_mapping.json` → `/conf/providers_mapping.json`, `/data/providers_logo.json` → `/conf/providers_logo.json`, `/data/recommendations_rules.json` → `/conf/recommendations_rules.json` et `/app/.secrets` → `/conf/.secrets`. En cas de conflit entre source legacy et destination, l'application refuse de démarrer pour éviter tout écrasement.
 
 > Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système**.
 
@@ -135,9 +144,9 @@ services:
       - "8094:80"
     volumes:
       - ./data:/data
+      - ./conf:/conf
       - /path/to/your/library:/library:ro
     environment:
-      LIBRARY_PATH: /library
       TZ: Europe/Paris
       # SEERR_URL: "http://seerr:5055"
       # SEERR_API_KEY: "your-seerr-api-key"
@@ -146,12 +155,21 @@ services:
 ```
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data
+mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
 # create compose.yaml above, then:
 docker compose up -d
 ```
 
 Open `http://localhost:8094` — a setup wizard appears on first launch.
+
+Runtime storage:
+- `./data` contains generated files (`library.json`, inventory, recommendations, `scanner.log`)
+- `./conf` contains persistent configuration (`config.json`, providers, rules, `.secrets`)
+- `/library` is the fixed media mount point inside the container
+- `/tmp` stays internal to the container and should not be mounted
+
+Old configuration files are migrated automatically on startup:
+`/data/config.json` → `/conf/config.json`, `/data/providers_mapping.json` → `/conf/providers_mapping.json`, `/data/providers_logo.json` → `/conf/providers_logo.json`, `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`, and `/app/.secrets` → `/conf/.secrets`. If a legacy source and destination conflict, startup stops to avoid overwriting user configuration.
 
 > Auto-scan schedule and log level are configured in **Settings > System**.
 

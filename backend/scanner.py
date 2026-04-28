@@ -49,6 +49,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
+    from backend import runtime_paths
+except Exception:
+    import runtime_paths  # type: ignore
+
+try:
     from backend.inventory_helpers import (
         apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
@@ -122,23 +127,40 @@ except Exception:
         def write_recommendations(items, output_path, now=None):
             return {"generated_at": None, "version": 1, "items": items}
 
+try:
+    from backend.media_probe import run_media_probe_if_enabled
+except Exception:
+    try:
+        from media_probe import run_media_probe_if_enabled
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[MEDIA_PROBE] media_probe import failed (%s). ffprobe comparison disabled.",
+            e,
+        )
+
+        def run_media_probe_if_enabled(*args, **kwargs):
+            return None
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
-OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
-INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
-RECOMMENDATIONS_OUTPUT_PATH = os.environ.get("RECOMMENDATIONS_OUTPUT_PATH", "/data/recommendations.json")
-RECOMMENDATIONS_DEFAULT_RULES_PATH = os.environ.get("RECOMMENDATIONS_DEFAULT_RULES_PATH", "/app/recommendations_rules.json")
-RECOMMENDATIONS_RULES_PATH = os.environ.get("RECOMMENDATIONS_RULES_PATH", "/data/recommendations_rules.json")
-CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
+LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
+OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
+LIBRARY_PROBE_OUTPUT_PATH = str(runtime_paths.LIBRARY_PROBE_JSON)
+INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
+RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
+DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
+RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
+RECOMMENDATIONS_RULES_PATH = str(runtime_paths.RECOMMENDATIONS_RULES_JSON)
+CONFIG_PATH = str(runtime_paths.CONFIG_JSON)
 SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
-SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
-SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
-PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
-PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
-PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
+SECRETS_PATH = str(runtime_paths.SECRETS_FILE)
+SCAN_LOCK_PATH = str(runtime_paths.SCAN_LOCK)
+PROVIDERS_MAPPING_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON)
+PROVIDERS_MAPPING_RUNTIME_PATH = str(runtime_paths.PROVIDERS_MAPPING_JSON)
+PROVIDERS_LOGO_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON)
+PROVIDERS_LOGO_PATH = str(runtime_paths.PROVIDERS_LOGO_JSON)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -157,7 +179,7 @@ def _set_global_log_level(raw_level: str | None) -> None:
         handler.setLevel(level)
 # Apply log_level from config.json if available (may be adjusted later via API too)
 try:
-    with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
+    with open(CONFIG_PATH, encoding="utf-8") as _cfg_f:
         _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
     _set_global_log_level(_cfg_loglevel)
 except Exception:
@@ -262,7 +284,7 @@ except ImportError:
     )
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
-_log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
+_log_file = str(runtime_paths.SCANNER_LOG)
 try:
     _fh = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=3)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -281,7 +303,7 @@ _JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — it
 
 
 def _load_secrets() -> dict:
-    """Load /app/.secrets (JSON). Returns {} if missing or unreadable."""
+    """Load the Seerr secrets JSON file. Returns {} if missing or unreadable."""
     try:
         with open(SECRETS_PATH, encoding="utf-8") as f:
             return json.load(f)
@@ -387,7 +409,7 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
 
 
 def _jsr_cfg() -> dict:
-    """Read Seerr settings. API key comes from /app/.secrets, rest from config.json."""
+    """Read Seerr settings. API key comes from the secrets file, rest from config.json."""
     cfg = load_config()
     jsr = cfg.get("seerr", {}) or cfg.get("jellyseerr", {})
     secrets = _load_secrets()
@@ -437,7 +459,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
 
 
 def _ensure_runtime_provider_mapping() -> None:
-    """Bootstrap /data providers mapping once: copy bundled file only if runtime file is absent."""
+    """Bootstrap providers mapping once: copy bundled file only if runtime file is absent."""
     runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
     if runtime_path.exists():
         return
@@ -450,6 +472,22 @@ def _ensure_runtime_provider_mapping() -> None:
             runtime_path.write_text("{}", encoding="utf-8")
     except Exception as e:
         log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
+
+
+def _ensure_runtime_providers_logo() -> None:
+    """Bootstrap providers logo mapping once without overwriting user config."""
+    runtime_path = Path(PROVIDERS_LOGO_PATH)
+    if runtime_path.exists():
+        return
+    try:
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path = Path(PROVIDERS_LOGO_SOURCE_PATH)
+        if source_path.exists():
+            shutil.copyfile(source_path, runtime_path)
+        else:
+            runtime_path.write_text("{}", encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[providers] Could not bootstrap providers logo file: {e}")
 
 
 def _load_runtime_provider_mapping() -> dict:
@@ -852,7 +890,7 @@ def migrate_env_to_config() -> None:
     if env_apikey and not secrets.get("seerr_apikey") and not jsr.get("apikey"):
         secrets["seerr_apikey"] = env_apikey
         _save_secrets(secrets)
-        log.info("[migrate] Seerr API key migrated to /app/.secrets")
+        log.info("[migrate] Seerr API key migrated to %s", SECRETS_PATH)
     # Remove apikey from config.json if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
@@ -912,6 +950,8 @@ def migrate_env_to_config() -> None:
         log.info("[MIGRATION] Env vars migrated to config.json")
     # Bootstrap runtime providers mapping once (non-destructive).
     _ensure_runtime_provider_mapping()
+    # Bootstrap runtime providers logo mapping once (non-destructive).
+    _ensure_runtime_providers_logo()
     # Bootstrap editable recommendations rules once (non-destructive).
     try:
         ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
@@ -1035,9 +1075,28 @@ def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int |
     return None, None
 
 
+def build_season_id(item_id: str, season) -> str | None:
+    season_num = _safe_int(season, None)
+    if not item_id or season_num is None or season_num < 0:
+        return None
+    return f"{item_id}:s{season_num:02d}"
+
+
+def build_episode_id(item_id: str, season=None, episode=None) -> str | None:
+    episode_num = _safe_int(episode, None)
+    if not item_id or episode_num is None or episode_num <= 0:
+        return None
+    season_num = _safe_int(season, None)
+    if season_num is not None and season_num >= 0:
+        return f"{item_id}:s{season_num:02d}e{episode_num:02d}"
+    return f"{item_id}:e{episode_num:03d}"
+
+
 def _build_episode_dedupe_key(season_num: int | None, episode_num: int | None, fallback: str) -> str:
     if season_num is not None and episode_num is not None:
-        return f"s{season_num:02d}e{episode_num:03d}"
+        return f"s{season_num:02d}e{episode_num:02d}"
+    if season_num is None and episode_num is not None:
+        return f"e{episode_num:03d}"
     return fallback.casefold()
 
 
@@ -1087,7 +1146,7 @@ def _prefer_episode_metadata(current: dict | None, candidate: dict) -> dict:
     return current
 
 
-def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) -> dict | None:
+def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None, item_id: str | None = None) -> dict | None:
     try:
         root = ET.parse(nfo_path).getroot()
     except Exception:
@@ -1102,9 +1161,6 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
             season_num = inferred_season
         if episode_num is None:
             episode_num = inferred_episode
-    if season_num is None:
-        season_num = 1
-
     video = root.find(".//fileinfo/streamdetails/video")
     audio = root.find(".//fileinfo/streamdetails/audio")
 
@@ -1155,7 +1211,8 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
         episode_num,
         fallback=_episode_fallback_key(nfo_path, series_dir),
     )
-    return {
+    episode_id = build_episode_id(item_id, season=season_num, episode=episode_num)
+    out = {
         "season": season_num,
         "episode": episode_num,
         "dedupe_key": dedupe_key,
@@ -1175,9 +1232,12 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
         "hdr_type": hdr_type,
         "runtime_min": runtime_min,
     }
+    if episode_id:
+        out["episode_id"] = episode_id
+    return out
 
 
-def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) -> list[dict]:
+def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str], item_id: str | None = None) -> list[dict]:
     parsed: list[dict] = []
     try:
         files = sorted(
@@ -1191,8 +1251,6 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
         if video.with_suffix(".nfo").exists():
             continue
         season_num, episode_num = _extract_season_episode_from_name(str(video))
-        if season_num is None:
-            season_num = 1
         key = _build_episode_dedupe_key(
             season_num,
             episode_num,
@@ -1204,7 +1262,8 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
             size_b = int(video.stat().st_size)
         except Exception:
             size_b = 0
-        parsed.append({
+        episode_id = build_episode_id(item_id, season=season_num, episode=episode_num)
+        ep = {
             "season": season_num,
             "episode": episode_num,
             "dedupe_key": key,
@@ -1223,11 +1282,14 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
             "hdr": False,
             "hdr_type": None,
             "runtime_min": None,
-        })
+        }
+        if episode_id:
+            ep["episode_id"] = episode_id
+        parsed.append(ep)
     return parsed
 
 
-def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
+def collect_series_episode_metadata(series_dir: Path, item_id: str | None = None) -> list[dict]:
     deduped: dict[str, dict] = {}
     try:
         nfo_candidates = sorted(
@@ -1238,13 +1300,13 @@ def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
         nfo_candidates = []
 
     for nfo_path in nfo_candidates:
-        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir)
+        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir, item_id=item_id)
         if not isinstance(ep, dict):
             continue
         key = ep["dedupe_key"]
         deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
 
-    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys())):
+    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys()), item_id=item_id):
         key = ep["dedupe_key"]
         deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
 
@@ -1346,6 +1408,13 @@ def _dominant_value_from_seasons(seasons: list[dict], field: str):
     return sorted(weighted.items(), key=lambda x: (-x[1], str(x[0])))[0][0]
 
 
+def _dominant_series_value(seasons: list[dict], episodes: list[dict], field: str):
+    value = _dominant_value_from_seasons(seasons, field)
+    if value not in (None, "", []):
+        return value
+    return _dominant_value([e.get(field) for e in episodes])
+
+
 def _aggregate_audio_languages_from_seasons(seasons: list[dict]) -> list[str]:
     total_weight = sum(_season_weight(s) for s in seasons if isinstance(s, dict))
     if total_weight <= 0:
@@ -1428,6 +1497,7 @@ def aggregate_season_metadata(
     season_number: int,
     season_episodes: list[dict],
     *,
+    item_id: str | None = None,
     episodes_expected: int | None = None,
     score_config: dict | None = None,
     include_quality: bool = True,
@@ -1479,6 +1549,9 @@ def aggregate_season_metadata(
         "size_b": size_b,
         "size": format_size(size_b),
     }
+    season_id = build_season_id(item_id or "", season_number)
+    if season_id:
+        out["season_id"] = season_id
     if include_quality:
         season_item_for_score = {
             "type": "tv",
@@ -1501,16 +1574,19 @@ def aggregate_season_metadata(
 def aggregate_series_metadata(
     series_episodes: list[dict],
     *,
+    item_id: str | None = None,
     score_config: dict | None = None,
     season_expected_counts: dict[int, int] | None = None,
     include_quality: bool = True,
 ) -> dict:
     by_season: dict[int, list[dict]] = defaultdict(list)
+    seasonless_episodes: list[dict] = []
     for ep in series_episodes:
-        season_num = _safe_int(ep.get("season"), 1)
+        season_num = _safe_int(ep.get("season"), None)
         if season_num is None:
-            season_num = 1
-        by_season[int(season_num)].append(ep)
+            seasonless_episodes.append(ep)
+        else:
+            by_season[int(season_num)].append(ep)
 
     seasons: list[dict] = []
     expected = season_expected_counts or {}
@@ -1521,36 +1597,43 @@ def aggregate_series_metadata(
             aggregate_season_metadata(
                 season_num,
                 season_eps,
+                item_id=item_id,
                 episodes_expected=expected.get(season_num),
                 score_config=score_config,
                 include_quality=include_quality,
             )
         )
 
-    resolution = _dominant_value_from_seasons(seasons, "resolution")
-    width = _dominant_value_from_seasons(seasons, "width")
-    height = _dominant_value_from_seasons(seasons, "height")
-    codec = _dominant_value_from_seasons(seasons, "codec")
-    audio_codec_raw = _dominant_value_from_seasons(seasons, "audio_codec_raw")
-    audio_codec = _dominant_value_from_seasons(seasons, "audio_codec")
-    audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in series_episodes])
-    hdr_type = _dominant_value_from_seasons(seasons, "hdr_type")
-    hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict))
+    all_episodes = [*series_episodes]
+    resolution = _dominant_series_value(seasons, all_episodes, "resolution")
+    width = _dominant_series_value(seasons, all_episodes, "width")
+    height = _dominant_series_value(seasons, all_episodes, "height")
+    codec = _dominant_series_value(seasons, all_episodes, "codec")
+    audio_codec_raw = _dominant_series_value(seasons, all_episodes, "audio_codec_raw")
+    audio_codec = _dominant_series_value(seasons, all_episodes, "audio_codec")
+    audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in all_episodes])
+    hdr_type = _dominant_series_value(seasons, all_episodes, "hdr_type")
+    hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict)) or any(bool(e.get("hdr")) for e in all_episodes)
 
     season_runtime_totals = [
         _safe_int((s or {}).get("runtime_min_total"), 0) or 0
         for s in seasons
         if isinstance(s, dict)
     ]
-    runtime_min = int(sum(season_runtime_totals)) if season_runtime_totals else 0
-    episode_count = int(sum((_safe_int((s or {}).get("episodes_found"), 0) or 0) for s in seasons if isinstance(s, dict)))
+    seasonless_runtimes = [
+        _safe_int(e.get("runtime_min"), 0) or 0
+        for e in seasonless_episodes
+        if isinstance(e, dict)
+    ]
+    runtime_min = int(sum(season_runtime_totals) + sum(seasonless_runtimes)) if season_runtime_totals or seasonless_runtimes else 0
+    episode_count = int(sum((_safe_int((s or {}).get("episodes_found"), 0) or 0) for s in seasons if isinstance(s, dict))) + len(seasonless_episodes)
     runtime_min_avg = int(round(runtime_min / episode_count)) if runtime_min > 0 and episode_count > 0 else None
     season_count = len(seasons)
-    size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)))
+    size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)) + sum((_safe_int((e or {}).get("size_b"), 0) or 0) for e in seasonless_episodes if isinstance(e, dict)))
 
-    audio_languages = _aggregate_audio_languages_from_seasons(seasons)
-    subtitle_languages = _aggregate_subtitle_languages_from_episodes(series_episodes) or None
-    video_bitrate = _average_video_bitrate_from_episodes(series_episodes)
+    audio_languages = sorted(set(_aggregate_audio_languages_from_seasons(seasons)) | set(_aggregate_audio_languages_from_episodes(seasonless_episodes)))
+    subtitle_languages = _aggregate_subtitle_languages_from_episodes(all_episodes) or None
+    video_bitrate = _average_video_bitrate_from_episodes(all_episodes)
     audio_languages_simple = simplify_audio_languages(audio_languages)
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
@@ -1728,6 +1811,7 @@ def merge_series_expected_counts_from_seerr(series_item: dict, expected_counts: 
             placeholder = aggregate_season_metadata(
                 int(season_num),
                 [],
+                item_id=series_item.get("id"),
                 episodes_expected=expected_ep,
                 score_config=None,
             )
@@ -1963,22 +2047,44 @@ _DEFAULT_CONFIG: dict = {
     "recommendations": {
         "enabled": False,
     },
+    "media_probe": {
+        "enabled": False,
+        "mode": "compare",
+        "workers": 4,
+        "cache_enabled": True,
+    },
     "score_configuration": get_builtin_score_defaults(),
 }
 
 
+def _load_default_config() -> dict:
+    try:
+        with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return copy.deepcopy(payload)
+    except Exception:
+        pass
+    return copy.deepcopy(_DEFAULT_CONFIG)
+
+
 def load_config() -> dict:
+    config_exists = Path(CONFIG_PATH).exists()
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception:
-        cfg = copy.deepcopy(_DEFAULT_CONFIG)
+        cfg = _load_default_config()
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
         cfg, rec_changed = normalize_recommendations_configuration(cfg)
-        if seerr_changed or changed or rec_changed:
-            save_config(cfg)
+        cfg, probe_changed = normalize_media_probe_configuration(cfg)
+        if seerr_changed or changed or rec_changed or probe_changed or not config_exists:
+            try:
+                save_config(cfg)
+            except Exception as e:
+                log.warning("[config] Could not initialize %s: %s", CONFIG_PATH, e)
     return cfg
 
 
@@ -2051,6 +2157,25 @@ def _is_recommendations_enabled(cfg: dict | None) -> bool:
         return False
     rec = (cfg or {}).get("recommendations")
     return isinstance(rec, dict) and rec.get("enabled") is True
+
+
+def normalize_media_probe_configuration(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    probe = cfg.get("media_probe")
+    enabled = isinstance(probe, dict) and probe.get("enabled") is True
+    mode = (probe or {}).get("mode") if isinstance(probe, dict) else None
+    workers = _clamp_int(_as_int(probe.get("workers") if isinstance(probe, dict) else None, 4), 1, 8)
+    cache_enabled = True if not isinstance(probe, dict) else probe.get("cache_enabled") is not False
+    normalized = {
+        "enabled": bool(enabled),
+        "mode": "compare" if mode in (None, "", "compare") else str(mode),
+        "workers": workers,
+        "cache_enabled": bool(cache_enabled),
+    }
+    if probe != normalized:
+        cfg["media_probe"] = normalized
+        changed = True
+    return cfg, changed
 
 
 def normalize_recommendations_configuration(cfg: dict) -> tuple[dict, bool]:
@@ -2696,9 +2821,10 @@ def scan_media_item(
         tvshow_nfo = media_dir / "tvshow.nfo"
         if tvshow_nfo.exists():
             nfo_meta = parse_tvshow_nfo(tvshow_nfo)
-        series_episodes = collect_series_episode_metadata(media_dir)
+        series_episodes = collect_series_episode_metadata(media_dir, item_id=lib_id)
         series_agg = aggregate_series_metadata(
             series_episodes,
+            item_id=lib_id,
             score_config=score_config if isinstance(score_config, dict) else None,
             include_quality=bool(enable_score),
         )
@@ -2715,6 +2841,7 @@ def scan_media_item(
                 if isinstance(season_expected, dict):
                     series_agg = aggregate_series_metadata(
                         series_episodes,
+                        item_id=lib_id,
                         score_config=score_config if isinstance(score_config, dict) else None,
                         season_expected_counts=season_expected,
                         include_quality=bool(enable_score),
@@ -3555,6 +3682,31 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
             run_inventory(scan_mode=scan_mode, only_category=only_category)
         elif phase == PHASE_RECOMMENDATIONS:
             run_recommendations()
+    _run_media_probe_post_scan()
+
+
+def _run_media_probe_post_scan() -> None:
+    cfg = load_config()
+    if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
+        return
+    if cfg["media_probe"].get("mode", "compare") != "compare":
+        log.warning("[MEDIA_PROBE] Unsupported mode %r — skipping", cfg["media_probe"].get("mode"))
+        return
+    if not Path(OUTPUT_PATH).exists():
+        log.info("[MEDIA_PROBE] Skipping — library.json does not exist")
+        return
+    _, effective_score_config, _ = get_effective_score_config(cfg)
+    try:
+        run_media_probe_if_enabled(
+            cfg,
+            library_json_path=OUTPUT_PATH,
+            output_path=LIBRARY_PROBE_OUTPUT_PATH,
+            library_root=LIBRARY_PATH,
+            score_enabled=_is_score_enabled(cfg),
+            score_config=effective_score_config,
+        )
+    except Exception as e:
+        log.exception("[MEDIA_PROBE] Failed to generate library_probe.json: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -4074,6 +4226,24 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
+def _is_scan_running() -> bool:
+    with _srv_lock:
+        running = _srv_state["status"] == "running"
+    return running or _is_scan_locked()
+
+
+def _log_post_save_scan_skipped() -> None:
+    log.info("[SETTINGS] Settings saved; post-save scan skipped because a scan is already running")
+
+
+def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
+    if _is_scan_running():
+        _log_post_save_scan_skipped()
+        return False
+    threading.Thread(target=_run_scan_bg, args=(mode, phases, None, "manual"), daemon=True).start()
+    return True
+
+
 def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
@@ -4251,8 +4421,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 version = resp.get("applicationVersion") or resp.get("version") or "?"
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
         elif path == "/health":
-            output = os.environ.get("OUTPUT_PATH", "/data/library.json")
-            ok = os.path.exists(output)
+            ok = os.path.exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {
                 "status": "ok" if ok else "degraded",
                 "library_json": ok,
@@ -4333,10 +4502,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_update(self, payload: dict) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             valid, err = validate_score_payload(payload, defaults, strict=True)
             if not valid:
@@ -4354,25 +4519,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] PUT /api/settings/score failed: %s", e)
             self._json(500, {
@@ -4386,10 +4561,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_reset(self) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             cfg = load_config()
             cfg["score_configuration"] = copy.deepcopy(defaults)
@@ -4400,25 +4571,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] POST /api/settings/score/reset failed: %s", e)
             self._json(500, {
@@ -4508,10 +4689,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running", "phases": _srv_state.get("phases", [])}); return
+                    log.info("[SCAN] Scan already running — refusing new scan request")
+                    self._json(409, self._scan_running_error_payload()); return
             if _is_scan_locked():
                 log.info("[SCAN] Scan already running — refusing new scan request")
-                self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running"}); return
+                self._json(409, self._scan_running_error_payload()); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
@@ -4599,12 +4781,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             )
             response = {"ok": True, "phases": phases}
             if phases:
-                if _is_scan_locked():
-                    log.info("[config] Phase plan %s skipped — scan already running", phases)
+                if not _start_post_save_scan_if_idle("phased", phases):
                     response["scan_skipped"] = "running"
                 else:
                     log.info("[config] Triggering phased scan from config save: %s", phases)
-                    threading.Thread(target=_run_scan_bg, args=("phased", phases, None, "manual"), daemon=True).start()
             self._json(200, response)
 
         elif path == "/api/settings/score":
