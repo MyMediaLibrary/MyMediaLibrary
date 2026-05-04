@@ -57,7 +57,6 @@ services:
       TZ: Europe/Paris
       # SEERR_URL: "http://seerr:5055"
       # SEERR_API_KEY: "your-seerr-api-key"
-      # APP_PASSWORD: ""
     restart: unless-stopped
 ```
 
@@ -68,6 +67,7 @@ docker compose up -d
 ```
 
 Accéder à `http://localhost:8094` — un assistant de configuration s'affiche au premier démarrage.
+L'authentification par mot de passe se configure dans cet assistant, puis dans **Paramètres > Configuration**. Le mot de passe n'est jamais passé par variable d'environnement et seul son hash est stocké dans `/conf/.secrets`.
 
 Stockage runtime :
 - `./data` contient les fichiers générés (`library.json`, inventaire, recommandations, `scanner.log`)
@@ -150,7 +150,6 @@ services:
       TZ: Europe/Paris
       # SEERR_URL: "http://seerr:5055"
       # SEERR_API_KEY: "your-seerr-api-key"
-      # APP_PASSWORD: ""
     restart: unless-stopped
 ```
 
@@ -161,6 +160,7 @@ docker compose up -d
 ```
 
 Open `http://localhost:8094` — a setup wizard appears on first launch.
+Password authentication is configured in that wizard, then in **Settings > Configuration**. The password is never passed through an environment variable and only its hash is stored in `/conf/.secrets`.
 
 Runtime storage:
 - `./data` contains generated files (`library.json`, inventory, recommendations, `scanner.log`)

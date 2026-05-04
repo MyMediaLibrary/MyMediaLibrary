@@ -13,6 +13,11 @@ const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/sta
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
 const frI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/fr.json'), 'utf8'));
 const enI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/en.json'), 'utf8'));
+const scannerSource = fs.readFileSync(path.resolve(__dirname, '../../../backend/scanner.py'), 'utf8');
+const composeSource = fs.readFileSync(path.resolve(__dirname, '../../../compose.yaml'), 'utf8');
+const readmeSource = fs.readFileSync(path.resolve(__dirname, '../../../README.md'), 'utf8');
+const docsFrSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/fr.md'), 'utf8');
+const docsEnSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/en.md'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
   const start = source.indexOf(`function ${functionName}(`);
@@ -208,6 +213,33 @@ test('settings exposes media probe toggle without using probe output as UI data'
   assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*workers: currentMediaProbe\.workers \|\| 4,[\s\S]*cache_enabled: currentMediaProbe\.cache_enabled !== false[\s\S]*\};/, 'settings save should persist compare mode and preserve backend performance defaults');
   assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
   assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
+});
+
+test('auth password is configured through onboarding/settings and never via environment docs', () => {
+  assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose auth enable toggle');
+  assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
+  assert.match(indexSource, /id="cfgAuthConfirm"/, 'settings should expose password confirmation');
+  assert.equal(frI18n.onboarding.step_auth_title, 'Authentification');
+  assert.equal(enI18n.onboarding.step_auth_title, 'Authentication');
+  assert.equal(frI18n.settings.auth.status_enabled, 'Authentification activée');
+  assert.equal(enI18n.settings.auth.status_enabled, 'Authentication enabled');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgAuthEnabled', _isAuthEnabled\(\)\);/, 'settings should read auth enabled state without a hash');
+  assert.match(loadBlock, /_rw\('cfgAuthPassword', ''\);/, 'settings should never prefill auth password');
+  assert.match(loadBlock, /_rw\('cfgAuthConfirm', ''\);/, 'settings should never prefill auth confirmation');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: authEnabled === true \};/, 'settings save should send auth enabled state');
+  assert.match(saveBlock, /partial\.auth\.password = authPassword;/, 'settings save should send new password only when entered');
+  assert.match(saveBlock, /partial\.auth\.password_confirm = authConfirm;/, 'settings save should send confirmation only when entered');
+  assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
+
+  const onboardingSaveBlock = functionBlock(settingsSource, 'onbLaunchScan');
+  assert.match(settingsSource, /else if \(_onbStep === 4\) panel\.innerHTML = _onbStep4HTML\(\);/, 'onboarding should insert auth before summary');
+  assert.match(onboardingSaveBlock, /auth: _onbAuth\.enabled[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding should submit auth password only through /api/config');
+  assert.doesNotMatch(scannerSource, /APP_PASSWORD/, 'backend runtime should not read APP_PASSWORD');
+  assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
 });
 
 test('frontend does not expose or persist library root path settings', () => {

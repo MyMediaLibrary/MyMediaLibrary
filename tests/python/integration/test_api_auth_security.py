@@ -1,6 +1,5 @@
 import http.server
 import json
-import os
 import pathlib
 import tempfile
 import threading
@@ -14,8 +13,15 @@ from backend import scanner
 class TestApiAuthSecurity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._old_password = os.environ.get("APP_PASSWORD")
-        os.environ["APP_PASSWORD"] = "test-password"
+        cls._old_secrets_path = scanner.SECRETS_PATH
+        cls._old_config_path = scanner.CONFIG_PATH
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(cls._tmp.name)
+        cls._secrets_path = root / ".secrets"
+        cls._config_path = root / "config.json"
+        scanner.SECRETS_PATH = str(cls._secrets_path)
+        scanner.CONFIG_PATH = str(cls._config_path)
+        cls._write_auth_hash("test-password")
 
         scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
@@ -41,15 +47,20 @@ class TestApiAuthSecurity(unittest.TestCase):
 
         scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
-
-        if cls._old_password is None:
-            os.environ.pop("APP_PASSWORD", None)
-        else:
-            os.environ["APP_PASSWORD"] = cls._old_password
+        scanner.SECRETS_PATH = cls._old_secrets_path
+        scanner.CONFIG_PATH = cls._old_config_path
+        cls._tmp.cleanup()
 
     def setUp(self):
         scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
+        self._write_auth_hash("test-password")
+
+    @classmethod
+    def _write_auth_hash(cls, password: str):
+        cls._secrets_path.write_text(json.dumps({
+            "auth_password_hash": scanner._auth_hash_password(password),
+        }), encoding="utf-8")
 
     @classmethod
     def _url(cls, path: str) -> str:
@@ -133,21 +144,76 @@ class TestApiAuthSecurity(unittest.TestCase):
         status, _, _ = self._request("/api/auth/validate", headers={"Cookie": cookie_pair})
         self.assertEqual(status, 401)
 
+    def test_legacy_plaintext_secret_migrates_to_hash_after_successful_login(self):
+        self._secrets_path.write_text("legacy-password", encoding="utf-8")
+
+        status, body, _ = self._request("/api/auth", method="POST", payload={"password": "legacy-password"})
+        self.assertEqual(status, 200)
+        self.assertIn('"ok": true', body.lower())
+
+        stored = json.loads(self._secrets_path.read_text(encoding="utf-8"))
+        self.assertIn("auth_password_hash", stored)
+        self.assertNotIn("legacy-password", self._secrets_path.read_text(encoding="utf-8"))
+        self.assertTrue(scanner._auth_check_password_hash(stored["auth_password_hash"], "legacy-password"))
+
+    def test_legacy_dot_secret_file_migrates_to_hash_after_successful_login(self):
+        self._secrets_path.unlink(missing_ok=True)
+        legacy_path = self._secrets_path.with_name(".secret")
+        legacy_path.write_text("legacy-dot-secret", encoding="utf-8")
+
+        status, body, _ = self._request("/api/auth", method="POST", payload={"password": "legacy-dot-secret"})
+        self.assertEqual(status, 200)
+        self.assertIn('"ok": true', body.lower())
+
+        self.assertFalse(legacy_path.exists())
+        stored = json.loads(self._secrets_path.read_text(encoding="utf-8"))
+        self.assertTrue(scanner._auth_check_password_hash(stored["auth_password_hash"], "legacy-dot-secret"))
+
+    def test_config_api_never_exposes_auth_hash(self):
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+        status, body, _ = self._request("/api/config", headers={"Cookie": cookie_pair})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload.get("auth"), {"enabled": True})
+        self.assertNotIn("auth_password_hash", body)
+        self.assertNotIn("test-password", body)
+
+    def test_config_api_writes_only_hash_for_auth_password(self):
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+        status, body, headers = self._request(
+            "/api/config",
+            method="POST",
+            headers={"Cookie": cookie_pair},
+            payload={"auth": {"enabled": True, "password": "new-password", "password_confirm": "new-password"}},
+        )
+        self.assertEqual(status, 200, body)
+        self.assertIn("mml_session=", headers.get("Set-Cookie") or "")
+
+        raw = self._secrets_path.read_text(encoding="utf-8")
+        self.assertNotIn("new-password", raw)
+        stored = json.loads(raw)
+        self.assertTrue(scanner._auth_check_password_hash(stored["auth_password_hash"], "new-password"))
+
 
 class TestRecommendationsApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._old_password = os.environ.get("APP_PASSWORD")
         cls._old_config_path = scanner.CONFIG_PATH
         cls._old_recommendations_output_path = scanner.RECOMMENDATIONS_OUTPUT_PATH
+        cls._old_secrets_path = scanner.SECRETS_PATH
         cls._tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(cls._tmp.name)
         cls._config_path = root / "config.json"
         cls._recommendations_path = root / "recommendations.json"
+        cls._secrets_path = root / ".secrets"
 
-        os.environ["APP_PASSWORD"] = ""
         scanner.CONFIG_PATH = str(cls._config_path)
         scanner.RECOMMENDATIONS_OUTPUT_PATH = str(cls._recommendations_path)
+        scanner.SECRETS_PATH = str(cls._secrets_path)
 
         cls._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), scanner._ScanHandler)
         cls._port = cls._server.server_address[1]
@@ -162,10 +228,7 @@ class TestRecommendationsApi(unittest.TestCase):
 
         scanner.CONFIG_PATH = cls._old_config_path
         scanner.RECOMMENDATIONS_OUTPUT_PATH = cls._old_recommendations_output_path
-        if cls._old_password is None:
-            os.environ.pop("APP_PASSWORD", None)
-        else:
-            os.environ["APP_PASSWORD"] = cls._old_password
+        scanner.SECRETS_PATH = cls._old_secrets_path
         cls._tmp.cleanup()
 
     def setUp(self):

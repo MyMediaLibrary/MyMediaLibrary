@@ -347,6 +347,22 @@
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.media_probe_enabled_hint">Génère un fichier de comparaison avec les données techniques extraites par ffprobe.</div>
             <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.auth.enabled">Authentification par mot de passe</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgAuthEnabled" onchange="toggleAuthFields()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+            <div class="settings-note" id="cfgAuthStatus" style="margin-bottom:8px" data-i18n="settings.auth.status_disabled">Authentification désactivée</div>
+            <div id="cfgAuthFields" style="display:none">
+              <div class="settings-row" style="margin-bottom:8px">
+                <label class="settings-label" data-i18n="settings.auth.new_password">Nouveau mot de passe</label>
+                <input type="password" id="cfgAuthPassword" class="settings-input" autocomplete="new-password"/>
+              </div>
+              <div class="settings-row" style="margin-bottom:8px">
+                <label class="settings-label" data-i18n="settings.auth.confirm_password">Confirmation</label>
+                <input type="password" id="cfgAuthConfirm" class="settings-input" autocomplete="new-password"/>
+              </div>
+              <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.auth.password_hint">Laissez vide pour conserver le mot de passe actuel.</div>
+            </div>
+            <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore"/><span class="toggle-switch-slider"></span></label>
             </div>

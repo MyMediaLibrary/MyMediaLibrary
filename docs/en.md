@@ -83,7 +83,7 @@ services:
       - ./conf:/conf                        # config.json, providers, rules, .secrets
       - /path/to/your/library:/library:ro   # your media library, read-only
     environment:
-      # APP_PASSWORD: ""
+      TZ: Europe/Paris
     restart: unless-stopped
 ```
 
@@ -92,9 +92,8 @@ services:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TZ` | ❌ | `UTC` | Container timezone (logs and timestamps) |
-| `APP_PASSWORD` | ❌ | — | Password (enables login screen) |
 
-Always mount your media to `/library` read-only. Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
+Always mount your media to `/library` read-only. Password authentication is configured during onboarding and later in **Settings > Configuration**; only a hash is stored in `/conf/.secrets`. Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
 
 ### Runtime storage
 

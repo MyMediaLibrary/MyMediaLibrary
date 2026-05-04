@@ -21,9 +21,11 @@ Filters (combinable with any mode):
 """
 
 import argparse
+import base64
 import contextlib
 import copy
 import fcntl
+import hashlib
 import hmac
 import http.server
 import json
@@ -306,22 +308,169 @@ def _load_secrets() -> dict:
     """Load the Seerr secrets JSON file. Returns {} if missing or unreadable."""
     try:
         with open(SECRETS_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
 
 
-def _save_secrets(data: dict) -> None:
+def _write_secrets(data: dict) -> None:
     """Write secrets dict to SECRETS_PATH with mode 600."""
+    output = Path(SECRETS_PATH)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(data, f)
     try:
-        with open(SECRETS_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        try:
-            os.chmod(SECRETS_PATH, 0o600)
-        except OSError as e:
-            log.error(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
+        os.chmod(output, 0o600)
+    except OSError as e:
+        log.warning(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
+
+
+def _save_secrets(data: dict) -> None:
+    try:
+        _write_secrets(data)
     except Exception as e:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
+
+
+_AUTH_PASSWORD_HASH_KEY = "auth_password_hash"
+_AUTH_LEGACY_PASSWORD_KEYS = ("auth_password", "app_password", "password")
+_AUTH_HASH_SCHEME = "pbkdf2_sha256"
+_AUTH_HASH_ITERATIONS = 260_000
+_AUTH_MIN_PASSWORD_LENGTH = 8
+
+
+def _auth_legacy_secret_paths() -> list[Path]:
+    current_conf_dir = Path(SECRETS_PATH).parent
+    return [
+        Path(SECRETS_PATH),
+        current_conf_dir / ".secret",
+        Path(runtime_paths.DATA_DIR) / ".secret",
+        Path(runtime_paths.APP_DIR) / ".secret",
+    ]
+
+
+def _auth_hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        _AUTH_HASH_ITERATIONS,
+    )
+    return "$".join((
+        _AUTH_HASH_SCHEME,
+        str(_AUTH_HASH_ITERATIONS),
+        base64.urlsafe_b64encode(salt).decode("ascii"),
+        base64.urlsafe_b64encode(digest).decode("ascii"),
+    ))
+
+
+def _auth_is_hash(value) -> bool:
+    return isinstance(value, str) and value.startswith(f"{_AUTH_HASH_SCHEME}$")
+
+
+def _auth_check_password_hash(stored_hash: str, password: str) -> bool:
+    try:
+        scheme, iterations_raw, salt_raw, digest_raw = stored_hash.split("$", 3)
+        if scheme != _AUTH_HASH_SCHEME:
+            return False
+        iterations = int(iterations_raw)
+        salt = base64.urlsafe_b64decode(salt_raw.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_raw.encode("ascii"))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def _auth_legacy_plaintext_from_current_file() -> str | None:
+    path = Path(SECRETS_PATH)
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    if not raw or raw.startswith("{"):
+        return None
+    return raw
+
+
+def _auth_plaintext_candidates(secrets_data: dict | None = None) -> list[tuple[str, Path | None, str | None]]:
+    candidates: list[tuple[str, Path | None, str | None]] = []
+    data = secrets_data if isinstance(secrets_data, dict) else _load_secrets()
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            candidates.append((value, None, key))
+    current_plaintext = _auth_legacy_plaintext_from_current_file()
+    if current_plaintext:
+        candidates.append((current_plaintext, Path(SECRETS_PATH), None))
+    for path in _auth_legacy_secret_paths()[1:]:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if value:
+            candidates.append((value, path, None))
+    return candidates
+
+
+def _auth_is_configured() -> bool:
+    secrets_data = _load_secrets()
+    if _auth_is_hash(secrets_data.get(_AUTH_PASSWORD_HASH_KEY)):
+        return True
+    return bool(_auth_plaintext_candidates(secrets_data))
+
+
+def _auth_migrate_plaintext_password(password: str, *, legacy_path: Path | None = None, legacy_key: str | None = None) -> None:
+    data = _load_secrets()
+    data[_AUTH_PASSWORD_HASH_KEY] = _auth_hash_password(password)
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        data.pop(key, None)
+    _write_secrets(data)
+    if legacy_path and legacy_path != Path(SECRETS_PATH):
+        with contextlib.suppress(Exception):
+            legacy_path.unlink(missing_ok=True)
+    log.info("[auth] Legacy plaintext password migrated to hash")
+
+
+def _auth_verify_password(password: str) -> bool:
+    if not isinstance(password, str) or not password:
+        return False
+    secrets_data = _load_secrets()
+    stored_hash = secrets_data.get(_AUTH_PASSWORD_HASH_KEY)
+    if _auth_is_hash(stored_hash):
+        return _auth_check_password_hash(stored_hash, password)
+    for legacy_password, legacy_path, legacy_key in _auth_plaintext_candidates(secrets_data):
+        if hmac.compare_digest(legacy_password, password):
+            _auth_migrate_plaintext_password(password, legacy_path=legacy_path, legacy_key=legacy_key)
+            return True
+    return False
+
+
+def _apply_auth_secret_update(payload: dict, secrets_data: dict) -> str:
+    auth_payload = payload.pop("auth", None)
+    if not isinstance(auth_payload, dict):
+        return "not modified"
+    enabled = auth_payload.get("enabled") is True
+    clear_requested = auth_payload.get("clear_password") is True
+    if clear_requested or not enabled:
+        secrets_data.pop(_AUTH_PASSWORD_HASH_KEY, None)
+        for key in _AUTH_LEGACY_PASSWORD_KEYS:
+            secrets_data.pop(key, None)
+        return "disabled"
+    password = auth_payload.get("password")
+    confirm = auth_payload.get("password_confirm", auth_payload.get("confirm_password"))
+    if not isinstance(password, str) or len(password) < _AUTH_MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must contain at least {_AUTH_MIN_PASSWORD_LENGTH} characters")
+    if password != confirm:
+        raise ValueError("Password confirmation does not match")
+    secrets_data[_AUTH_PASSWORD_HASH_KEY] = _auth_hash_password(password)
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        secrets_data.pop(key, None)
+    return "updated"
 
 
 def _redact_config_payload(payload: dict) -> dict:
@@ -331,6 +480,11 @@ def _redact_config_payload(payload: dict) -> dict:
         jsr = safe_payload.get(key)
         if isinstance(jsr, dict) and "apikey" in jsr:
             jsr["apikey"] = "***"
+    auth = safe_payload.get("auth")
+    if isinstance(auth, dict):
+        for key in ("password", "password_confirm", "confirm_password"):
+            if key in auth:
+                auth[key] = "***"
     return safe_payload
 
 
@@ -4339,8 +4493,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _check_auth(self) -> bool:
         """Return True if request carries a valid mml_session cookie."""
-        pw = os.environ.get("APP_PASSWORD", "")
-        if not pw:
+        if not _auth_is_configured():
             return True
         token = self._session_token()
         if token and token in _valid_sessions:
@@ -4398,9 +4551,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # reaching here means the request is authenticated.
             self._json(200, {})
         elif path == "/api/auth":
-            pw = os.environ.get("APP_PASSWORD", "")
             lang = load_config().get("system", {}).get("language") or "en"
-            required = bool(pw)
+            required = _auth_is_configured()
             self._json(200, {
                 "required": required,
                 "language": lang,
@@ -4454,6 +4606,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
             out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
+            out["auth"] = {"enabled": _auth_is_configured()}
             out, seerr_changed = normalize_seerr_config(out)
             if seerr_changed:
                 changed = True
@@ -4642,13 +4795,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 payload = json.loads(body)
             except Exception:
                 payload = {}
-            pw      = os.environ.get("APP_PASSWORD", "")
             entered = payload.get("password", "")
-            ok = (
-                bool(pw)
-                and isinstance(entered, str)
-                and hmac.compare_digest(pw, entered)
-            )
+            ok = _auth_verify_password(entered)
             if ok:
                 token = secrets.token_hex(32)
                 _valid_sessions.add(token)
@@ -4737,6 +4885,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
+            try:
+                auth_action = _apply_auth_secret_update(payload, secrets_after)
+            except ValueError as e:
+                self._json(400, {"ok": False, "error": {"code": "INVALID_AUTH_CONFIG", "message": str(e)}})
+                return
             jsr_key_action = _apply_seerr_secret_update(payload, secrets_after)
 
             merged = deep_merge(cfg, payload)
@@ -4753,7 +4906,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             merged.pop("jellyseerr", None)
             save_config(merged)
             if secrets_after != secrets_before:
-                _save_secrets(secrets_after)
+                try:
+                    _write_secrets(secrets_after)
+                except Exception as e:
+                    self._json(500, {"ok": False, "error": {"code": "SECRETS_WRITE_FAILED", "message": str(e)}})
+                    return
 
             if jsr_key_action == "updated":
                 log.info("[config] Seerr API key updated")
@@ -4763,6 +4920,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 log.info("[config] Seerr API key cleared (explicit request)")
             else:
                 log.info("[config] Seerr API key not modified")
+            if auth_action == "updated":
+                log.info("[config] Authentication password updated")
+            elif auth_action == "disabled":
+                log.info("[config] Authentication disabled")
 
             log.info("[config] Saved")
             # Apply log_level change immediately without restart
@@ -4785,7 +4946,14 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     response["scan_skipped"] = "running"
                 else:
                     log.info("[config] Triggering phased scan from config save: %s", phases)
-            self._json(200, response)
+            set_cookie = None
+            if auth_action == "updated":
+                token = secrets.token_hex(32)
+                _valid_sessions.add(token)
+                set_cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
+            elif auth_action == "disabled":
+                set_cookie = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            self._json(200, response, set_cookie=set_cookie)
 
         elif path == "/api/settings/score":
             self._handle_score_settings_update(payload)

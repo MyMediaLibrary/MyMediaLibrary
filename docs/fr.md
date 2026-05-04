@@ -84,7 +84,7 @@ services:
       - ./conf:/conf                             # config.json, providers, règles, .secrets
       - /chemin/vers/ta/mediatheque:/library:ro  # médiathèque en lecture seule
     environment:
-      # APP_PASSWORD: ""
+      TZ: Europe/Paris
     restart: unless-stopped
 ```
 
@@ -93,9 +93,8 @@ services:
 | Variable | Obligatoire | Défaut | Description |
 |---|---|---|---|
 | `TZ` | ❌ | `UTC` | Fuseau horaire du conteneur (logs et timestamps) |
-| `APP_PASSWORD` | ❌ | — | Mot de passe (active l'écran de connexion) |
 
-Montez toujours vos médias dans `/library` en lecture seule. Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
+Montez toujours vos médias dans `/library` en lecture seule. L'authentification par mot de passe se configure dans l'onboarding puis dans **Paramètres > Configuration** ; seul un hash est stocké dans `/conf/.secrets`. Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
 
 ### Stockage runtime
 

@@ -28,6 +28,13 @@
     "features_inventory_desc": "Génère un inventaire technique des fichiers détectés pour analyses avancées.",
     "features_enabled": "activé",
     "features_disabled": "désactivé",
+    "step_auth_title": "Authentification",
+    "step_auth_desc": "Optionnel — protégez l’accès à l’application par mot de passe.",
+    "auth_enable": "Activer l’authentification",
+    "auth_password": "Mot de passe",
+    "auth_confirm": "Confirmation",
+    "auth_summary": "Authentification",
+    "auth_skipped": "désactivée / ignorée",
     "step_scan_title": "Prêt à scanner",
     "step_scan_desc": "Vérifiez la configuration avant de lancer le scan initial.",
     "no_configured": "Aucun dossier configuré",
@@ -168,6 +175,16 @@
       "score": "Score",
       "connections": "Connexions",
       "system": "Système"
+    },
+    "auth": {
+      "enabled": "Authentification par mot de passe",
+      "status_enabled": "Authentification activée",
+      "status_disabled": "Authentification désactivée",
+      "new_password": "Nouveau mot de passe",
+      "confirm_password": "Confirmation",
+      "password_hint": "Laissez vide pour conserver le mot de passe actuel.",
+      "password_too_short": "Le mot de passe doit contenir au moins 8 caractères.",
+      "password_mismatch": "Les deux mots de passe ne correspondent pas."
     },
     "score": {
       "save": "Enregistrer le score",

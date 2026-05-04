@@ -28,6 +28,13 @@
     "features_inventory_desc": "Builds a technical inventory of detected files for advanced analysis.",
     "features_enabled": "enabled",
     "features_disabled": "disabled",
+    "step_auth_title": "Authentication",
+    "step_auth_desc": "Optional — protect access to the app with a password.",
+    "auth_enable": "Enable authentication",
+    "auth_password": "Password",
+    "auth_confirm": "Confirmation",
+    "auth_summary": "Authentication",
+    "auth_skipped": "disabled / skipped",
     "step_scan_title": "Ready to scan",
     "step_scan_desc": "Review the configuration before launching the initial scan.",
     "no_configured": "No folders configured",
@@ -168,6 +175,16 @@
       "score": "Score",
       "connections": "Connections",
       "system": "System"
+    },
+    "auth": {
+      "enabled": "Password authentication",
+      "status_enabled": "Authentication enabled",
+      "status_disabled": "Authentication disabled",
+      "new_password": "New password",
+      "confirm_password": "Confirmation",
+      "password_hint": "Leave blank to keep the current password.",
+      "password_too_short": "Password must contain at least 8 characters.",
+      "password_mismatch": "Passwords do not match."
     },
     "score": {
       "save": "Save score",

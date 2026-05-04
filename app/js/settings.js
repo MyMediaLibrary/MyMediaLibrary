@@ -35,6 +35,7 @@
   let _onbStep = 0;
   let _onbJsr = { enabled: false, url: '', key: '' };
   let _onbFeatures = { scoreEnabled: false, inventoryEnabled: false };
+  let _onbAuth = { enabled: false, password: '', confirm: '' };
   let _onbLogSeen = 0;
   let _langTimer = null;
   let _onbLang = 'fr';
@@ -770,6 +771,24 @@
     return {};
   }
 
+  function _isAuthEnabled() {
+    return appConfig?.auth?.enabled === true;
+  }
+
+  function toggleAuthFields() {
+    const enabled = document.getElementById('cfgAuthEnabled')?.checked === true;
+    const fields = document.getElementById('cfgAuthFields');
+    const status = document.getElementById('cfgAuthStatus');
+    if (fields) fields.style.display = enabled ? '' : 'none';
+    ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
+    });
+    if (status) {
+      status.textContent = enabled ? t('settings.auth.status_enabled') : t('settings.auth.status_disabled');
+    }
+  }
+
   function syncRecommendationsToggle() {
     const scoreEl = _field('cfgEnableScore');
     const recEl = _field('cfgEnableRecommendations');
@@ -802,6 +821,10 @@
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
+    _rw('cfgAuthEnabled', _isAuthEnabled());
+    _rw('cfgAuthPassword', '');
+    _rw('cfgAuthConfirm', '');
+    toggleAuthFields();
     _rw('cfgEnableScore', isScoreEnabled());
     _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
     syncRecommendationsToggle();
@@ -886,6 +909,9 @@
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
     const mediaProbeEnabled = get('cfgMediaProbeEnabled');
+    const authEnabled = get('cfgAuthEnabled');
+    const authPasswordRaw = get('cfgAuthPassword');
+    const authConfirmRaw = get('cfgAuthConfirm');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
@@ -912,6 +938,23 @@
         workers: currentMediaProbe.workers || 4,
         cache_enabled: currentMediaProbe.cache_enabled !== false,
       };
+    }
+    if (authEnabled !== null) {
+      const authPassword = typeof authPasswordRaw === 'string' ? authPasswordRaw : '';
+      const authConfirm = typeof authConfirmRaw === 'string' ? authConfirmRaw : '';
+      partial.auth = { enabled: authEnabled === true };
+      if (authEnabled === true && (authPassword || authConfirm || !_isAuthEnabled())) {
+        if (authPassword.length < 8) {
+          alert(t('settings.auth.password_too_short'));
+          return;
+        }
+        if (authPassword !== authConfirm) {
+          alert(t('settings.auth.password_mismatch'));
+          return;
+        }
+        partial.auth.password = authPassword;
+        partial.auth.password_confirm = authConfirm;
+      }
     }
 
     try {
@@ -1501,6 +1544,7 @@
       scoreEnabled: !!(appConfig?.score?.enabled),
       inventoryEnabled: appConfig?.system?.inventory_enabled === true,
     };
+    _onbAuth = { enabled: _isAuthEnabled(), password: '', confirm: '' };
     _onbLogSeen = 0;
     // Prefetch both i18n files so lang switching is instant (browser caches them)
     ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
@@ -1509,13 +1553,13 @@
   }
 
   function _onbRender() {
-    // Step indicator: hidden on step 0, 3 bars for steps 1-3
+    // Step indicator: hidden on step 0, bars for configured steps
     const stepsEl = document.getElementById('onbSteps');
     if (stepsEl) {
       if (_onbStep === 0) {
         stepsEl.innerHTML = '';
       } else {
-        stepsEl.innerHTML = [1,2,3,4].map(n =>
+        stepsEl.innerHTML = [1,2,3,4,5].map(n =>
           '<div style="width:40px;height:4px;border-radius:2px;background:'+(n===_onbStep?'var(--accent)':'var(--border)')+'"></div>'
         ).join('');
       }
@@ -1527,7 +1571,8 @@
     else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
     else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
     else if (_onbStep === 3) panel.innerHTML = _onbStep3HTML();
-    else                     panel.innerHTML = _onbStep4HTML();
+    else if (_onbStep === 4) panel.innerHTML = _onbStep4HTML();
+    else                     panel.innerHTML = _onbStep5HTML();
 
     // Nav buttons
     const prev = document.getElementById('onbPrevBtn');
@@ -1543,7 +1588,7 @@
     if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (_onbStep === 4) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
+      if (_onbStep === 5) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
@@ -1553,8 +1598,13 @@
     }
     if (skip) {
       skip.textContent = t('nav.skip');
-      skip.style.display = _onbStep === 2 ? '' : 'none';
+      skip.style.display = (_onbStep === 2 || _onbStep === 4) ? '' : 'none';
       if (_onbStep === 2) _updateOnbSkipStyle(skip);
+      else if (_onbStep === 4) {
+        skip.style.background = 'transparent';
+        skip.style.borderColor = 'var(--border)';
+        skip.style.color = 'var(--muted)';
+      }
     }
   }
 
@@ -1715,6 +1765,24 @@
   }
 
   function _onbStep4HTML() {
+    const dis = _onbAuth.enabled ? '' : ' disabled';
+    const disOp = _onbAuth.enabled ? '' : ';opacity:.45';
+    return '<div style="margin-bottom:16px">'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
+      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:14px">'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+' onchange="_onbAuthToggle()"/><span class="toggle-switch-slider"></span></label></div>'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'"/></div>'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'"/></div>'
+      + '<div id="onbAuthError" style="display:none;font-size:12px;color:#ef4444"></div>'
+      + '</div>';
+  }
+
+  function _onbStep5HTML() {
     const folders = appConfig.folders || [];
     const nMovies  = folders.filter(f => !f.missing && (f._onbType||f.type)==='movie').length;
     const nTv      = folders.filter(f => !f.missing && (f._onbType||f.type)==='tv').length;
@@ -1732,6 +1800,7 @@
       + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
       + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🗂️ Inventaire : '+(_onbFeatures.inventoryEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
       + '</div>';
   }
 
@@ -1746,6 +1815,39 @@
 
   function _onbFeaturesToggle() {
     _captureOnbFeatures();
+  }
+
+  function _captureOnbAuth() {
+    const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
+    const password = document.getElementById('onbAuthPassword')?.value ?? _onbAuth.password;
+    const confirm = document.getElementById('onbAuthConfirm')?.value ?? _onbAuth.confirm;
+    _onbAuth = { enabled, password, confirm };
+  }
+
+  function _onbAuthToggle() {
+    _captureOnbAuth();
+    ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = !_onbAuth.enabled; el.style.opacity = _onbAuth.enabled ? '' : '.45'; }
+    });
+    const err = document.getElementById('onbAuthError');
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+  }
+
+  function _onbValidateAuth() {
+    _captureOnbAuth();
+    const err = document.getElementById('onbAuthError');
+    if (!_onbAuth.enabled) return true;
+    if ((_onbAuth.password || '').length < 8) {
+      if (err) { err.textContent = t('settings.auth.password_too_short'); err.style.display = ''; }
+      return false;
+    }
+    if (_onbAuth.password !== _onbAuth.confirm) {
+      if (err) { err.textContent = t('settings.auth.password_mismatch'); err.style.display = ''; }
+      return false;
+    }
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+    return true;
   }
 
   async function onbTestJsr() {
@@ -1765,7 +1867,8 @@
     if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
     if (_onbStep === 2) _captureOnbJsr();
     if (_onbStep === 3) _captureOnbFeatures();
-    if (_onbStep < 4) { _onbStep++; _onbRender(); }
+    if (_onbStep === 4 && !_onbValidateAuth()) return;
+    if (_onbStep < 5) { _onbStep++; _onbRender(); }
   }
 
   function onbPrev() {
@@ -1773,11 +1876,14 @@
   }
 
   function onbSkip() {
-    // Only shown on step 2 — Skip means disable Seerr
     if (_onbStep === 2) {
       _captureOnbJsr();
       _onbJsr.enabled = false;
       _onbStep = 3; _onbRender();
+    }
+    else if (_onbStep === 4) {
+      _onbAuth = { enabled: false, password: '', confirm: '' };
+      _onbStep = 5; _onbRender();
     }
   }
 
@@ -1803,6 +1909,9 @@
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
       score: { enabled: _onbFeatures.scoreEnabled },
+      auth: _onbAuth.enabled
+        ? { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm }
+        : { enabled: false },
       system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled },
       ui: { theme: _onbTheme },
     };
@@ -1979,6 +2088,7 @@
   window.switchStab                = switchStab;
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
+  window.toggleAuthFields          = toggleAuthFields;
   window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;
@@ -1988,6 +2098,7 @@
   window._onbFolderChange          = _onbFolderChange;
   window._onbJsrToggle             = _onbJsrToggle;
   window._onbFeaturesToggle        = _onbFeaturesToggle;
+  window._onbAuthToggle            = _onbAuthToggle;
   window.onbTestJsr                = onbTestJsr;
   window.onbNext                   = onbNext;
   window.onbPrev                   = onbPrev;
