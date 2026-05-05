@@ -1820,6 +1820,8 @@
 
   function _onbStep4HTML() {
     const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
+    const dis = _onbAuth.enabled ? '' : ' disabled';
+    const disOp = _onbAuth.enabled ? '' : ';opacity:.45';
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
@@ -1829,9 +1831,9 @@
         + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+' onchange="_onbAuthToggle()"/><span class="toggle-switch-slider"></span></label></div>'
       + '<div id="onbAuthFields">'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
-        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'" oninput="_onbAuthPasswordInput()"/></div>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'" oninput="_onbAuthPasswordInput()"/></div>'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
-        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'" oninput="_onbAuthPasswordInput()"/></div>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'" oninput="_onbAuthPasswordInput()"/></div>'
       + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
       + '</div>'
       + '</div>';
@@ -1881,6 +1883,10 @@
 
   function _onbAuthToggle() {
     _captureOnbAuth();
+    ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = !_onbAuth.enabled; el.style.opacity = _onbAuth.enabled ? '' : '.45'; }
+    });
     const skip = document.getElementById('onbSkipBtn');
     if (skip) {
       skip.style.background = _onbAuth.enabled ? 'transparent' : 'var(--accent)';

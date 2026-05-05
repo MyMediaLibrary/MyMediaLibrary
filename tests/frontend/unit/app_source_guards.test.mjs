@@ -255,8 +255,14 @@ test('auth password is configured through onboarding/settings and never via envi
   const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
   assert.match(authStepBlock, /id="onbAuthEnabled"[\s\S]*onchange="_onbAuthToggle\(\)"/, 'onboarding auth should be controlled by a toggle');
   assert.match(authStepBlock, /id="onbAuthFields"/, 'onboarding auth fields should always be rendered');
-  assert.doesNotMatch(authStepBlock, /display:none|disabled|opacity:\.45/, 'onboarding auth fields should remain visible and editable when auth starts disabled');
+  assert.doesNotMatch(authStepBlock, /display:none/, 'onboarding auth fields should remain visible when auth starts disabled');
+  assert.match(authStepBlock, /const dis = _onbAuth\.enabled \? '' : ' disabled';/, 'onboarding auth fields should start disabled when auth is off');
+  assert.match(authStepBlock, /const disOp = _onbAuth\.enabled \? '' : ';opacity:\.45';/, 'onboarding auth fields should look disabled when auth is off');
   assert.match(authStepBlock, /id="onbAuthRules"/, 'onboarding auth should show per-rule validation feedback');
+
+  const authToggleBlock = functionBlock(settingsSource, '_onbAuthToggle', '_onbAuthPasswordInput');
+  assert.match(authToggleBlock, /el\.disabled = !_onbAuth\.enabled;/, 'onboarding auth toggle should enable password fields only when auth is on');
+  assert.match(authToggleBlock, /el\.style\.opacity = _onbAuth\.enabled \? '' : '\.45';/, 'onboarding auth toggle should visually disable password fields when auth is off');
 
   const authInputBlock = functionBlock(settingsSource, '_onbAuthPasswordInput', '_onbValidateAuth');
   assert.match(authInputBlock, /if \(toggle && \(password \|\| confirm\)\)[\s\S]*toggle\.checked = true;/, 'typing a password should auto-enable the auth toggle');
