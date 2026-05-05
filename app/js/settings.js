@@ -829,53 +829,15 @@
   }
 
   function syncSettingsAuthPasswordState() {
+    const enabled = document.getElementById('cfgAuthEnabled')?.checked === true;
+    const fields = document.getElementById('cfgAuthFields');
+    if (fields) fields.style.display = enabled ? '' : 'none';
     const password = document.getElementById('cfgAuthPassword')?.value || '';
     const confirm = document.getElementById('cfgAuthConfirm')?.value || '';
     const validation = _authPasswordValidation(password, confirm);
     const rules = document.getElementById('cfgAuthRules');
-    if (rules) rules.innerHTML = _renderAuthRuleList(validation);
-    const btn = document.getElementById('cfgAuthChangeBtn');
-    if (btn) btn.disabled = !validation.valid;
+    if (rules) rules.innerHTML = enabled ? _renderAuthRuleList(validation) : '';
     _setSettingsAuthStatus('');
-  }
-
-  async function changeAuthPasswordFromSettings() {
-    const password = document.getElementById('cfgAuthPassword')?.value || '';
-    const confirm = document.getElementById('cfgAuthConfirm')?.value || '';
-    const validation = _authPasswordValidation(password, confirm);
-    if (!validation.valid) {
-      _setSettingsAuthStatus(
-        validation.confirmationMatches ? t('settings.auth.password_rules_error') : t('settings.auth.password_mismatch'),
-        true,
-      );
-      syncSettingsAuthPasswordState();
-      return;
-    }
-    const btn = document.getElementById('cfgAuthChangeBtn');
-    if (btn) btn.disabled = true;
-    try {
-      await saveConfig({ auth: { enabled: true, password, password_confirm: confirm } });
-      ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-      syncSettingsAuthPasswordState();
-      _setSettingsAuthStatus(t('settings.auth.password_changed'), false);
-    } catch (e) {
-      _setSettingsAuthStatus(t('settings.save_error', {msg: e.message}), true);
-      syncSettingsAuthPasswordState();
-    }
-  }
-
-  async function disableAuthFromSettings() {
-    try {
-      await saveConfig({ auth: { enabled: false } });
-      appConfig.auth = { enabled: false };
-      const block = document.getElementById('cfgAuthBlock');
-      if (block) block.style.display = 'none';
-      ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-      _setSettingsAuthStatus('');
-      window.location.reload();
-    } catch (e) {
-      _setSettingsAuthStatus(t('settings.save_error', {msg: e.message}), true);
-    }
   }
 
   function syncRecommendationsToggle() {
@@ -910,10 +872,9 @@
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
+    _rw('cfgAuthEnabled', _isAuthEnabled());
     _rw('cfgAuthPassword', '');
     _rw('cfgAuthConfirm', '');
-    const authBlock = document.getElementById('cfgAuthBlock');
-    if (authBlock) authBlock.style.display = _isAuthEnabled() ? '' : 'none';
     syncSettingsAuthPasswordState();
     _rw('cfgEnableScore', isScoreEnabled());
     _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
@@ -999,6 +960,9 @@
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
     const mediaProbeEnabled = get('cfgMediaProbeEnabled');
+    const authEnabled = get('cfgAuthEnabled');
+    const authPasswordRaw = get('cfgAuthPassword');
+    const authConfirmRaw = get('cfgAuthConfirm');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
@@ -1025,6 +989,25 @@
         workers: currentMediaProbe.workers || 4,
         cache_enabled: currentMediaProbe.cache_enabled !== false,
       };
+    }
+    if (authEnabled !== null) {
+      const authPassword = typeof authPasswordRaw === 'string' ? authPasswordRaw : '';
+      const authConfirm = typeof authConfirmRaw === 'string' ? authConfirmRaw : '';
+      const wasEnabled = _isAuthEnabled();
+      if (authEnabled === false && wasEnabled) {
+        partial.auth = { enabled: false };
+      } else if (authEnabled === true && (authPassword || authConfirm || !wasEnabled)) {
+        const validation = _authPasswordValidation(authPassword, authConfirm);
+        if (!validation.confirmationMatches) {
+          _setSettingsAuthStatus(t('settings.auth.password_mismatch'), true);
+          return;
+        }
+        if (!validation.valid) {
+          _setSettingsAuthStatus(t('settings.auth.password_rules_error'), true);
+          return;
+        }
+        partial.auth = { enabled: true, password: authPassword, password_confirm: authConfirm };
+      }
     }
     try {
       await saveConfig(partial);
@@ -2185,8 +2168,6 @@
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
   window.syncSettingsAuthPasswordState = syncSettingsAuthPasswordState;
-  window.changeAuthPasswordFromSettings = changeAuthPasswordFromSettings;
-  window.disableAuthFromSettings   = disableAuthFromSettings;
   window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;

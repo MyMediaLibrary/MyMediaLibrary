@@ -467,12 +467,13 @@
               📄 Logs accessibles sur l'hôte : ./data/scanner.log
             </div>
           </div>
-          <div class="settings-group settings-subgroup" id="cfgAuthBlock" style="display:none">
-            <button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="settingsAuthBody" aria-expanded="false">
-              <span class="settings-collapsible-title" data-i18n="settings.auth.block_title">Authentification</span>
-              <span class="settings-collapsible-icon">▾</span>
-            </button>
-            <div class="settings-collapsible-body is-collapsed" id="settingsAuthBody">
+          <div class="settings-group" id="cfgAuthBlock" style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
+            <div class="settings-group-title" data-i18n="settings.auth.block_title">Authentification</div>
+            <div class="settings-row" style="margin-bottom:8px">
+              <label class="settings-label" data-i18n="settings.auth.enabled">Authentification par mot de passe</label>
+              <label class="toggle-switch"><input type="checkbox" id="cfgAuthEnabled" onchange="syncSettingsAuthPasswordState()"/><span class="toggle-switch-slider"></span></label>
+            </div>
+            <div id="cfgAuthFields" style="display:none">
               <div class="settings-row" style="margin-bottom:8px">
                 <label class="settings-label" data-i18n="settings.auth.new_password">Nouveau mot de passe</label>
                 <input type="password" id="cfgAuthPassword" class="settings-input" autocomplete="new-password" oninput="syncSettingsAuthPasswordState()"/>
@@ -482,12 +483,8 @@
                 <input type="password" id="cfgAuthConfirm" class="settings-input" autocomplete="new-password" oninput="syncSettingsAuthPasswordState()"/>
               </div>
               <div id="cfgAuthRules" style="margin-bottom:10px"></div>
-              <div class="settings-row" style="justify-content:flex-end;gap:8px">
-                <button id="cfgAuthDisableBtn" class="scan-btn" onclick="disableAuthFromSettings()" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.auth.disable">Désactiver l'authentification</button>
-                <button id="cfgAuthChangeBtn" class="scan-btn" onclick="changeAuthPasswordFromSettings()" style="padding:5px 12px;font-size:12px" disabled data-i18n="settings.auth.change_password">Changer le mot de passe</button>
-              </div>
-              <div id="cfgAuthStatus" class="settings-note" style="display:none;margin-top:8px"></div>
             </div>
+            <div id="cfgAuthStatus" class="settings-note" style="display:none;margin-top:8px"></div>
           </div>
           <div class="settings-group" style="padding-top:4px">
             <div class="settings-row">

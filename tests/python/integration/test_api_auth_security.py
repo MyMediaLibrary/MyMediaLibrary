@@ -235,6 +235,25 @@ class TestApiAuthSecurity(unittest.TestCase):
         self.assertEqual(status, 400, body)
         self.assertIn("INVALID_AUTH_CONFIG", body)
 
+    def test_config_api_disables_auth_and_removes_hash(self):
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+        status, body, headers = self._request(
+            "/api/config",
+            method="POST",
+            headers={"Cookie": cookie_pair},
+            payload={"auth": {"enabled": False}},
+        )
+        self.assertEqual(status, 200, body)
+        self.assertIn("Max-Age=0", headers.get("Set-Cookie") or "")
+        stored = json.loads(self._secrets_path.read_text(encoding="utf-8"))
+        self.assertNotIn("auth_password_hash", stored)
+
+        status, body, _ = self._request("/api/auth")
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)["required"])
+
     def test_backend_auth_password_validation_rules(self):
         ok, details = scanner.validate_auth_password(VALID_AUTH_PASSWORD, VALID_AUTH_PASSWORD)
         self.assertTrue(ok)

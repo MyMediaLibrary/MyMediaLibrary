@@ -218,29 +218,32 @@ test('settings exposes media probe toggle without using probe output as UI data'
 });
 
 test('auth password is configured through onboarding/settings and never via environment docs', () => {
-  assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose auth management in System as a collapsible block');
+  assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose an auth section');
+  assert.match(indexSource, /id="cfgAuthBlock"[^>]*border-top:1px solid var\(--border\)/, 'settings auth section should be visually separated');
+  assert.doesNotMatch(indexSource, /data-target="settingsAuthBody"|id="settingsAuthBody"/, 'settings auth section should not be collapsible');
+  assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose an auth enable toggle');
   assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
   assert.match(indexSource, /id="cfgAuthConfirm"/, 'settings should expose password confirmation');
-  assert.match(indexSource, /id="cfgAuthChangeBtn"[\s\S]*data-i18n="settings\.auth\.change_password"/, 'settings should expose a dedicated password change button');
-  assert.match(indexSource, /id="cfgAuthDisableBtn"[\s\S]*data-i18n="settings\.auth\.disable"/, 'settings should expose a disable auth button');
+  assert.doesNotMatch(indexSource, /cfgAuthChangeBtn|cfgAuthDisableBtn|changeAuthPasswordFromSettings|disableAuthFromSettings/, 'settings auth should use the global save button only');
   assert.equal(frI18n.onboarding.step_auth_title, 'Authentification');
   assert.equal(enI18n.onboarding.step_auth_title, 'Authentication');
   assert.equal(frI18n.settings.auth.status_enabled, 'Authentification activée');
   assert.equal(enI18n.settings.auth.status_enabled, 'Authentication enabled');
 
   const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
-  assert.match(loadBlock, /authBlock\.style\.display = _isAuthEnabled\(\) \? '' : 'none';/, 'settings should hide auth block when auth is disabled');
+  assert.match(loadBlock, /_rw\('cfgAuthEnabled', _isAuthEnabled\(\)\);/, 'settings should read auth enabled state without a hash');
   assert.match(loadBlock, /_rw\('cfgAuthPassword', ''\);/, 'settings should never prefill auth password');
   assert.match(loadBlock, /_rw\('cfgAuthConfirm', ''\);/, 'settings should never prefill auth confirmation');
 
-  const settingsChangeBlock = functionBlock(settingsSource, 'changeAuthPasswordFromSettings', 'disableAuthFromSettings');
-  assert.match(settingsChangeBlock, /const validation = _authPasswordValidation\(password, confirm\);/, 'settings password change should reuse frontend auth validation');
-  assert.match(settingsChangeBlock, /await saveConfig\(\{ auth: \{ enabled: true, password, password_confirm: confirm \} \}\);/, 'settings password change should persist through /api/config');
-  assert.match(settingsChangeBlock, /el\.value = ''/, 'settings should clear password fields after a successful change');
+  const settingsSyncBlock = functionBlock(settingsSource, 'syncSettingsAuthPasswordState', 'syncRecommendationsToggle');
+  assert.match(settingsSyncBlock, /fields\.style\.display = enabled \? '' : 'none';/, 'settings auth fields/rules should hide when toggle is off');
+  assert.match(settingsSyncBlock, /rules\.innerHTML = enabled \? _renderAuthRuleList\(validation\) : '';/, 'settings auth rules should hide when toggle is off');
 
-  const settingsDisableBlock = functionBlock(settingsSource, 'disableAuthFromSettings', 'syncRecommendationsToggle');
-  assert.match(settingsDisableBlock, /await saveConfig\(\{ auth: \{ enabled: false \} \}\);/, 'settings disable should remove auth through /api/config');
-  assert.doesNotMatch(settingsChangeBlock + settingsDisableBlock, /auth_password_hash/, 'settings must not know about auth hashes');
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: false \};/, 'global settings save should disable auth when toggle is off');
+  assert.match(saveBlock, /const validation = _authPasswordValidation\(authPassword, authConfirm\);/, 'global settings save should validate auth password');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: true, password: authPassword, password_confirm: authConfirm \};/, 'global settings save should persist valid auth password');
+  assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
 
   const authRulesBlock = functionBlock(settingsSource, '_authPasswordRules', '_authPasswordValidation');
   assert.match(authRulesBlock, /length: value\.length >= 25/, 'frontend auth validation should require 25 characters');
