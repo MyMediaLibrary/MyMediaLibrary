@@ -20,10 +20,12 @@ const docsFrSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/fr.m
 const docsEnSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/en.md'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
-  const start = source.indexOf(`function ${functionName}(`);
+  let start = source.indexOf(`function ${functionName}(`);
+  if (start === -1) start = source.indexOf(`async function ${functionName}(`);
   assert.notEqual(start, -1, `Function ${functionName} not found`);
   if (!nextFunctionName) return source.slice(start);
-  const end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  let end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  if (end === -1) end = source.indexOf(`\n  async function ${nextFunctionName}(`, start);
   assert.notEqual(end, -1, `Following function ${nextFunctionName} not found`);
   return source.slice(start, end);
 }
@@ -233,11 +235,31 @@ test('auth password is configured through onboarding/settings and never via envi
   assert.match(saveBlock, /partial\.auth = \{ enabled: authEnabled === true \};/, 'settings save should send auth enabled state');
   assert.match(saveBlock, /partial\.auth\.password = authPassword;/, 'settings save should send new password only when entered');
   assert.match(saveBlock, /partial\.auth\.password_confirm = authConfirm;/, 'settings save should send confirmation only when entered');
+  assert.match(saveBlock, /const validation = _authPasswordValidation\(authPassword, authConfirm\);/, 'settings save should reuse frontend auth validation');
   assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
+
+  const authRulesBlock = functionBlock(settingsSource, '_authPasswordRules', '_authPasswordValidation');
+  assert.match(authRulesBlock, /length: value\.length >= 25/, 'frontend auth validation should require 25 characters');
+  assert.match(authRulesBlock, /lowercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 lowercase letters');
+  assert.match(authRulesBlock, /uppercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 uppercase letters');
+  assert.match(authRulesBlock, /digits:[\s\S]*>= 2/, 'frontend auth validation should require 2 digits');
+  assert.match(authRulesBlock, /special:[\s\S]*>= 2/, 'frontend auth validation should require 2 special characters');
+
+  const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
+  assert.match(authStepBlock, /id="onbAuthEnabled"[\s\S]*onchange="_onbAuthToggle\(\)"/, 'onboarding auth should be controlled by a toggle');
+  assert.match(authStepBlock, /id="onbAuthRules"/, 'onboarding auth should show per-rule validation feedback');
+
+  const validateBlock = functionBlock(settingsSource, '_onbValidateAuth', 'onbTestJsr');
+  assert.match(validateBlock, /if \(!_onbAuth\.enabled\)[\s\S]*next\.disabled = true/, 'auth disabled should keep Next disabled');
+  assert.match(validateBlock, /next\.disabled = !validation\.valid/, 'auth enabled should allow Next only when password validation passes');
+
+  const onbNextBlock = functionBlock(settingsSource, 'onbNext', 'onbPrev');
+  assert.match(onbNextBlock, /await saveConfig\(\{ auth: \{ enabled: true, password: _onbAuth\.password, password_confirm: _onbAuth\.confirm \} \}\);/, 'onboarding Next should persist auth before summary');
+  assert.match(onbNextBlock, /_onbAuth = \{ enabled: true, password: '', confirm: '', saved: true \};/, 'onboarding should clear password fields after auth save');
 
   const onboardingSaveBlock = functionBlock(settingsSource, 'onbLaunchScan');
   assert.match(settingsSource, /else if \(_onbStep === 4\) panel\.innerHTML = _onbStep4HTML\(\);/, 'onboarding should insert auth before summary');
-  assert.match(onboardingSaveBlock, /auth: _onbAuth\.enabled[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding should submit auth password only through /api/config');
+  assert.match(onboardingSaveBlock, /!\_onbAuth\.saved[\s\S]*auth:[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding launch should not resend password after auth was already saved');
   assert.doesNotMatch(scannerSource, /APP_PASSWORD/, 'backend runtime should not read APP_PASSWORD');
   assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
 });

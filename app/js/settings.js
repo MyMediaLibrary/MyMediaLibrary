@@ -35,7 +35,7 @@
   let _onbStep = 0;
   let _onbJsr = { enabled: false, url: '', key: '' };
   let _onbFeatures = { scoreEnabled: false, inventoryEnabled: false };
-  let _onbAuth = { enabled: false, password: '', confirm: '' };
+  let _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
   let _onbLogSeen = 0;
   let _langTimer = null;
   let _onbLang = 'fr';
@@ -775,6 +775,45 @@
     return appConfig?.auth?.enabled === true;
   }
 
+  function _authPasswordRules(password) {
+    const value = String(password || '');
+    return {
+      length: value.length >= 25,
+      lowercase: (value.match(/[a-z]/g) || []).length >= 2,
+      uppercase: (value.match(/[A-Z]/g) || []).length >= 2,
+      digits: (value.match(/[0-9]/g) || []).length >= 2,
+      special: (value.match(/[^A-Za-z0-9\s]/g) || []).length >= 2,
+    };
+  }
+
+  function _authPasswordValidation(password, confirm) {
+    const rules = _authPasswordRules(password);
+    const confirmationMatches = String(password || '') === String(confirm || '');
+    return {
+      rules,
+      confirmationMatches,
+      valid: Object.values(rules).every(Boolean) && confirmationMatches,
+    };
+  }
+
+  function _renderAuthRuleList(validation) {
+    const ruleRows = [
+      ['length', t('settings.auth.rule_length')],
+      ['lowercase', t('settings.auth.rule_lowercase')],
+      ['uppercase', t('settings.auth.rule_uppercase')],
+      ['digits', t('settings.auth.rule_digits')],
+      ['special', t('settings.auth.rule_special')],
+    ];
+    return '<div class="settings-note" style="display:flex;flex-direction:column;gap:4px;margin-top:2px">'
+      + ruleRows.map(([key, label]) => {
+        const ok = validation.rules[key] === true;
+        return '<div data-auth-rule="'+key+'" style="color:'+(ok ? '#34d399' : 'var(--muted)')+'">'+(ok ? '✓ ' : '• ')+escH(label)+'</div>';
+      }).join('')
+      + '<div id="onbAuthConfirmRule" style="color:'+(validation.confirmationMatches ? '#34d399' : '#ef4444')+'">'
+      + (validation.confirmationMatches ? '✓ ' : '• ')+escH(t('settings.auth.rule_confirmation'))+'</div>'
+      + '</div>';
+  }
+
   function toggleAuthFields() {
     const enabled = document.getElementById('cfgAuthEnabled')?.checked === true;
     const fields = document.getElementById('cfgAuthFields');
@@ -944,12 +983,13 @@
       const authConfirm = typeof authConfirmRaw === 'string' ? authConfirmRaw : '';
       partial.auth = { enabled: authEnabled === true };
       if (authEnabled === true && (authPassword || authConfirm || !_isAuthEnabled())) {
-        if (authPassword.length < 8) {
-          alert(t('settings.auth.password_too_short'));
+        const validation = _authPasswordValidation(authPassword, authConfirm);
+        if (!validation.confirmationMatches) {
+          alert(t('settings.auth.password_mismatch'));
           return;
         }
-        if (authPassword !== authConfirm) {
-          alert(t('settings.auth.password_mismatch'));
+        if (!validation.valid) {
+          alert(t('settings.auth.password_rules_error'));
           return;
         }
         partial.auth.password = authPassword;
@@ -1544,7 +1584,7 @@
       scoreEnabled: !!(appConfig?.score?.enabled),
       inventoryEnabled: appConfig?.system?.inventory_enabled === true,
     };
-    _onbAuth = { enabled: _isAuthEnabled(), password: '', confirm: '' };
+    _onbAuth = { enabled: _isAuthEnabled(), password: '', confirm: '', saved: false };
     _onbLogSeen = 0;
     // Prefetch both i18n files so lang switching is instant (browser caches them)
     ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
@@ -1594,6 +1634,7 @@
       // Step 2: disable next until Seerr test passes
       if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
       else if (_onbStep === 2) { next.disabled = true; }
+      else if (_onbStep === 4) { next.disabled = true; _onbValidateAuth(); }
       else next.disabled = false;
     }
     if (skip) {
@@ -1601,9 +1642,10 @@
       skip.style.display = (_onbStep === 2 || _onbStep === 4) ? '' : 'none';
       if (_onbStep === 2) _updateOnbSkipStyle(skip);
       else if (_onbStep === 4) {
-        skip.style.background = 'transparent';
-        skip.style.borderColor = 'var(--border)';
-        skip.style.color = 'var(--muted)';
+        const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
+        skip.style.background = enabled ? 'transparent' : 'var(--accent)';
+        skip.style.borderColor = enabled ? 'var(--border)' : 'var(--accent)';
+        skip.style.color = enabled ? 'var(--muted)' : '#fff';
       }
     }
   }
@@ -1767,6 +1809,7 @@
   function _onbStep4HTML() {
     const dis = _onbAuth.enabled ? '' : ' disabled';
     const disOp = _onbAuth.enabled ? '' : ';opacity:.45';
+    const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
@@ -1774,11 +1817,13 @@
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+' onchange="_onbAuthToggle()"/><span class="toggle-switch-slider"></span></label></div>'
-      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
-        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'"/></div>'
-      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
-        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'"/></div>'
-      + '<div id="onbAuthError" style="display:none;font-size:12px;color:#ef4444"></div>'
+      + '<div id="onbAuthFields" style="'+(_onbAuth.enabled ? '' : 'display:none')+'">'
+      + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'" oninput="_onbValidateAuth()"/></div>'
+      + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'" oninput="_onbValidateAuth()"/></div>'
+      + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
+      + '</div>'
       + '</div>';
   }
 
@@ -1821,33 +1866,38 @@
     const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
     const password = document.getElementById('onbAuthPassword')?.value ?? _onbAuth.password;
     const confirm = document.getElementById('onbAuthConfirm')?.value ?? _onbAuth.confirm;
-    _onbAuth = { enabled, password, confirm };
+    _onbAuth = { ..._onbAuth, enabled, password, confirm };
   }
 
   function _onbAuthToggle() {
     _captureOnbAuth();
+    const fields = document.getElementById('onbAuthFields');
+    if (fields) fields.style.display = _onbAuth.enabled ? '' : 'none';
     ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.disabled = !_onbAuth.enabled; el.style.opacity = _onbAuth.enabled ? '' : '.45'; }
     });
-    const err = document.getElementById('onbAuthError');
-    if (err) { err.style.display = 'none'; err.textContent = ''; }
+    const skip = document.getElementById('onbSkipBtn');
+    if (skip) {
+      skip.style.background = _onbAuth.enabled ? 'transparent' : 'var(--accent)';
+      skip.style.borderColor = _onbAuth.enabled ? 'var(--border)' : 'var(--accent)';
+      skip.style.color = _onbAuth.enabled ? 'var(--muted)' : '#fff';
+    }
+    _onbValidateAuth();
   }
 
   function _onbValidateAuth() {
     _captureOnbAuth();
-    const err = document.getElementById('onbAuthError');
-    if (!_onbAuth.enabled) return true;
-    if ((_onbAuth.password || '').length < 8) {
-      if (err) { err.textContent = t('settings.auth.password_too_short'); err.style.display = ''; }
+    const next = document.getElementById('onbNextBtn');
+    const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
+    const rules = document.getElementById('onbAuthRules');
+    if (rules) rules.innerHTML = _renderAuthRuleList(validation);
+    if (!_onbAuth.enabled) {
+      if (next) next.disabled = true;
       return false;
     }
-    if (_onbAuth.password !== _onbAuth.confirm) {
-      if (err) { err.textContent = t('settings.auth.password_mismatch'); err.style.display = ''; }
-      return false;
-    }
-    if (err) { err.style.display = 'none'; err.textContent = ''; }
-    return true;
+    if (next) next.disabled = !validation.valid;
+    return validation.valid;
   }
 
   async function onbTestJsr() {
@@ -1863,11 +1913,23 @@
     });
   }
 
-  function onbNext() {
+  async function onbNext() {
     if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
     if (_onbStep === 2) _captureOnbJsr();
     if (_onbStep === 3) _captureOnbFeatures();
-    if (_onbStep === 4 && !_onbValidateAuth()) return;
+    if (_onbStep === 4) {
+      if (!_onbValidateAuth()) return;
+      const next = document.getElementById('onbNextBtn');
+      if (next) { next.disabled = true; next.textContent = t('onboarding.saving'); }
+      try {
+        await saveConfig({ auth: { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm } });
+        _onbAuth = { enabled: true, password: '', confirm: '', saved: true };
+      } catch (e) {
+        alert(t('settings.save_error', {msg: e.message}));
+        if (next) { next.textContent = t('nav.next'); _onbValidateAuth(); }
+        return;
+      }
+    }
     if (_onbStep < 5) { _onbStep++; _onbRender(); }
   }
 
@@ -1882,7 +1944,7 @@
       _onbStep = 3; _onbRender();
     }
     else if (_onbStep === 4) {
-      _onbAuth = { enabled: false, password: '', confirm: '' };
+      _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
       _onbStep = 5; _onbRender();
     }
   }
@@ -1909,9 +1971,9 @@
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
       score: { enabled: _onbFeatures.scoreEnabled },
-      auth: _onbAuth.enabled
+      ...(!_onbAuth.saved ? { auth: (_onbAuth.enabled
         ? { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm }
-        : { enabled: false },
+        : { enabled: false }) } : {}),
       system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled },
       ui: { theme: _onbTheme },
     };
@@ -2099,6 +2161,7 @@
   window._onbJsrToggle             = _onbJsrToggle;
   window._onbFeaturesToggle        = _onbFeaturesToggle;
   window._onbAuthToggle            = _onbAuthToggle;
+  window._onbValidateAuth          = _onbValidateAuth;
   window.onbTestJsr                = onbTestJsr;
   window.onbNext                   = onbNext;
   window.onbPrev                   = onbPrev;

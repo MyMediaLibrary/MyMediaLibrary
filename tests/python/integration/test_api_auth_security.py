@@ -10,6 +10,9 @@ import urllib.request
 from backend import scanner
 
 
+VALID_AUTH_PASSWORD = "aaAA11!!" + "x" * 17
+
+
 class TestApiAuthSecurity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -188,15 +191,66 @@ class TestApiAuthSecurity(unittest.TestCase):
             "/api/config",
             method="POST",
             headers={"Cookie": cookie_pair},
-            payload={"auth": {"enabled": True, "password": "new-password", "password_confirm": "new-password"}},
+            payload={"auth": {"enabled": True, "password": VALID_AUTH_PASSWORD, "password_confirm": VALID_AUTH_PASSWORD}},
         )
         self.assertEqual(status, 200, body)
         self.assertIn("mml_session=", headers.get("Set-Cookie") or "")
 
         raw = self._secrets_path.read_text(encoding="utf-8")
-        self.assertNotIn("new-password", raw)
+        self.assertNotIn(VALID_AUTH_PASSWORD, raw)
         stored = json.loads(raw)
-        self.assertTrue(scanner._auth_check_password_hash(stored["auth_password_hash"], "new-password"))
+        self.assertTrue(scanner._auth_check_password_hash(stored["auth_password_hash"], VALID_AUTH_PASSWORD))
+
+    def test_config_api_rejects_invalid_auth_password(self):
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+        invalid_cases = [
+            "aaAA11!!" + "x" * 16, # too short
+            "AABB11!!" + "Z" * 17, # no lowercase
+            "aabb11!!" + "x" * 17, # no uppercase
+            "aaAA!!!!" + "x" * 17, # no digits
+            "aaAA1122" + "x" * 17, # no special chars
+        ]
+        for password in invalid_cases:
+            status, body, _ = self._request(
+                "/api/config",
+                method="POST",
+                headers={"Cookie": cookie_pair},
+                payload={"auth": {"enabled": True, "password": password, "password_confirm": password}},
+            )
+            self.assertEqual(status, 400, body)
+            self.assertIn("INVALID_AUTH_CONFIG", body)
+
+    def test_config_api_rejects_auth_confirmation_mismatch(self):
+        status, _, headers = self._request("/api/auth", method="POST", payload={"password": "test-password"})
+        cookie_pair = (headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+        status, body, _ = self._request(
+            "/api/config",
+            method="POST",
+            headers={"Cookie": cookie_pair},
+            payload={"auth": {"enabled": True, "password": VALID_AUTH_PASSWORD, "password_confirm": VALID_AUTH_PASSWORD + "x"}},
+        )
+        self.assertEqual(status, 400, body)
+        self.assertIn("INVALID_AUTH_CONFIG", body)
+
+    def test_backend_auth_password_validation_rules(self):
+        ok, details = scanner.validate_auth_password(VALID_AUTH_PASSWORD, VALID_AUTH_PASSWORD)
+        self.assertTrue(ok)
+        self.assertTrue(all(details["rules"].values()))
+        self.assertTrue(details["confirmation_matches"])
+
+        for password, failed_rule in [
+            ("aaAA11!!" + "x" * 16, "length"),
+            ("AABB11!!" + "Z" * 17, "lowercase"),
+            ("aabb11!!" + "x" * 17, "uppercase"),
+            ("aaAA!!!!" + "x" * 17, "digits"),
+            ("aaAA1122" + "x" * 17, "special"),
+        ]:
+            ok, details = scanner.validate_auth_password(password, password)
+            self.assertFalse(ok)
+            self.assertFalse(details["rules"][failed_rule])
 
 
 class TestRecommendationsApi(unittest.TestCase):

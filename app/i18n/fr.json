@@ -183,8 +183,14 @@
       "new_password": "Nouveau mot de passe",
       "confirm_password": "Confirmation",
       "password_hint": "Laissez vide pour conserver le mot de passe actuel.",
-      "password_too_short": "Le mot de passe doit contenir au moins 8 caractères.",
-      "password_mismatch": "Les deux mots de passe ne correspondent pas."
+      "password_rules_error": "Le mot de passe ne respecte pas les règles de sécurité.",
+      "password_mismatch": "Les deux mots de passe ne correspondent pas.",
+      "rule_length": "25 caractères minimum",
+      "rule_lowercase": "Au moins 2 lettres minuscules",
+      "rule_uppercase": "Au moins 2 lettres majuscules",
+      "rule_digits": "Au moins 2 chiffres",
+      "rule_special": "Au moins 2 caractères spéciaux",
+      "rule_confirmation": "Confirmation identique"
     },
     "score": {
       "save": "Enregistrer le score",

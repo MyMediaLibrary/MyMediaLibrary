@@ -337,7 +337,11 @@ _AUTH_PASSWORD_HASH_KEY = "auth_password_hash"
 _AUTH_LEGACY_PASSWORD_KEYS = ("auth_password", "app_password", "password")
 _AUTH_HASH_SCHEME = "pbkdf2_sha256"
 _AUTH_HASH_ITERATIONS = 260_000
-_AUTH_MIN_PASSWORD_LENGTH = 8
+_AUTH_MIN_PASSWORD_LENGTH = 25
+_AUTH_MIN_LOWERCASE = 2
+_AUTH_MIN_UPPERCASE = 2
+_AUTH_MIN_DIGITS = 2
+_AUTH_MIN_SPECIAL = 2
 
 
 def _auth_legacy_secret_paths() -> list[Path]:
@@ -382,6 +386,30 @@ def _auth_check_password_hash(stored_hash: str, password: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except Exception:
         return False
+
+
+def _auth_password_rule_status(password: str) -> dict[str, bool]:
+    value = password if isinstance(password, str) else ""
+    return {
+        "length": len(value) >= _AUTH_MIN_PASSWORD_LENGTH,
+        "lowercase": sum(1 for ch in value if ch.islower()) >= _AUTH_MIN_LOWERCASE,
+        "uppercase": sum(1 for ch in value if ch.isupper()) >= _AUTH_MIN_UPPERCASE,
+        "digits": sum(1 for ch in value if ch.isdigit()) >= _AUTH_MIN_DIGITS,
+        "special": sum(1 for ch in value if not ch.isalnum() and not ch.isspace()) >= _AUTH_MIN_SPECIAL,
+    }
+
+
+def validate_auth_password(password: str, confirmation: str | None = None) -> tuple[bool, dict]:
+    """Validate auth password creation/change rules without exposing secrets."""
+    rules = _auth_password_rule_status(password)
+    confirmation_matches = confirmation is None or password == confirmation
+    ok = all(rules.values()) and confirmation_matches
+    return ok, {
+        "ok": ok,
+        "rules": rules,
+        "confirmation_matches": confirmation_matches,
+        "min_length": _AUTH_MIN_PASSWORD_LENGTH,
+    }
 
 
 def _auth_legacy_plaintext_from_current_file() -> str | None:
@@ -463,10 +491,13 @@ def _apply_auth_secret_update(payload: dict, secrets_data: dict) -> str:
         return "disabled"
     password = auth_payload.get("password")
     confirm = auth_payload.get("password_confirm", auth_payload.get("confirm_password"))
-    if not isinstance(password, str) or len(password) < _AUTH_MIN_PASSWORD_LENGTH:
-        raise ValueError(f"Password must contain at least {_AUTH_MIN_PASSWORD_LENGTH} characters")
-    if password != confirm:
+    if not isinstance(password, str):
+        raise ValueError("Password is required")
+    valid, validation = validate_auth_password(password, confirm if isinstance(confirm, str) else None)
+    if not validation["confirmation_matches"]:
         raise ValueError("Password confirmation does not match")
+    if not valid:
+        raise ValueError("Password does not meet security requirements")
     secrets_data[_AUTH_PASSWORD_HASH_KEY] = _auth_hash_password(password)
     for key in _AUTH_LEGACY_PASSWORD_KEYS:
         secrets_data.pop(key, None)
