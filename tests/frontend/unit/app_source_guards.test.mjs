@@ -218,25 +218,29 @@ test('settings exposes media probe toggle without using probe output as UI data'
 });
 
 test('auth password is configured through onboarding/settings and never via environment docs', () => {
-  assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose auth enable toggle');
+  assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose auth management in System as a collapsible block');
   assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
   assert.match(indexSource, /id="cfgAuthConfirm"/, 'settings should expose password confirmation');
+  assert.match(indexSource, /id="cfgAuthChangeBtn"[\s\S]*data-i18n="settings\.auth\.change_password"/, 'settings should expose a dedicated password change button');
+  assert.match(indexSource, /id="cfgAuthDisableBtn"[\s\S]*data-i18n="settings\.auth\.disable"/, 'settings should expose a disable auth button');
   assert.equal(frI18n.onboarding.step_auth_title, 'Authentification');
   assert.equal(enI18n.onboarding.step_auth_title, 'Authentication');
   assert.equal(frI18n.settings.auth.status_enabled, 'Authentification activée');
   assert.equal(enI18n.settings.auth.status_enabled, 'Authentication enabled');
 
   const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
-  assert.match(loadBlock, /_rw\('cfgAuthEnabled', _isAuthEnabled\(\)\);/, 'settings should read auth enabled state without a hash');
+  assert.match(loadBlock, /authBlock\.style\.display = _isAuthEnabled\(\) \? '' : 'none';/, 'settings should hide auth block when auth is disabled');
   assert.match(loadBlock, /_rw\('cfgAuthPassword', ''\);/, 'settings should never prefill auth password');
   assert.match(loadBlock, /_rw\('cfgAuthConfirm', ''\);/, 'settings should never prefill auth confirmation');
 
-  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
-  assert.match(saveBlock, /partial\.auth = \{ enabled: authEnabled === true \};/, 'settings save should send auth enabled state');
-  assert.match(saveBlock, /partial\.auth\.password = authPassword;/, 'settings save should send new password only when entered');
-  assert.match(saveBlock, /partial\.auth\.password_confirm = authConfirm;/, 'settings save should send confirmation only when entered');
-  assert.match(saveBlock, /const validation = _authPasswordValidation\(authPassword, authConfirm\);/, 'settings save should reuse frontend auth validation');
-  assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
+  const settingsChangeBlock = functionBlock(settingsSource, 'changeAuthPasswordFromSettings', 'disableAuthFromSettings');
+  assert.match(settingsChangeBlock, /const validation = _authPasswordValidation\(password, confirm\);/, 'settings password change should reuse frontend auth validation');
+  assert.match(settingsChangeBlock, /await saveConfig\(\{ auth: \{ enabled: true, password, password_confirm: confirm \} \}\);/, 'settings password change should persist through /api/config');
+  assert.match(settingsChangeBlock, /el\.value = ''/, 'settings should clear password fields after a successful change');
+
+  const settingsDisableBlock = functionBlock(settingsSource, 'disableAuthFromSettings', 'syncRecommendationsToggle');
+  assert.match(settingsDisableBlock, /await saveConfig\(\{ auth: \{ enabled: false \} \}\);/, 'settings disable should remove auth through /api/config');
+  assert.doesNotMatch(settingsChangeBlock + settingsDisableBlock, /auth_password_hash/, 'settings must not know about auth hashes');
 
   const authRulesBlock = functionBlock(settingsSource, '_authPasswordRules', '_authPasswordValidation');
   assert.match(authRulesBlock, /length: value\.length >= 25/, 'frontend auth validation should require 25 characters');
@@ -247,7 +251,12 @@ test('auth password is configured through onboarding/settings and never via envi
 
   const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
   assert.match(authStepBlock, /id="onbAuthEnabled"[\s\S]*onchange="_onbAuthToggle\(\)"/, 'onboarding auth should be controlled by a toggle');
+  assert.match(authStepBlock, /id="onbAuthFields"/, 'onboarding auth fields should always be rendered');
+  assert.doesNotMatch(authStepBlock, /display:none|disabled|opacity:\.45/, 'onboarding auth fields should remain visible and editable when auth starts disabled');
   assert.match(authStepBlock, /id="onbAuthRules"/, 'onboarding auth should show per-rule validation feedback');
+
+  const authInputBlock = functionBlock(settingsSource, '_onbAuthPasswordInput', '_onbValidateAuth');
+  assert.match(authInputBlock, /if \(toggle && \(password \|\| confirm\)\)[\s\S]*toggle\.checked = true;/, 'typing a password should auto-enable the auth toggle');
 
   const validateBlock = functionBlock(settingsSource, '_onbValidateAuth', 'onbTestJsr');
   assert.match(validateBlock, /if \(!_onbAuth\.enabled\)[\s\S]*next\.disabled = true/, 'auth disabled should keep Next disabled');

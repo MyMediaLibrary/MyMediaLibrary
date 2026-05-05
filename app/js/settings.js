@@ -809,22 +809,72 @@
         const ok = validation.rules[key] === true;
         return '<div data-auth-rule="'+key+'" style="color:'+(ok ? '#34d399' : 'var(--muted)')+'">'+(ok ? '✓ ' : '• ')+escH(label)+'</div>';
       }).join('')
-      + '<div id="onbAuthConfirmRule" style="color:'+(validation.confirmationMatches ? '#34d399' : '#ef4444')+'">'
+      + '<div data-auth-rule="confirmation" style="color:'+(validation.confirmationMatches ? '#34d399' : '#ef4444')+'">'
       + (validation.confirmationMatches ? '✓ ' : '• ')+escH(t('settings.auth.rule_confirmation'))+'</div>'
       + '</div>';
   }
 
-  function toggleAuthFields() {
-    const enabled = document.getElementById('cfgAuthEnabled')?.checked === true;
-    const fields = document.getElementById('cfgAuthFields');
+  function _setSettingsAuthStatus(message, isError = false) {
     const status = document.getElementById('cfgAuthStatus');
-    if (fields) fields.style.display = enabled ? '' : 'none';
-    ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) { el.disabled = !enabled; el.style.opacity = enabled ? '' : '.45'; }
-    });
-    if (status) {
-      status.textContent = enabled ? t('settings.auth.status_enabled') : t('settings.auth.status_disabled');
+    if (!status) return;
+    if (!message) {
+      status.style.display = 'none';
+      status.textContent = '';
+      status.style.color = 'var(--muted)';
+      return;
+    }
+    status.style.display = '';
+    status.textContent = message;
+    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+  }
+
+  function syncSettingsAuthPasswordState() {
+    const password = document.getElementById('cfgAuthPassword')?.value || '';
+    const confirm = document.getElementById('cfgAuthConfirm')?.value || '';
+    const validation = _authPasswordValidation(password, confirm);
+    const rules = document.getElementById('cfgAuthRules');
+    if (rules) rules.innerHTML = _renderAuthRuleList(validation);
+    const btn = document.getElementById('cfgAuthChangeBtn');
+    if (btn) btn.disabled = !validation.valid;
+    _setSettingsAuthStatus('');
+  }
+
+  async function changeAuthPasswordFromSettings() {
+    const password = document.getElementById('cfgAuthPassword')?.value || '';
+    const confirm = document.getElementById('cfgAuthConfirm')?.value || '';
+    const validation = _authPasswordValidation(password, confirm);
+    if (!validation.valid) {
+      _setSettingsAuthStatus(
+        validation.confirmationMatches ? t('settings.auth.password_rules_error') : t('settings.auth.password_mismatch'),
+        true,
+      );
+      syncSettingsAuthPasswordState();
+      return;
+    }
+    const btn = document.getElementById('cfgAuthChangeBtn');
+    if (btn) btn.disabled = true;
+    try {
+      await saveConfig({ auth: { enabled: true, password, password_confirm: confirm } });
+      ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      syncSettingsAuthPasswordState();
+      _setSettingsAuthStatus(t('settings.auth.password_changed'), false);
+    } catch (e) {
+      _setSettingsAuthStatus(t('settings.save_error', {msg: e.message}), true);
+      syncSettingsAuthPasswordState();
+    }
+  }
+
+  async function disableAuthFromSettings() {
+    try {
+      await saveConfig({ auth: { enabled: false } });
+      appConfig.auth = { enabled: false };
+      const block = document.getElementById('cfgAuthBlock');
+      if (block) block.style.display = 'none';
+      ['cfgAuthPassword', 'cfgAuthConfirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      _setSettingsAuthStatus('');
+      window.location.reload();
+    } catch (e) {
+      _setSettingsAuthStatus(t('settings.save_error', {msg: e.message}), true);
     }
   }
 
@@ -860,10 +910,11 @@
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
-    _rw('cfgAuthEnabled', _isAuthEnabled());
     _rw('cfgAuthPassword', '');
     _rw('cfgAuthConfirm', '');
-    toggleAuthFields();
+    const authBlock = document.getElementById('cfgAuthBlock');
+    if (authBlock) authBlock.style.display = _isAuthEnabled() ? '' : 'none';
+    syncSettingsAuthPasswordState();
     _rw('cfgEnableScore', isScoreEnabled());
     _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
     syncRecommendationsToggle();
@@ -948,9 +999,6 @@
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
     const mediaProbeEnabled = get('cfgMediaProbeEnabled');
-    const authEnabled = get('cfgAuthEnabled');
-    const authPasswordRaw = get('cfgAuthPassword');
-    const authConfirmRaw = get('cfgAuthConfirm');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
@@ -978,25 +1026,6 @@
         cache_enabled: currentMediaProbe.cache_enabled !== false,
       };
     }
-    if (authEnabled !== null) {
-      const authPassword = typeof authPasswordRaw === 'string' ? authPasswordRaw : '';
-      const authConfirm = typeof authConfirmRaw === 'string' ? authConfirmRaw : '';
-      partial.auth = { enabled: authEnabled === true };
-      if (authEnabled === true && (authPassword || authConfirm || !_isAuthEnabled())) {
-        const validation = _authPasswordValidation(authPassword, authConfirm);
-        if (!validation.confirmationMatches) {
-          alert(t('settings.auth.password_mismatch'));
-          return;
-        }
-        if (!validation.valid) {
-          alert(t('settings.auth.password_rules_error'));
-          return;
-        }
-        partial.auth.password = authPassword;
-        partial.auth.password_confirm = authConfirm;
-      }
-    }
-
     try {
       await saveConfig(partial);
       const shouldPersistScoreSettings = _isScoreTabActive() && _isScoreSettingsEnabled() && !!_scoreSettingsDraft;
@@ -1807,8 +1836,6 @@
   }
 
   function _onbStep4HTML() {
-    const dis = _onbAuth.enabled ? '' : ' disabled';
-    const disOp = _onbAuth.enabled ? '' : ';opacity:.45';
     const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
@@ -1817,11 +1844,11 @@
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+' onchange="_onbAuthToggle()"/><span class="toggle-switch-slider"></span></label></div>'
-      + '<div id="onbAuthFields" style="'+(_onbAuth.enabled ? '' : 'display:none')+'">'
+      + '<div id="onbAuthFields">'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
-        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'" oninput="_onbValidateAuth()"/></div>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'" oninput="_onbAuthPasswordInput()"/></div>'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
-        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'" oninput="_onbValidateAuth()"/></div>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'" oninput="_onbAuthPasswordInput()"/></div>'
       + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
       + '</div>'
       + '</div>';
@@ -1871,12 +1898,6 @@
 
   function _onbAuthToggle() {
     _captureOnbAuth();
-    const fields = document.getElementById('onbAuthFields');
-    if (fields) fields.style.display = _onbAuth.enabled ? '' : 'none';
-    ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) { el.disabled = !_onbAuth.enabled; el.style.opacity = _onbAuth.enabled ? '' : '.45'; }
-    });
     const skip = document.getElementById('onbSkipBtn');
     if (skip) {
       skip.style.background = _onbAuth.enabled ? 'transparent' : 'var(--accent)';
@@ -1884,6 +1905,19 @@
       skip.style.color = _onbAuth.enabled ? 'var(--muted)' : '#fff';
     }
     _onbValidateAuth();
+  }
+
+  function _onbAuthPasswordInput() {
+    const password = document.getElementById('onbAuthPassword')?.value || '';
+    const confirm = document.getElementById('onbAuthConfirm')?.value || '';
+    const toggle = document.getElementById('onbAuthEnabled');
+    if (toggle && (password || confirm)) {
+      toggle.checked = true;
+    } else if (toggle && !password && !confirm) {
+      toggle.checked = false;
+    }
+    _captureOnbAuth();
+    _onbAuthToggle();
   }
 
   function _onbValidateAuth() {
@@ -2150,7 +2184,9 @@
   window.switchStab                = switchStab;
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
-  window.toggleAuthFields          = toggleAuthFields;
+  window.syncSettingsAuthPasswordState = syncSettingsAuthPasswordState;
+  window.changeAuthPasswordFromSettings = changeAuthPasswordFromSettings;
+  window.disableAuthFromSettings   = disableAuthFromSettings;
   window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;
@@ -2161,6 +2197,7 @@
   window._onbJsrToggle             = _onbJsrToggle;
   window._onbFeaturesToggle        = _onbFeaturesToggle;
   window._onbAuthToggle            = _onbAuthToggle;
+  window._onbAuthPasswordInput     = _onbAuthPasswordInput;
   window._onbValidateAuth          = _onbValidateAuth;
   window.onbTestJsr                = onbTestJsr;
   window.onbNext                   = onbNext;

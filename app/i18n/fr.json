@@ -177,12 +177,16 @@
       "system": "Système"
     },
     "auth": {
+      "block_title": "Authentification",
       "enabled": "Authentification par mot de passe",
       "status_enabled": "Authentification activée",
       "status_disabled": "Authentification désactivée",
       "new_password": "Nouveau mot de passe",
       "confirm_password": "Confirmation",
       "password_hint": "Laissez vide pour conserver le mot de passe actuel.",
+      "change_password": "Changer le mot de passe",
+      "disable": "Désactiver l'authentification",
+      "password_changed": "Mot de passe mis à jour.",
       "password_rules_error": "Le mot de passe ne respecte pas les règles de sécurité.",
       "password_mismatch": "Les deux mots de passe ne correspondent pas.",
       "rule_length": "25 caractères minimum",
