@@ -13,12 +13,19 @@ const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/sta
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
 const frI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/fr.json'), 'utf8'));
 const enI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/en.json'), 'utf8'));
+const scannerSource = fs.readFileSync(path.resolve(__dirname, '../../../backend/scanner.py'), 'utf8');
+const composeSource = fs.readFileSync(path.resolve(__dirname, '../../../compose.yaml'), 'utf8');
+const readmeSource = fs.readFileSync(path.resolve(__dirname, '../../../README.md'), 'utf8');
+const docsFrSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/fr.md'), 'utf8');
+const docsEnSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/en.md'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
-  const start = source.indexOf(`function ${functionName}(`);
+  let start = source.indexOf(`function ${functionName}(`);
+  if (start === -1) start = source.indexOf(`async function ${functionName}(`);
   assert.notEqual(start, -1, `Function ${functionName} not found`);
   if (!nextFunctionName) return source.slice(start);
-  const end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  let end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  if (end === -1) end = source.indexOf(`\n  async function ${nextFunctionName}(`, start);
   assert.notEqual(end, -1, `Following function ${nextFunctionName} not found`);
   return source.slice(start, end);
 }
@@ -192,6 +199,98 @@ test('loadSettings score toggle reflects effective runtime score state', () => {
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
 });
 
+test('settings exposes media probe toggle without using probe output as UI data', () => {
+  assert.match(indexSource, /id="cfgMediaProbeEnabled"/, 'settings should expose the ffprobe analysis toggle');
+  assert.match(indexSource, /settings\.system\.media_probe_enabled/, 'settings should use i18n for the media probe label');
+  assert.equal(frI18n.settings.system.media_probe_enabled, 'Analyse technique ffprobe');
+  assert.equal(frI18n.settings.system.media_probe_enabled_hint, 'Génère un fichier de comparaison avec les données techniques extraites par ffprobe.');
+  assert.equal(enI18n.settings.system.media_probe_enabled, 'ffprobe technical analysis');
+  assert.equal(enI18n.settings.system.media_probe_enabled_hint, 'Generates a comparison file with technical data extracted by ffprobe.');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgMediaProbeEnabled', appConfig\.media_probe\?\.enabled === true\);/, 'loadSettings should default missing media_probe config to disabled');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /const mediaProbeEnabled = get\('cfgMediaProbeEnabled'\);/, 'settings save should read the media probe toggle');
+  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*workers: currentMediaProbe\.workers \|\| 4,[\s\S]*cache_enabled: currentMediaProbe\.cache_enabled !== false[\s\S]*\};/, 'settings save should persist compare mode and preserve backend performance defaults');
+  assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
+  assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
+});
+
+test('auth password is configured through onboarding/settings and never via environment docs', () => {
+  assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose an auth section');
+  assert.match(indexSource, /id="cfgAuthBlock"[^>]*border-top:1px solid var\(--border\)/, 'settings auth section should be visually separated');
+  assert.doesNotMatch(indexSource, /data-target="settingsAuthBody"|id="settingsAuthBody"/, 'settings auth section should not be collapsible');
+  assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose an auth enable toggle');
+  assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
+  assert.match(indexSource, /id="cfgAuthConfirm"/, 'settings should expose password confirmation');
+  assert.doesNotMatch(indexSource, /cfgAuthChangeBtn|cfgAuthDisableBtn|changeAuthPasswordFromSettings|disableAuthFromSettings/, 'settings auth should use the global save button only');
+  assert.equal(frI18n.onboarding.step_auth_title, 'Authentification');
+  assert.equal(enI18n.onboarding.step_auth_title, 'Authentication');
+  assert.equal(frI18n.settings.auth.status_enabled, 'Authentification activée');
+  assert.equal(enI18n.settings.auth.status_enabled, 'Authentication enabled');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgAuthEnabled', _isAuthEnabled\(\)\);/, 'settings should read auth enabled state without a hash');
+  assert.match(loadBlock, /_rw\('cfgAuthPassword', ''\);/, 'settings should never prefill auth password');
+  assert.match(loadBlock, /_rw\('cfgAuthConfirm', ''\);/, 'settings should never prefill auth confirmation');
+
+  const settingsSyncBlock = functionBlock(settingsSource, 'syncSettingsAuthPasswordState', 'syncRecommendationsToggle');
+  assert.match(settingsSyncBlock, /fields\.style\.display = enabled \? '' : 'none';/, 'settings auth fields/rules should hide when toggle is off');
+  assert.match(settingsSyncBlock, /rules\.innerHTML = enabled \? _renderAuthRuleList\(validation\) : '';/, 'settings auth rules should hide when toggle is off');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: false \};/, 'global settings save should disable auth when toggle is off');
+  assert.match(saveBlock, /const validation = _authPasswordValidation\(authPassword, authConfirm\);/, 'global settings save should validate auth password');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: true, password: authPassword, password_confirm: authConfirm \};/, 'global settings save should persist valid auth password');
+  assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
+
+  const authRulesBlock = functionBlock(settingsSource, '_authPasswordRules', '_authPasswordValidation');
+  assert.match(authRulesBlock, /length: value\.length >= 25/, 'frontend auth validation should require 25 characters');
+  assert.match(authRulesBlock, /lowercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 lowercase letters');
+  assert.match(authRulesBlock, /uppercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 uppercase letters');
+  assert.match(authRulesBlock, /digits:[\s\S]*>= 2/, 'frontend auth validation should require 2 digits');
+  assert.match(authRulesBlock, /special:[\s\S]*>= 2/, 'frontend auth validation should require 2 special characters');
+
+  const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
+  assert.match(authStepBlock, /id="onbAuthEnabled"[\s\S]*onchange="_onbAuthToggle\(\)"/, 'onboarding auth should be controlled by a toggle');
+  assert.match(authStepBlock, /id="onbAuthFields"/, 'onboarding auth fields should always be rendered');
+  assert.doesNotMatch(authStepBlock, /display:none/, 'onboarding auth fields should remain visible when auth starts disabled');
+  assert.match(authStepBlock, /const dis = _onbAuth\.enabled \? '' : ' disabled';/, 'onboarding auth fields should start disabled when auth is off');
+  assert.match(authStepBlock, /const disOp = _onbAuth\.enabled \? '' : ';opacity:\.45';/, 'onboarding auth fields should look disabled when auth is off');
+  assert.match(authStepBlock, /id="onbAuthRules"/, 'onboarding auth should show per-rule validation feedback');
+
+  const authToggleBlock = functionBlock(settingsSource, '_onbAuthToggle', '_onbAuthPasswordInput');
+  assert.match(authToggleBlock, /el\.disabled = !_onbAuth\.enabled;/, 'onboarding auth toggle should enable password fields only when auth is on');
+  assert.match(authToggleBlock, /el\.style\.opacity = _onbAuth\.enabled \? '' : '\.45';/, 'onboarding auth toggle should visually disable password fields when auth is off');
+
+  const authInputBlock = functionBlock(settingsSource, '_onbAuthPasswordInput', '_onbValidateAuth');
+  assert.match(authInputBlock, /if \(toggle && \(password \|\| confirm\)\)[\s\S]*toggle\.checked = true;/, 'typing a password should auto-enable the auth toggle');
+
+  const validateBlock = functionBlock(settingsSource, '_onbValidateAuth', 'onbTestJsr');
+  assert.match(validateBlock, /if \(!_onbAuth\.enabled\)[\s\S]*next\.disabled = true/, 'auth disabled should keep Next disabled');
+  assert.match(validateBlock, /next\.disabled = !validation\.valid/, 'auth enabled should allow Next only when password validation passes');
+
+  const onbNextBlock = functionBlock(settingsSource, 'onbNext', 'onbPrev');
+  assert.match(onbNextBlock, /await saveConfig\(\{ auth: \{ enabled: true, password: _onbAuth\.password, password_confirm: _onbAuth\.confirm \} \}\);/, 'onboarding Next should persist auth before summary');
+  assert.match(onbNextBlock, /_onbAuth = \{ enabled: true, password: '', confirm: '', saved: true \};/, 'onboarding should clear password fields after auth save');
+
+  const onboardingSaveBlock = functionBlock(settingsSource, 'onbLaunchScan');
+  assert.match(settingsSource, /else if \(_onbStep === 4\) panel\.innerHTML = _onbStep4HTML\(\);/, 'onboarding should insert auth before summary');
+  assert.match(onboardingSaveBlock, /!\_onbAuth\.saved[\s\S]*auth:[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding launch should not resend password after auth was already saved');
+  assert.doesNotMatch(scannerSource, /APP_PASSWORD/, 'backend runtime should not read APP_PASSWORD');
+  assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
+});
+
+test('frontend does not expose or persist library root path settings', () => {
+  assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
+  assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');
+  assert.doesNotMatch(settingsSource, /cfgLibraryPath|libraryPathLabel|library_path/, 'settings logic should not read or write library root path state');
+  assert.doesNotMatch(appSource, /libraryPathLabel|data\.library_path|brandSub.*library/i, 'app shell should not display library root path from library.json');
+  assert.equal(enI18n.settings.library.path, undefined, 'English library path label should be removed');
+  assert.equal(frI18n.settings.library.path, undefined, 'French library path label should be removed');
+});
+
 test('recommendations feature is gated by score and avoids fetch when disabled', () => {
   assert.match(indexSource, /id="navRecommendations"[\s\S]*display:none/, 'recommendations desktop nav should start hidden');
   assert.match(indexSource, /id="mnavRecommendations"[\s\S]*display:none/, 'recommendations mobile nav should start hidden');
@@ -324,6 +423,24 @@ test('settings trigger scan only when folders changed', () => {
 
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
   assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
+});
+
+test('settings save treats scan-skipped responses as successful saves', () => {
+  const saveStart = appSource.indexOf('async function saveConfig(');
+  const saveEnd = appSource.indexOf('\n  async function loadRecommendations(', saveStart);
+  assert.notEqual(saveStart, -1, 'saveConfig should be defined');
+  assert.notEqual(saveEnd, -1, 'loadRecommendations should follow saveConfig');
+  const saveConfigBlock = appSource.slice(saveStart, saveEnd);
+  assert.match(saveConfigBlock, /if \(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/, 'config save should only fail on non-2xx HTTP responses');
+  assert.doesNotMatch(saveConfigBlock, /scan_skipped|SCAN_RUNNING/, 'config save should not surface scan-skipped responses as errors');
+
+  const scoreStart = settingsSource.indexOf('async function _persistScoreSettings(');
+  const scoreEnd = settingsSource.indexOf('\n  async function resetScoreSettings(', scoreStart);
+  assert.notEqual(scoreStart, -1, '_persistScoreSettings should be defined');
+  assert.notEqual(scoreEnd, -1, 'resetScoreSettings should follow _persistScoreSettings');
+  const scorePersistBlock = settingsSource.slice(scoreStart, scoreEnd);
+  assert.match(scorePersistBlock, /if \(!res\.ok\) throw new Error/, 'score save should only fail on non-2xx HTTP before reading payload');
+  assert.doesNotMatch(scorePersistBlock, /scan_skipped|SCAN_RUNNING/, 'score settings save should not show a special error for skipped post-save scans');
 });
 
 test('restoreState defers stats tab render until library load is complete', () => {

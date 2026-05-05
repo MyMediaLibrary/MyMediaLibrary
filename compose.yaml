@@ -5,12 +5,11 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                              # config.json, library.json, scanner.log
+      - ./data:/data                              # library.json, inventory, recommendations, scanner.log
+      - ./conf:/conf                              # config.json, providers, rules, .secrets
       - /chemin/vers/ta/mediatheque:/library:ro   # adapter ce chemin à ta médiathèque
     environment:
-      LIBRARY_PATH: /library   # fixé à /library dans le conteneur — adapter le volume ci-dessus
       TZ: Europe/Paris
       # SEERR_URL: "http://seerr:5055"
       # SEERR_API_KEY: "your-seerr-api-key"
-      # APP_PASSWORD: ""
     restart: unless-stopped

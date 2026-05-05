@@ -15,6 +15,21 @@ class EntrypointRuntimeGuardsTest(unittest.TestCase):
         self.assertLess(tz_idx, scan_server_idx)
         self.assertLess(tz_idx, initial_scan_idx)
 
+    def test_entrypoint_uses_fixed_library_mount_without_env_option(self):
+        source = ENTRYPOINT.read_text(encoding="utf-8")
+        self.assertIn('LIBRARY_DIR  : /library', source)
+        self.assertNotIn('LIBRARY_PATH=', source)
+        self.assertNotIn('envsubst', source)
+        self.assertNotIn("/mnt/media/library", source)
+
+    def test_storage_migration_runs_before_scanner_processes_start(self):
+        source = ENTRYPOINT.read_text(encoding="utf-8")
+        migration_idx = source.index('python3 -m backend.storage_migration || exit 1')
+        scan_server_idx = source.index('python3 /app/scanner.py --serve &')
+        initial_scan_idx = source.index('python3 /app/scanner.py')
+        self.assertLess(migration_idx, scan_server_idx)
+        self.assertLess(migration_idx, initial_scan_idx)
+
     def test_entrypoint_does_not_redirect_scanner_stdout_to_log_path(self):
         source = ENTRYPOINT.read_text(encoding="utf-8")
         self.assertNotIn('>> "${LOG_PATH', source)

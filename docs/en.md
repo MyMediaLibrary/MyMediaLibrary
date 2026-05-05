@@ -24,10 +24,10 @@
 **MyMediaLibrary** is a self-hosted dashboard to visualize a movie and TV show library. It runs in a single Docker container with no database.
 
 **Flow:**
-1. The Python scanner reads subdirectories of `LIBRARY_PATH`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
+1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
 2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations.
 3. The web interface (vanilla JS) loads the generated JSON files and renders library, filters, statistics, and recommendations.
-4. Configuration is persisted in `data/config.json` (folders, Seerr, UI preferences).
+4. Configuration is persisted in `conf/config.json` (folders, Seerr, UI preferences).
 
 ---
 
@@ -39,7 +39,7 @@
 - **Frontend**: HTML/CSS + vanilla JS (no framework)
 - **Backend**: minimal Python server (`backend/scanner.py`) — REST API routes + static file serving
 - **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, `library.json` writing
-- **Persistence**: `data/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
+- **Persistence**: `conf/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
 
 ### Internationalisation
 
@@ -61,7 +61,7 @@ Main impact areas:
 **Requirements:** Docker + Docker Compose, library with `.nfo` files.
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data
+mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 # edit compose.yaml — update the volume path
 docker compose up -d
@@ -79,11 +79,11 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                        # config.json, library.json, scanner.log
+      - ./data:/data                        # library.json, inventory, recommendations, scanner.log
+      - ./conf:/conf                        # config.json, providers, rules, .secrets
       - /path/to/your/library:/library:ro   # your media library, read-only
     environment:
-      LIBRARY_PATH: /library
-      # APP_PASSWORD: ""
+      TZ: Europe/Paris
     restart: unless-stopped
 ```
 
@@ -91,11 +91,26 @@ services:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `LIBRARY_PATH` | ✅ | — | Root path of the library inside the container |
 | `TZ` | ❌ | `UTC` | Container timezone (logs and timestamps) |
-| `APP_PASSWORD` | ❌ | — | Password (enables login screen) |
 
-Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
+Always mount your media to `/library` read-only. Password authentication is configured during onboarding and later in **Settings > Configuration**; only a hash is stored in `/conf/.secrets`. Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
+
+### Runtime storage
+
+- `/data` contains generated files: `library.json`, `library_inventory.json`, `recommendations.json`, `scanner.log`.
+- `/conf` contains persistent configuration: `config.json`, `providers_mapping.json`, `providers_logo.json`, `recommendations_rules.json`, `.secrets`.
+- `/library` is the fixed media mount point.
+- `/tmp` is internal to the container and contains `scan.lock`.
+
+On startup, the app automatically migrates old configuration files:
+
+- `/data/config.json` → `/conf/config.json`
+- `/data/providers_mapping.json` → `/conf/providers_mapping.json`
+- `/data/providers_logo.json` → `/conf/providers_logo.json`
+- `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`
+- `/app/.secrets` → `/conf/.secrets`
+
+After a successful migration, legacy files are removed. If both source and destination exist with different contents, startup stops to avoid overwriting user configuration.
 
 ### Updating
 
@@ -107,12 +122,12 @@ docker compose pull && docker compose up -d
 
 ## 4. Library structure
 
-The scanner reads the **direct subdirectories** of `LIBRARY_PATH`. Each subdirectory is a **folder** that you assign a type to (Movies, Series, Ignore) from the interface.
+The scanner reads the **direct subdirectories** of `/library`. Each subdirectory is a **folder** that you assign a type to (Movies, Series, Ignore) from the interface.
 
 ### Recommended structure
 
 ```
-/library/                    ← LIBRARY_PATH
+/library/                    ← fixed media root
 ├── movies/
 │   ├── Film (2010)/
 │   │   ├── Film.mkv
@@ -146,20 +161,19 @@ volumes:
   - /nas1/movies:/library/movies:ro
   - /nas2/series:/library/series:ro
   - ./data:/data
-environment:
-  LIBRARY_PATH: /library
+  - ./conf:/conf
 ```
 
 ---
 
 ## 5. Onboarding
 
-The setup wizard appears on first launch (or when `config.json` is missing/empty).
+The setup wizard appears on first launch (or when `config.json` is missing/empty in `./conf`).
 
 **Steps:**
 
 1. **Welcome screen** — app description, language selection, "Get started" button
-2. **Folders** — lists subdirectories of `LIBRARY_PATH`, assign a type to each (Movies / Series / Ignore). Unconfigured folders are skipped during scan. The "Next" button is disabled until at least 1 folder is configured.
+2. **Folders** — lists subdirectories of `/library`, assign a type to each (Movies / Series / Ignore). Unconfigured folders are skipped during scan. The "Next" button is disabled until at least 1 folder is configured.
 3. **Seerr** (optional) — URL + API key, connection test button
 4. **Summary + Scan** — shows the configuration, "Launch scan" button that starts the initial scan and redirects to the library when done
 
@@ -171,7 +185,7 @@ The scanner is the core component of MyMediaLibrary. It reads the filesystem, pa
 
 ### Overview
 
-The scanner (`scanner.py`) analyses the content of `LIBRARY_PATH` and generates:
+The scanner (`scanner.py`) analyses the content of `/library` and generates:
 
 | File | Purpose |
 |---|---|
@@ -229,7 +243,7 @@ Genres are normalized through an external mapping file: `app/mapping_genres.json
 
 ### Anti-concurrency lock
 
-Only one scan can run at a time. The scanner uses an inter-process file lock (`/data/.scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent simultaneous writes that would corrupt `library.json`.
+Only one scan can run at a time. The scanner uses an inter-process file lock (`/tmp/scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent simultaneous writes that would corrupt `library.json`. `/tmp` stays internal to the container and should not be mounted.
 
 If a scan is already running:
 - A UI-triggered scan receives an error response (HTTP 409)
@@ -267,7 +281,7 @@ Main file consumed by the web interface. Top-level structure:
 ```json
 {
   "scanned_at": "2025-04-14T20:00:00.000000",
-  "library_path": "/mnt/media/library",
+  "library_path": "/library",
   "total_items": 3289,
   "categories": ["Movies", "Series"],
   "items": [ ... ]
@@ -422,7 +436,7 @@ URL + API key in settings (Seerr tab) or during onboarding. A "Test connection" 
 
 ### `providers_mapping.json` (key file)
 
-- Runtime mapping used by the app is `/data/providers_mapping.json`.
+- Runtime mapping used by the app is `/conf/providers_mapping.json`.
 - On first startup, it is initialized from the bundled mapping file.
 - After that, it is **never auto-overwritten**.
 - After providers enrichment, newly detected raw providers are appended with `null`.
@@ -453,7 +467,7 @@ Interpretation:
 
 ### Customize displayed providers
 
-1. Open `/data/providers_mapping.json`.
+1. Open `/conf/providers_mapping.json`.
 2. Edit mappings.
 3. Reload the app (or restart the container if needed).
 
@@ -727,7 +741,7 @@ Recommendations turn library analysis into concrete actions: improve quality, op
 ### Engine
 
 - Deterministic rules, no generative AI.
-- Simple business rules configurable through `/data/recommendations_rules.json`.
+- Simple business rules configurable through `/conf/recommendations_rules.json`.
 - Backend structural rules for missing data and series inconsistencies.
 
 ### Structure
@@ -830,7 +844,6 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 
 ### Library tab
 
-- Library path (`LIBRARY_PATH`, read-only if set via compose.yaml)
 - Show/hide Movies or Series
 - Table of detected folders: type (Movies/Series/Ignore) + individual visibility
 

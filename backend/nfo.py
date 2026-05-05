@@ -55,7 +55,7 @@ def classify_resolution(width: int, height: int) -> str:
 
 CODEC_CANONICAL = {
     "hevc": "H.265", "h265": "H.265", "x265": "H.265",
-    "h264": "H.264", "x264": "H.264", "avc":  "H.264",
+    "h264": "H.264", "x264": "H.264", "avc":  "H.264", "avc1": "H.264",
     "av1":  "AV1",
     "mpeg2video": "MPEG-2", "mpeg2": "MPEG-2",
     "mpeg4": "MPEG-4",
