@@ -132,7 +132,8 @@ def import_config(conn: sqlite3.Connection, path: str | Path, report: ImportRepo
             if key == "auth":
                 _import_auth_settings(conn, value)
                 continue
-            if _looks_sensitive(key, value):
+            clean_value = _strip_sensitive_value(key, value)
+            if clean_value is _SKIP_VALUE:
                 continue
             rows += _insert_count(
                 conn,
@@ -140,7 +141,7 @@ def import_config(conn: sqlite3.Connection, path: str | Path, report: ImportRepo
                 INSERT OR IGNORE INTO app_config(key, value_json)
                 VALUES (?, ?)
                 """,
-                (str(key), _to_json(value)),
+                (str(key), _to_json(clean_value)),
             )
         if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
             score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
@@ -373,13 +374,28 @@ def _to_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _looks_sensitive(key: str, value: Any) -> bool:
+_SKIP_VALUE = object()
+
+
+def _strip_sensitive_value(key: str, value: Any) -> Any:
     lowered = str(key).casefold()
     if any(token in lowered for token in ("apikey", "api_key", "token", "secret", "password")):
-        return True
+        return _SKIP_VALUE
     if isinstance(value, dict):
-        return any(_looks_sensitive(child_key, child_value) for child_key, child_value in value.items())
-    return False
+        clean = {}
+        for child_key, child_value in value.items():
+            stripped = _strip_sensitive_value(child_key, child_value)
+            if stripped is not _SKIP_VALUE:
+                clean[child_key] = stripped
+        return clean
+    if isinstance(value, list):
+        clean_list = []
+        for item in value:
+            stripped = _strip_sensitive_value(key, item)
+            if stripped is not _SKIP_VALUE:
+                clean_list.append(stripped)
+        return clean_list
+    return value
 
 
 def _as_int(value: Any) -> int | None:

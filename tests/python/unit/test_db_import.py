@@ -100,7 +100,7 @@ class DatabaseImportTest(unittest.TestCase):
 
             self.assertGreaterEqual(inserted, 4)
             self.assertIn("folders", exported)
-            self.assertNotIn("seerr", exported)
+            self.assertEqual(exported["seerr"], {"enabled": True, "url": "https://example.test"})
             self.assertEqual(score["enabled"], 1)
             self.assertEqual(json.loads(probe["value_json"])["workers"], 2)
 
