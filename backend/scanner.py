@@ -136,7 +136,7 @@ except Exception:
         from media_probe import run_media_probe_pipeline_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
-            "[MEDIA_PROBE] media_probe import failed (%s). ffprobe technical scan disabled.",
+            "[SCAN] [PHASE 1B] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
             e,
         )
 
@@ -2098,7 +2098,7 @@ def write_inventory_json_non_blocking(
     forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
     forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
-    log.debug("[SCAN] Inventory write started")
+    log.debug("%s Inventory write started", _phase_prefix("4"))
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
         existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
@@ -2108,7 +2108,7 @@ def write_inventory_json_non_blocking(
                 inventory_to_write = merge_inventory_documents(existing_inventory, current_inventory)
             except Exception as e:
                 log.warning(
-                    f"[SCAN] Inventory merge failed: {e}. Falling back to current scan inventory."
+                    f"{_phase_prefix('4')} Inventory merge failed: {e}. Falling back to current scan inventory."
                 )
         should_reconcile_missing = (scan_mode == "full") if reconcile_missing is None else bool(reconcile_missing)
         if should_reconcile_missing:
@@ -2118,7 +2118,7 @@ def write_inventory_json_non_blocking(
             except Exception as e:
                 inventory_to_write["missing_reconciliation"] = False
                 log.warning(
-                    f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing with merged inventory."
+                    f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing with merged inventory."
                 )
         else:
             inventory_to_write["missing_reconciliation"] = False
@@ -2134,9 +2134,9 @@ def write_inventory_json_non_blocking(
             )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
         write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.debug(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
+        log.debug(f"{_phase_prefix('4')} Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
-        log.warning(f"[SCAN] Inventory write failed: {e}")
+        log.warning(f"{_phase_prefix('4')} Inventory write failed: {e}")
 
 
 def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
@@ -2153,7 +2153,7 @@ def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
             raise ValueError("inventory.items must be an array")
         return document
     except Exception as e:
-        log.warning(f"[SCAN] Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
+        log.warning(f"{_phase_prefix('4')} Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
         return None
 
 
@@ -3142,11 +3142,11 @@ def run_quick(only_category: str | None = None) -> None:
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] ── Phase 1 : filesystem + NFO{scope} ──────────────")
+    _log_phase_start("1", suffix=scope)
 
     root = Path(LIBRARY_PATH)
     if not root.exists():
-        log.error(f"[SCAN] Library path not found: {LIBRARY_PATH}")
+        log.error(f"{_phase_prefix('1')} Library path not found: {LIBRARY_PATH}")
         return
 
     # One-time migration of legacy env vars → config.json
@@ -3165,7 +3165,7 @@ def run_quick(only_category: str | None = None) -> None:
     # Phase 1 builds metadata/aggregations but does not persist final quality.
     score_enabled = False
     if score_feature_enabled:
-        log.debug("[SCAN] Phase 1 keeps score disabled (final quality is computed in phase 3)")
+        log.debug("%s Score disabled for phase 1; final quality is computed in phase 3", _phase_prefix("1"))
     _, effective_score_config, _ = get_effective_score_config(cfg)
     jsr_for_counts = _jsr_cfg()
     seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
@@ -3179,22 +3179,22 @@ def run_quick(only_category: str | None = None) -> None:
             continue
         ftype = folder.get("type")
         if not ftype or ftype == "ignore":
-            log.debug(f"[SCAN] Skipping folder [{fname}] — no type configured")
+            log.debug(f"{_phase_prefix('1')} Folder [{fname}] skipped — no type configured")
 
     if not categories:
         all_typed_folders = [f for f in cfg.get("folders", []) if f.get("type") in {"movie", "tv"}]
         if not all_typed_folders:
             # No folders with a recognised type configured at all
             if not Path(OUTPUT_PATH).exists():
-                log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+                log.info("%s No folder configured yet — skipping phase", _phase_prefix("1"))
             else:
-                log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
+                log.warning("%s No folder configured with type 'movie' or 'tv'", _phase_prefix("1"))
         else:
             # Folders exist but all are disabled — update inventory to mark them missing
-            log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
+            log.warning("%s All configured folders are disabled — skipping phase", _phase_prefix("1"))
         return
 
-    log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
+    log.info(f"{_phase_prefix('1')} {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
     # Preserve previous file content for backward-compatible partial scans
@@ -3215,10 +3215,11 @@ def run_quick(only_category: str | None = None) -> None:
     n_cats = len(active_cats)
 
     for cat_idx, cat in enumerate(active_cats, 1):
-        log.info(f"[SCAN] Processing folder [{cat['folder']}] ({cat_idx}/{n_cats}) — type={cat['type']}")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('1')} Folder [{cat['folder']}] ({cat_idx}/{n_cats}) started — type={cat['type']}")
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Folder not found on filesystem: {cat_dir}")
+            log.warning(f"{_phase_prefix('1')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
             continue
 
         cat_items_before = len(items)
@@ -3249,12 +3250,12 @@ def run_quick(only_category: str | None = None) -> None:
         count = len(items) - cat_items_before
         # Incremental write after each folder
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
-        log.info(f'[SCAN] Folder [{cat["folder"]}] done — {count} item(s) found')
+        log.info(f'{_phase_prefix("1")} Folder [{cat["folder"]}] completed in {time.monotonic() - cat_started_at:.1f}s — {count} item(s)')
 
     # When filtering by category, preserve items from other categories
     if only_category:
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
-        log.info(f"  Preserving {len(preserved)} items from other categories")
+        log.info(f"{_phase_prefix('1')} Preserving {len(preserved)} item(s) from other categories")
         for i in preserved:
             if not score_enabled:
                 _strip_score_fields(i)
@@ -3281,15 +3282,15 @@ def run_quick(only_category: str | None = None) -> None:
     try:
         mapping_added = _upsert_runtime_provider_mapping(items)
         if mapping_added:
-            log.info(f"[SCAN] providers_mapping updated (+{mapping_added} raw provider(s))")
+            log.info(f"{_phase_prefix('1')} providers_mapping updated (+{mapping_added} raw provider(s))")
     except Exception as e:
-        log.warning(f"[SCAN] providers_mapping update failed: {e}")
+        log.warning(f"{_phase_prefix('1')} providers_mapping update failed: {e}")
 
     elapsed = time.monotonic() - _t0
     if _nfo_stats["failed"] > 0:
-        log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
+        log.info(f"{_phase_prefix('1')} NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed")
     else:
-        log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
+        log.debug(f"{_phase_prefix('1')} NFO parsing: {_nfo_stats['ok']} OK")
 
     # Audio codec stats
     audio_dist: dict = {}
@@ -3297,8 +3298,8 @@ def run_quick(only_category: str | None = None) -> None:
         ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
     audio_parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio codecs detected: {len(audio_dist)}")
-    log.debug(f"[SCAN] Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
+    log.info(f"{_phase_prefix('1')} Audio codecs detected: {len(audio_dist)}")
+    log.debug(f"{_phase_prefix('1')} Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
 
     # Audio language stats
     lang_dist: dict = {}
@@ -3306,9 +3307,9 @@ def run_quick(only_category: str | None = None) -> None:
         for lang in (item.get("audio_languages") or []):
             lang_dist[lang] = lang_dist.get(lang, 0) + 1
     lang_parts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio languages detected: {len(lang_dist)}")
+    log.info(f"{_phase_prefix('1')} Audio languages detected: {len(lang_dist)}")
     if lang_parts:
-        log.debug(f"[SCAN] Audio languages detail: {' / '.join(lang_parts)}")
+        log.debug(f"{_phase_prefix('1')} Audio languages detail: {' / '.join(lang_parts)}")
 
     # Video codec stats
     video_dist: dict = {}
@@ -3316,8 +3317,8 @@ def run_quick(only_category: str | None = None) -> None:
         vc = item.get("codec") or "unknown"
         video_dist[vc] = video_dist.get(vc, 0) + 1
     video_parts = [f"{k}×{v}" for k, v in sorted(video_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Video codecs detected: {len(video_dist)}")
-    log.debug(f"[SCAN] Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
+    log.info(f"{_phase_prefix('1')} Video codecs detected: {len(video_dist)}")
+    log.debug(f"{_phase_prefix('1')} Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
 
     # Resolution stats
     res_dist: dict = {}
@@ -3325,17 +3326,17 @@ def run_quick(only_category: str | None = None) -> None:
         r = item.get("resolution") or "unknown"
         res_dist[r] = res_dist.get(r, 0) + 1
     res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
-    log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    log.info(f"{_phase_prefix('1')} Resolutions detected: {len(res_dist)}")
+    log.debug(f"{_phase_prefix('1')} Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
     log.info(
-        f"[SCAN] TV scan summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
+        f"{_phase_prefix('1')} TV summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
     )
     if seerr_counts_active:
         log.info(
-            f"[SCAN] TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
+            f"{_phase_prefix('1')} TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
         )
 
-    log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
+    _log_phase_complete("1", elapsed, f"{len(items)} item(s) total ({size_str})")
 
     # Inventory update is handled explicitly by phase 4.
 
@@ -3348,21 +3349,21 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] ── Phase 2 : Seerr enrichment ({label}){scope} ──")
+    _log_phase_start("2", suffix=f" ({label}){scope}")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("[SCAN] Seerr disabled in config.json — skipping enrichment")
+        log.warning("%s Disabled in config.json — skipping phase", _phase_prefix("2"))
         return
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("[SCAN] Seerr URL or apikey missing in config.json — skipping enrichment")
+        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
         return
 
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        log.error(f"Cannot read {OUTPUT_PATH}: {e}")
+        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}: {e}")
         return
 
     items = data.get("items", [])
@@ -3380,10 +3381,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     to_enrich = [i for i in items if needs_enrich(i)]
     skipped   = len(items) - len(to_enrich)
-    log.info(f"[SCAN] Seerr enrichment: {len(to_enrich)} items to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
+    log.info(f"{_phase_prefix('2')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        log.info("[SCAN] Nothing to enrich.")
+        _log_phase_complete("2", time.monotonic() - _t0, "0 item(s)")
         return
 
     by_cat = defaultdict(list)
@@ -3423,7 +3424,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                             item["tmdb_id"] = str(resolved_tmdb)
                         if resolved_tvdb not in (None, ""):
                             log.info(
-                                f"[enrich-tv] Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                                f"{_phase_prefix('2')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
                             providers = fetch_providers(item["tvdb_id"], True, jsr)
@@ -3440,13 +3441,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                         resolved_tmdb = resolved_ids.get("tmdb_id")
                         if resolved_tmdb not in (None, ""):
                             log.info(
-                                f"[enrich-movie] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                                f"{_phase_prefix('2')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
                             )
                             item["tmdb_id"] = str(resolved_tmdb)
                             providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
             log.warning(
-                f"[enrich] Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{_phase_prefix('2')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
                 f"{item.get('title')!r}: {e}"
             )
             providers = _FETCH_ERROR
@@ -3461,7 +3462,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     n_enrich_cats = len(sorted_by_cat)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
         cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
-        log.info(f"[SCAN] Enriching folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -3483,25 +3485,25 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 item["providers_fetched"] = True
                 enriched += 1
                 total_providers = len(providers or [])
-                log.debug(f"  {item['title']} — {total_providers} provider(s)")
+                log.debug(f"{_phase_prefix('2')} {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
+        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"[SCAN] {not_found_count} item(s) not found in Seerr — ids: {ids_str}{suffix}")
+        log.info(f"{_phase_prefix('2')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Seerr error) — ids: {ids_str}{suffix}")
+        log.warning(f"{_phase_prefix('2')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
     if not_found_count: parts.append(f"{not_found_count} not found in Seerr")
     if failed_count:    parts.append(f"{failed_count} errors")
-    log.info(f"[SCAN] Phase 2 completed in {elapsed:.1f}s — {' / '.join(parts)}")
+    _log_phase_complete("2", elapsed, " / ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -3590,15 +3592,15 @@ def run_scoring(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("[SCAN] Scoring disabled (score.enabled=false) — skipping phase 3")
+        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("3"))
         return
 
-    log.info("[SCAN] ── Phase 3 : scoring ──────────────────────────────")
+    _log_phase_start("3")
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}: {e}")
         return
 
     items = data.get("items", [])
@@ -3612,7 +3614,7 @@ def run_scoring(only_category: str | None = None) -> None:
         by_cat[cat_name].append(item)
 
     if not by_cat:
-        log.info("[SCAN] No items to score.")
+        _log_phase_complete("3", time.monotonic() - _t0, "0 item(s)")
         return
 
     # Build category display-name → raw folder name lookup for consistent log labels
@@ -3625,25 +3627,28 @@ def run_scoring(only_category: str | None = None) -> None:
     n_score_cats = len(sorted_score_cats)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
         cat_folder = cat_folder_by_name.get(cat_name, cat_name)
-        log.info(f"[SCAN] Scoring folder [{cat_folder}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
         scored_total += recompute_scores_for_items(cat_items, effective_score_config)
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_folder}] scored")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
-    log.info(f"[SCAN] Phase 3 completed — {scored_total} item(s) scored in {elapsed:.1f}s")
+    _log_phase_complete("3", elapsed, f"{scored_total} item(s) scored")
 
 
 def run_score_only() -> int:
     with _scan_lock("score_only"):
         _t0 = time.monotonic()
-        log.info("[SCAN] ── Score-only recompute ───────────────────────────")
+        log.info("[SCAN] %s", _SCAN_SEPARATOR)
+        log.info("[SCAN] [SCORE-ONLY] Starting recompute")
+        log.info("[SCAN] %s", _SCAN_SEPARATOR)
         defaults, effective_score_config, _ = get_effective_score_config()
         del defaults  # only used for lazy bootstrap and validation side-effects
         recalculated = recompute_scores_only(effective_score_config)
         elapsed = time.monotonic() - _t0
-        log.info(f"[SCAN] Score-only completed — {recalculated} item(s) scored in {elapsed:.1f}s")
+        log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {recalculated} item(s) scored")
         return recalculated
 
 
@@ -3667,15 +3672,15 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_inventory_enabled(cfg):
-        log.info("[SCAN] Inventory disabled (system.inventory_enabled=false) — skipping phase 4")
+        log.info("%s Disabled (system.inventory_enabled=false) — skipping phase", _phase_prefix("4"))
         return
 
-    log.info("[SCAN] ── Phase 4 : inventory ─────────────────────────────")
+    _log_phase_start("4")
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as f:
             lib_data = json.load(f)
     except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}: {e}")
         return
 
     root = Path(LIBRARY_PATH)
@@ -3707,10 +3712,11 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     for cat_idx, cat in enumerate(active_inv_cats, 1):
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Inventory: folder not found: {cat_dir}")
+            log.warning(f"{_phase_prefix('4')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
             continue
 
-        log.info(f"[SCAN] Inventory: processing folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) — type={cat['type']}")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) started — type={cat['type']}")
         cat_inv_items: list[dict] = []
         for media_dir in sorted(cat_dir.iterdir()):
             if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
@@ -3738,7 +3744,7 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
             merged = partial_doc
         merged = cleanup_inventory_transient_fields(merged)
         write_json(merged, INVENTORY_OUTPUT_PATH)
-        log.info(f"[SCAN] Inventory: folder [{cat['folder']}] done — {len(cat_inv_items)} item(s)")
+        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_inv_items)} item(s)")
 
     # Final pass: full merge + optional missing reconciliation
     final_doc = {
@@ -3763,7 +3769,7 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
             final_merged["missing_reconciliation"] = True
         except Exception as e:
             final_merged["missing_reconciliation"] = False
-            log.warning(f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing.")
+            log.warning(f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing.")
     else:
         final_merged["missing_reconciliation"] = False
 
@@ -3777,16 +3783,13 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     if missing_items:
         names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
         suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
-        log.info(f"[SCAN] Inventory: {len(missing_items)} missing item(s)")
-        log.debug(f"[SCAN] Inventory missing: {', '.join(names)}{suffix}")
+        log.info(f"{_phase_prefix('4')} {len(missing_items)} missing item(s)")
+        log.debug(f"{_phase_prefix('4')} Missing items: {', '.join(names)}{suffix}")
     else:
-        log.info("[SCAN] Inventory: no missing items")
+        log.info(f"{_phase_prefix('4')} No missing items")
 
     elapsed = time.monotonic() - _t0
-    log.info(
-        f"[SCAN] Phase 4 completed in {elapsed:.1f}s — "
-        f"{len(all_new_items)} present, {len(missing_items)} missing"
-    )
+    _log_phase_complete("4", elapsed, f"{len(all_new_items)} present / {len(missing_items)} missing")
 
 
 # ---------------------------------------------------------------------------
@@ -3794,28 +3797,29 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
 # ---------------------------------------------------------------------------
 
 def run_recommendations() -> int:
+    _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("[SCAN] Recommendations disabled — score required")
+        log.info("%s Disabled — score required", _phase_prefix("5"))
         return 0
     if not _is_recommendations_enabled(cfg):
-        log.info("[SCAN] Recommendations disabled — skipping phase")
+        log.info("%s Disabled — skipping phase", _phase_prefix("5"))
         return 0
 
-    log.info("[SCAN] Phase 5: recommendations")
+    _log_phase_start("5")
     ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
     try:
         with open(OUTPUT_PATH, encoding="utf-8") as f:
             lib_data = json.load(f)
     except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+        log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}: {e}")
         write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
         return 0
 
     rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
     recs = generate_recommendations(lib_data, rules)
     write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
-    log.info("[SCAN] Recommendations generated: %s recommendation(s)", len(recs))
+    _log_phase_complete("5", time.monotonic() - _t0, f"{len(recs)} recommendation(s)")
     return len(recs)
 
 
@@ -3848,25 +3852,40 @@ def _resolve_startup_phases(cfg: dict) -> list[int]:
     return [PHASE_SCAN]
 
 
-def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
+def run_phases(phases: list[int], *, only_category: str | None = None) -> list[tuple[str, float]]:
     ordered = _normalize_phases(phases)
     if not ordered:
         log.info("[SCAN] No phase selected — nothing to run")
-        return
-    log.info("[SCAN] Planned phases: %s", " -> ".join(str(p) for p in ordered))
+        return []
+    planned_phase_ids = _log_planned_phases(ordered)
+    durations: list[tuple[str, float]] = []
     for phase in ordered:
         if phase == PHASE_SCAN:
+            phase_started_at = time.monotonic()
             run_quick(only_category=only_category)
-            _run_media_probe_phase1b(only_category=only_category)
+            durations.append(("1", time.monotonic() - phase_started_at))
+            if "1B" in planned_phase_ids:
+                phase_started_at = time.monotonic()
+                _run_media_probe_phase1b(only_category=only_category)
+                durations.append(("1B", time.monotonic() - phase_started_at))
         elif phase == PHASE_ENRICH:
+            phase_started_at = time.monotonic()
             run_enrich(force=True, only_category=only_category)
+            durations.append(("2", time.monotonic() - phase_started_at))
         elif phase == PHASE_SCORE:
+            phase_started_at = time.monotonic()
             run_scoring(only_category=only_category)
+            durations.append(("3", time.monotonic() - phase_started_at))
         elif phase == PHASE_INVENTORY:
+            phase_started_at = time.monotonic()
             scan_mode = "full" if PHASE_SCAN in ordered else "partial"
             run_inventory(scan_mode=scan_mode, only_category=only_category)
+            durations.append(("4", time.monotonic() - phase_started_at))
         elif phase == PHASE_RECOMMENDATIONS:
+            phase_started_at = time.monotonic()
             run_recommendations()
+            durations.append(("5", time.monotonic() - phase_started_at))
+    return durations
 
 
 def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
@@ -3874,10 +3893,10 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
     if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
         return
     if cfg["media_probe"].get("mode", "compare") != "compare":
-        log.warning("[MEDIA_PROBE] Unsupported mode %r — skipping", cfg["media_probe"].get("mode"))
+        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
         return
     if not Path(OUTPUT_PATH).exists():
-        log.info("[MEDIA_PROBE] Skipping — library.json does not exist")
+        log.info("%s Skipping — library.json does not exist", _phase_prefix("1B"))
         return
     try:
         run_media_probe_pipeline_if_enabled(
@@ -3887,7 +3906,7 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
             only_category=only_category,
         )
     except Exception as e:
-        log.exception("[MEDIA_PROBE] Failed during phase 1b ffprobe scan: %s", e)
+        log.exception("%s Failed: %s", _phase_prefix("1B"), e)
 
 
 # ---------------------------------------------------------------------------
@@ -4030,6 +4049,61 @@ PHASE_INVENTORY = 4
 PHASE_RECOMMENDATIONS = 5
 _PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
+_SCAN_SEPARATOR = "─" * 47
+_SCAN_FINAL_SEPARATOR = "═" * 47
+_PHASE_LABELS = {
+    "1": ("FILESYSTEM+NFO", "Filesystem + NFO"),
+    "1B": ("FFPROBE", "FFprobe technical scan"),
+    "2": ("SEERR", "Seerr enrichment"),
+    "3": ("SCORING", "Scoring"),
+    "4": ("INVENTORY", "Inventory"),
+    "5": ("RECOMMENDATIONS", "Recommendations"),
+}
+_PHASE_ID_BY_NUMBER = {
+    PHASE_SCAN: "1",
+    PHASE_ENRICH: "2",
+    PHASE_SCORE: "3",
+    PHASE_INVENTORY: "4",
+    PHASE_RECOMMENDATIONS: "5",
+}
+
+
+def _phase_prefix(phase_id: str) -> str:
+    name = _PHASE_LABELS.get(str(phase_id).upper(), (str(phase_id).upper(), ""))[0]
+    return f"[SCAN] [PHASE {str(phase_id).upper()}] [{name}]"
+
+
+def _phase_display_name(phase_id: str) -> str:
+    return _PHASE_LABELS.get(str(phase_id).upper(), (str(phase_id).upper(), str(phase_id)))[1]
+
+
+def _log_phase_start(phase_id: str, *, suffix: str = "") -> None:
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
+    log.info("%s Starting phase%s", _phase_prefix(phase_id), suffix)
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
+
+
+def _log_phase_complete(phase_id: str, duration: float, summary: str | None = None) -> None:
+    msg = f"{_phase_prefix(phase_id)} Completed in {duration:.1f}s"
+    if summary:
+        msg = f"{msg} — {summary}"
+    log.info(msg)
+
+
+def _log_planned_phases(ordered: list[int]) -> list[str]:
+    expanded = []
+    for phase in ordered:
+        phase_id = _PHASE_ID_BY_NUMBER.get(phase)
+        if not phase_id:
+            continue
+        expanded.append(phase_id)
+        if phase == PHASE_SCAN:
+            expanded.append("1B")
+    log.info("[SCAN] Planned phases:")
+    for phase_id in expanded:
+        label = phase_id.lower() if phase_id == "1B" else phase_id
+        log.info("[SCAN]   %-2s -> %s", label, _phase_display_name(phase_id))
+    return expanded
 
 
 def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
@@ -5066,18 +5140,19 @@ def main():
     try:
         with _scan_lock(lock_mode):
             _t_main = time.monotonic()
+            phase_durations: list[tuple[str, float]] = []
             if args.origin == "cron":
                 log.info("[SCAN] Starting scheduled scan (dynamic pipeline)")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
             log.info(f"[SCAN] Starting scan {mode_label}")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
             if args.quick:
-                run_phases([PHASE_SCAN], only_category=args.category)
+                phase_durations = run_phases([PHASE_SCAN], only_category=args.category)
             elif args.score_only:
                 run_score_only()
             elif args.phases:
-                run_phases(_parse_phases_csv(args.phases), only_category=args.category)
+                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category)
             else:
                 cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
                 if args.origin == "startup":
@@ -5086,12 +5161,21 @@ def main():
                         log.info("[SCAN] Startup: no media scan phase required")
                 else:
                     phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
-                run_phases(phases, only_category=args.category)
+                phase_durations = run_phases(phases, only_category=args.category)
 
             elapsed = time.monotonic() - _t_main
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
             log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            if phase_durations:
+                log.info("[SCAN] Phase durations:")
+                for phase_id, duration in phase_durations:
+                    log.info(
+                        "[SCAN]   Phase %-2s (%s): %.1fs",
+                        phase_id.lower() if phase_id == "1B" else phase_id,
+                        _phase_display_name(phase_id).replace(" + ", "+"),
+                        duration,
+                    )
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
     except BlockingIOError:
         if args.origin == "startup":

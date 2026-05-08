@@ -54,6 +54,8 @@ MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v",
     ".ts", ".m2ts", ".mpg", ".mpeg", ".flv", ".webm",
 }
+_PHASE_PREFIX = "[SCAN] [PHASE 1B] [FFPROBE]"
+_SCAN_SEPARATOR = "─" * 47
 
 TECHNICAL_FIELDS = (
     "resolution",
@@ -131,7 +133,6 @@ def run_media_probe_pipeline_if_enabled(
         return None
 
     library_path = Path(library_json_path)
-    log.info("[SCAN] ── Phase 1b : ffprobe technical scan ─────────────")
     return generate_library_probe(
         library_json_path=library_path,
         library_root=library_root,
@@ -166,11 +167,9 @@ def generate_library_probe(
     workers = _normalize_workers(workers)
     stats = {"items": 0, "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
 
-    log.info(
-        "[MEDIA_PROBE] Starting compare probe: workers=%s, cache=%s",
-        workers,
-        "enabled" if cache_enabled else "disabled",
-    )
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
+    log.info("%s Starting phase — workers=%s, cache=%s", _PHASE_PREFIX, workers, "enabled" if cache_enabled else "disabled")
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
 
     with open(source_path, encoding="utf-8") as f:
         original_doc = json.load(f)
@@ -194,7 +193,7 @@ def generate_library_probe(
         except Exception as exc:
             _set_error_diagnostic(item, str(exc))
             stats["errors"] += 1
-            log.debug("[MEDIA_PROBE] Item planning failed for %s: %s", item.get("path"), exc)
+            log.debug("%s Item planning failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
 
     disk_cache = _load_probe_cache(cache_path) if cache_enabled else {}
     next_cache: dict[str, dict] = {}
@@ -209,7 +208,7 @@ def generate_library_probe(
         category_stats["files_total"] = len(files_to_resolve)
         stats["files_total"] += category_stats["files_total"]
 
-        log.info("[MEDIA_PROBE] Folder %s/%s: %s", index, total_groups, category)
+        log.info("%s Folder [%s] (%s/%s) started", _PHASE_PREFIX, category, index, total_groups)
         probe_results, probe_stats = _resolve_probe_results(
             files_to_resolve,
             cache_path=cache_path,
@@ -235,7 +234,7 @@ def generate_library_probe(
             except Exception as exc:
                 _set_error_diagnostic(item, str(exc))
                 category_stats["errors"] += 1
-                log.debug("[MEDIA_PROBE] Item probe failed for %s: %s", item.get("path"), exc)
+                log.debug("%s Item probe failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
 
         stats["errors"] += category_stats["errors"]
         _log_category_summary(category, category_stats, time.monotonic() - category_started_at, cache_enabled)
@@ -312,44 +311,48 @@ def _category_label(item: dict) -> str:
 def _log_category_summary(category: str, stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
     if cache_enabled:
         log.info(
-            "[MEDIA_PROBE] %s completed: %s items, %s files, %s probed, %s cached, %s errors (duration: %.1fs)",
+            "%s Folder [%s] completed in %.1fs — %s items / %s files / %s probed / %s cached / %s errors",
+            _PHASE_PREFIX,
             category,
+            duration,
             stats["items"],
             stats["files_total"],
             stats["files_probed"],
             stats["files_cached"],
             stats["errors"],
-            duration,
         )
         return
     log.info(
-        "[MEDIA_PROBE] %s completed: %s items, %s files, %s errors (duration: %.1fs)",
+        "%s Folder [%s] completed in %.1fs — %s items / %s files / %s errors",
+        _PHASE_PREFIX,
         category,
+        duration,
         stats["items"],
         stats["files_total"],
         stats["errors"],
-        duration,
     )
 
 
 def _log_final_summary(stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
     if cache_enabled:
         log.info(
-            "[MEDIA_PROBE] Updated library.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
+            "%s Completed in %.1fs — %s items / %s files total / %s probed / %s cached / %s errors",
+            _PHASE_PREFIX,
+            duration,
             stats["items"],
             stats["files_total"],
             stats["files_probed"],
             stats["files_cached"],
             stats["errors"],
-            duration,
         )
         return
     log.info(
-        "[MEDIA_PROBE] Updated library.json: %s items, %s files probed, %s errors (duration: %.1fs)",
+        "%s Completed in %.1fs — %s items / %s files probed / %s errors",
+        _PHASE_PREFIX,
+        duration,
         stats["items"],
         stats["files_probed"],
         stats["errors"],
-        duration,
     )
 
 
@@ -494,10 +497,10 @@ def _resolve_probe_results(
                 results[key] = copy.deepcopy(probe)
                 next_cache[key] = _cache_entry_for(path, probe)
                 stats["files_cached"] += 1
-                log.debug("[MEDIA_PROBE] Cache hit: %s", path)
+                log.debug("%s Cache hit: %s", _PHASE_PREFIX, path)
                 continue
         if cache_enabled:
-            log.debug("[MEDIA_PROBE] Cache miss: %s", path)
+            log.debug("%s Cache miss: %s", _PHASE_PREFIX, path)
         to_probe.append(path)
 
     if to_probe:
@@ -515,7 +518,7 @@ def _resolve_probe_results(
                 if probe.get("ok") and cache_enabled:
                     next_cache[key] = _cache_entry_for(path, probe)
                 elif not probe.get("ok"):
-                    log.debug("[MEDIA_PROBE] ffprobe failed for %s: %s", path, probe.get("error"))
+                    log.debug("%s ffprobe failed for %s: %s", _PHASE_PREFIX, path, probe.get("error"))
 
     if cache_enabled and write_cache:
         _write_probe_cache(cache_path, next_cache)
@@ -540,7 +543,7 @@ def _write_probe_cache(cache_path: str | Path, files: dict[str, dict]) -> None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"version": 1, "files": files}, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception as exc:
-        log.warning("[MEDIA_PROBE] Could not write cache %s: %s", path, exc)
+        log.warning("%s Could not write cache %s: %s", _PHASE_PREFIX, path, exc)
 
 
 def _cache_entry_matches(path: Path, entry: dict) -> bool:

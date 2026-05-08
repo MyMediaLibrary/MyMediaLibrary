@@ -284,6 +284,25 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
 
         self.assertEqual(calls, ["scan", "probe", "enrich", "score"])
 
+    def test_run_phases_logs_explicit_phase_1b_plan(self):
+        with patch.object(scanner, "run_quick"), \
+             patch.object(scanner, "_run_media_probe_phase1b"), \
+             patch.object(scanner, "run_enrich"), \
+             patch.object(scanner, "run_scoring"), \
+             self.assertLogs("scanner", level="INFO") as logs:
+            scanner.run_phases([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ])
+
+        joined = "\n".join(logs.output)
+        self.assertIn("[SCAN] Planned phases:", joined)
+        self.assertIn("1  -> Filesystem + NFO", joined)
+        self.assertIn("1b -> FFprobe technical scan", joined)
+        self.assertIn("2  -> Seerr enrichment", joined)
+        self.assertIn("3  -> Scoring", joined)
+
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))
         self.assertFalse(scanner._is_score_enabled({"system": {"enable_score": "true"}}))
