@@ -56,11 +56,12 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
-    from backend.repositories import providers_repository, recommendations_repository
+    from backend.repositories import config_repository, providers_repository, recommendations_repository
 except Exception:
     try:
-        from repositories import providers_repository, recommendations_repository  # type: ignore
+        from repositories import config_repository, providers_repository, recommendations_repository  # type: ignore
     except Exception:
+        config_repository = None  # type: ignore
         providers_repository = None  # type: ignore
         recommendations_repository = None  # type: ignore
 
@@ -466,6 +467,7 @@ def _auth_migrate_plaintext_password(password: str, *, legacy_path: Path | None 
     for key in _AUTH_LEGACY_PASSWORD_KEYS:
         data.pop(key, None)
     _write_secrets(data)
+    _sync_auth_settings_to_db(data)
     if legacy_path and legacy_path != Path(SECRETS_PATH):
         with contextlib.suppress(Exception):
             legacy_path.unlink(missing_ok=True)
@@ -510,6 +512,20 @@ def _apply_auth_secret_update(payload: dict, secrets_data: dict) -> str:
     for key in _AUTH_LEGACY_PASSWORD_KEYS:
         secrets_data.pop(key, None)
     return "updated"
+
+
+def _sync_auth_settings_to_db(secrets_data: dict | None = None) -> None:
+    if config_repository is None:
+        return
+    data = secrets_data if isinstance(secrets_data, dict) else _load_secrets()
+    password_hash = data.get(_AUTH_PASSWORD_HASH_KEY)
+    try:
+        config_repository.save_auth_settings(
+            auth_enabled=_auth_is_hash(password_hash),
+            password_hash=password_hash if _auth_is_hash(password_hash) else None,
+        )
+    except Exception as e:
+        log.debug("[auth] Could not sync auth settings to SQLite: %s", e)
 
 
 def _redact_config_payload(payload: dict) -> dict:
@@ -2292,11 +2308,18 @@ def _load_default_config() -> dict:
 
 def load_config() -> dict:
     config_exists = Path(CONFIG_PATH).exists()
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        cfg = _load_default_config()
+    cfg = None
+    if config_repository is not None:
+        try:
+            cfg = config_repository.load_config(CONFIG_PATH)
+        except Exception as e:
+            log.warning("[config] Could not load config from SQLite repository: %s", e)
+    if not isinstance(cfg, dict):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = _load_default_config()
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
@@ -2435,6 +2458,12 @@ def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> boo
 
 
 def save_config(data: dict) -> None:
+    if config_repository is not None:
+        try:
+            config_repository.save_config(data, CONFIG_PATH)
+            return
+        except Exception as e:
+            log.warning("[config] Could not save config through SQLite repository: %s", e)
     output = Path(CONFIG_PATH)
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "w", encoding="utf-8") as f:
@@ -5081,6 +5110,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if secrets_after != secrets_before:
                 try:
                     _write_secrets(secrets_after)
+                    _sync_auth_settings_to_db(secrets_after)
                 except Exception as e:
                     self._json(500, {"ok": False, "error": {"code": "SECRETS_WRITE_FAILED", "message": str(e)}})
                     return

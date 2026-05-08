@@ -36,6 +36,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             default_path.parent.mkdir()
             default_path.write_text('{"system":{"log_level":"DEBUG"},"folders":[]}', encoding="utf-8")
             with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
+                 patch.object(scanner.config_repository, "load_config", return_value=None), \
                  patch.object(scanner, "DEFAULT_CONFIG_PATH", str(default_path)):
                 cfg = scanner.load_config()
 
@@ -44,11 +45,32 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             self.assertEqual(cfg["folders"], [])
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
 
+    def test_load_config_prefers_sqlite_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
+            config_path.parent.mkdir()
+            config_path.write_text('{"system":{"log_level":"JSON"},"folders":[]}', encoding="utf-8")
+            db_cfg = {
+                "system": {"log_level": "DEBUG"},
+                "folders": [],
+                "score": {"enabled": False},
+                "score_configuration": {},
+                "recommendations": {"enabled": False},
+                "media_probe": {"enabled": False, "mode": "compare", "workers": 4, "cache_enabled": True},
+            }
+
+            with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
+                 patch.object(scanner.config_repository, "load_config", return_value=db_cfg):
+                cfg = scanner.load_config()
+
+            self.assertEqual(cfg["system"]["log_level"], "DEBUG")
+
     def test_save_config_writes_to_conf_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
             payload = {"system": {"log_level": "DEBUG"}, "folders": []}
-            with patch.object(scanner, "CONFIG_PATH", str(config_path)):
+            with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
+                 patch.object(scanner.config_repository, "save_config", side_effect=RuntimeError("db unavailable")):
                 scanner.save_config(payload)
 
             self.assertEqual(json.loads(config_path.read_text(encoding="utf-8")), payload)

@@ -11,10 +11,148 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import db  # noqa: E402
 import scanner  # noqa: E402
-from repositories import providers_repository, recommendations_repository  # noqa: E402
+from repositories import config_repository, providers_repository, recommendations_repository  # noqa: E402
 
 
 class RuntimeRepositoriesTest(unittest.TestCase):
+    def test_config_read_sqlite_before_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            json_path.parent.mkdir()
+            json_path.write_text('{"system":{"log_level":"JSON"},"folders":[]}', encoding="utf-8")
+
+            conn = db.initialize_database(db_path)
+            try:
+                conn.execute(
+                    "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("system", '{"log_level":"DB","scan_cron":"0 3 * * *"}'),
+                )
+                conn.execute(
+                    "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
+                    ("default", 1, '{"weights":{"video":40}}'),
+                )
+                conn.execute(
+                    "INSERT INTO scan_settings(id, value_json) VALUES (?, ?)",
+                    ("media_probe", '{"enabled":true,"workers":2}'),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            cfg = config_repository.load_config(json_path, db_path)
+
+            self.assertEqual(cfg["system"]["log_level"], "DB")
+            self.assertEqual(cfg["score"], {"enabled": True})
+            self.assertEqual(cfg["score_configuration"], {"weights": {"video": 40}})
+            self.assertEqual(cfg["media_probe"], {"enabled": True, "workers": 2})
+
+    def test_config_imports_json_when_sqlite_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            json_path.parent.mkdir()
+            payload = {
+                "system": {"log_level": "DEBUG", "scan_cron": "*/5 * * * *"},
+                "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+                "score": {"enabled": True},
+                "score_configuration": {"weights": {"video": 40}},
+                "media_probe": {"enabled": True, "workers": 3},
+            }
+            json_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            cfg = config_repository.load_config(json_path, db_path)
+            cfg_again = config_repository.load_config(json_path, db_path)
+
+            self.assertEqual(cfg["system"]["log_level"], "DEBUG")
+            self.assertEqual(cfg["folders"], payload["folders"])
+            self.assertEqual(cfg["score"], {"enabled": True})
+            self.assertEqual(cfg["score_configuration"], payload["score_configuration"])
+            self.assertEqual(cfg["media_probe"], payload["media_probe"])
+            self.assertEqual(cfg_again, cfg)
+            conn = db.initialize_database(db_path)
+            try:
+                app_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
+                score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+                scan_count = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertGreaterEqual(app_count, 2)
+            self.assertEqual(score_count, 1)
+            self.assertEqual(scan_count, 1)
+
+    def test_config_fallback_to_json_when_sqlite_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("blocked", encoding="utf-8")
+            json_path = root / "conf" / "config.json"
+            json_path.parent.mkdir()
+            json_path.write_text('{"system":{"log_level":"INFO"},"folders":[]}', encoding="utf-8")
+
+            cfg = config_repository.load_config(json_path, blocked_parent / "mml.db")
+
+            self.assertIsNone(cfg)
+
+    def test_config_save_updates_sqlite_and_json_without_secrets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            payload = {
+                "system": {"log_level": "DEBUG", "scan_cron": "0 3 * * *"},
+                "seerr": {"url": "https://seerr.test", "apikey": "clear-secret"},
+                "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+                "score": {"enabled": True},
+                "score_configuration": {"weights": {"video": 40}},
+                "media_probe": {"enabled": True, "workers": 2},
+            }
+
+            config_repository.save_config(payload, json_path, db_path)
+
+            exported = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertNotIn("apikey", exported["seerr"])
+            self.assertEqual(exported["seerr"], {"url": "https://seerr.test"})
+            cfg = config_repository.load_config(json_path, db_path)
+            self.assertNotIn("apikey", cfg["seerr"])
+            self.assertEqual(cfg["score"], {"enabled": True})
+            self.assertEqual(cfg["media_probe"], {"enabled": True, "workers": 2})
+
+    def test_config_sanitizes_sensitive_keys_recursively(self):
+        payload = {
+            "api_key": "top",
+            "nested": {
+                "access_token": "token",
+                "refresh_token": "refresh",
+                "safe": "ok",
+                "items": [{"password": "pw", "name": "kept"}],
+            },
+        }
+
+        sanitized = config_repository.sanitize_config(payload)
+
+        self.assertEqual(sanitized, {"nested": {"safe": "ok", "items": [{"name": "kept"}]}})
+
+    def test_auth_settings_store_hash_and_disabled_clears_hash(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
+
+            config_repository.save_auth_settings(
+                auth_enabled=True,
+                password_hash="pbkdf2_sha256$260000$salt$digest",
+                db_path=db_path,
+            )
+            enabled = config_repository.load_auth_settings(db_path)
+            config_repository.save_auth_settings(auth_enabled=False, password_hash=None, db_path=db_path)
+            disabled = config_repository.load_auth_settings(db_path)
+
+            self.assertEqual(enabled["auth_enabled"], True)
+            self.assertEqual(enabled["password_hash"], "pbkdf2_sha256$260000$salt$digest")
+            self.assertEqual(disabled["auth_enabled"], False)
+            self.assertIsNone(disabled["password_hash"])
+
     def test_provider_mappings_read_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
