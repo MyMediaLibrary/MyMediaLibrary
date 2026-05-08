@@ -23,6 +23,10 @@ def ffprobe_payload(
     channels=6,
     duration=3600,
     bitrate=8_000_000,
+    audio_bitrate=640_000,
+    framerate="24000/1001",
+    container="matroska,webm",
+    size=123456,
     audio_lang="fra",
     subtitle_lang="eng",
 ):
@@ -35,12 +39,14 @@ def ffprobe_payload(
                 "height": height,
                 "duration": str(duration),
                 "bit_rate": str(bitrate),
+                "avg_frame_rate": framerate,
                 "color_transfer": "bt709",
             },
             {
                 "codec_type": "audio",
                 "codec_name": audio_codec,
                 "channels": channels,
+                "bit_rate": str(audio_bitrate),
                 "tags": {"language": audio_lang},
             },
             {
@@ -49,7 +55,7 @@ def ffprobe_payload(
                 "tags": {"language": subtitle_lang},
             },
         ],
-        "format": {"duration": str(duration), "bit_rate": str(bitrate)},
+        "format": {"duration": str(duration), "bit_rate": str(bitrate), "format_name": container, "size": str(size)},
     }
 
 
@@ -103,7 +109,7 @@ class MediaProbeTest(unittest.TestCase):
                 cache_path=self.cache_json,
                 **kwargs,
             )
-        return json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        return json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
 
     def test_disabled_does_not_write_or_call_ffprobe(self):
         self.write_library([])
@@ -119,12 +125,12 @@ class MediaProbeTest(unittest.TestCase):
         run.assert_not_called()
         self.assertFalse(self.probe_json.exists())
 
-    def test_enabled_compare_generates_probe_without_modifying_library_json(self):
+    def test_enabled_compare_enriches_library_json_without_parallel_output(self):
         movie_dir = self.library_root / "Movies" / "Film"
         movie_dir.mkdir(parents=True)
         (movie_dir / "small.mkv").write_bytes(b"1")
         (movie_dir / "main.mkv").write_bytes(b"1" * 10)
-        original = self.write_library([
+        self.write_library([
             {
                 "id": "movie:Movies:Film",
                 "path": "Movies/Film",
@@ -156,8 +162,8 @@ class MediaProbeTest(unittest.TestCase):
 
         self.assertEqual(stats, {"items": 1, "files_total": 1, "files_probed": 1, "files_cached": 0, "errors": 0})
         self.assertIn("main.mkv", run.call_args.args[0][-1])
-        self.assertEqual(json.loads(self.library_json.read_text(encoding="utf-8")), original)
-        out = json.loads(self.probe_json.read_text(encoding="utf-8"))
+        self.assertFalse(self.probe_json.exists())
+        out = json.loads(self.library_json.read_text(encoding="utf-8"))
         item = out["items"][0]
         self.assertEqual(item["title"], "Film")
         self.assertEqual(item["providers"], ["Netflix"])
@@ -172,9 +178,23 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["audio_languages_simple"], "VF")
         self.assertEqual(item["subtitle_languages"], ["eng"])
         self.assertEqual(item["video_bitrate"], 8_000_000)
+        self.assertEqual(item["audio_bitrate"], 640_000)
+        self.assertEqual(item["framerate"], 23.976)
+        self.assertEqual(item["container"], "MKV")
+        self.assertEqual(item["size_b"], 123456)
         self.assertEqual(item["runtime_min"], 60)
         self.assertEqual(item["media_probe"]["status"], "ok")
         self.assertIn("resolution", item["media_probe"]["overwritten_fields"])
+
+    def test_ffprobe_dolby_vision_sets_hdr_type_and_flag(self):
+        payload = ffprobe_payload()
+        payload["streams"][0]["profile"] = "dvhe.05.06"
+
+        item = self.generate_movie_probe(payload)
+
+        self.assertTrue(item["dolby_vision"])
+        self.assertTrue(item["hdr"])
+        self.assertEqual(item["hdr_type"], "Dolby Vision")
 
     def test_pipeline_probe_applies_technical_fields_to_library_without_diagnostics(self):
         movie_dir = self.library_root / "Movies" / "Film"
@@ -197,18 +217,16 @@ class MediaProbeTest(unittest.TestCase):
             stats = media_probe.run_media_probe_pipeline_if_enabled(
                 cfg,
                 library_json_path=self.library_json,
-                probe_output_path=self.probe_json,
                 library_root=self.library_root,
                 cache_path=self.cache_json,
             )
 
         self.assertEqual(stats["items"], 1)
         library_item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
-        probe_item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(library_item["resolution"], "4K")
         self.assertEqual(library_item["codec"], "H.265")
         self.assertNotIn("media_probe", library_item)
-        self.assertEqual(probe_item["media_probe"]["status"], "ok")
+        self.assertFalse(self.probe_json.exists())
 
     def test_null_empty_unknown_probe_values_do_not_overwrite_existing_fields(self):
         movie_dir = self.library_root / "Movies" / "Film"
@@ -237,7 +255,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["resolution"], "1080p")
         self.assertEqual(item["codec"], "H.265")
         self.assertEqual(item["audio_languages"], ["fra"])
@@ -269,7 +287,7 @@ class MediaProbeTest(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(stats["files_cached"], 1)
         self.assertEqual(stats["files_probed"], 0)
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.265")
 
     def test_cache_miss_calls_ffprobe_and_writes_cache(self):
@@ -311,7 +329,7 @@ class MediaProbeTest(unittest.TestCase):
 
         run.assert_called_once()
         self.assertEqual(stats["files_probed"], 1)
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.265")
 
     def test_cache_disabled_always_calls_ffprobe(self):
@@ -335,7 +353,7 @@ class MediaProbeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(stats["files_cached"], 0)
         self.assertEqual(stats["files_probed"], 1)
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.264")
 
     def test_workers_are_bounded_for_thread_pool(self):
@@ -368,7 +386,7 @@ class MediaProbeTest(unittest.TestCase):
             )
 
         self.assertEqual(stats["errors"], 1)
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["media_probe"]["status"], "error")
 
     def test_summary_log_includes_cache_counts_and_duration(self):
@@ -388,7 +406,7 @@ class MediaProbeTest(unittest.TestCase):
         self.assertIn("Starting compare probe: workers=4, cache=disabled", joined)
         self.assertIn("Folder 1/1: Movies", joined)
         self.assertIn("Movies completed: 1 items, 1 files, 0 errors", joined)
-        self.assertIn("Generated library_probe.json: 1 items, 1 files probed, 0 errors", joined)
+        self.assertIn("Updated library.json: 1 items, 1 files probed, 0 errors", joined)
         self.assertIn("duration:", joined)
 
     def test_category_progress_logs_include_cache_counts_and_duration(self):
@@ -420,7 +438,7 @@ class MediaProbeTest(unittest.TestCase):
         self.assertIn("[MEDIA_PROBE] Folder 2/2: Series", joined)
         self.assertIn("Movies completed: 1 items, 1 files, 1 probed, 0 cached, 0 errors (duration:", joined)
         self.assertIn("Series completed: 1 items, 1 files, 1 probed, 0 cached, 0 errors (duration:", joined)
-        self.assertIn("Generated library_probe.json: 2 items, 2 files total, 2 probed, 0 cached, 0 errors (duration:", joined)
+        self.assertIn("Updated library.json: 2 items, 2 files total, 2 probed, 0 cached, 0 errors (duration:", joined)
 
     def test_disabled_probe_does_not_emit_media_probe_logs(self):
         self.write_library([])
@@ -675,7 +693,7 @@ class MediaProbeTest(unittest.TestCase):
                 score_config=scanner.get_effective_score_config({"score": {"enabled": True}})[1],
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertIn("quality", item)
         self.assertEqual(item["media_probe"]["original_score"], original_quality["score"])
         self.assertEqual(item["media_probe"]["probe_score"], item["quality"]["score"])
@@ -697,7 +715,7 @@ class MediaProbeTest(unittest.TestCase):
                 score_enabled=False,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertNotIn("quality", item)
         self.assertIsNone(item["media_probe"]["probe_score"])
 
@@ -724,7 +742,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(stats["errors"], 1)
         self.assertEqual(item["resolution"], "720p")
         self.assertEqual(item["quality"], {"score": 12})
@@ -746,7 +764,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(stats["errors"], 1)
         self.assertEqual(item["media_probe"]["status"], "error")
         self.assertIn("ffprobe not found", item["media_probe"]["error"])
@@ -785,7 +803,7 @@ class MediaProbeTest(unittest.TestCase):
                 score_config=scanner.get_effective_score_config({"score": {"enabled": True}})[1],
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(stats["files_probed"], 3)
         self.assertEqual(item["season_count"], 2)
         self.assertEqual(item["episode_count"], 3)
@@ -821,7 +839,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["episode_count"], 1)
         self.assertEqual(item["season_count"], 0)
         self.assertEqual(item["seasons"], [])
@@ -861,7 +879,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["seasons"][0]["audio_languages"], ["eng", "fra"])
         self.assertEqual(item["seasons"][0]["audio_languages_simple"], "MULTI")
         self.assertEqual(item["seasons"][0]["subtitle_languages"], ["eng", "fra"])
@@ -920,7 +938,7 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
             )
 
-        item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["audio_languages"], ["eng", "fra"])
         self.assertEqual(item["audio_languages_simple"], "MULTI")
         self.assertEqual(item["subtitle_languages"], ["eng", "spa"])

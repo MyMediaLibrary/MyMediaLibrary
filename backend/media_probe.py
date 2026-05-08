@@ -1,9 +1,4 @@
-"""Generate and apply ffprobe-based technical metadata for MyMediaLibrary.
-
-The comparison output stays in library_probe.json. During the scan pipeline,
-the same probed technical fields can also be merged into library.json before
-Seerr/scoring without exposing probe diagnostics there.
-"""
+"""Generate and apply ffprobe-based technical metadata for MyMediaLibrary."""
 
 from __future__ import annotations
 
@@ -53,7 +48,6 @@ except Exception:
 log = logging.getLogger("scanner")
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
-LIBRARY_PROBE_OUTPUT_PATH = str(runtime_paths.LIBRARY_PROBE_JSON)
 MEDIA_PROBE_CACHE_PATH = str(runtime_paths.MEDIA_PROBE_CACHE_JSON)
 
 MEDIA_EXTENSIONS = {
@@ -75,8 +69,13 @@ TECHNICAL_FIELDS = (
     "audio_languages_simple",
     "subtitle_languages",
     "video_bitrate",
+    "audio_bitrate",
+    "framerate",
+    "container",
     "hdr",
     "hdr_type",
+    "dolby_vision",
+    "size_b",
     "quality",
 )
 
@@ -98,7 +97,7 @@ def run_media_probe_if_enabled(
     cfg: dict | None,
     *,
     library_json_path: str | Path,
-    output_path: str | Path = LIBRARY_PROBE_OUTPUT_PATH,
+    output_path: str | Path | None = None,
     library_root: str | Path = LIBRARY_PATH,
     score_enabled: bool = False,
     score_config: dict | None = None,
@@ -115,6 +114,7 @@ def run_media_probe_if_enabled(
         timeout=timeout,
         workers=_media_probe_workers(cfg),
         cache_enabled=_media_probe_cache_enabled(cfg),
+        include_diagnostics=False,
     )
 
 
@@ -122,27 +122,18 @@ def run_media_probe_pipeline_if_enabled(
     cfg: dict | None,
     *,
     library_json_path: str | Path,
-    probe_output_path: str | Path = LIBRARY_PROBE_OUTPUT_PATH,
     library_root: str | Path = LIBRARY_PATH,
     timeout: float = 5.0,
     only_category: str | None = None,
     cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
 ) -> dict[str, int] | None:
-    """Run ffprobe as scan phase 1b and merge technical fields into library.json.
-
-    library_probe.json keeps the comparison diagnostics. library.json receives the
-    probed technical values only, so later phases (Seerr, scoring, inventory)
-    operate on the best technical metadata without exposing probe diagnostics.
-    """
     if not is_enabled(cfg):
         return None
 
     library_path = Path(library_json_path)
-    probe_path = Path(probe_output_path)
     log.info("[SCAN] ── Phase 1b : ffprobe technical scan ─────────────")
-    stats = generate_library_probe(
+    return generate_library_probe(
         library_json_path=library_path,
-        output_path=probe_path,
         library_root=library_root,
         score_enabled=False,
         score_config=None,
@@ -151,21 +142,14 @@ def run_media_probe_pipeline_if_enabled(
         cache_enabled=_media_probe_cache_enabled(cfg),
         cache_path=cache_path,
         only_category=only_category,
+        include_diagnostics=False,
     )
-    try:
-        with open(probe_path, encoding="utf-8") as f:
-            probed_doc = json.load(f)
-        _strip_probe_diagnostics(probed_doc)
-        _write_json_atomic(library_path, probed_doc)
-    except Exception as exc:
-        log.warning("[MEDIA_PROBE] Could not apply ffprobe results to library.json: %s", exc)
-    return stats
 
 
 def generate_library_probe(
     *,
     library_json_path: str | Path,
-    output_path: str | Path = LIBRARY_PROBE_OUTPUT_PATH,
+    output_path: str | Path | None = None,
     library_root: str | Path = LIBRARY_PATH,
     score_enabled: bool = False,
     score_config: dict | None = None,
@@ -174,10 +158,10 @@ def generate_library_probe(
     cache_enabled: bool = True,
     cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
     only_category: str | None = None,
+    include_diagnostics: bool = True,
 ) -> dict[str, int]:
     started_at = time.monotonic()
     source_path = Path(library_json_path)
-    out_path = Path(output_path)
     root = Path(library_root)
     workers = _normalize_workers(workers)
     stats = {"items": 0, "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
@@ -259,9 +243,9 @@ def generate_library_probe(
     if cache_enabled:
         _write_probe_cache(cache_path, next_cache)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(probe_doc, f, ensure_ascii=False, indent=2)
+    if not include_diagnostics:
+        _strip_probe_diagnostics(probe_doc)
+    _write_json_atomic(source_path, probe_doc)
 
     duration = time.monotonic() - started_at
     _log_final_summary(stats, duration, cache_enabled)
@@ -351,7 +335,7 @@ def _log_category_summary(category: str, stats: dict[str, int], duration: float,
 def _log_final_summary(stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
     if cache_enabled:
         log.info(
-            "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
+            "[MEDIA_PROBE] Updated library.json: %s items, %s files total, %s probed, %s cached, %s errors (duration: %.1fs)",
             stats["items"],
             stats["files_total"],
             stats["files_probed"],
@@ -361,7 +345,7 @@ def _log_final_summary(stats: dict[str, int], duration: float, cache_enabled: bo
         )
         return
     log.info(
-        "[MEDIA_PROBE] Generated library_probe.json: %s items, %s files probed, %s errors (duration: %.1fs)",
+        "[MEDIA_PROBE] Updated library.json: %s items, %s files probed, %s errors (duration: %.1fs)",
         stats["items"],
         stats["files_probed"],
         stats["errors"],
@@ -461,7 +445,7 @@ def _probe_video_file(path: Path, *, timeout: float) -> dict:
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=index,codec_type,codec_name,width,height,duration,bit_rate,channels,channel_layout,tags,disposition,color_transfer,color_primaries,color_space,pix_fmt,profile",
+        "format=duration,format_name,size:stream=index,codec_type,codec_name,width,height,duration,bit_rate,channels,channel_layout,avg_frame_rate,r_frame_rate,tags,disposition,color_transfer,color_primaries,color_space,pix_fmt,profile,side_data_list",
         "-of",
         "json",
         str(path),
@@ -629,9 +613,14 @@ def _technical_from_ffprobe(payload: dict) -> dict:
 
     audio_languages = _languages_from_streams(audio_streams)
     subtitle_languages = _languages_from_streams(subtitle_streams)
-    runtime_min = _runtime_minutes(video.get("duration")) or _runtime_minutes((payload.get("format") or {}).get("duration") if isinstance(payload.get("format"), dict) else None)
+    fmt = payload.get("format") if isinstance(payload.get("format"), dict) else {}
+    runtime_min = _runtime_minutes(video.get("duration")) or _runtime_minutes(fmt.get("duration"))
     video_bitrate = _video_bitrate_from_stream(video)
+    audio_bitrate = _average_positive_int([_audio_bitrate_from_stream(stream) for stream in audio_streams])
     hdr_type = _detect_hdr_type(video)
+    dolby_vision = _detect_dolby_vision(video)
+    if dolby_vision:
+        hdr_type = "Dolby Vision"
     tech = {
         "width": width,
         "height": height,
@@ -646,8 +635,13 @@ def _technical_from_ffprobe(payload: dict) -> dict:
         "audio_languages_simple": simplify_audio_languages(audio_languages),
         "subtitle_languages": subtitle_languages or None,
         "video_bitrate": video_bitrate,
+        "audio_bitrate": audio_bitrate,
+        "framerate": _framerate_from_stream(video),
+        "container": _container_from_format(fmt),
         "hdr": bool(hdr_type),
         "hdr_type": hdr_type,
+        "dolby_vision": dolby_vision,
+        "size_b": _positive_int(fmt.get("size")),
     }
     if _is_unknown(tech["audio_languages_simple"]):
         tech["audio_languages_simple"] = None
@@ -666,6 +660,51 @@ def _detect_hdr_type(video: dict) -> str | None:
     if "BT2020" in text:
         return "HDR"
     return None
+
+
+def _detect_dolby_vision(video: dict) -> bool:
+    side_data = video.get("side_data_list")
+    side_data_text = json.dumps(side_data, ensure_ascii=False) if isinstance(side_data, list) else ""
+    text = " ".join(
+        str(video.get(k) or "")
+        for k in ("codec_name", "profile", "pix_fmt")
+    )
+    text = f"{text} {side_data_text}".upper()
+    return any(marker in text for marker in ("DOLBY VISION", "DOVI", "DVHE", "DVH1"))
+
+
+def _framerate_from_stream(video: dict) -> float | None:
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        value = _clean_str(video.get(key))
+        if not value or value in {"0/0", "0"}:
+            continue
+        try:
+            if "/" in value:
+                numerator, denominator = value.split("/", 1)
+                fps = float(numerator) / float(denominator)
+            else:
+                fps = float(value)
+        except Exception:
+            continue
+        if fps > 0:
+            return round(fps, 3)
+    return None
+
+
+def _container_from_format(fmt: dict) -> str | None:
+    raw = _clean_str(fmt.get("format_name")) if isinstance(fmt, dict) else None
+    if not raw:
+        return None
+    first = raw.split(",", 1)[0].strip()
+    aliases = {
+        "matroska": "MKV",
+        "mov": "MP4",
+        "mp4": "MP4",
+        "mpegts": "MPEG-TS",
+        "avi": "AVI",
+        "webm": "WebM",
+    }
+    return aliases.get(first.casefold(), first.upper())
 
 
 def _aggregate_series_metadata(episodes: list[dict], *, score_enabled: bool, score_config: dict | None) -> dict:
@@ -717,11 +756,16 @@ def _aggregate_series_metadata(episodes: list[dict], *, score_enabled: bool, sco
         "audio_languages_simple": simplify_audio_languages(audio_languages),
         "subtitle_languages": subtitle_languages or None,
         "video_bitrate": _average_positive_int([ep.get("video_bitrate") for ep in episodes]),
+        "audio_bitrate": _average_positive_int([ep.get("audio_bitrate") for ep in episodes]),
+        "framerate": _dominant_from_groups(seasons, "framerate") or _dominant_from_groups(all_groups, "framerate"),
+        "container": _dominant_from_groups(seasons, "container") or _dominant_from_groups(all_groups, "container"),
         "hdr_type": _dominant_from_groups(seasons, "hdr_type") or _dominant_from_groups(all_groups, "hdr_type"),
         "runtime_min": runtime_min,
         "runtime_min_avg": int(round(runtime_min / episode_count)) if runtime_min > 0 and episode_count > 0 else None,
+        "size_b": sum(int(s.get("size_b") or 0) for s in seasons) + sum(int(ep.get("size_b") or 0) for ep in seasonless_episodes),
     }
     agg["hdr"] = bool(agg["hdr_type"]) or any(bool(s.get("hdr")) for s in seasons) or any(bool(ep.get("hdr")) for ep in all_groups)
+    agg["dolby_vision"] = any(bool(s.get("dolby_vision")) for s in seasons) or any(bool(ep.get("dolby_vision")) for ep in all_groups)
     if _is_unknown(agg["audio_languages_simple"]):
         agg["audio_languages_simple"] = None
     return agg
@@ -745,6 +789,9 @@ def _aggregate_season_metadata(season: int, episodes: list[dict], *, item_id: st
         "audio_languages_simple": simplify_audio_languages(audio_languages),
         "subtitle_languages": _aggregate_subtitle_languages(episodes) or None,
         "video_bitrate": _average_positive_int([ep.get("video_bitrate") for ep in episodes]),
+        "audio_bitrate": _average_positive_int([ep.get("audio_bitrate") for ep in episodes]),
+        "framerate": _dominant_from_groups(episodes, "framerate"),
+        "container": _dominant_from_groups(episodes, "container"),
         "hdr_type": _dominant_from_groups(episodes, "hdr_type"),
         "runtime_min_total": runtime_total,
         "runtime_min_avg": int(round(runtime_total / known_runtime_count)) if runtime_total > 0 and known_runtime_count > 0 else None,
@@ -754,6 +801,7 @@ def _aggregate_season_metadata(season: int, episodes: list[dict], *, item_id: st
     if season_id:
         out["season_id"] = season_id
     out["hdr"] = bool(out["hdr_type"]) or any(bool(ep.get("hdr")) for ep in episodes)
+    out["dolby_vision"] = any(bool(ep.get("dolby_vision")) for ep in episodes)
     if _is_unknown(out["audio_languages_simple"]):
         out["audio_languages_simple"] = None
     if score_enabled:
@@ -1071,6 +1119,22 @@ def _video_bitrate_from_stream(video: dict) -> int | None:
     if bitrate:
         return bitrate
     tags = video.get("tags") if isinstance(video.get("tags"), dict) else {}
+    bitrate = _positive_int(tags.get("BPS"))
+    if bitrate:
+        return bitrate
+    for key, value in tags.items():
+        if isinstance(key, str) and key.upper().startswith("BPS-"):
+            bitrate = _positive_int(value)
+            if bitrate:
+                return bitrate
+    return _video_bitrate_from_byte_duration_tags(tags)
+
+
+def _audio_bitrate_from_stream(audio: dict) -> int | None:
+    bitrate = _positive_int(audio.get("bit_rate"))
+    if bitrate:
+        return bitrate
+    tags = audio.get("tags") if isinstance(audio.get("tags"), dict) else {}
     bitrate = _positive_int(tags.get("BPS"))
     if bitrate:
         return bitrate

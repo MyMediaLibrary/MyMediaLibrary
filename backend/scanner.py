@@ -130,18 +130,15 @@ except Exception:
             return {"generated_at": None, "version": 1, "items": items}
 
 try:
-    from backend.media_probe import run_media_probe_if_enabled, run_media_probe_pipeline_if_enabled
+    from backend.media_probe import run_media_probe_pipeline_if_enabled
 except Exception:
     try:
-        from media_probe import run_media_probe_if_enabled, run_media_probe_pipeline_if_enabled
+        from media_probe import run_media_probe_pipeline_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[MEDIA_PROBE] media_probe import failed (%s). ffprobe comparison disabled.",
             e,
         )
-
-        def run_media_probe_if_enabled(*args, **kwargs):
-            return None
 
         def run_media_probe_pipeline_if_enabled(*args, **kwargs):
             return None
@@ -152,7 +149,6 @@ except Exception:
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
-LIBRARY_PROBE_OUTPUT_PATH = str(runtime_paths.LIBRARY_PROBE_JSON)
 INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
 RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
 DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
@@ -3887,7 +3883,6 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
         run_media_probe_pipeline_if_enabled(
             cfg,
             library_json_path=OUTPUT_PATH,
-            probe_output_path=LIBRARY_PROBE_OUTPUT_PATH,
             library_root=LIBRARY_PATH,
             only_category=only_category,
         )

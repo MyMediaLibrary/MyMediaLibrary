@@ -2,7 +2,7 @@ FROM nginx:alpine3.23
 
 # Keep runtime packages minimal:
 # - python3: scanner + API
-# - ffmpeg: ffprobe for optional media_probe comparison
+# - ffmpeg: ffprobe for optional media_probe technical enrichment
 # - tzdata: timezone support for scanner scheduler logs
 RUN apk update \
     && apk upgrade --no-cache \

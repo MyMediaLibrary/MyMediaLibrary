@@ -256,12 +256,10 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             library_json = root / "data" / "library.json"
-            probe_json = root / "data" / "library_probe.json"
             library_json.parent.mkdir()
             library_json.write_text('{"items":[]}', encoding="utf-8")
             cfg = {"media_probe": {"enabled": True, "mode": "compare"}, "score": {"enabled": True}}
             with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
-                 patch.object(scanner, "LIBRARY_PROBE_OUTPUT_PATH", str(probe_json)), \
                  patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
                  patch.object(scanner, "load_config", return_value=cfg), \
                  patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
@@ -270,7 +268,6 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             run_probe.assert_called_once()
             kwargs = run_probe.call_args.kwargs
             self.assertEqual(kwargs["library_json_path"], str(library_json))
-            self.assertEqual(kwargs["probe_output_path"], str(probe_json))
             self.assertEqual(kwargs["only_category"], "Movies")
 
     def test_run_phases_places_media_probe_between_scan_and_enrich(self):
