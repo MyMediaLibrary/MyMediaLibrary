@@ -1,8 +1,10 @@
+import logging
 import pathlib
 import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -22,6 +24,35 @@ class DatabaseSchemaTest(unittest.TestCase):
             conn.close()
 
             self.assertTrue(db_path.is_file())
+
+    def test_runtime_bootstrap_creates_database_and_logs_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "nested" / "mymedialibrary.db"
+
+            with self.assertLogs("db-bootstrap-test", level="INFO") as logs:
+                ok = db.bootstrap_runtime_database(
+                    db_path,
+                    logger=logging.getLogger("db-bootstrap-test"),
+                )
+
+            self.assertTrue(ok)
+            self.assertTrue(db_path.is_file())
+            output = "\n".join(logs.output)
+            self.assertIn("[DB] SQLite initialized", output)
+            self.assertIn(f"path={db_path}", output)
+            self.assertIn(f"[DB] Schema version: {db_schema.SCHEMA_VERSION}", output)
+            self.assertIn("[DB] WAL enabled: True", output)
+
+    def test_runtime_bootstrap_logs_json_fallback_when_unavailable(self):
+        with self.assertLogs("db-bootstrap-fallback-test", level="WARNING") as logs, \
+             patch.object(db, "initialize_database", side_effect=OSError("read-only")):
+            ok = db.bootstrap_runtime_database(
+                pathlib.Path("/blocked/mymedialibrary.db"),
+                logger=logging.getLogger("db-bootstrap-fallback-test"),
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("[DB] SQLite unavailable — falling back to JSON", "\n".join(logs.output))
 
     def test_initialization_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmpdir:

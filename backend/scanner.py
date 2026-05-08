@@ -56,6 +56,14 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
+    from backend import db as sqlite_db
+except Exception:
+    try:
+        import db as sqlite_db  # type: ignore
+    except Exception:
+        sqlite_db = None  # type: ignore
+
+try:
     from backend.repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository
 except Exception:
     try:
@@ -5292,10 +5300,23 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 
 def serve():
+    _bootstrap_sqlite_runtime()
     start_user_scan_scheduler()
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
     log.info("[server] Listening on 127.0.0.1:8095")
     server.serve_forever()
+
+
+def _bootstrap_sqlite_runtime() -> bool:
+    """Create and migrate the runtime SQLite DB early so production startup is observable."""
+    if sqlite_db is None:
+        log.warning("[DB] SQLite unavailable — falling back to JSON: module import failed")
+        return False
+    try:
+        return bool(sqlite_db.bootstrap_runtime_database(logger=log))
+    except Exception as exc:
+        log.warning("[DB] SQLite unavailable — falling back to JSON: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -5331,6 +5352,8 @@ def main():
     if args.serve:
         serve()
         return
+
+    _bootstrap_sqlite_runtime()
 
     if args.reset:
         run_reset()

@@ -29,6 +29,20 @@ class ScannerRuntimePathsTest(unittest.TestCase):
         self.assertEqual(scanner.SCAN_LOCK_PATH, str(runtime_paths.SCAN_LOCK))
         self.assertEqual(scanner._log_file, str(runtime_paths.SCANNER_LOG))
 
+    def test_scanner_bootstraps_sqlite_runtime_database(self):
+        with patch.object(scanner.sqlite_db, "bootstrap_runtime_database", return_value=True) as bootstrap:
+            self.assertTrue(scanner._bootstrap_sqlite_runtime())
+
+        bootstrap.assert_called_once()
+        self.assertIs(bootstrap.call_args.kwargs.get("logger"), scanner.log)
+
+    def test_scanner_bootstrap_logs_fallback_when_sqlite_unavailable(self):
+        with patch.object(scanner.sqlite_db, "bootstrap_runtime_database", side_effect=RuntimeError("boom")), \
+             self.assertLogs("scanner", level="WARNING") as logs:
+            self.assertFalse(scanner._bootstrap_sqlite_runtime())
+
+        self.assertIn("[DB] SQLite unavailable — falling back to JSON", "\n".join(logs.output))
+
     def test_load_config_creates_missing_config_in_conf(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"

@@ -18,6 +18,12 @@ RUN mkdir -p /app/backend
 COPY backend/scanner.py /app/scanner.py
 COPY backend/runtime_paths.py /app/backend/runtime_paths.py
 COPY backend/storage_migration.py /app/backend/storage_migration.py
+COPY backend/db.py /app/backend/db.py
+COPY backend/db_schema.py /app/backend/db_schema.py
+COPY backend/db_migrations.py /app/backend/db_migrations.py
+COPY backend/db_import.py /app/backend/db_import.py
+COPY backend/db_export.py /app/backend/db_export.py
+COPY backend/repositories/ /app/backend/repositories/
 COPY backend/media_probe.py /app/backend/media_probe.py
 COPY backend/default_config.json /app/defaults/conf/config.json
 COPY app/providers_mapping.json /app/defaults/conf/providers_mapping.json

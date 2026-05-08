@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 from pathlib import Path
 
 try:
@@ -13,6 +14,8 @@ except Exception:
 
 
 DEFAULT_DB_PATH = runtime_paths.SQLITE_DB
+
+log = logging.getLogger(__name__)
 
 
 def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
@@ -38,6 +41,33 @@ def initialize_database(db_path: str | Path | None = None) -> sqlite3.Connection
         conn.close()
         raise
     return conn
+
+
+def bootstrap_runtime_database(
+    db_path: str | Path | None = None,
+    *,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Initialize the runtime database once at process startup and log its state."""
+
+    target = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    active_logger = logger or log
+    try:
+        conn = initialize_database(target)
+    except Exception as exc:
+        active_logger.warning("[DB] SQLite unavailable — falling back to JSON: %s", exc)
+        return False
+    try:
+        version = get_schema_version(conn)
+        wal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        active_logger.info("[DB] SQLite initialized — path=%s", target)
+        active_logger.info("[DB] Schema version: %s", version)
+        active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
+        active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
+        return True
+    finally:
+        conn.close()
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
