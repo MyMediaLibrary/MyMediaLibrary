@@ -176,6 +176,40 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["media_probe"]["status"], "ok")
         self.assertIn("resolution", item["media_probe"]["overwritten_fields"])
 
+    def test_pipeline_probe_applies_technical_fields_to_library_without_diagnostics(self):
+        movie_dir = self.library_root / "Movies" / "Film"
+        movie_dir.mkdir(parents=True)
+        (movie_dir / "main.mkv").write_bytes(b"1")
+        self.write_library([
+            {
+                "id": "movie:Movies:Film",
+                "path": "Movies/Film",
+                "title": "Film",
+                "category": "Movies",
+                "type": "movie",
+                "resolution": "720p",
+                "codec": "H.265",
+            }
+        ])
+
+        cfg = {"media_probe": {"enabled": True, "mode": "compare", "workers": 2, "cache_enabled": True}}
+        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(width=3840, height=2160, video_codec="hevc"))):
+            stats = media_probe.run_media_probe_pipeline_if_enabled(
+                cfg,
+                library_json_path=self.library_json,
+                probe_output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        self.assertEqual(stats["items"], 1)
+        library_item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
+        probe_item = json.loads(self.probe_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(library_item["resolution"], "4K")
+        self.assertEqual(library_item["codec"], "H.265")
+        self.assertNotIn("media_probe", library_item)
+        self.assertEqual(probe_item["media_probe"]["status"], "ok")
+
     def test_null_empty_unknown_probe_values_do_not_overwrite_existing_fields(self):
         movie_dir = self.library_root / "Movies" / "Film"
         movie_dir.mkdir(parents=True)

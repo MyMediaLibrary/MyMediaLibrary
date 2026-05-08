@@ -130,10 +130,10 @@ except Exception:
             return {"generated_at": None, "version": 1, "items": items}
 
 try:
-    from backend.media_probe import run_media_probe_if_enabled
+    from backend.media_probe import run_media_probe_if_enabled, run_media_probe_pipeline_if_enabled
 except Exception:
     try:
-        from media_probe import run_media_probe_if_enabled
+        from media_probe import run_media_probe_if_enabled, run_media_probe_pipeline_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[MEDIA_PROBE] media_probe import failed (%s). ffprobe comparison disabled.",
@@ -141,6 +141,9 @@ except Exception:
         )
 
         def run_media_probe_if_enabled(*args, **kwargs):
+            return None
+
+        def run_media_probe_pipeline_if_enabled(*args, **kwargs):
             return None
 
 # ---------------------------------------------------------------------------
@@ -3858,6 +3861,7 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
     for phase in ordered:
         if phase == PHASE_SCAN:
             run_quick(only_category=only_category)
+            _run_media_probe_phase1b(only_category=only_category)
         elif phase == PHASE_ENRICH:
             run_enrich(force=True, only_category=only_category)
         elif phase == PHASE_SCORE:
@@ -3867,10 +3871,9 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
             run_inventory(scan_mode=scan_mode, only_category=only_category)
         elif phase == PHASE_RECOMMENDATIONS:
             run_recommendations()
-    _run_media_probe_post_scan()
 
 
-def _run_media_probe_post_scan() -> None:
+def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
     cfg = load_config()
     if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
         return
@@ -3880,18 +3883,16 @@ def _run_media_probe_post_scan() -> None:
     if not Path(OUTPUT_PATH).exists():
         log.info("[MEDIA_PROBE] Skipping — library.json does not exist")
         return
-    _, effective_score_config, _ = get_effective_score_config(cfg)
     try:
-        run_media_probe_if_enabled(
+        run_media_probe_pipeline_if_enabled(
             cfg,
             library_json_path=OUTPUT_PATH,
-            output_path=LIBRARY_PROBE_OUTPUT_PATH,
+            probe_output_path=LIBRARY_PROBE_OUTPUT_PATH,
             library_root=LIBRARY_PATH,
-            score_enabled=_is_score_enabled(cfg),
-            score_config=effective_score_config,
+            only_category=only_category,
         )
     except Exception as e:
-        log.exception("[MEDIA_PROBE] Failed to generate library_probe.json: %s", e)
+        log.exception("[MEDIA_PROBE] Failed during phase 1b ffprobe scan: %s", e)
 
 
 # ---------------------------------------------------------------------------

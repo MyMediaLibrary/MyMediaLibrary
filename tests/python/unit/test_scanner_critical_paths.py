@@ -246,13 +246,13 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             "cache_enabled": True,
         })
 
-    def test_media_probe_post_scan_disabled_does_not_run(self):
+    def test_media_probe_phase1b_disabled_does_not_run(self):
         with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
-             patch.object(scanner, "run_media_probe_if_enabled") as run_probe:
-            scanner._run_media_probe_post_scan()
+             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
+            scanner._run_media_probe_phase1b()
         run_probe.assert_not_called()
 
-    def test_media_probe_post_scan_enabled_writes_probe_snapshot(self):
+    def test_media_probe_phase1b_enabled_runs_before_later_phases(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             library_json = root / "data" / "library.json"
@@ -264,15 +264,28 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
                  patch.object(scanner, "LIBRARY_PROBE_OUTPUT_PATH", str(probe_json)), \
                  patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
                  patch.object(scanner, "load_config", return_value=cfg), \
-                 patch.object(scanner, "get_effective_score_config", return_value=({}, {"weights": {}}, {})), \
-                 patch.object(scanner, "run_media_probe_if_enabled") as run_probe:
-                scanner._run_media_probe_post_scan()
+                 patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
+                scanner._run_media_probe_phase1b(only_category="Movies")
 
             run_probe.assert_called_once()
             kwargs = run_probe.call_args.kwargs
             self.assertEqual(kwargs["library_json_path"], str(library_json))
-            self.assertEqual(kwargs["output_path"], str(probe_json))
-            self.assertTrue(kwargs["score_enabled"])
+            self.assertEqual(kwargs["probe_output_path"], str(probe_json))
+            self.assertEqual(kwargs["only_category"], "Movies")
+
+    def test_run_phases_places_media_probe_between_scan_and_enrich(self):
+        calls = []
+        with patch.object(scanner, "run_quick", side_effect=lambda **_: calls.append("scan")), \
+             patch.object(scanner, "_run_media_probe_phase1b", side_effect=lambda **_: calls.append("probe")), \
+             patch.object(scanner, "run_enrich", side_effect=lambda **_: calls.append("enrich")), \
+             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")):
+            scanner.run_phases([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ])
+
+        self.assertEqual(calls, ["scan", "probe", "enrich", "score"])
 
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))

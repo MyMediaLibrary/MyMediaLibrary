@@ -1,17 +1,19 @@
-"""Generate a ffprobe-based comparison snapshot for MyMediaLibrary.
+"""Generate and apply ffprobe-based technical metadata for MyMediaLibrary.
 
-The probe output is intentionally separate from library.json. It keeps the
-regular scan output untouched and writes a comparison document to
-library_probe.json when explicitly enabled.
+The comparison output stays in library_probe.json. During the scan pipeline,
+the same probed technical fields can also be merged into library.json before
+Seerr/scoring without exposing probe diagnostics there.
 """
 
 from __future__ import annotations
 
 import copy
+import contextlib
 import json
 import logging
 import re
 import subprocess
+import tempfile
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -116,6 +118,50 @@ def run_media_probe_if_enabled(
     )
 
 
+def run_media_probe_pipeline_if_enabled(
+    cfg: dict | None,
+    *,
+    library_json_path: str | Path,
+    probe_output_path: str | Path = LIBRARY_PROBE_OUTPUT_PATH,
+    library_root: str | Path = LIBRARY_PATH,
+    timeout: float = 5.0,
+    only_category: str | None = None,
+    cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
+) -> dict[str, int] | None:
+    """Run ffprobe as scan phase 1b and merge technical fields into library.json.
+
+    library_probe.json keeps the comparison diagnostics. library.json receives the
+    probed technical values only, so later phases (Seerr, scoring, inventory)
+    operate on the best technical metadata without exposing probe diagnostics.
+    """
+    if not is_enabled(cfg):
+        return None
+
+    library_path = Path(library_json_path)
+    probe_path = Path(probe_output_path)
+    log.info("[SCAN] ── Phase 1b : ffprobe technical scan ─────────────")
+    stats = generate_library_probe(
+        library_json_path=library_path,
+        output_path=probe_path,
+        library_root=library_root,
+        score_enabled=False,
+        score_config=None,
+        timeout=timeout,
+        workers=_media_probe_workers(cfg),
+        cache_enabled=_media_probe_cache_enabled(cfg),
+        cache_path=cache_path,
+        only_category=only_category,
+    )
+    try:
+        with open(probe_path, encoding="utf-8") as f:
+            probed_doc = json.load(f)
+        _strip_probe_diagnostics(probed_doc)
+        _write_json_atomic(library_path, probed_doc)
+    except Exception as exc:
+        log.warning("[MEDIA_PROBE] Could not apply ffprobe results to library.json: %s", exc)
+    return stats
+
+
 def generate_library_probe(
     *,
     library_json_path: str | Path,
@@ -127,6 +173,7 @@ def generate_library_probe(
     workers: int = 4,
     cache_enabled: bool = True,
     cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
+    only_category: str | None = None,
 ) -> dict[str, int]:
     started_at = time.monotonic()
     source_path = Path(library_json_path)
@@ -153,6 +200,8 @@ def generate_library_probe(
     plans = []
     for item in items:
         if not isinstance(item, dict):
+            continue
+        if only_category and item.get("category") != only_category:
             continue
         stats["items"] += 1
         try:
@@ -217,6 +266,42 @@ def generate_library_probe(
     duration = time.monotonic() - started_at
     _log_final_summary(stats, duration, cache_enabled)
     return stats
+
+
+def _strip_probe_diagnostics(document: dict) -> None:
+    items = document.get("items")
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if isinstance(item, dict):
+            item.pop("media_probe", None)
+
+
+def _write_json_atomic(path: str | Path, document: dict) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(output.parent),
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+            json.dump(document, f, ensure_ascii=False, indent=2, allow_nan=False)
+            f.flush()
+        tmp_path.replace(output)
+        with contextlib.suppress(Exception):
+            output.chmod(0o644)
+    finally:
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 def _group_plans_by_category(plans: list[dict]) -> list[tuple[str, list[dict]]]:
