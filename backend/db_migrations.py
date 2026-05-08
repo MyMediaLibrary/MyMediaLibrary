@@ -44,6 +44,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 2:
             _apply_v2_ffprobe_lookup_index(conn)
             current_version = 2
+        if current_version < 3:
+            _apply_v3_inventory_indexes(conn)
+            current_version = 3
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -64,4 +67,19 @@ def _apply_v2_ffprobe_lookup_index(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (2,),
+    )
+
+
+def _apply_v3_inventory_indexes(conn: sqlite3.Connection) -> None:
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_items_folder ON inventory_items(folder)",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_type ON inventory_items(media_type)",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_items_last_seen_at ON inventory_items(last_seen_at)",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_items_missing_since ON inventory_items(missing_since)",
+    ):
+        conn.execute(statement)
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (3,),
     )

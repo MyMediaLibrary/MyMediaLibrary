@@ -56,12 +56,13 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
-    from backend.repositories import config_repository, providers_repository, recommendations_repository
+    from backend.repositories import config_repository, inventory_repository, providers_repository, recommendations_repository
 except Exception:
     try:
-        from repositories import config_repository, providers_repository, recommendations_repository  # type: ignore
+        from repositories import config_repository, inventory_repository, providers_repository, recommendations_repository  # type: ignore
     except Exception:
         config_repository = None  # type: ignore
+        inventory_repository = None  # type: ignore
         providers_repository = None  # type: ignore
         recommendations_repository = None  # type: ignore
 
@@ -2187,14 +2188,25 @@ def write_inventory_json_non_blocking(
                 forced_missing_categories,
             )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
-        write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
+        save_inventory_document_non_blocking(inventory_to_write, INVENTORY_OUTPUT_PATH)
         log.debug(f"{_phase_prefix('4')} Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
         log.warning(f"{_phase_prefix('4')} Inventory write failed: {e}")
 
 
 def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
-    """Load inventory JSON for merge; return None on missing/invalid/non-dict."""
+    """Load inventory for merge; prefer SQLite and fall back to JSON."""
+    if inventory_repository is not None:
+        try:
+            document = inventory_repository.load_inventory(path)
+            if isinstance(document, dict):
+                items = document.get("items", [])
+                if isinstance(items, list):
+                    return document
+                raise ValueError("inventory.items must be an array")
+        except Exception as e:
+            log.warning(f"{_phase_prefix('4')} Failed to load SQLite inventory: {e}. Falling back to JSON.")
+
     inventory_path = Path(path)
     if not inventory_path.exists():
         return None
@@ -2209,6 +2221,17 @@ def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
     except Exception as e:
         log.warning(f"{_phase_prefix('4')} Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
         return None
+
+
+def save_inventory_document_non_blocking(document: dict, path: str) -> None:
+    """Persist inventory through SQLite when available while keeping JSON compatibility output."""
+    if inventory_repository is not None:
+        try:
+            inventory_repository.save_inventory(document, path)
+            return
+        except Exception as e:
+            log.warning(f"{_phase_prefix('4')} Failed to save SQLite inventory: {e}. Falling back to JSON.")
+    write_json(document, path)
 
 
 # ---------------------------------------------------------------------------
@@ -3818,7 +3841,7 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
         else:
             merged = partial_doc
         merged = cleanup_inventory_transient_fields(merged)
-        write_json(merged, INVENTORY_OUTPUT_PATH)
+        save_inventory_document_non_blocking(merged, INVENTORY_OUTPUT_PATH)
         log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_inv_items)} item(s)")
 
     # Final pass: full merge + optional missing reconciliation
@@ -3851,7 +3874,7 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     # Stamp last_checked_at = now for all items regardless of status
     _stamp_last_checked_at(final_merged, now_utc)
     final_merged = cleanup_inventory_transient_fields(final_merged)
-    write_json(final_merged, INVENTORY_OUTPUT_PATH)
+    save_inventory_document_non_blocking(final_merged, INVENTORY_OUTPUT_PATH)
 
     # Missing summary
     missing_items = [i for i in final_merged.get("items", []) if i.get("status") == "missing"]

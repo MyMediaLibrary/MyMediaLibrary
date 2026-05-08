@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 CREATE_TABLES_SQL = (
@@ -336,8 +336,13 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_recommendations_media_id ON recommendations(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_type_priority ON recommendations(recommendation_type, priority)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_id ON inventory_items(media_id)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_path ON inventory_items(path)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_status ON inventory_items(status)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_items_folder ON inventory_items(folder)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_type ON inventory_items(media_type)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_items_last_seen_at ON inventory_items(last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_inventory_items_missing_since ON inventory_items(missing_since)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_path ON ffprobe_cache(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",

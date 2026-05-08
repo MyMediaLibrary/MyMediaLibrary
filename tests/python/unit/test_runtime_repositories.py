@@ -11,7 +11,13 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import db  # noqa: E402
 import scanner  # noqa: E402
-from repositories import config_repository, ffprobe_repository, providers_repository, recommendations_repository  # noqa: E402
+from repositories import (  # noqa: E402
+    config_repository,
+    ffprobe_repository,
+    inventory_repository,
+    providers_repository,
+    recommendations_repository,
+)
 
 
 class RuntimeRepositoriesTest(unittest.TestCase):
@@ -257,6 +263,237 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             repo = ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
 
             self.assertIsNone(repo)
+
+    def test_inventory_loads_sqlite_before_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library_inventory.json"
+            json_path.parent.mkdir()
+            json_path.write_text(
+                json.dumps({"version": 1, "items": [{"id": "movie:Films:Json", "title": "JSON"}]}),
+                encoding="utf-8",
+            )
+            conn = db.initialize_database(db_path)
+            try:
+                inventory_repository.upsert_item(
+                    conn,
+                    {
+                        "id": "movie:Films:Db",
+                        "media_type": "movie",
+                        "title": "DB",
+                        "category": "Films",
+                        "status": "present",
+                    },
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            document = inventory_repository.load_inventory(json_path, db_path)
+
+            self.assertEqual([item["title"] for item in document["items"]], ["DB"])
+
+    def test_inventory_imports_json_once_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library_inventory.json"
+            json_path.parent.mkdir()
+            json_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "items": [
+                        {
+                            "id": "movie:Films:Inception (2010)",
+                            "media_type": "movie",
+                            "title": "Inception",
+                            "category": "Films",
+                            "root_folder_path": "Films/Inception (2010)",
+                            "status": "present",
+                            "first_seen_at": "2026-04-01T00:00:00Z",
+                            "last_seen_at": "2026-04-02T00:00:00Z",
+                            "last_checked_at": "2026-04-02T00:00:00Z",
+                        }
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            first = inventory_repository.load_inventory(json_path, db_path)
+            second = inventory_repository.load_inventory(json_path, db_path)
+            conn = db.initialize_database(db_path)
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM inventory_items").fetchone()[0]
+            finally:
+                conn.close()
+
+            self.assertEqual(first, second)
+            self.assertEqual(count, 1)
+            self.assertEqual(first["items"][0]["title"], "Inception")
+
+    def test_inventory_tolerates_absent_and_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            missing_json = root / "data" / "missing_inventory.json"
+            invalid_json = root / "data" / "invalid_inventory.json"
+            invalid_json.parent.mkdir()
+            invalid_json.write_text("{ invalid", encoding="utf-8")
+
+            missing = inventory_repository.load_inventory(missing_json, root / "data" / "missing.db")
+            invalid = inventory_repository.load_inventory(invalid_json, root / "data" / "invalid.db")
+
+            self.assertIsNone(missing)
+            self.assertIsNone(invalid)
+
+    def test_inventory_fallback_when_sqlite_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("blocked", encoding="utf-8")
+            json_path = root / "library_inventory.json"
+
+            document = inventory_repository.load_inventory(json_path, blocked_parent / "mml.db")
+
+            self.assertIsNone(document)
+
+    def test_inventory_save_updates_sqlite_and_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library_inventory.json"
+            document = {
+                "version": 1,
+                "generated_at": "2026-04-02T00:00:00Z",
+                "items": [
+                    {
+                        "id": "movie:Films:Inception (2010)",
+                        "media_type": "movie",
+                        "title": "Inception",
+                        "category": "Films",
+                        "root_folder_path": "Films/Inception (2010)",
+                        "status": "present",
+                        "first_seen_at": "2026-04-01T00:00:00Z",
+                        "last_seen_at": "2026-04-02T00:00:00Z",
+                        "last_checked_at": "2026-04-02T00:00:00Z",
+                    }
+                ],
+            }
+
+            inventory_repository.save_inventory(document, json_path, db_path)
+
+            self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["generated_at"], document["generated_at"])
+            conn = db.initialize_database(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT inventory_key, title, status, path FROM inventory_items"
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual((row["inventory_key"], row["title"], row["status"], row["path"]), (
+                "movie:Films:Inception (2010)",
+                "Inception",
+                "present",
+                "Films/Inception (2010)",
+            ))
+
+    def test_inventory_upsert_present_preserves_first_seen_and_updates_seen_dates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
+            conn = db.initialize_database(db_path)
+            try:
+                inventory_repository.upsert_item(
+                    conn,
+                    {
+                        "id": "movie:Films:Inception (2010)",
+                        "title": "Inception",
+                        "status": "present",
+                        "first_seen_at": "2026-04-01T00:00:00Z",
+                        "last_seen_at": "2026-04-01T00:00:00Z",
+                        "last_checked_at": "2026-04-01T00:00:00Z",
+                    },
+                )
+                inventory_repository.upsert_item(
+                    conn,
+                    {
+                        "id": "movie:Films:Inception (2010)",
+                        "title": "Inception",
+                        "status": "present",
+                        "first_seen_at": "2026-05-01T00:00:00Z",
+                        "last_seen_at": "2026-05-01T00:00:00Z",
+                        "last_checked_at": "2026-05-01T00:00:00Z",
+                    },
+                )
+                row = conn.execute(
+                    "SELECT first_seen_at, last_seen_at, last_checked_at, data_json FROM inventory_items"
+                ).fetchone()
+            finally:
+                conn.close()
+
+            data = json.loads(row["data_json"])
+            self.assertEqual(row["first_seen_at"], "2026-04-01T00:00:00Z")
+            self.assertEqual(data["first_seen_at"], "2026-04-01T00:00:00Z")
+            self.assertEqual(row["last_seen_at"], "2026-05-01T00:00:00Z")
+            self.assertEqual(row["last_checked_at"], "2026-05-01T00:00:00Z")
+
+    def test_inventory_mark_missing_preserves_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
+            conn = db.initialize_database(db_path)
+            try:
+                inventory_repository.mark_present(
+                    conn,
+                    "movie:Films:Inception (2010)",
+                    seen_at="2026-04-01T00:00:00Z",
+                    data={"title": "Inception", "category": "Films"},
+                )
+                inventory_repository.mark_missing(
+                    conn,
+                    "movie:Films:Inception (2010)",
+                    checked_at="2026-05-01T00:00:00Z",
+                )
+                inventory_repository.mark_missing(
+                    conn,
+                    "movie:Films:Inception (2010)",
+                    checked_at="2026-05-02T00:00:00Z",
+                )
+                row = conn.execute(
+                    "SELECT status, first_seen_at, last_seen_at, last_checked_at, missing_since, data_json FROM inventory_items"
+                ).fetchone()
+            finally:
+                conn.close()
+
+            data = json.loads(row["data_json"])
+            self.assertEqual(row["status"], "missing")
+            self.assertEqual(row["first_seen_at"], "2026-04-01T00:00:00Z")
+            self.assertEqual(row["last_seen_at"], "2026-04-01T00:00:00Z")
+            self.assertEqual(row["last_checked_at"], "2026-05-02T00:00:00Z")
+            self.assertEqual(row["missing_since"], "2026-05-01T00:00:00Z")
+            self.assertEqual(data["missing_since"], "2026-05-01T00:00:00Z")
+
+    def test_scanner_inventory_load_prefers_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            json_path.write_text(
+                json.dumps({"version": 1, "items": [{"id": "json", "title": "JSON"}]}),
+                encoding="utf-8",
+            )
+            repo_document = {"version": 1, "items": [{"id": "db", "title": "DB"}]}
+
+            with patch.object(scanner.inventory_repository, "load_inventory", return_value=repo_document):
+                loaded = scanner.load_existing_inventory_document_non_blocking(str(json_path))
+
+            self.assertEqual(loaded, repo_document)
+
+    def test_scanner_inventory_save_uses_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = pathlib.Path(tmpdir) / "library_inventory.json"
+            document = {"version": 1, "items": [{"id": "db", "title": "DB"}]}
+
+            with patch.object(scanner.inventory_repository, "save_inventory") as save_inventory:
+                scanner.save_inventory_document_non_blocking(document, str(json_path))
+
+            save_inventory.assert_called_once_with(document, str(json_path))
 
     def test_provider_mappings_read_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
