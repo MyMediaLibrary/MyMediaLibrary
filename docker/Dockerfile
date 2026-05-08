@@ -3,10 +3,11 @@ FROM nginx:alpine3.23
 # Keep runtime packages minimal:
 # - python3: scanner + API
 # - ffmpeg: ffprobe for optional media_probe technical enrichment
+# - sqlite: sqlite3 CLI for runtime DB inspection/debugging
 # - tzdata: timezone support for scanner scheduler logs
 RUN apk update \
     && apk upgrade --no-cache \
-    && apk add --no-cache python3 ffmpeg tzdata
+    && apk add --no-cache python3 ffmpeg sqlite tzdata
 
 WORKDIR /app
 
@@ -16,15 +17,7 @@ COPY docs/ /usr/share/nginx/html/docs/
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /app/backend
 COPY backend/scanner.py /app/scanner.py
-COPY backend/runtime_paths.py /app/backend/runtime_paths.py
-COPY backend/storage_migration.py /app/backend/storage_migration.py
-COPY backend/db.py /app/backend/db.py
-COPY backend/db_schema.py /app/backend/db_schema.py
-COPY backend/db_migrations.py /app/backend/db_migrations.py
-COPY backend/db_import.py /app/backend/db_import.py
-COPY backend/db_export.py /app/backend/db_export.py
-COPY backend/repositories/ /app/backend/repositories/
-COPY backend/media_probe.py /app/backend/media_probe.py
+COPY backend/ /app/backend/
 COPY backend/default_config.json /app/defaults/conf/config.json
 COPY app/providers_mapping.json /app/defaults/conf/providers_mapping.json
 COPY app/providers_logo.json /app/defaults/conf/providers_logo.json

@@ -10,6 +10,7 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+        cls.dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
         cls.dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
         cls.entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
         cls.nginx = (ROOT / "docker" / "nginx.conf").read_text(encoding="utf-8")
@@ -30,16 +31,19 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertIn("/app/defaults/conf/providers_logo.json", self.dockerfile)
         self.assertIn("/app/defaults/conf/recommendations_rules.json", self.dockerfile)
         self.assertIn("ffmpeg", self.dockerfile)
-        self.assertIn("/app/backend/media_probe.py", self.dockerfile)
-        self.assertIn("/app/backend/db.py", self.dockerfile)
-        self.assertIn("/app/backend/db_schema.py", self.dockerfile)
-        self.assertIn("/app/backend/db_migrations.py", self.dockerfile)
-        self.assertIn("/app/backend/db_import.py", self.dockerfile)
-        self.assertIn("/app/backend/db_export.py", self.dockerfile)
-        self.assertIn("/app/backend/repositories/", self.dockerfile)
+        self.assertRegex(self.dockerfile, r"apk add --no-cache .*sqlite")
+        self.assertIn("COPY backend/ /app/backend/", self.dockerfile)
+        self.assertIn("COPY backend/scanner.py /app/scanner.py", self.dockerfile)
         self.assertIn('VOLUME ["/data", "/conf"]', self.dockerfile)
         self.assertNotIn("/app/.secrets", self.dockerfile)
         self.assertNotIn("/data/config.json", self.dockerfile)
+
+    def test_docker_context_does_not_exclude_backend_sqlite_runtime(self):
+        self.assertIn("**/__pycache__/", self.dockerignore)
+        self.assertIn("**/*.pyc", self.dockerignore)
+        self.assertNotRegex(self.dockerignore, r"(?m)^backend/?$")
+        self.assertNotIn("backend/db.py", self.dockerignore)
+        self.assertNotIn("backend/repositories", self.dockerignore)
 
     def test_entrypoint_and_nginx_do_not_depend_on_library_path_env(self):
         combined = self.entrypoint + "\n" + self.nginx
