@@ -364,8 +364,15 @@ class MediaProbeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(stats["files_probed"], 1)
         self.assertEqual(stats["files_cached"], 0)
-        cache = json.loads(self.cache_json.read_text(encoding="utf-8"))
-        self.assertEqual(len(cache["files"]), 1)
+        self.assertFalse(self.cache_json.exists())
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        repo = ffprobe_repository.open_cache(json_path=self.cache_json)
+        try:
+            stat = movie_path.stat()
+            cached = repo.get(movie_path, size=stat.st_size, mtime=stat.st_mtime)
+        finally:
+            repo.close()
+        self.assertIsNotNone(cached)
 
     def test_cache_reprobes_when_size_or_mtime_changes(self):
         self.write_movie_fixture()

@@ -82,6 +82,7 @@ def migrate_runtime_json_files_at_startup(
     warnings = False
 
     active_logger.info("[DB] JSON migration starting")
+    _remove_obsolete_runtime_files(paths, active_logger)
     for spec in specs:
         result = _migrate_one_startup_json(conn, spec, active_logger, remove_validated=remove_validated)
         results.append(result)
@@ -177,6 +178,7 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "source_count": _count_files_source,
             "db_count": lambda conn: _table_count(conn, "ffprobe_cache"),
             "import": import_media_probe_cache,
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "library_inventory",
@@ -223,7 +225,8 @@ def _migrate_one_startup_json(
     source_count = spec["source_count"](payload)
     spec["import"](conn, path)
     db_count = spec["db_count"](conn)
-    if source_count == db_count:
+    valid_when = spec.get("valid_when") or (lambda source_count, db_count: source_count == db_count)
+    if valid_when(source_count, db_count):
         removed = False
         active_logger.info("[DB] Import check %s — json=%s db=%s — OK", path.name, source_count, db_count)
         if remove_validated:
@@ -266,6 +269,21 @@ def _migrate_one_startup_json(
         db_count=db_count,
         warning="count_mismatch",
     )
+
+
+def _remove_obsolete_runtime_files(paths, active_logger: logging.Logger) -> None:
+    for attr in ("LIBRARY_PROBE_JSON",):
+        obsolete = getattr(paths, attr, None)
+        if obsolete is None:
+            continue
+        path = Path(obsolete)
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+            active_logger.info("[DB] Removed obsolete file %s", path)
+        except Exception as exc:
+            active_logger.warning("[DB] Could not remove obsolete file %s: %s", path, exc)
 
 
 def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:

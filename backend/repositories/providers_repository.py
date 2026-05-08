@@ -1,9 +1,4 @@
-"""Runtime accessors for provider mappings and logos.
-
-The transition is intentionally conservative: SQLite is preferred when it has
-data, JSON remains the compatibility format, and database failures fall back to
-the existing files.
-"""
+"""SQLite runtime accessors for provider mappings and logos."""
 
 from __future__ import annotations
 
@@ -14,29 +9,31 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_export, db_import
+    from backend import db, db_export, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_export  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
 
 
 def load_provider_mappings(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, str | None]:
-    """Load provider mappings from SQLite first, importing JSON if DB is empty."""
+    """Load provider mappings from SQLite only."""
 
     db_mapping = _load_from_db(
         db_path,
+        json_path=json_path,
+        canonical_path=runtime_paths.PROVIDERS_MAPPING_JSON,
         table_name="provider_mappings",
-        importer=lambda conn: db_import.import_providers_mapping(conn, json_path),
         exporter=db_export.export_providers_mapping,
         log_label="provider mappings",
     )
     if db_mapping is not None:
         return db_mapping
-    return _read_json_object(json_path)
+    return {}
 
 
 def save_provider_mappings(
@@ -44,15 +41,10 @@ def save_provider_mappings(
     json_path: str | Path,
     db_path: str | Path | None = None,
 ) -> None:
-    """Persist provider mappings to JSON compatibility output and SQLite."""
+    """Persist provider mappings to SQLite."""
 
     normalized = _normalize_mapping(mapping)
-    _write_json_object(json_path, normalized)
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.warning("[providers] Could not open SQLite provider mappings store: %s", exc)
-        return
+    conn = db.initialize_database(_effective_db_path(json_path, db_path, runtime_paths.PROVIDERS_MAPPING_JSON))
     try:
         with conn:
             for raw_name, mapped_name in normalized.items():
@@ -67,47 +59,50 @@ def save_provider_mappings(
                     """,
                     (raw_name, mapped_name, 1 if mapped_name is None else 0),
                 )
+        if not _is_canonical_json_path(json_path, runtime_paths.PROVIDERS_MAPPING_JSON):
+            _write_json_object(json_path, normalized)
     finally:
         conn.close()
 
 
 def load_provider_logos(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, str]:
-    """Load provider logos from SQLite first, importing JSON if DB is empty."""
+    """Load provider logos from SQLite only."""
 
     db_logos = _load_from_db(
         db_path,
+        json_path=json_path,
+        canonical_path=runtime_paths.PROVIDERS_LOGO_JSON,
         table_name="provider_logos",
-        importer=lambda conn: db_import.import_providers_logo(conn, json_path),
         exporter=db_export.export_providers_logo,
         log_label="provider logos",
     )
     if db_logos is not None:
         return db_logos
-    return {key: value for key, value in _read_json_object(json_path).items() if isinstance(value, str)}
+    return {}
 
 
 def _load_from_db(
     db_path: str | Path | None,
     *,
+    json_path: str | Path,
+    canonical_path: Path,
     table_name: str,
-    importer,
     exporter,
     log_label: str,
 ):
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[providers] SQLite unavailable for %s, falling back to JSON: %s", log_label, exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path, canonical_path))
     try:
         if _table_is_empty(conn, table_name):
-            imported = importer(conn)
-            if not imported and _table_is_empty(conn, table_name):
+            if not _is_canonical_json_path(json_path, canonical_path):
+                if table_name == "provider_mappings":
+                    db_import.import_providers_mapping(conn, json_path)
+                elif table_name == "provider_logos":
+                    db_import.import_providers_logo(conn, json_path)
+                if _table_is_empty(conn, table_name):
+                    return None
+            else:
                 return None
         return exporter(conn)
-    except Exception as exc:
-        log.warning("[providers] Could not load %s from SQLite: %s", log_label, exc)
-        return None
     finally:
         conn.close()
 
@@ -126,16 +121,25 @@ def _normalize_mapping(mapping: dict[str, Any]) -> dict[str, str | None]:
     return normalized
 
 
-def _read_json_object(path: str | Path) -> dict[str, Any]:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception as exc:
-        log.warning("[providers] Could not read JSON fallback %s: %s", path, exc)
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def _write_json_object(path: str | Path, payload: dict[str, Any]) -> None:
     json_path = Path(path)
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _effective_db_path(
+    json_path: str | Path,
+    db_path: str | Path | None,
+    canonical_path: Path,
+) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == canonical_path:
+        return None
+    root = path.parent.parent if path.parent.name == "conf" else path.parent
+    return root / "data" / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path, canonical_path: Path) -> bool:
+    return Path(json_path) == canonical_path

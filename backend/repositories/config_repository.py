@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_import
+    from backend import db, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
@@ -32,22 +33,18 @@ _SKIP = object()
 
 
 def load_config(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, Any] | None:
-    """Load configuration from SQLite, importing JSON first when DB is empty."""
+    """Load configuration from SQLite only."""
 
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[config] SQLite unavailable for config, falling back to JSON: %s", exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         if _config_tables_empty(conn):
-            imported = db_import.import_config(conn, json_path)
-            if not imported and _config_tables_empty(conn):
+            if not _is_canonical_json_path(json_path):
+                db_import.import_config(conn, json_path)
+                if _config_tables_empty(conn):
+                    return None
+            else:
                 return None
         return _export_config(conn)
-    except Exception as exc:
-        log.warning("[config] Could not load config from SQLite: %s", exc)
-        return None
     finally:
         conn.close()
 
@@ -60,15 +57,10 @@ def save_config(
     auth_enabled: bool | None = None,
     password_hash: str | None = None,
 ) -> None:
-    """Persist sanitized config to SQLite and JSON compatibility output."""
+    """Persist sanitized config to SQLite."""
 
     sanitized = sanitize_config(config)
-    _write_json(json_path, sanitized)
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.warning("[config] Could not open SQLite config store: %s", exc)
-        return
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         with conn:
             _replace_app_config(conn, sanitized)
@@ -88,11 +80,7 @@ def save_auth_settings(
 ) -> None:
     """Persist hash-only auth state to SQLite without touching .secrets."""
 
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[config] SQLite unavailable for auth settings: %s", exc)
-        return
+    conn = db.initialize_database(db_path)
     try:
         with conn:
             _replace_auth_settings(conn, auth_enabled, password_hash)
@@ -101,11 +89,7 @@ def save_auth_settings(
 
 
 def load_auth_settings(db_path: str | Path | None = None) -> dict[str, Any] | None:
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[config] SQLite unavailable for auth settings: %s", exc)
-        return None
+    conn = db.initialize_database(db_path)
     try:
         row = conn.execute(
             "SELECT auth_enabled, password_hash, updated_at FROM auth_settings WHERE id = 1"
@@ -133,6 +117,20 @@ def _config_tables_empty(conn: sqlite3.Connection) -> bool:
         if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
             return False
     return True
+
+
+def _effective_db_path(json_path: str | Path, db_path: str | Path | None) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == runtime_paths.CONFIG_JSON:
+        return None
+    root = path.parent.parent if path.parent.name == "conf" else path.parent
+    return root / "data" / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path) -> bool:
+    return Path(json_path) == runtime_paths.CONFIG_JSON
 
 
 def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -233,12 +231,6 @@ def _sanitize_value(key: str, value: Any) -> Any:
                 cleaned_list.append(sanitized)
         return cleaned_list
     return copy.deepcopy(value)
-
-
-def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _to_json(value: Any) -> str:

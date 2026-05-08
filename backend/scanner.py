@@ -149,18 +149,44 @@ except Exception:
             return {"generated_at": None, "version": 1, "items": items}
 
 try:
-    from backend.media_probe import run_media_probe_pipeline_if_enabled
+    from backend.media_probe import run_media_probe_document_if_enabled
 except Exception:
     try:
-        from media_probe import run_media_probe_pipeline_if_enabled
+        from media_probe import run_media_probe_document_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
             "[SCAN] [PHASE 1B] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
             e,
         )
 
-        def run_media_probe_pipeline_if_enabled(*args, **kwargs):
+        def run_media_probe_document_if_enabled(*args, **kwargs):
             return None
+
+def run_media_probe_pipeline_if_enabled(
+    cfg: dict | None,
+    *,
+    library_document: dict | None = None,
+    library_json_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+    library_root: str | Path = runtime_paths.LIBRARY_DIR,
+    timeout: float = 5.0,
+    only_category: str | None = None,
+    cache_path: str | Path = runtime_paths.MEDIA_PROBE_CACHE_JSON,
+):
+    del output_path
+    document = library_document
+    if document is None and library_json_path is not None:
+        document = load_library_document_non_blocking(str(library_json_path))
+    if not isinstance(document, dict):
+        return None
+    return run_media_probe_document_if_enabled(
+        cfg,
+        library_document=document,
+        library_root=library_root,
+        timeout=timeout,
+        only_category=only_category,
+        cache_path=cache_path,
+    )
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -696,36 +722,18 @@ def _ensure_runtime_providers_logo() -> None:
 
 def _load_runtime_provider_mapping() -> dict:
     if providers_repository is not None:
-        try:
-            payload = providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
-            if isinstance(payload, dict):
-                return payload
-        except Exception as e:
-            log.warning("[providers] Could not load mappings from SQLite repository: %s", e)
-    try:
-        with open(PROVIDERS_MAPPING_RUNTIME_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
         if isinstance(payload, dict):
             return payload
-    except Exception as e:
-        log.warning(f"[providers] Could not read runtime mapping file: {e}")
+    log.error("[providers] SQLite provider mappings repository unavailable")
     return {}
 
 
 def _save_runtime_provider_mapping(mapping: dict) -> None:
     if providers_repository is not None:
-        try:
-            providers_repository.save_provider_mappings(mapping, PROVIDERS_MAPPING_RUNTIME_PATH)
-            return
-        except Exception as e:
-            log.warning("[providers] Could not save mappings through SQLite repository: %s", e)
-    try:
-        path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log.warning(f"[providers] Could not write runtime mapping file: {e}")
+        providers_repository.save_provider_mappings(mapping, PROVIDERS_MAPPING_RUNTIME_PATH)
+        return
+    raise RuntimeError("SQLite provider mappings repository unavailable")
 
 
 def _extract_raw_providers_from_item(item: dict) -> list[str]:
@@ -761,13 +769,11 @@ def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
 
 def _load_runtime_recommendation_rules() -> list[dict]:
     if recommendations_repository is not None:
-        try:
-            rules = recommendations_repository.load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
-            if isinstance(rules, list):
-                return rules
-        except Exception as e:
-            log.warning("[recommendations] Could not load rules from SQLite repository: %s", e)
-    return load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+        rules = recommendations_repository.load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+        if isinstance(rules, list):
+            return rules
+    log.error("[recommendations] SQLite recommendation rules repository unavailable")
+    return []
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -2177,43 +2183,25 @@ def write_inventory_json_non_blocking(
 
 
 def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
-    """Load inventory for merge; prefer SQLite and fall back to JSON."""
+    """Load inventory for merge from SQLite."""
     if inventory_repository is not None:
-        try:
-            document = inventory_repository.load_inventory(path)
-            if isinstance(document, dict):
-                items = document.get("items", [])
-                if isinstance(items, list):
-                    return document
-                raise ValueError("inventory.items must be an array")
-        except Exception as e:
-            log.warning(f"{_phase_prefix('4')} Failed to load SQLite inventory: {e}. Falling back to JSON.")
-
-    inventory_path = Path(path)
-    if not inventory_path.exists():
-        return None
-    try:
-        with open(inventory_path, encoding="utf-8") as f:
-            document = json.load(f)
+        document = inventory_repository.load_inventory(path)
         if not isinstance(document, dict):
-            raise ValueError("inventory root must be a JSON object")
-        if not isinstance(document.get("items", []), list):
+            return None
+        items = document.get("items", [])
+        if isinstance(items, list):
+            return document
+        if items is not None:
             raise ValueError("inventory.items must be an array")
-        return document
-    except Exception as e:
-        log.warning(f"{_phase_prefix('4')} Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
-        return None
+    log.error("%s SQLite inventory repository unavailable", _phase_prefix("4"))
+    return None
 
 
 def save_inventory_document_non_blocking(document: dict, path: str) -> None:
-    """Persist inventory through SQLite when available while keeping JSON compatibility output."""
-    if inventory_repository is not None:
-        try:
-            inventory_repository.save_inventory(document, path)
-            return
-        except Exception as e:
-            log.warning(f"{_phase_prefix('4')} Failed to save SQLite inventory: {e}. Falling back to JSON.")
-    write_json(document, path)
+    """Persist inventory through SQLite."""
+    if inventory_repository is None:
+        raise RuntimeError("SQLite inventory repository unavailable")
+    inventory_repository.save_inventory(document, path)
 
 
 # ---------------------------------------------------------------------------
@@ -2232,100 +2220,72 @@ def load_existing(output_path: str) -> dict:
 
 def write_json(data: dict, output_path: str) -> None:
     if _is_library_output_path(output_path) and media_repository is not None:
-        try:
-            media_repository.save_library(data, output_path)
-            log.debug(f"Written: {output_path}")
-            return
-        except Exception as e:
-            log.warning("[library] Could not save through SQLite repository: %s. Falling back to JSON.", e)
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(output.parent),
-            prefix=f".{output.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as f:
-            tmp_path = Path(f.name)
-            json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, output)
-        # nginx serves /data/library.json as a static file; keep it world-readable.
-        with contextlib.suppress(Exception):
-            output.chmod(0o644)
-    except Exception:
-        if tmp_path is not None:
-            with contextlib.suppress(Exception):
-                tmp_path.unlink(missing_ok=True)
-        raise
-    log.debug(f"Written: {output_path}")
+        media_repository.save_library(data, output_path)
+        log.debug("[library] Written to SQLite")
+        return
+    if not _is_canonical_runtime_json_path(output_path):
+        _write_json_file_atomic(data, output_path)
+        return
+    raise RuntimeError(f"Runtime JSON writes are disabled: {output_path}")
 
 
 def _is_library_output_path(output_path: str | Path) -> bool:
     return str(Path(output_path)) == str(Path(OUTPUT_PATH))
 
 
-def load_library_document_non_blocking(path: str) -> dict | None:
-    """Load library document; prefer SQLite and fall back to JSON compatibility output."""
-    if media_repository is not None:
-        try:
-            document = media_repository.load_library(path)
-            if isinstance(document, dict):
-                items = document.get("items", [])
-                if isinstance(items, list):
-                    return document
-                raise ValueError("library.items must be an array")
-        except Exception as e:
-            log.warning("[library] Failed to load SQLite library: %s. Falling back to JSON.", e)
+def _is_canonical_runtime_json_path(output_path: str | Path) -> bool:
+    path = Path(output_path)
+    return path in {
+        runtime_paths.CONFIG_JSON,
+        runtime_paths.PROVIDERS_MAPPING_JSON,
+        runtime_paths.PROVIDERS_LOGO_JSON,
+        runtime_paths.RECOMMENDATIONS_RULES_JSON,
+        runtime_paths.LIBRARY_JSON,
+        runtime_paths.INVENTORY_JSON,
+        runtime_paths.RECOMMENDATIONS_JSON,
+        runtime_paths.MEDIA_PROBE_CACHE_JSON,
+        runtime_paths.LIBRARY_PROBE_JSON,
+    }
+
+
+def _write_json_file_atomic(data: dict, output_path: str | Path) -> None:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent))
     try:
-        with open(path, encoding="utf-8") as f:
-            document = json.load(f)
-        if not isinstance(document, dict):
-            raise ValueError("library root must be a JSON object")
-        if not isinstance(document.get("items", []), list):
-            raise ValueError("library.items must be an array")
-        return document
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
+            f.write("\n")
+        os.chmod(tmp_name, 0o644)
+        os.replace(tmp_name, output)
     except Exception:
-        return None
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp_name)
+        raise
+
+
+def load_library_document_non_blocking(path: str) -> dict | None:
+    """Load library document from SQLite."""
+    if media_repository is not None:
+        document = media_repository.load_library(path)
+        if isinstance(document, dict):
+            items = document.get("items", [])
+            if isinstance(items, list):
+                return document
+            raise ValueError("library.items must be an array")
+    log.error("[library] SQLite media repository unavailable")
+    return None
 
 
 def library_document_exists(path: str | None = None) -> bool:
     target_path = path or OUTPUT_PATH
-    if Path(target_path).exists():
-        return True
     document = load_library_document_non_blocking(target_path)
-    if not isinstance(document, dict):
-        return False
-    try:
-        media_repository.save_library(document, target_path) if media_repository is not None else None
-    except Exception:
-        pass
-    return True
+    return isinstance(document, dict) and isinstance(document.get("items"), list)
 
 
 def persist_library_json_to_sqlite(path: str | None = None) -> None:
-    """Import the current compatibility JSON into SQLite after external writers update it."""
-    if media_repository is None:
-        return
-    target_path = path or OUTPUT_PATH
-    document = None
-    try:
-        with open(target_path, encoding="utf-8") as f:
-            document = json.load(f)
-    except Exception as e:
-        log.debug("[library] Could not read %s for SQLite persistence: %s", target_path, e)
-        return
-    if not isinstance(document, dict):
-        return
-    try:
-        media_repository.save_library(document, target_path)
-    except Exception as e:
-        log.warning("[library] Could not persist %s to SQLite: %s", target_path, e)
+    """Deprecated no-op: runtime library persistence is already SQLite-only."""
+    del path
 
 
 # ---------------------------------------------------------------------------
@@ -2382,29 +2342,24 @@ def _load_default_config() -> dict:
 
 
 def load_config() -> dict:
-    config_exists = Path(CONFIG_PATH).exists()
     cfg = None
     if config_repository is not None:
         try:
             cfg = config_repository.load_config(CONFIG_PATH)
         except Exception as e:
-            log.warning("[config] Could not load config from SQLite repository: %s", e)
+            log.error("[config] SQLite config unavailable: %s", e)
     if not isinstance(cfg, dict):
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            cfg = _load_default_config()
+        cfg = _load_default_config()
     if isinstance(cfg, dict):
         cfg, seerr_changed = normalize_seerr_config(cfg)
         cfg, changed, _ = normalize_score_configuration_sections(cfg)
         cfg, rec_changed = normalize_recommendations_configuration(cfg)
         cfg, probe_changed = normalize_media_probe_configuration(cfg)
-        if seerr_changed or changed or rec_changed or probe_changed or not config_exists:
+        if seerr_changed or changed or rec_changed or probe_changed:
             try:
                 save_config(cfg)
             except Exception as e:
-                log.warning("[config] Could not initialize %s: %s", CONFIG_PATH, e)
+                log.warning("[config] Could not normalize SQLite config: %s", e)
     return cfg
 
 
@@ -2534,15 +2489,9 @@ def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> boo
 
 def save_config(data: dict) -> None:
     if config_repository is not None:
-        try:
-            config_repository.save_config(data, CONFIG_PATH)
-            return
-        except Exception as e:
-            log.warning("[config] Could not save config through SQLite repository: %s", e)
-    output = Path(CONFIG_PATH)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        config_repository.save_config(data, CONFIG_PATH)
+        return
+    raise RuntimeError("SQLite config repository unavailable")
 
 
 def deep_merge(base: dict, update: dict) -> dict:
@@ -3411,11 +3360,8 @@ def run_quick(only_category: str | None = None) -> None:
     if only_category:
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
-    try:
-        size_mb = Path(OUTPUT_PATH).stat().st_size / (1024*1024)
-        size_str = f"{size_mb:.1f} MB"
-    except Exception:
-        size_str = "?"
+    size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
+    size_str = f"{size_mb:.1f} MB"
     try:
         mapping_added = _upsert_runtime_provider_mapping(items)
         if mapping_added:
@@ -3958,42 +3904,25 @@ def run_recommendations() -> int:
 
 
 def load_recommendations_document_non_blocking(path: str) -> dict | None:
-    """Load recommendations; prefer SQLite and fall back to JSON compatibility output."""
+    """Load recommendations from SQLite."""
     if recommendations_repository is not None:
-        try:
-            payload = recommendations_repository.load_recommendations(path)
-            if isinstance(payload, dict):
-                items = payload.get("items", [])
-                if isinstance(items, list):
-                    return payload
-                raise ValueError("recommendations.items must be an array")
-        except Exception as e:
-            log.warning("[recommendations] Failed to load SQLite recommendations: %s. Falling back to JSON.", e)
-
-    rec_path = Path(path)
-    if not rec_path.exists():
-        return None
-    try:
-        with open(rec_path, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = recommendations_repository.load_recommendations(path)
         if not isinstance(payload, dict):
-            raise ValueError("recommendations root must be a JSON object")
-        if not isinstance(payload.get("items", []), list):
+            return None
+        items = payload.get("items", [])
+        if isinstance(items, list):
+            return payload
+        if items is not None:
             raise ValueError("recommendations.items must be an array")
-        return payload
-    except Exception as e:
-        log.warning("[recommendations] Could not read %s: %s", path, e)
-        return None
+    log.error("[recommendations] SQLite recommendations repository unavailable")
+    return None
 
 
 def save_recommendations_document_non_blocking(items: list[dict], path: str) -> dict:
-    """Persist generated recommendations through SQLite while keeping JSON compatibility output."""
+    """Persist generated recommendations through SQLite."""
     if recommendations_repository is not None:
-        try:
-            return recommendations_repository.save_recommendations(items, path)
-        except Exception as e:
-            log.warning("[recommendations] Failed to save SQLite recommendations: %s. Falling back to JSON.", e)
-    return write_recommendations(items, path)
+        return recommendations_repository.save_recommendations(items, path)
+    raise RuntimeError("SQLite recommendations repository unavailable")
 
 
 def _prepare_startup_configuration() -> dict:
@@ -4069,16 +3998,24 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
         log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
         return
     if not library_document_exists(OUTPUT_PATH):
-        log.info("%s Skipping — library.json does not exist", _phase_prefix("1B"))
+        log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
         return
     try:
-        run_media_probe_pipeline_if_enabled(
+        document = load_library_document_non_blocking(OUTPUT_PATH)
+        if not isinstance(document, dict):
+            log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
+            return
+        result = run_media_probe_pipeline_if_enabled(
             cfg,
+            library_document=document,
             library_json_path=OUTPUT_PATH,
+            output_path=OUTPUT_PATH,
             library_root=LIBRARY_PATH,
             only_category=only_category,
         )
-        persist_library_json_to_sqlite(OUTPUT_PATH)
+        if result is not None:
+            updated_document, _stats = result
+            write_json(updated_document, OUTPUT_PATH)
     except Exception as e:
         log.exception("%s Failed: %s", _phase_prefix("1B"), e)
 
@@ -4724,6 +4661,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
     global _srv_proc
     cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
     env = os.environ.copy()
+    env["MML_SKIP_DB_STARTUP_TASKS"] = "1"
 
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
@@ -5282,13 +5220,8 @@ def serve():
 def _bootstrap_sqlite_runtime() -> bool:
     """Create and migrate the runtime SQLite DB early so production startup is observable."""
     if sqlite_db is None:
-        log.warning("[DB] SQLite unavailable — falling back to JSON: module import failed")
-        return False
-    try:
-        return bool(sqlite_db.bootstrap_runtime_database(logger=log))
-    except Exception as exc:
-        log.warning("[DB] SQLite unavailable — falling back to JSON: %s", exc)
-        return False
+        raise RuntimeError("SQLite module import failed")
+    return bool(sqlite_db.bootstrap_runtime_database(logger=log))
 
 
 # ---------------------------------------------------------------------------

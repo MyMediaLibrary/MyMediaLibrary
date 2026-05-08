@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 import logging
+import os
+import threading
 from pathlib import Path
 
 try:
@@ -16,6 +18,8 @@ except Exception:
 DEFAULT_DB_PATH = runtime_paths.SQLITE_DB
 
 log = logging.getLogger(__name__)
+_startup_tasks_lock = threading.Lock()
+_startup_tasks_done = False
 
 
 def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
@@ -50,13 +54,14 @@ def bootstrap_runtime_database(
 ) -> bool:
     """Initialize the runtime database once at process startup and log its state."""
 
+    global _startup_tasks_done
     target = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
     active_logger = logger or log
     try:
         conn = initialize_database(target)
     except Exception as exc:
-        active_logger.warning("[DB] SQLite unavailable — falling back to JSON: %s", exc)
-        return False
+        active_logger.error("[DB] SQLite unavailable — runtime storage unavailable: %s", exc)
+        raise
     try:
         version = get_schema_version(conn)
         wal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -65,8 +70,14 @@ def bootstrap_runtime_database(
         active_logger.info("[DB] Schema version: %s", version)
         active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
         active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
-        _migrate_runtime_json_sources(conn, active_logger)
-        _seed_bundled_defaults(conn, active_logger)
+        if os.environ.get("MML_SKIP_DB_STARTUP_TASKS") == "1":
+            active_logger.debug("[DB] Startup JSON migration/seed skipped for child process")
+            return True
+        with _startup_tasks_lock:
+            if not _startup_tasks_done:
+                _migrate_runtime_json_sources(conn, active_logger)
+                _seed_bundled_defaults(conn, active_logger)
+                _startup_tasks_done = True
         return True
     finally:
         conn.close()

@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_import
+    from backend import db, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
@@ -91,21 +92,17 @@ def open_cache(
     json_path: str | Path,
     db_path: str | Path | None = None,
 ) -> FfprobeCacheRepository | None:
-    """Open the SQLite cache, importing JSON once when the table is empty."""
+    """Open the SQLite cache."""
 
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[ffprobe] SQLite cache unavailable, falling back to JSON: %s", exc)
-        return None
-    try:
-        if _table_is_empty(conn):
+        if _table_is_empty(conn) and not _is_canonical_json_path(json_path):
             db_import.import_media_probe_cache(conn, json_path)
         return FfprobeCacheRepository(conn)
     except Exception as exc:
         log.warning("[ffprobe] Could not initialize SQLite cache: %s", exc)
         conn.close()
-        return None
+        raise
 
 
 def _table_is_empty(conn: sqlite3.Connection) -> bool:
@@ -119,6 +116,23 @@ def _to_json(value: Any) -> str:
 def _from_json(value: str | None, default: Any) -> Any:
     if not isinstance(value, str):
         return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _effective_db_path(json_path: str | Path, db_path: str | Path | None) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == runtime_paths.MEDIA_PROBE_CACHE_JSON:
+        return None
+    return path.parent / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path) -> bool:
+    return Path(json_path) == runtime_paths.MEDIA_PROBE_CACHE_JSON
     try:
         return json.loads(value)
     except Exception:

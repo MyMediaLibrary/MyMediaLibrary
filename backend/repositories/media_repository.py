@@ -5,18 +5,16 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import tempfile
-import os
-import contextlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_import
+    from backend import db, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
@@ -25,35 +23,24 @@ _LIBRARY_DOCUMENT_KEY = "runtime_library_document"
 
 
 def load_library(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, Any] | None:
-    """Load the media library from SQLite, importing JSON once when empty."""
+    """Load the media library from SQLite only."""
 
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[library] SQLite unavailable, falling back to JSON: %s", exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         if _table_is_empty(conn, "media"):
             document = _load_document_snapshot(conn)
             if document is not None:
                 return document
-            payload = _read_library_json(json_path)
-            if payload is None:
-                db_import.import_library(conn, json_path)
-            else:
-                _save_library_payload(conn, payload, replace=False)
-            document = _load_document_snapshot(conn)
-            if document is not None:
-                return document
-            if _table_is_empty(conn, "media"):
-                return None
+            if not _is_canonical_json_path(json_path):
+                payload = _read_library_json(json_path)
+                if payload is not None:
+                    _save_library_payload(conn, payload, replace=False)
+                    return _load_document_snapshot(conn)
+            return None
         document = _load_document_snapshot(conn)
         if document is not None:
             return document
         return export_library(conn)
-    except Exception as exc:
-        log.warning("[library] Could not load media library from SQLite: %s", exc)
-        return None
     finally:
         conn.close()
 
@@ -65,18 +52,14 @@ def save_library(
     *,
     replace: bool = False,
 ) -> dict[str, Any]:
-    """Persist the current library document to SQLite and export JSON compatibility output."""
+    """Persist the current library document to SQLite."""
 
     payload = _normalize_library_document(document)
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.warning("[library] Could not open SQLite media library store: %s", exc)
-        _write_json(json_path, payload)
-        return payload
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         _save_library_payload(conn, payload, replace=replace)
-        _write_json(json_path, payload)
+        if not _is_canonical_json_path(json_path):
+            _write_json(json_path, payload)
         return payload
     finally:
         conn.close()
@@ -84,7 +67,7 @@ def save_library(
 
 def import_library_if_empty(json_path: str | Path, db_path: str | Path | None = None) -> int:
     try:
-        conn = db.initialize_database(db_path)
+        conn = db.initialize_database(_effective_db_path(json_path, db_path))
     except Exception as exc:
         log.debug("[library] SQLite unavailable for import: %s", exc)
         return 0
@@ -291,32 +274,24 @@ def _read_library_json(path: str | Path) -> dict[str, Any] | None:
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(output.parent),
-            prefix=f".{output.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            tmp_path = Path(handle.name)
-            json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, output)
-        with contextlib.suppress(Exception):
-            output.chmod(0o644)
-    except Exception:
-        if tmp_path is not None:
-            with contextlib.suppress(Exception):
-                tmp_path.unlink(missing_ok=True)
-        raise
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _table_is_empty(conn: sqlite3.Connection, table_name: str) -> bool:
     return conn.execute(f"SELECT 1 FROM {table_name} LIMIT 1").fetchone() is None
+
+
+def _effective_db_path(json_path: str | Path, db_path: str | Path | None) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == runtime_paths.LIBRARY_JSON:
+        return None
+    return path.parent / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path) -> bool:
+    return Path(json_path) == runtime_paths.LIBRARY_JSON
 
 
 def _to_json(value: Any) -> str:

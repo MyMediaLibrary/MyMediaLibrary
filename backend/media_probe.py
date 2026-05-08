@@ -160,6 +160,59 @@ def run_media_probe_pipeline_if_enabled(
     )
 
 
+def run_media_probe_document_if_enabled(
+    cfg: dict | None,
+    *,
+    library_document: dict,
+    library_root: str | Path = LIBRARY_PATH,
+    timeout: float = 5.0,
+    only_category: str | None = None,
+    cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
+) -> tuple[dict, dict[str, int]] | None:
+    if not is_enabled(cfg):
+        return None
+    return generate_library_probe_document(
+        library_document=library_document,
+        library_root=library_root,
+        score_enabled=False,
+        score_config=None,
+        timeout=timeout,
+        workers=_media_probe_workers(cfg),
+        cache_enabled=_media_probe_cache_enabled(cfg),
+        cache_path=cache_path,
+        only_category=only_category,
+        include_diagnostics=False,
+    )
+
+
+def generate_library_probe_document(
+    *,
+    library_document: dict,
+    library_root: str | Path = LIBRARY_PATH,
+    score_enabled: bool = False,
+    score_config: dict | None = None,
+    timeout: float = 5.0,
+    workers: int = 4,
+    cache_enabled: bool = True,
+    cache_path: str | Path = MEDIA_PROBE_CACHE_PATH,
+    only_category: str | None = None,
+    include_diagnostics: bool = True,
+) -> tuple[dict, dict[str, int]]:
+    probe_doc, stats = _generate_probe_document(
+        library_document,
+        library_root=library_root,
+        score_enabled=score_enabled,
+        score_config=score_config,
+        timeout=timeout,
+        workers=workers,
+        cache_enabled=cache_enabled,
+        cache_path=cache_path,
+        only_category=only_category,
+        include_diagnostics=include_diagnostics,
+    )
+    return probe_doc, stats
+
+
 def generate_library_probe(
     *,
     library_json_path: str | Path,
@@ -174,8 +227,41 @@ def generate_library_probe(
     only_category: str | None = None,
     include_diagnostics: bool = True,
 ) -> dict[str, int]:
-    started_at = time.monotonic()
     source_path = Path(library_json_path)
+    if Path(cache_path) == runtime_paths.MEDIA_PROBE_CACHE_JSON and source_path != runtime_paths.LIBRARY_JSON:
+        cache_path = source_path.parent / runtime_paths.MEDIA_PROBE_CACHE_JSON.name
+    with open(source_path, encoding="utf-8") as f:
+        original_doc = json.load(f)
+    probe_doc, stats = _generate_probe_document(
+        original_doc,
+        library_root=library_root,
+        score_enabled=score_enabled,
+        score_config=score_config,
+        timeout=timeout,
+        workers=workers,
+        cache_enabled=cache_enabled,
+        cache_path=cache_path,
+        only_category=only_category,
+        include_diagnostics=include_diagnostics,
+    )
+    _write_json_atomic(source_path, probe_doc)
+    return stats
+
+
+def _generate_probe_document(
+    original_doc: dict,
+    *,
+    library_root: str | Path,
+    score_enabled: bool,
+    score_config: dict | None,
+    timeout: float,
+    workers: int,
+    cache_enabled: bool,
+    cache_path: str | Path,
+    only_category: str | None,
+    include_diagnostics: bool,
+) -> tuple[dict, dict[str, int]]:
+    started_at = time.monotonic()
     root = Path(library_root)
     workers = _normalize_workers(workers)
     stats = {"items": 0, "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
@@ -183,9 +269,6 @@ def generate_library_probe(
     log.info("[SCAN] %s", _SCAN_SEPARATOR)
     log.info("%s Starting phase — workers=%s, cache=%s", _PHASE_PREFIX, workers, "enabled" if cache_enabled else "disabled")
     log.info("[SCAN] %s", _SCAN_SEPARATOR)
-
-    with open(source_path, encoding="utf-8") as f:
-        original_doc = json.load(f)
 
     probe_doc = copy.deepcopy(original_doc)
     items = probe_doc.get("items")
@@ -210,7 +293,7 @@ def generate_library_probe(
 
     cache_repo = _open_probe_cache_repository(cache_path) if cache_enabled else None
     try:
-        disk_cache = {} if cache_repo is not None else (_load_probe_cache(cache_path) if cache_enabled else {})
+        disk_cache = {}
         next_cache: dict[str, dict] = {}
         grouped_plans = _group_plans_by_category(plans)
         total_groups = len(grouped_plans)
@@ -256,18 +339,17 @@ def generate_library_probe(
             _log_category_summary(category, category_stats, time.monotonic() - category_started_at, cache_enabled)
 
         if cache_enabled and cache_repo is None:
-            _write_probe_cache(cache_path, next_cache)
+            log.error("%s SQLite cache repository unavailable", _PHASE_PREFIX)
     finally:
         if cache_repo is not None:
             cache_repo.close()
 
     if not include_diagnostics:
         _strip_probe_diagnostics(probe_doc)
-    _write_json_atomic(source_path, probe_doc)
 
     duration = time.monotonic() - started_at
     _log_final_summary(stats, duration, cache_enabled)
-    return stats
+    return probe_doc, stats
 
 
 def _strip_probe_diagnostics(document: dict) -> None:
@@ -504,7 +586,7 @@ def _resolve_probe_results(
     unique_files = sorted({Path(path) for path in files}, key=lambda p: str(p))
     stats = {"files_probed": 0, "files_cached": 0}
     results: dict[str, dict] = {}
-    disk_cache = disk_cache if disk_cache is not None else (_load_probe_cache(cache_path) if cache_enabled else {})
+    disk_cache = disk_cache if disk_cache is not None else {}
     next_cache = next_cache if next_cache is not None else {}
     to_probe: list[Path] = []
 
@@ -516,7 +598,7 @@ def _resolve_probe_results(
             stats["files_cached"] += 1
             log.debug("%s Cache hit: %s", _PHASE_PREFIX, path)
             continue
-        entry = disk_cache.get(key) if cache_enabled and cache_repo is None else None
+        entry = None
         if entry and _cache_entry_matches(path, entry):
             probe = entry.get("probe")
             if isinstance(probe, dict):
@@ -549,18 +631,14 @@ def _resolve_probe_results(
                     log.debug("%s ffprobe failed for %s: %s", _PHASE_PREFIX, path, probe.get("error"))
 
     if cache_enabled and write_cache and cache_repo is None:
-        _write_probe_cache(cache_path, next_cache)
+        log.error("%s SQLite cache repository unavailable", _PHASE_PREFIX)
     return results, stats
 
 
 def _open_probe_cache_repository(cache_path: str | Path):
     if ffprobe_repository is None:
-        return None
-    try:
-        return ffprobe_repository.open_cache(json_path=cache_path)
-    except Exception as exc:
-        log.debug("%s SQLite cache unavailable: %s", _PHASE_PREFIX, exc)
-        return None
+        raise RuntimeError("SQLite ffprobe repository unavailable")
+    return ffprobe_repository.open_cache(json_path=cache_path)
 
 
 def _cache_repo_get(cache_repo, path: Path) -> dict | None:

@@ -36,14 +36,12 @@ class ScannerRuntimePathsTest(unittest.TestCase):
         bootstrap.assert_called_once()
         self.assertIs(bootstrap.call_args.kwargs.get("logger"), scanner.log)
 
-    def test_scanner_bootstrap_logs_fallback_when_sqlite_unavailable(self):
-        with patch.object(scanner.sqlite_db, "bootstrap_runtime_database", side_effect=RuntimeError("boom")), \
-             self.assertLogs("scanner", level="WARNING") as logs:
-            self.assertFalse(scanner._bootstrap_sqlite_runtime())
+    def test_scanner_bootstrap_requires_sqlite(self):
+        with patch.object(scanner.sqlite_db, "bootstrap_runtime_database", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                scanner._bootstrap_sqlite_runtime()
 
-        self.assertIn("[DB] SQLite unavailable — falling back to JSON", "\n".join(logs.output))
-
-    def test_load_config_creates_missing_config_in_conf(self):
+    def test_load_config_uses_defaults_without_creating_conf_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
             default_path = pathlib.Path(tmpdir) / "defaults" / "config.json"
@@ -54,8 +52,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
                  patch.object(scanner, "DEFAULT_CONFIG_PATH", str(default_path)):
                 cfg = scanner.load_config()
 
-            self.assertTrue(config_path.exists())
-            self.assertEqual(json.loads(config_path.read_text(encoding="utf-8")), cfg)
+            self.assertFalse(config_path.exists())
             self.assertEqual(cfg["folders"], [])
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
 
@@ -79,15 +76,16 @@ class ScannerRuntimePathsTest(unittest.TestCase):
 
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
 
-    def test_save_config_writes_to_conf_path(self):
+    def test_save_config_requires_sqlite_repository(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
             payload = {"system": {"log_level": "DEBUG"}, "folders": []}
             with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
                  patch.object(scanner.config_repository, "save_config", side_effect=RuntimeError("db unavailable")):
-                scanner.save_config(payload)
+                with self.assertRaises(RuntimeError):
+                    scanner.save_config(payload)
 
-            self.assertEqual(json.loads(config_path.read_text(encoding="utf-8")), payload)
+            self.assertFalse(config_path.exists())
 
     def test_secrets_are_loaded_from_conf_and_saved_0600(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,29 +127,29 @@ class ScannerRuntimePathsTest(unittest.TestCase):
     def test_recommendations_phase_uses_conf_rules_and_data_outputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
-            library_path = root / "data" / "library.json"
             recs_path = root / "data" / "recommendations.json"
             rules_path = root / "conf" / "recommendations_rules.json"
             default_rules_path = root / "defaults" / "recommendations_rules.json"
-            library_path.parent.mkdir()
+            recs_path.parent.mkdir()
             rules_path.parent.mkdir()
             default_rules_path.parent.mkdir()
-            library_path.write_text('{"items":[]}', encoding="utf-8")
 
-            with patch.object(scanner, "OUTPUT_PATH", str(library_path)), \
+            with patch.object(scanner, "OUTPUT_PATH", str(root / "data" / "library.json")), \
                  patch.object(scanner, "RECOMMENDATIONS_OUTPUT_PATH", str(recs_path)), \
                  patch.object(scanner, "RECOMMENDATIONS_RULES_PATH", str(rules_path)), \
                  patch.object(scanner, "RECOMMENDATIONS_DEFAULT_RULES_PATH", str(default_rules_path)), \
                  patch.object(scanner, "load_config", return_value={"score": {"enabled": True}, "recommendations": {"enabled": True}}), \
                  patch.object(scanner, "ensure_user_rules") as ensure_rules, \
+                 patch.object(scanner, "load_library_document_non_blocking", return_value={"items": []}), \
                  patch.object(scanner, "_load_runtime_recommendation_rules", return_value=[]) as load_rules, \
-                 patch.object(scanner, "generate_recommendations", return_value=[]) as generate:
+                 patch.object(scanner, "generate_recommendations", return_value=[]) as generate, \
+                 patch.object(scanner.recommendations_repository, "save_recommendations", return_value={"items": []}):
                 scanner.run_recommendations()
 
             ensure_rules.assert_not_called()
             load_rules.assert_called_once_with()
             generate.assert_called_once()
-            self.assertTrue(recs_path.exists())
+            self.assertFalse(recs_path.exists())
 
     def test_scan_lock_uses_tmp_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:

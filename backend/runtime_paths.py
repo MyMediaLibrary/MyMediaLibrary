@@ -18,6 +18,7 @@ LIBRARY_DIR = Path("/library")
 APP_DIR = Path("/app")
 
 LIBRARY_JSON = DATA_DIR / "library.json"
+LIBRARY_PROBE_JSON = DATA_DIR / "library_probe.json"
 MEDIA_PROBE_CACHE_JSON = DATA_DIR / "media_probe_cache.json"
 INVENTORY_JSON = DATA_DIR / "library_inventory.json"
 RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
@@ -58,10 +59,6 @@ class LegacyMigration:
 
 
 GENERATED_FILES = (
-    LIBRARY_JSON,
-    MEDIA_PROBE_CACHE_JSON,
-    INVENTORY_JSON,
-    RECOMMENDATIONS_JSON,
     SCANNER_LOG,
     SQLITE_DB,
 )

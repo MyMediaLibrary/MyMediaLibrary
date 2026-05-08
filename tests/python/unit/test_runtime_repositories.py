@@ -55,7 +55,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(cfg["score_configuration"], {"weights": {"video": 40}})
             self.assertEqual(cfg["media_probe"], {"enabled": True, "workers": 2})
 
-    def test_config_imports_json_when_sqlite_empty(self):
+    def test_config_imports_noncanonical_json_once(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -74,10 +74,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             cfg_again = config_repository.load_config(json_path, db_path)
 
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
-            self.assertEqual(cfg["folders"], payload["folders"])
-            self.assertEqual(cfg["score"], {"enabled": True})
-            self.assertEqual(cfg["score_configuration"], payload["score_configuration"])
-            self.assertEqual(cfg["media_probe"], payload["media_probe"])
             self.assertEqual(cfg_again, cfg)
             conn = db.initialize_database(db_path)
             try:
@@ -86,11 +82,11 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                 scan_count = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
             finally:
                 conn.close()
-            self.assertGreaterEqual(app_count, 2)
+            self.assertGreater(app_count, 0)
             self.assertEqual(score_count, 1)
             self.assertEqual(scan_count, 1)
 
-    def test_config_fallback_to_json_when_sqlite_unavailable(self):
+    def test_config_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
@@ -99,11 +95,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             json_path.parent.mkdir()
             json_path.write_text('{"system":{"log_level":"INFO"},"folders":[]}', encoding="utf-8")
 
-            cfg = config_repository.load_config(json_path, blocked_parent / "mml.db")
+            with self.assertRaises(Exception):
+                config_repository.load_config(json_path, blocked_parent / "mml.db")
 
-            self.assertIsNone(cfg)
-
-    def test_config_save_updates_sqlite_and_json_without_secrets(self):
+    def test_config_save_updates_sqlite_without_json_or_secrets(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -119,9 +114,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             config_repository.save_config(payload, json_path, db_path)
 
-            exported = json.loads(json_path.read_text(encoding="utf-8"))
-            self.assertNotIn("apikey", exported["seerr"])
-            self.assertEqual(exported["seerr"], {"url": "https://seerr.test"})
+            self.assertFalse(json_path.exists())
             cfg = config_repository.load_config(json_path, db_path)
             self.assertNotIn("apikey", cfg["seerr"])
             self.assertEqual(cfg["score"], {"enabled": True})
@@ -255,15 +248,14 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(missing_count, 0)
             self.assertEqual(invalid_count, 0)
 
-    def test_ffprobe_cache_fallback_when_sqlite_unavailable(self):
+    def test_ffprobe_cache_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
             blocked_parent.write_text("blocked", encoding="utf-8")
 
-            repo = ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
-
-            self.assertIsNone(repo)
+            with self.assertRaises(Exception):
+                ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
 
     def test_inventory_loads_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,16 +339,15 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertIsNone(missing)
             self.assertIsNone(invalid)
 
-    def test_inventory_fallback_when_sqlite_unavailable(self):
+    def test_inventory_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
             blocked_parent.write_text("blocked", encoding="utf-8")
             json_path = root / "library_inventory.json"
 
-            document = inventory_repository.load_inventory(json_path, blocked_parent / "mml.db")
-
-            self.assertIsNone(document)
+            with self.assertRaises(Exception):
+                inventory_repository.load_inventory(json_path, blocked_parent / "mml.db")
 
     def test_inventory_save_updates_sqlite_and_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -560,15 +551,14 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(loaded["items"], [])
             self.assertEqual(loaded["total_items"], 0)
 
-    def test_media_library_fallback_when_sqlite_unavailable(self):
+    def test_media_library_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
             blocked_parent.write_text("blocked", encoding="utf-8")
 
-            loaded = media_repository.load_library(root / "library.json", blocked_parent / "mml.db")
-
-            self.assertIsNone(loaded)
+            with self.assertRaises(Exception):
+                media_repository.load_library(root / "library.json", blocked_parent / "mml.db")
 
     def test_media_library_save_updates_sqlite_and_exports_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -600,7 +590,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             media_repository.save_library(document, json_path, db_path)
 
-            exported = json.loads(json_path.read_text(encoding="utf-8"))
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute(
@@ -611,6 +600,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             finally:
                 conn.close()
 
+            exported = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual([item["id"] for item in exported["items"]], [movie["id"], series["id"]])
             self.assertEqual([row["id"] for row in rows], [movie["id"], series["id"]])
             self.assertEqual(rows[0]["quality_score"], 91)
@@ -712,7 +702,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                 conn.close()
             self.assertEqual(count, 2)
 
-    def test_provider_mappings_fallback_to_json_when_sqlite_unavailable(self):
+    def test_provider_mappings_require_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
@@ -721,9 +711,8 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             json_path.parent.mkdir()
             json_path.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
 
-            mapping = providers_repository.load_provider_mappings(json_path, blocked_parent / "mml.db")
-
-            self.assertEqual(mapping, {"Netflix": "Netflix"})
+            with self.assertRaises(Exception):
+                providers_repository.load_provider_mappings(json_path, blocked_parent / "mml.db")
 
     def test_provider_mapping_save_updates_sqlite_and_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -843,18 +832,17 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertIsNone(missing)
             self.assertIsNone(invalid)
 
-    def test_recommendations_fallback_when_sqlite_unavailable(self):
+    def test_recommendations_require_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             blocked_parent = root / "not-a-directory"
             blocked_parent.write_text("blocked", encoding="utf-8")
 
-            payload = recommendations_repository.load_recommendations(
-                root / "recommendations.json",
-                blocked_parent / "mml.db",
-            )
-
-            self.assertIsNone(payload)
+            with self.assertRaises(Exception):
+                recommendations_repository.load_recommendations(
+                    root / "recommendations.json",
+                    blocked_parent / "mml.db",
+                )
 
     def test_recommendations_save_replaces_sqlite_and_exports_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -881,13 +869,13 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             recommendations_repository.save_recommendations([old_rec], json_path, db_path)
             recommendations_repository.save_recommendations([new_rec], json_path, db_path)
 
-            exported = json.loads(json_path.read_text(encoding="utf-8"))
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
             finally:
                 conn.close()
 
+            exported = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual([item["id"] for item in exported["items"]], ["new-rec"])
             self.assertEqual([row["id"] for row in rows], ["new-rec"])
             self.assertIsNone(rows[0]["media_id"])

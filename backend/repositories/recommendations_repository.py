@@ -10,42 +10,39 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_export, db_import
+    from backend import db, db_export, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_export  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
 
 
 def load_recommendation_rules(json_path: str | Path, db_path: str | Path | None = None) -> list[dict[str, Any]]:
-    """Load enabled recommendation rules from SQLite first, with JSON fallback."""
+    """Load enabled recommendation rules from SQLite only."""
 
     db_rules = _load_rules_from_db(json_path, db_path)
     if db_rules is not None:
         return db_rules
-    return _load_enabled_json_rules(json_path)
+    return []
 
 
 def load_recommendations(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, Any] | None:
-    """Load generated recommendations from SQLite, importing JSON once when empty."""
+    """Load generated recommendations from SQLite only."""
 
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[recommendations] SQLite unavailable, falling back to JSON: %s", exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path, runtime_paths.RECOMMENDATIONS_JSON))
     try:
         if _table_is_empty(conn, "recommendations"):
-            imported = db_import.import_recommendations(conn, json_path)
-            if not imported and _table_is_empty(conn, "recommendations"):
-                return None
+            if not _is_canonical_json_path(json_path, runtime_paths.RECOMMENDATIONS_JSON):
+                db_import.import_recommendations(conn, json_path)
+                if _table_is_empty(conn, "recommendations"):
+                    return None
+                return export_recommendations(conn)
+            return None
         return export_recommendations(conn)
-    except Exception as exc:
-        log.warning("[recommendations] Could not load recommendations from SQLite: %s", exc)
-        return None
     finally:
         conn.close()
 
@@ -57,19 +54,15 @@ def save_recommendations(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Replace generated recommendations in SQLite and export JSON compatibility output."""
+    """Replace generated recommendations in SQLite."""
 
     ts = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     payload = {"generated_at": ts, "version": 1, "items": [item for item in items if isinstance(item, dict)]}
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.warning("[recommendations] Could not open SQLite recommendation store: %s", exc)
-        _write_json(json_path, payload)
-        return payload
+    conn = db.initialize_database(_effective_db_path(json_path, db_path, runtime_paths.RECOMMENDATIONS_JSON))
     try:
         replace_recommendations(conn, payload["items"])
-        _write_json(json_path, payload)
+        if not _is_canonical_json_path(json_path, runtime_paths.RECOMMENDATIONS_JSON):
+            _write_json(json_path, payload)
         return payload
     finally:
         conn.close()
@@ -136,20 +129,16 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
 
 
 def _load_rules_from_db(json_path: str | Path, db_path: str | Path | None) -> list[dict[str, Any]] | None:
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[recommendations] SQLite unavailable for rules, falling back to JSON: %s", exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path, runtime_paths.RECOMMENDATIONS_RULES_JSON))
     try:
         if _table_is_empty(conn, "recommendation_rules"):
-            imported = db_import.import_recommendation_rules(conn, json_path)
-            if not imported and _table_is_empty(conn, "recommendation_rules"):
+            if not _is_canonical_json_path(json_path, runtime_paths.RECOMMENDATIONS_RULES_JSON):
+                db_import.import_recommendation_rules(conn, json_path)
+                if _table_is_empty(conn, "recommendation_rules"):
+                    return None
+            else:
                 return None
         payload = db_export.export_recommendation_rules(conn)
-    except Exception as exc:
-        log.warning("[recommendations] Could not load rules from SQLite: %s", exc)
-        return None
     finally:
         conn.close()
     rules = payload.get("rules") if isinstance(payload, dict) else None
@@ -190,16 +179,16 @@ def _existing_media_id(conn: sqlite3.Connection, value: Any) -> str | None:
     return media_id if row else None
 
 
+def _to_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(output.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(output)
-
-
-def _to_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _from_json(value: str | None, default: Any) -> Any:
@@ -218,13 +207,19 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _load_enabled_json_rules(path: str | Path) -> list[dict[str, Any]]:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception as exc:
-        log.warning("[recommendations] Could not read rules JSON fallback %s: %s", path, exc)
-        return []
-    rules = payload.get("rules") if isinstance(payload, dict) else payload
-    if not isinstance(rules, list):
-        return []
-    return [rule for rule in rules if isinstance(rule, dict) and rule.get("enabled") is not False]
+def _effective_db_path(
+    json_path: str | Path,
+    db_path: str | Path | None,
+    canonical_path: Path,
+) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == canonical_path:
+        return None
+    root = path.parent.parent if path.parent.name == "conf" else path.parent
+    return root / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path, canonical_path: Path) -> bool:
+    return Path(json_path) == canonical_path

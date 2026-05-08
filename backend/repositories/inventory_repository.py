@@ -10,52 +10,46 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from backend import db, db_import
+    from backend import db, db_import, runtime_paths
 except Exception:
     import db  # type: ignore
     import db_import  # type: ignore
+    import runtime_paths  # type: ignore
 
 
 log = logging.getLogger(__name__)
 
 
 def load_inventory(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, Any] | None:
-    """Load inventory from SQLite, importing JSON once when the table is empty."""
+    """Load inventory from SQLite only."""
 
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.debug("[inventory] SQLite unavailable, falling back to JSON: %s", exc)
-        return None
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         if _table_is_empty(conn):
-            imported = db_import.import_library_inventory(conn, json_path)
-            if not imported and _table_is_empty(conn):
-                return None
-        return export_inventory(conn)
-    except Exception as exc:
-        log.warning("[inventory] Could not load inventory from SQLite: %s", exc)
-        return None
+            if not _is_canonical_json_path(json_path):
+                db_import.import_library_inventory(conn, json_path)
+                if _table_is_empty(conn):
+                    return None
+                return _with_noncanonical_document_metadata(export_inventory(conn), json_path)
+            return None
+        return _with_noncanonical_document_metadata(export_inventory(conn), json_path)
     finally:
         conn.close()
 
 
 def save_inventory(document: dict[str, Any], json_path: str | Path, db_path: str | Path | None = None) -> None:
-    """Persist inventory to SQLite and JSON compatibility output."""
+    """Persist inventory to SQLite."""
 
     payload = document if isinstance(document, dict) else {"version": 1, "items": []}
-    try:
-        conn = db.initialize_database(db_path)
-    except Exception as exc:
-        log.warning("[inventory] Could not open SQLite inventory store: %s", exc)
-        _write_json(json_path, payload)
-        return
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         with conn:
+            conn.execute("DELETE FROM inventory_items")
             for item in (payload.get("items") if isinstance(payload, dict) else []) or []:
                 if isinstance(item, dict):
                     upsert_item(conn, item)
-        _write_json(json_path, payload)
+        if not _is_canonical_json_path(json_path):
+            _write_json(json_path, payload)
     finally:
         conn.close()
 
@@ -115,11 +109,18 @@ def mark_present(conn: sqlite3.Connection, inventory_key: str, *, seen_at: str, 
 
 
 def mark_missing(conn: sqlite3.Connection, inventory_key: str, *, checked_at: str) -> None:
-    row = conn.execute("SELECT data_json, missing_since FROM inventory_items WHERE inventory_key = ?", (inventory_key,)).fetchone()
+    row = conn.execute(
+        "SELECT data_json, first_seen_at, last_seen_at, missing_since FROM inventory_items WHERE inventory_key = ?",
+        (inventory_key,),
+    ).fetchone()
     item = _from_json(row["data_json"], {}) if row else {"id": inventory_key}
     if not isinstance(item, dict):
         item = {"id": inventory_key}
     item["status"] = "missing"
+    if row and row["first_seen_at"]:
+        item["first_seen_at"] = row["first_seen_at"]
+    if row and row["last_seen_at"]:
+        item["last_seen_at"] = row["last_seen_at"]
     item["last_checked_at"] = checked_at
     item["missing_since"] = row["missing_since"] if row and row["missing_since"] else checked_at
     upsert_item(conn, item)
@@ -158,14 +159,28 @@ def _folder_from_id(inventory_id: str) -> str | None:
     return parts[2] if len(parts) == 3 else None
 
 
+def _to_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _to_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+def _with_noncanonical_document_metadata(document: dict[str, Any], json_path: str | Path) -> dict[str, Any]:
+    if _is_canonical_json_path(json_path):
+        return document
+    try:
+        source = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    except Exception:
+        return document
+    if not isinstance(source, dict):
+        return document
+    merged = {key: copy.deepcopy(value) for key, value in source.items() if key not in {"items", "version"}}
+    merged.update(document)
+    return merged
 
 
 def _from_json(value: str | None, default: Any) -> Any:
@@ -175,3 +190,16 @@ def _from_json(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except Exception:
         return default
+
+
+def _effective_db_path(json_path: str | Path, db_path: str | Path | None) -> str | Path | None:
+    if db_path is not None:
+        return db_path
+    path = Path(json_path)
+    if path == runtime_paths.INVENTORY_JSON:
+        return None
+    return path.parent / "mymedialibrary.db"
+
+
+def _is_canonical_json_path(json_path: str | Path) -> bool:
+    return Path(json_path) == runtime_paths.INVENTORY_JSON
