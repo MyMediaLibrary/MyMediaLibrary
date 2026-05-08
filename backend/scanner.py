@@ -136,7 +136,7 @@ except Exception:
         from media_probe import run_media_probe_pipeline_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
-            "[MEDIA_PROBE] media_probe import failed (%s). ffprobe comparison disabled.",
+            "[MEDIA_PROBE] media_probe import failed (%s). ffprobe technical scan disabled.",
             e,
         )
 
