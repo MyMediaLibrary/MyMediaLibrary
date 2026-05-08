@@ -65,6 +65,7 @@ def bootstrap_runtime_database(
         active_logger.info("[DB] Schema version: %s", version)
         active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
         active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
+        _migrate_runtime_json_sources(conn, active_logger)
         return True
     finally:
         conn.close()
@@ -74,3 +75,14 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
     """Expose schema version lookup from the migration layer."""
 
     return db_migrations.get_schema_version(conn)
+
+
+def _migrate_runtime_json_sources(conn: sqlite3.Connection, active_logger: logging.Logger) -> None:
+    try:
+        try:
+            from backend import db_import
+        except Exception:
+            import db_import  # type: ignore
+        db_import.migrate_runtime_json_files_at_startup(conn, logger=active_logger)
+    except Exception as exc:
+        active_logger.warning("[DB] JSON migration completed with warnings — source files kept for review: %s", exc)

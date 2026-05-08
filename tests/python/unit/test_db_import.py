@@ -29,6 +29,7 @@ class DatabaseImportTest(unittest.TestCase):
             INVENTORY_JSON=data / "library_inventory.json",
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
+            SECRETS_FILE=conf / ".secrets",
         )
 
     def write_json(self, path: pathlib.Path, payload):
@@ -266,6 +267,89 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(report.invalid_json, [])
             self.assertEqual(report.skipped_missing, [])
             self.assertEqual(report.imported["providers_logo"], 1)
+
+    def test_startup_migration_removes_validated_json_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(paths.PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
+            self.write_json(paths.PROVIDERS_MAPPING_JSON, {"Prime": "Prime Video"})
+            self.write_json(paths.RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low"}]})
+            self.write_json(paths.CONFIG_JSON, {"folders": [], "score": {"enabled": False}})
+            self.write_json(
+                paths.MEDIA_PROBE_CACHE_JSON,
+                {"version": 1, "files": {"/movie.mkv": {"size_b": 1, "mtime": 2.0, "probe": {"ok": True}}}},
+            )
+            self.write_json(paths.INVENTORY_JSON, {"version": 1, "items": [{"id": "inv-1", "status": "present"}]})
+            self.write_json(paths.LIBRARY_JSON, {"version": 1, "items": [{"id": "m-1", "type": "movie", "title": "M", "path": "/m"}]})
+            self.write_json(paths.RECOMMENDATIONS_JSON, {"version": 1, "items": [{"id": "r-1", "title": "R"}]})
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            self.assertTrue(all(result.status == "ok" for result in results))
+            self.assertFalse(paths.LIBRARY_JSON.exists())
+            self.assertFalse(paths.RECOMMENDATIONS_JSON.exists())
+            self.assertFalse(paths.INVENTORY_JSON.exists())
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0], 1)
+            conn.close()
+
+    def test_startup_migration_keeps_json_when_validation_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(paths.PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn.execute(
+                "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                ("Disney+", "disney.webp"),
+            )
+            conn.commit()
+
+            results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            logo_result = next(result for result in results if result.name == "providers_logo")
+            self.assertEqual(logo_result.status, "warning")
+            self.assertTrue(paths.PROVIDERS_LOGO_JSON.exists())
+            self.assertEqual(logo_result.source_count, 1)
+            self.assertEqual(logo_result.db_count, 2)
+            conn.close()
+
+    def test_startup_migration_keeps_invalid_json_and_skips_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            paths.PROVIDERS_MAPPING_JSON.write_text("{ invalid", encoding="utf-8")
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            mapping = next(result for result in results if result.name == "providers_mapping")
+            logo = next(result for result in results if result.name == "providers_logo")
+            self.assertEqual(mapping.status, "warning")
+            self.assertEqual(mapping.warning, "invalid_json")
+            self.assertTrue(paths.PROVIDERS_MAPPING_JSON.exists())
+            self.assertEqual(logo.status, "skipped")
+            conn.close()
+
+    def test_startup_migration_is_idempotent_after_cleanup_and_never_removes_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(paths.PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
+            paths.SECRETS_FILE.write_text('{"seerr_apikey":"secret"}', encoding="utf-8")
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            first = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+            second = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            self.assertEqual(next(result for result in first if result.name == "providers_logo").status, "ok")
+            self.assertEqual(next(result for result in second if result.name == "providers_logo").status, "skipped")
+            self.assertFalse(paths.PROVIDERS_LOGO_JSON.exists())
+            self.assertTrue(paths.SECRETS_FILE.exists())
+            self.assertEqual(json.loads(paths.SECRETS_FILE.read_text(encoding="utf-8"))["seerr_apikey"], "secret")
+            conn.close()
 
     def test_upsert_library_item_prepares_scanner_db_write(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -31,6 +31,19 @@ class ImportReport:
         self.imported[name] = self.imported.get(name, 0) + int(count)
 
 
+@dataclass
+class StartupJsonMigrationResult:
+    """Result for one startup JSON import/validation/cleanup step."""
+
+    name: str
+    path: Path
+    status: str
+    source_count: int | None = None
+    db_count: int | None = None
+    removed: bool = False
+    warning: str | None = None
+
+
 def import_runtime_json_files(
     db_path: str | Path | None = None,
     *,
@@ -52,6 +65,169 @@ def import_runtime_json_files(
         return report
     finally:
         conn.close()
+
+
+def migrate_runtime_json_files_at_startup(
+    conn: sqlite3.Connection,
+    *,
+    paths=runtime_paths,
+    logger: logging.Logger | None = None,
+    remove_validated: bool = True,
+) -> list[StartupJsonMigrationResult]:
+    """Import runtime JSON files, validate row counts, and remove validated sources."""
+
+    active_logger = logger or log
+    specs = _startup_json_specs(paths)
+    results: list[StartupJsonMigrationResult] = []
+    warnings = False
+
+    active_logger.info("[DB] JSON migration starting")
+    for spec in specs:
+        result = _migrate_one_startup_json(conn, spec, active_logger, remove_validated=remove_validated)
+        results.append(result)
+        if result.status not in ("ok", "skipped"):
+            warnings = True
+
+    active_logger.info("[DB] JSON migration summary:")
+    for result in results:
+        suffix = ""
+        if result.status == "ok" and result.removed:
+            suffix = " removed"
+        elif result.status == "warning":
+            suffix = " kept"
+        active_logger.info("[DB]   %s: %s%s", result.path.name, result.status.upper(), suffix)
+    if warnings:
+        active_logger.warning("[DB] JSON migration completed with warnings — source files kept for review")
+    else:
+        active_logger.info("[DB] JSON migration completed successfully")
+    return results
+
+
+def _startup_json_specs(paths) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "config",
+            "path": Path(paths.CONFIG_JSON),
+            "source_count": _count_config_source,
+            "db_count": _count_config_db,
+            "import": import_config,
+        },
+        {
+            "name": "providers_mapping",
+            "path": Path(paths.PROVIDERS_MAPPING_JSON),
+            "source_count": _count_mapping_source,
+            "db_count": lambda conn: _table_count(conn, "provider_mappings"),
+            "import": import_providers_mapping,
+        },
+        {
+            "name": "providers_logo",
+            "path": Path(paths.PROVIDERS_LOGO_JSON),
+            "source_count": _count_mapping_source,
+            "db_count": lambda conn: _table_count(conn, "provider_logos"),
+            "import": import_providers_logo,
+        },
+        {
+            "name": "recommendation_rules",
+            "path": Path(paths.RECOMMENDATIONS_RULES_JSON),
+            "source_count": _count_rules_source,
+            "db_count": lambda conn: _table_count(conn, "recommendation_rules"),
+            "import": import_recommendation_rules,
+        },
+        {
+            "name": "media_probe_cache",
+            "path": Path(paths.MEDIA_PROBE_CACHE_JSON),
+            "source_count": _count_files_source,
+            "db_count": lambda conn: _table_count(conn, "ffprobe_cache"),
+            "import": import_media_probe_cache,
+        },
+        {
+            "name": "library_inventory",
+            "path": Path(paths.INVENTORY_JSON),
+            "source_count": _count_items_source,
+            "db_count": lambda conn: _table_count(conn, "inventory_items"),
+            "import": import_library_inventory,
+        },
+        {
+            "name": "library",
+            "path": Path(paths.LIBRARY_JSON),
+            "source_count": _count_items_source,
+            "db_count": lambda conn: _table_count(conn, "media"),
+            "import": import_library,
+        },
+        {
+            "name": "recommendations",
+            "path": Path(paths.RECOMMENDATIONS_JSON),
+            "source_count": _count_items_source,
+            "db_count": lambda conn: _table_count(conn, "recommendations"),
+            "import": import_recommendations,
+        },
+    ]
+
+
+def _migrate_one_startup_json(
+    conn: sqlite3.Connection,
+    spec: dict[str, Any],
+    active_logger: logging.Logger,
+    *,
+    remove_validated: bool,
+) -> StartupJsonMigrationResult:
+    name = spec["name"]
+    path = Path(spec["path"])
+    if not path.exists():
+        active_logger.info("[DB] Import skipped — %s not found", path.name)
+        return StartupJsonMigrationResult(name=name, path=path, status="skipped")
+
+    payload = _read_json(path, name, None)
+    if payload is None:
+        active_logger.warning("[DB] Import check failed for %s — invalid JSON — keeping source file for review", path.name)
+        return StartupJsonMigrationResult(name=name, path=path, status="warning", warning="invalid_json")
+
+    source_count = spec["source_count"](payload)
+    spec["import"](conn, path)
+    db_count = spec["db_count"](conn)
+    if source_count == db_count:
+        removed = False
+        active_logger.info("[DB] Imported %s — json=%s db=%s — OK", path.name, source_count, db_count)
+        if remove_validated:
+            try:
+                path.unlink()
+                removed = True
+                active_logger.info("[DB] Removed migrated file %s", path)
+            except FileNotFoundError:
+                removed = True
+            except Exception as exc:
+                active_logger.warning("[DB] Could not remove migrated file %s: %s", path, exc)
+                return StartupJsonMigrationResult(
+                    name=name,
+                    path=path,
+                    status="warning",
+                    source_count=source_count,
+                    db_count=db_count,
+                    warning=str(exc),
+                )
+        return StartupJsonMigrationResult(
+            name=name,
+            path=path,
+            status="ok",
+            source_count=source_count,
+            db_count=db_count,
+            removed=removed,
+        )
+
+    active_logger.warning(
+        "[DB] Import check failed for %s — json=%s db=%s — keeping source file for review",
+        path.name,
+        source_count,
+        db_count,
+    )
+    return StartupJsonMigrationResult(
+        name=name,
+        path=path,
+        status="warning",
+        source_count=source_count,
+        db_count=db_count,
+        warning="count_mismatch",
+    )
 
 
 def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
@@ -296,6 +472,7 @@ def import_library(conn: sqlite3.Connection, path: str | Path, report: ImportRep
             if not isinstance(item, dict):
                 continue
             rows += upsert_library_item(conn, item, overwrite=False)
+        _store_library_document_snapshot(conn, payload)
     _record(report, "library", rows)
     return rows
 
@@ -348,6 +525,82 @@ def _read_json(path: str | Path, name: str, report: ImportReport | None) -> Any:
             report.invalid_json.append(name)
         log.warning("[db-import] invalid %s %s: %s", name, json_path, exc)
         return None
+
+
+def _count_mapping_source(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    return sum(1 for key in payload if isinstance(key, str) and key)
+
+
+def _count_rules_source(payload: Any) -> int:
+    rules = payload.get("rules") if isinstance(payload, dict) else payload
+    if not isinstance(rules, list):
+        return 0
+    return sum(1 for rule in rules if isinstance(rule, dict))
+
+
+def _count_files_source(payload: Any) -> int:
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, dict):
+        return 0
+    return sum(1 for file_path, entry in files.items() if isinstance(file_path, str) and isinstance(entry, dict))
+
+
+def _count_items_source(payload: Any) -> int:
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return 0
+    return sum(1 for item in items if isinstance(item, dict))
+
+
+def _count_config_source(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    count = 0
+    for key, value in payload.items():
+        if key == "auth":
+            if isinstance(value, dict):
+                count += 1
+            continue
+        if _strip_sensitive_value(key, value) is not _SKIP_VALUE:
+            count += 1
+    if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
+        count += 1
+    if isinstance(payload.get("media_probe"), dict):
+        count += 1
+    return count
+
+
+def _count_config_db(conn: sqlite3.Connection) -> int:
+    app_config = conn.execute(
+        "SELECT COUNT(*) FROM app_config WHERE key != ?",
+        (_LIBRARY_DOCUMENT_KEY,),
+    ).fetchone()[0]
+    score = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+    scan = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
+    auth = conn.execute("SELECT COUNT(*) FROM auth_settings").fetchone()[0]
+    return int(app_config) + int(score) + int(scan) + int(auth)
+
+
+def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+
+
+_LIBRARY_DOCUMENT_KEY = "runtime_library_document"
+
+
+def _store_library_document_snapshot(conn: sqlite3.Connection, document: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO app_config(key, value_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (_LIBRARY_DOCUMENT_KEY, _to_json(document)),
+    )
 
 
 def _record(report: ImportReport | None, name: str, rows: int) -> None:

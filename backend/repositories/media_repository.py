@@ -34,11 +34,17 @@ def load_library(json_path: str | Path, db_path: str | Path | None = None) -> di
         return None
     try:
         if _table_is_empty(conn, "media"):
+            document = _load_document_snapshot(conn)
+            if document is not None:
+                return document
             payload = _read_library_json(json_path)
             if payload is None:
                 db_import.import_library(conn, json_path)
             else:
                 _save_library_payload(conn, payload, replace=False)
+            document = _load_document_snapshot(conn)
+            if document is not None:
+                return document
             if _table_is_empty(conn, "media"):
                 return None
         document = _load_document_snapshot(conn)

@@ -544,6 +544,22 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertIsNone(missing)
             self.assertIsNone(invalid)
 
+    def test_media_library_loads_empty_snapshot_after_json_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+            conn = db.initialize_database(db_path)
+            try:
+                media_repository.replace_library(conn, {"version": 1, "items": []})
+            finally:
+                conn.close()
+
+            loaded = media_repository.load_library(json_path, db_path)
+
+            self.assertEqual(loaded["items"], [])
+            self.assertEqual(loaded["total_items"], 0)
+
     def test_media_library_fallback_when_sqlite_unavailable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
