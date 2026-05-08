@@ -47,6 +47,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 3:
             _apply_v3_inventory_indexes(conn)
             current_version = 3
+        if current_version < 4:
+            _apply_v4_recommendations_indexes(conn)
+            current_version = 4
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -82,4 +85,16 @@ def _apply_v3_inventory_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (3,),
+    )
+
+
+def _apply_v4_recommendations_indexes(conn: sqlite3.Connection) -> None:
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_recommendations_priority ON recommendations(priority)",
+        "CREATE INDEX IF NOT EXISTS idx_recommendations_created_at ON recommendations(created_at)",
+    ):
+        conn.execute(statement)
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (4,),
     )

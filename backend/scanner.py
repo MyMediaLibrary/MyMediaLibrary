@@ -3911,14 +3911,53 @@ def run_recommendations() -> int:
             lib_data = json.load(f)
     except Exception as e:
         log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}: {e}")
-        write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
+        save_recommendations_document_non_blocking([], RECOMMENDATIONS_OUTPUT_PATH)
         return 0
 
     rules = _load_runtime_recommendation_rules()
     recs = generate_recommendations(lib_data, rules)
-    write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
+    save_recommendations_document_non_blocking(recs, RECOMMENDATIONS_OUTPUT_PATH)
     _log_phase_complete("5", time.monotonic() - _t0, _count_label(len(recs), "recommendation"))
     return len(recs)
+
+
+def load_recommendations_document_non_blocking(path: str) -> dict | None:
+    """Load recommendations; prefer SQLite and fall back to JSON compatibility output."""
+    if recommendations_repository is not None:
+        try:
+            payload = recommendations_repository.load_recommendations(path)
+            if isinstance(payload, dict):
+                items = payload.get("items", [])
+                if isinstance(items, list):
+                    return payload
+                raise ValueError("recommendations.items must be an array")
+        except Exception as e:
+            log.warning("[recommendations] Failed to load SQLite recommendations: %s. Falling back to JSON.", e)
+
+    rec_path = Path(path)
+    if not rec_path.exists():
+        return None
+    try:
+        with open(rec_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            raise ValueError("recommendations root must be a JSON object")
+        if not isinstance(payload.get("items", []), list):
+            raise ValueError("recommendations.items must be an array")
+        return payload
+    except Exception as e:
+        log.warning("[recommendations] Could not read %s: %s", path, e)
+        return None
+
+
+def save_recommendations_document_non_blocking(items: list[dict], path: str) -> dict:
+    """Persist generated recommendations through SQLite while keeping JSON compatibility output."""
+    if recommendations_repository is not None:
+        try:
+            return recommendations_repository.save_recommendations(items, path)
+        except Exception as e:
+            log.warning("[recommendations] Failed to save SQLite recommendations: %s. Falling back to JSON.", e)
+    return write_recommendations(items, path)
 
 
 def _prepare_startup_configuration() -> dict:
@@ -4633,24 +4672,15 @@ def _recommendations_api_payload(cfg: dict | None = None) -> dict:
     if not enabled:
         return _empty_recommendations_payload(False)
 
-    rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
-    if not rec_path.exists():
+    payload = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
+    if not isinstance(payload, dict):
         return _empty_recommendations_payload(True)
-
-    try:
-        with open(rec_path, encoding="utf-8") as f:
-            payload = json.load(f)
-        if not isinstance(payload, dict):
-            return _empty_recommendations_payload(True)
-        payload["enabled"] = True
-        payload.setdefault("generated_at", None)
-        payload.setdefault("version", 1)
-        if not isinstance(payload.get("items"), list):
-            payload["items"] = []
-        return payload
-    except Exception as e:
-        log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
-        return _empty_recommendations_payload(True)
+    payload["enabled"] = True
+    payload.setdefault("generated_at", None)
+    payload.setdefault("version", 1)
+    if not isinstance(payload.get("items"), list):
+        payload["items"] = []
+    return payload
 
 
 def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):

@@ -591,6 +591,185 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual(logos, {"Netflix": "db.webp"})
 
+    def test_recommendations_loads_sqlite_before_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "recommendations.json"
+            json_path.parent.mkdir()
+            json_path.write_text(
+                json.dumps({"version": 1, "items": [{"id": "json-rec", "display": {"title": "JSON"}}]}),
+                encoding="utf-8",
+            )
+            conn = db.initialize_database(db_path)
+            try:
+                recommendations_repository.upsert_recommendation(
+                    conn,
+                    {
+                        "id": "db-rec",
+                        "display": {"title": "DB"},
+                        "recommendation_type": "quality",
+                        "priority": "medium",
+                        "message": {"en": "DB"},
+                        "suggested_action": {"en": "Fix"},
+                    },
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            payload = recommendations_repository.load_recommendations(json_path, db_path)
+
+            self.assertEqual([item["id"] for item in payload["items"]], ["db-rec"])
+
+    def test_recommendations_imports_json_once_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "recommendations.json"
+            json_path.parent.mkdir()
+            rec = {
+                "id": "rec:movie:Films:Inception (2010):low_score",
+                "media_ref": {"id": "movie:Films:Inception (2010)", "type": "movie"},
+                "display": {"title": "Inception"},
+                "recommendation_type": "quality",
+                "priority": "medium",
+                "rule_id": "low_score",
+                "message": {"en": "Low score"},
+                "suggested_action": {"en": "Replace"},
+            }
+            json_path.write_text(json.dumps({"version": 1, "items": [rec]}), encoding="utf-8")
+
+            first = recommendations_repository.load_recommendations(json_path, db_path)
+            second = recommendations_repository.load_recommendations(json_path, db_path)
+            conn = db.initialize_database(db_path)
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
+            finally:
+                conn.close()
+
+            self.assertEqual(first["items"], second["items"])
+            self.assertEqual(count, 1)
+            self.assertEqual(first["items"][0]["rule_id"], "low_score")
+
+    def test_recommendations_tolerates_absent_and_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            missing_json = root / "data" / "missing_recommendations.json"
+            invalid_json = root / "data" / "invalid_recommendations.json"
+            invalid_json.parent.mkdir()
+            invalid_json.write_text("{ invalid", encoding="utf-8")
+
+            missing = recommendations_repository.load_recommendations(missing_json, root / "data" / "missing.db")
+            invalid = recommendations_repository.load_recommendations(invalid_json, root / "data" / "invalid.db")
+
+            self.assertIsNone(missing)
+            self.assertIsNone(invalid)
+
+    def test_recommendations_fallback_when_sqlite_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("blocked", encoding="utf-8")
+
+            payload = recommendations_repository.load_recommendations(
+                root / "recommendations.json",
+                blocked_parent / "mml.db",
+            )
+
+            self.assertIsNone(payload)
+
+    def test_recommendations_save_replaces_sqlite_and_exports_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "recommendations.json"
+            old_rec = {
+                "id": "old-rec",
+                "display": {"title": "Old"},
+                "recommendation_type": "quality",
+                "priority": "low",
+            }
+            new_rec = {
+                "id": "new-rec",
+                "media_ref": {"id": "movie:Films:Inception (2010)", "type": "movie"},
+                "display": {"title": "Inception"},
+                "recommendation_type": "quality",
+                "priority": "high",
+                "rule_id": "low_score",
+                "message": {"en": "Low score"},
+                "suggested_action": {"en": "Replace"},
+            }
+
+            recommendations_repository.save_recommendations([old_rec], json_path, db_path)
+            recommendations_repository.save_recommendations([new_rec], json_path, db_path)
+
+            exported = json.loads(json_path.read_text(encoding="utf-8"))
+            conn = db.initialize_database(db_path)
+            try:
+                rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
+            finally:
+                conn.close()
+
+            self.assertEqual([item["id"] for item in exported["items"]], ["new-rec"])
+            self.assertEqual([row["id"] for row in rows], ["new-rec"])
+            self.assertIsNone(rows[0]["media_id"])
+            self.assertEqual(rows[0]["priority"], "high")
+            self.assertEqual(json.loads(rows[0]["details_json"])["media_ref"]["id"], "movie:Films:Inception (2010)")
+
+    def test_recommendations_upsert_keeps_existing_media_id_when_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
+            conn = db.initialize_database(db_path)
+            try:
+                conn.execute(
+                    "INSERT INTO media(id, media_type, title) VALUES (?, ?, ?)",
+                    ("movie:Films:Inception (2010)", "movie", "Inception"),
+                )
+                recommendations_repository.upsert_recommendation(
+                    conn,
+                    {
+                        "id": "rec:movie:Films:Inception (2010):low_score",
+                        "media_ref": {"id": "movie:Films:Inception (2010)", "type": "movie"},
+                        "display": {"title": "Inception"},
+                        "recommendation_type": "quality",
+                        "priority": "medium",
+                    },
+                )
+                row = conn.execute("SELECT media_id FROM recommendations").fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["media_id"], "movie:Films:Inception (2010)")
+
+    def test_scanner_recommendations_api_prefers_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recs_path = pathlib.Path(tmpdir) / "recommendations.json"
+            recs_path.write_text(
+                json.dumps({"version": 1, "items": [{"id": "json-rec"}]}),
+                encoding="utf-8",
+            )
+            db_payload = {"version": 1, "generated_at": "2026-05-01T00:00:00Z", "items": [{"id": "db-rec"}]}
+
+            with patch.object(scanner, "RECOMMENDATIONS_OUTPUT_PATH", str(recs_path)), \
+                 patch.object(scanner.recommendations_repository, "load_recommendations", return_value=db_payload):
+                payload = scanner._recommendations_api_payload({"score": {"enabled": True}, "recommendations": {"enabled": True}})
+
+            self.assertTrue(payload["enabled"])
+            self.assertEqual([item["id"] for item in payload["items"]], ["db-rec"])
+
+    def test_scanner_recommendations_save_uses_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recs_path = pathlib.Path(tmpdir) / "recommendations.json"
+            items = [{"id": "rec", "display": {"title": "Title"}}]
+            repo_payload = {"version": 1, "generated_at": "2026-05-01T00:00:00Z", "items": items}
+
+            with patch.object(scanner.recommendations_repository, "save_recommendations", return_value=repo_payload) as save:
+                payload = scanner.save_recommendations_document_non_blocking(items, str(recs_path))
+
+            save.assert_called_once_with(items, str(recs_path))
+            self.assertEqual(payload, repo_payload)
+
     def test_recommendation_rules_read_sqlite_before_json_and_filter_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)

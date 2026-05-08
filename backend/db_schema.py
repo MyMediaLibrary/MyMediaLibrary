@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 CREATE_TABLES_SQL = (
@@ -335,6 +335,8 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_media_providers_provider_id ON media_providers(provider_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_media_id ON recommendations(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_type_priority ON recommendations(recommendation_type, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_priority ON recommendations(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_created_at ON recommendations(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_id ON inventory_items(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_path ON inventory_items(path)",
