@@ -22,6 +22,7 @@ MEDIA_PROBE_CACHE_JSON = DATA_DIR / "media_probe_cache.json"
 INVENTORY_JSON = DATA_DIR / "library_inventory.json"
 RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
 SCANNER_LOG = DATA_DIR / "scanner.log"
+SQLITE_DB = DATA_DIR / "mymedialibrary.db"
 
 CONFIG_JSON = CONF_DIR / "config.json"
 PROVIDERS_MAPPING_JSON = CONF_DIR / "providers_mapping.json"
@@ -62,6 +63,7 @@ GENERATED_FILES = (
     INVENTORY_JSON,
     RECOMMENDATIONS_JSON,
     SCANNER_LOG,
+    SQLITE_DB,
 )
 
 CONFIG_FILES = (
