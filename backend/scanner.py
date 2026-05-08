@@ -56,6 +56,15 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
+    from backend.repositories import providers_repository, recommendations_repository
+except Exception:
+    try:
+        from repositories import providers_repository, recommendations_repository  # type: ignore
+    except Exception:
+        providers_repository = None  # type: ignore
+        recommendations_repository = None  # type: ignore
+
+try:
     from backend.inventory_helpers import (
         apply_forced_missing_by_categories,
         cleanup_inventory_transient_fields,
@@ -661,21 +670,33 @@ def _ensure_runtime_provider_mapping() -> None:
 def _ensure_runtime_providers_logo() -> None:
     """Bootstrap providers logo mapping once without overwriting user config."""
     runtime_path = Path(PROVIDERS_LOGO_PATH)
-    if runtime_path.exists():
-        return
-    try:
-        runtime_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path = Path(PROVIDERS_LOGO_SOURCE_PATH)
-        if source_path.exists():
-            shutil.copyfile(source_path, runtime_path)
-        else:
-            runtime_path.write_text("{}", encoding="utf-8")
-    except Exception as e:
-        log.warning(f"[providers] Could not bootstrap providers logo file: {e}")
+    if not runtime_path.exists():
+        try:
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path = Path(PROVIDERS_LOGO_SOURCE_PATH)
+            if source_path.exists():
+                shutil.copyfile(source_path, runtime_path)
+            else:
+                runtime_path.write_text("{}", encoding="utf-8")
+        except Exception as e:
+            log.warning(f"[providers] Could not bootstrap providers logo file: {e}")
+            return
+    if providers_repository is not None:
+        try:
+            providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)
+        except Exception as e:
+            log.debug("[providers] Could not warm SQLite provider logos: %s", e)
 
 
 def _load_runtime_provider_mapping() -> dict:
     _ensure_runtime_provider_mapping()
+    if providers_repository is not None:
+        try:
+            payload = providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
+            if isinstance(payload, dict):
+                return payload
+        except Exception as e:
+            log.warning("[providers] Could not load mappings from SQLite repository: %s", e)
     try:
         with open(PROVIDERS_MAPPING_RUNTIME_PATH, encoding="utf-8") as f:
             payload = json.load(f)
@@ -687,6 +708,12 @@ def _load_runtime_provider_mapping() -> dict:
 
 
 def _save_runtime_provider_mapping(mapping: dict) -> None:
+    if providers_repository is not None:
+        try:
+            providers_repository.save_provider_mappings(mapping, PROVIDERS_MAPPING_RUNTIME_PATH)
+            return
+        except Exception as e:
+            log.warning("[providers] Could not save mappings through SQLite repository: %s", e)
     try:
         path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -725,6 +752,17 @@ def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
     if added:
         _save_runtime_provider_mapping(mapping)
     return added
+
+
+def _load_runtime_recommendation_rules() -> list[dict]:
+    if recommendations_repository is not None:
+        try:
+            rules = recommendations_repository.load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+            if isinstance(rules, list):
+                return rules
+        except Exception as e:
+            log.warning("[recommendations] Could not load rules from SQLite repository: %s", e)
+    return load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -3824,7 +3862,7 @@ def run_recommendations() -> int:
         write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
         return 0
 
-    rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+    rules = _load_runtime_recommendation_rules()
     recs = generate_recommendations(lib_data, rules)
     write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
     _log_phase_complete("5", time.monotonic() - _t0, _count_label(len(recs), "recommendation"))

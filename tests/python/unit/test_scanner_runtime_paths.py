@@ -104,12 +104,12 @@ class ScannerRuntimePathsTest(unittest.TestCase):
                  patch.object(scanner, "RECOMMENDATIONS_DEFAULT_RULES_PATH", str(default_rules_path)), \
                  patch.object(scanner, "load_config", return_value={"score": {"enabled": True}, "recommendations": {"enabled": True}}), \
                  patch.object(scanner, "ensure_user_rules") as ensure_rules, \
-                 patch.object(scanner, "load_recommendation_rules", return_value=[]) as load_rules, \
+                 patch.object(scanner, "_load_runtime_recommendation_rules", return_value=[]) as load_rules, \
                  patch.object(scanner, "generate_recommendations", return_value=[]) as generate:
                 scanner.run_recommendations()
 
             ensure_rules.assert_called_once_with(str(default_rules_path), str(rules_path))
-            load_rules.assert_called_once_with(str(rules_path))
+            load_rules.assert_called_once_with()
             generate.assert_called_once()
             self.assertTrue(recs_path.exists())
 
