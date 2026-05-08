@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 CREATE_TABLES_SQL = (
@@ -340,6 +340,7 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_inventory_items_status ON inventory_items(status)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_path ON ffprobe_cache(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
+    "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",
 )
 
 

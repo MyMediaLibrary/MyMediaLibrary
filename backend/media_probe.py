@@ -21,6 +21,14 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
+    from backend.repositories import ffprobe_repository
+except Exception:
+    try:
+        from repositories import ffprobe_repository  # type: ignore
+    except Exception:
+        ffprobe_repository = None  # type: ignore
+
+try:
     from backend.nfo import (
         classify_resolution,
         normalize_audio_channels,
@@ -200,52 +208,58 @@ def generate_library_probe(
             stats["errors"] += 1
             log.debug("%s Item planning failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
 
-    disk_cache = _load_probe_cache(cache_path) if cache_enabled else {}
-    next_cache: dict[str, dict] = {}
-    grouped_plans = _group_plans_by_category(plans)
-    total_groups = len(grouped_plans)
-    for index, (category, category_plans) in enumerate(grouped_plans, start=1):
-        category_started_at = time.monotonic()
-        category_stats = {"items": len(category_plans), "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
-        files_to_resolve: list[Path] = []
-        for plan in category_plans:
-            files_to_resolve.extend(plan.get("files") or [])
-        category_stats["files_total"] = len(files_to_resolve)
-        stats["files_total"] += category_stats["files_total"]
+    cache_repo = _open_probe_cache_repository(cache_path) if cache_enabled else None
+    try:
+        disk_cache = {} if cache_repo is not None else (_load_probe_cache(cache_path) if cache_enabled else {})
+        next_cache: dict[str, dict] = {}
+        grouped_plans = _group_plans_by_category(plans)
+        total_groups = len(grouped_plans)
+        for index, (category, category_plans) in enumerate(grouped_plans, start=1):
+            category_started_at = time.monotonic()
+            category_stats = {"items": len(category_plans), "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
+            files_to_resolve: list[Path] = []
+            for plan in category_plans:
+                files_to_resolve.extend(plan.get("files") or [])
+            category_stats["files_total"] = len(files_to_resolve)
+            stats["files_total"] += category_stats["files_total"]
 
-        log.info("%s Folder [%s] (%s/%s) started", _PHASE_PREFIX, category, index, total_groups)
-        probe_results, probe_stats = _resolve_probe_results(
-            files_to_resolve,
-            cache_path=cache_path,
-            cache_enabled=cache_enabled,
-            workers=workers,
-            timeout=timeout,
-            disk_cache=disk_cache,
-            next_cache=next_cache,
-            write_cache=False,
-        )
-        category_stats["files_probed"] = probe_stats["files_probed"]
-        category_stats["files_cached"] = probe_stats["files_cached"]
-        stats["files_probed"] += category_stats["files_probed"]
-        stats["files_cached"] += category_stats["files_cached"]
+            log.info("%s Folder [%s] (%s/%s) started", _PHASE_PREFIX, category, index, total_groups)
+            probe_results, probe_stats = _resolve_probe_results(
+                files_to_resolve,
+                cache_path=cache_path,
+                cache_enabled=cache_enabled,
+                workers=workers,
+                timeout=timeout,
+                disk_cache=disk_cache,
+                next_cache=next_cache,
+                write_cache=False,
+                cache_repo=cache_repo,
+            )
+            category_stats["files_probed"] = probe_stats["files_probed"]
+            category_stats["files_cached"] = probe_stats["files_cached"]
+            stats["files_probed"] += category_stats["files_probed"]
+            stats["files_cached"] += category_stats["files_cached"]
 
-        for plan in category_plans:
-            item = plan["item"]
-            try:
-                item_stats = _apply_item_probe(plan, probe_results, score_enabled=score_enabled, score_config=score_config)
-                category_stats["errors"] += item_stats.get("errors", 0)
-                if item.get("media_probe", {}).get("status") == "error" and item_stats.get("errors", 0) == 0:
+            for plan in category_plans:
+                item = plan["item"]
+                try:
+                    item_stats = _apply_item_probe(plan, probe_results, score_enabled=score_enabled, score_config=score_config)
+                    category_stats["errors"] += item_stats.get("errors", 0)
+                    if item.get("media_probe", {}).get("status") == "error" and item_stats.get("errors", 0) == 0:
+                        category_stats["errors"] += 1
+                except Exception as exc:
+                    _set_error_diagnostic(item, str(exc))
                     category_stats["errors"] += 1
-            except Exception as exc:
-                _set_error_diagnostic(item, str(exc))
-                category_stats["errors"] += 1
-                log.debug("%s Item probe failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
+                    log.debug("%s Item probe failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
 
-        stats["errors"] += category_stats["errors"]
-        _log_category_summary(category, category_stats, time.monotonic() - category_started_at, cache_enabled)
+            stats["errors"] += category_stats["errors"]
+            _log_category_summary(category, category_stats, time.monotonic() - category_started_at, cache_enabled)
 
-    if cache_enabled:
-        _write_probe_cache(cache_path, next_cache)
+        if cache_enabled and cache_repo is None:
+            _write_probe_cache(cache_path, next_cache)
+    finally:
+        if cache_repo is not None:
+            cache_repo.close()
 
     if not include_diagnostics:
         _strip_probe_diagnostics(probe_doc)
@@ -485,6 +499,7 @@ def _resolve_probe_results(
     disk_cache: dict[str, dict] | None = None,
     next_cache: dict[str, dict] | None = None,
     write_cache: bool = True,
+    cache_repo=None,
 ) -> tuple[dict[str, dict], dict[str, int]]:
     unique_files = sorted({Path(path) for path in files}, key=lambda p: str(p))
     stats = {"files_probed": 0, "files_cached": 0}
@@ -495,7 +510,13 @@ def _resolve_probe_results(
 
     for path in unique_files:
         key = str(path)
-        entry = disk_cache.get(key) if cache_enabled else None
+        repo_probe = _cache_repo_get(cache_repo, path) if cache_enabled and cache_repo is not None else None
+        if repo_probe is not None:
+            results[key] = copy.deepcopy(repo_probe)
+            stats["files_cached"] += 1
+            log.debug("%s Cache hit: %s", _PHASE_PREFIX, path)
+            continue
+        entry = disk_cache.get(key) if cache_enabled and cache_repo is None else None
         if entry and _cache_entry_matches(path, entry):
             probe = entry.get("probe")
             if isinstance(probe, dict):
@@ -520,14 +541,51 @@ def _resolve_probe_results(
                     probe = {"ok": False, "error": str(exc)}
                 results[key] = probe
                 stats["files_probed"] += 1
-                if probe.get("ok") and cache_enabled:
+                if cache_enabled and cache_repo is not None:
+                    _cache_repo_upsert(cache_repo, path, probe)
+                elif probe.get("ok") and cache_enabled:
                     next_cache[key] = _cache_entry_for(path, probe)
-                elif not probe.get("ok"):
+                if not probe.get("ok"):
                     log.debug("%s ffprobe failed for %s: %s", _PHASE_PREFIX, path, probe.get("error"))
 
-    if cache_enabled and write_cache:
+    if cache_enabled and write_cache and cache_repo is None:
         _write_probe_cache(cache_path, next_cache)
     return results, stats
+
+
+def _open_probe_cache_repository(cache_path: str | Path):
+    if ffprobe_repository is None:
+        return None
+    try:
+        return ffprobe_repository.open_cache(json_path=cache_path)
+    except Exception as exc:
+        log.debug("%s SQLite cache unavailable: %s", _PHASE_PREFIX, exc)
+        return None
+
+
+def _cache_repo_get(cache_repo, path: Path) -> dict | None:
+    try:
+        stat = path.stat()
+        return cache_repo.get(path, size=int(stat.st_size), mtime=float(stat.st_mtime))
+    except Exception as exc:
+        log.debug("%s SQLite cache lookup failed for %s: %s", _PHASE_PREFIX, path, exc)
+        return None
+
+
+def _cache_repo_upsert(cache_repo, path: Path, probe: dict) -> None:
+    try:
+        stat = path.stat()
+        if probe.get("ok"):
+            cache_repo.upsert_probe(path, size=int(stat.st_size), mtime=float(stat.st_mtime), probe=probe)
+        else:
+            cache_repo.upsert_error(
+                path,
+                size=int(stat.st_size),
+                mtime=float(stat.st_mtime),
+                error=str(probe.get("error") or "ffprobe failed"),
+            )
+    except Exception as exc:
+        log.debug("%s SQLite cache upsert failed for %s: %s", _PHASE_PREFIX, path, exc)
 
 
 def _load_probe_cache(cache_path: str | Path) -> dict[str, dict]:

@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import media_probe  # noqa: E402
 import scanner  # noqa: E402
+from repositories import ffprobe_repository  # noqa: E402
 
 
 def ffprobe_payload(
@@ -289,6 +290,65 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(stats["files_probed"], 0)
         item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.265")
+
+    def test_sqlite_cache_hit_reuses_probe_without_loading_json_cache(self):
+        self.write_movie_fixture()
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        db_path = self.data_dir / "mml.db"
+        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
+        stat = movie_path.stat()
+        repo = ffprobe_repository.open_cache(json_path=self.cache_json, db_path=db_path)
+        try:
+            repo.upsert_probe(movie_path, size=stat.st_size, mtime=stat.st_mtime, probe=cached_probe)
+        finally:
+            repo.close()
+        self.cache_json.write_text("{ invalid json", encoding="utf-8")
+
+        with patch.object(
+            media_probe.ffprobe_repository,
+            "open_cache",
+            side_effect=lambda *, json_path: ffprobe_repository.open_cache(json_path=json_path, db_path=db_path),
+        ), patch.object(media_probe, "_load_probe_cache", side_effect=AssertionError("JSON cache should not be loaded")), \
+             patch.object(media_probe.subprocess, "run") as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_not_called()
+        self.assertEqual(stats["files_cached"], 1)
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["codec"], "H.265")
+
+    def test_sqlite_cache_miss_writes_database_without_json_rewrite(self):
+        self.write_movie_fixture()
+        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
+        db_path = self.data_dir / "mml.db"
+
+        with patch.object(
+            media_probe.ffprobe_repository,
+            "open_cache",
+            side_effect=lambda *, json_path: ffprobe_repository.open_cache(json_path=json_path, db_path=db_path),
+        ), patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                output_path=self.probe_json,
+                library_root=self.library_root,
+                cache_path=self.cache_json,
+            )
+
+        run.assert_called_once()
+        self.assertEqual(stats["files_probed"], 1)
+        self.assertFalse(self.cache_json.exists())
+        repo = ffprobe_repository.open_cache(json_path=self.cache_json, db_path=db_path)
+        try:
+            stat = movie_path.stat()
+            cached = repo.get(movie_path, size=stat.st_size, mtime=stat.st_mtime)
+        finally:
+            repo.close()
+        self.assertEqual(cached["technical"]["codec"], "H.265")
 
     def test_cache_miss_calls_ffprobe_and_writes_cache(self):
         self.write_movie_fixture()

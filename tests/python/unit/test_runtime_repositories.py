@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import db  # noqa: E402
 import scanner  # noqa: E402
-from repositories import config_repository, providers_repository, recommendations_repository  # noqa: E402
+from repositories import config_repository, ffprobe_repository, providers_repository, recommendations_repository  # noqa: E402
 
 
 class RuntimeRepositoriesTest(unittest.TestCase):
@@ -152,6 +152,111 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(enabled["password_hash"], "pbkdf2_sha256$260000$salt$digest")
             self.assertEqual(disabled["auth_enabled"], False)
             self.assertIsNone(disabled["password_hash"])
+
+    def test_ffprobe_cache_hit_and_miss_by_file_signature(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            cache_json = root / "data" / "media_probe_cache.json"
+            media_file = root / "library" / "movie.mkv"
+            media_file.parent.mkdir()
+            media_file.write_bytes(b"movie")
+            stat = media_file.stat()
+            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
+            try:
+                repo.upsert_probe(
+                    media_file,
+                    size=stat.st_size,
+                    mtime=stat.st_mtime,
+                    probe={"ok": True, "technical": {"resolution": "1080p"}},
+                )
+                hit = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
+                miss = repo.get(media_file, size=stat.st_size + 1, mtime=stat.st_mtime)
+            finally:
+                repo.close()
+
+            self.assertEqual(hit, {"ok": True, "technical": {"resolution": "1080p"}})
+            self.assertIsNone(miss)
+
+    def test_ffprobe_cache_upsert_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            cache_json = root / "data" / "media_probe_cache.json"
+            media_file = root / "library" / "broken.mkv"
+            media_file.parent.mkdir()
+            media_file.write_bytes(b"broken")
+            stat = media_file.stat()
+            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
+            try:
+                repo.upsert_error(media_file, size=stat.st_size, mtime=stat.st_mtime, error="broken file")
+                cached = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
+            finally:
+                repo.close()
+
+            self.assertEqual(cached, {"ok": False, "error": "broken file"})
+
+    def test_ffprobe_cache_imports_json_once_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            cache_json = root / "data" / "media_probe_cache.json"
+            cache_json.parent.mkdir()
+            cache_json.write_text(
+                json.dumps({
+                    "version": 1,
+                    "files": {
+                        "/library/movie.mkv": {
+                            "path": "/library/movie.mkv",
+                            "size_b": 123,
+                            "mtime": 42.5,
+                            "probe": {"ok": True, "technical": {"codec": "H.265"}},
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            first = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
+            first.close()
+            second = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
+            try:
+                cached = second.get("/library/movie.mkv", size=123, mtime=42.5)
+                count = second.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
+            finally:
+                second.close()
+
+            self.assertEqual(cached, {"ok": True, "technical": {"codec": "H.265"}})
+            self.assertEqual(count, 1)
+
+    def test_ffprobe_cache_tolerates_absent_and_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            missing_json = root / "data" / "missing.json"
+            invalid_json = root / "data" / "invalid.json"
+            invalid_json.parent.mkdir()
+            invalid_json.write_text("{ invalid", encoding="utf-8")
+
+            missing_repo = ffprobe_repository.open_cache(json_path=missing_json, db_path=db_path)
+            missing_count = missing_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
+            missing_repo.close()
+            invalid_repo = ffprobe_repository.open_cache(json_path=invalid_json, db_path=root / "data" / "other.db")
+            invalid_count = invalid_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
+            invalid_repo.close()
+
+            self.assertEqual(missing_count, 0)
+            self.assertEqual(invalid_count, 0)
+
+    def test_ffprobe_cache_fallback_when_sqlite_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("blocked", encoding="utf-8")
+
+            repo = ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
+
+            self.assertIsNone(repo)
 
     def test_provider_mappings_read_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

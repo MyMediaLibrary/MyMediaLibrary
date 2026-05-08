@@ -38,7 +38,7 @@ class DatabaseSchemaTest(unittest.TestCase):
             second.close()
 
             self.assertEqual([(row["key"], row["value_json"]) for row in rows], [("theme", '"dark"')])
-            self.assertEqual([row["version"] for row in migrations], [db_schema.SCHEMA_VERSION])
+            self.assertEqual([row["version"] for row in migrations], [1, db_schema.SCHEMA_VERSION])
 
     def test_expected_tables_are_present(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -168,8 +168,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             after = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
             conn.close()
 
-            self.assertEqual(before, 1)
-            self.assertEqual(after, 1)
+            self.assertEqual(before, 2)
+            self.assertEqual(after, 2)
 
 
 if __name__ == "__main__":

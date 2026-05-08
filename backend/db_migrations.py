@@ -41,6 +41,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 1:
             _apply_initial_schema(conn)
             current_version = 1
+        if current_version < 2:
+            _apply_v2_ffprobe_lookup_index(conn)
+            current_version = 2
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -52,5 +55,13 @@ def _apply_initial_schema(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
-        (db_schema.SCHEMA_VERSION,),
+        (1,),
+    )
+
+
+def _apply_v2_ffprobe_lookup_index(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)")
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (2,),
     )
