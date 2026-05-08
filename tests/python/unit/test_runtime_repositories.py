@@ -15,6 +15,7 @@ from repositories import (  # noqa: E402
     config_repository,
     ffprobe_repository,
     inventory_repository,
+    media_repository,
     providers_repository,
     recommendations_repository,
 )
@@ -470,6 +471,166 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(row["last_checked_at"], "2026-05-02T00:00:00Z")
             self.assertEqual(row["missing_since"], "2026-05-01T00:00:00Z")
             self.assertEqual(data["missing_since"], "2026-05-01T00:00:00Z")
+
+    def test_media_library_loads_sqlite_before_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+            json_path.parent.mkdir()
+            json_path.write_text(
+                json.dumps({"items": [{"id": "json", "path": "Films/Json", "title": "JSON", "type": "movie"}]}),
+                encoding="utf-8",
+            )
+            db_doc = {
+                "scanned_at": "2026-05-01T00:00:00",
+                "library_path": "/library",
+                "items": [{"id": "db", "path": "Films/Db", "title": "DB", "type": "movie", "category": "Films"}],
+            }
+            conn = db.initialize_database(db_path)
+            try:
+                media_repository.replace_library(conn, db_doc)
+            finally:
+                conn.close()
+
+            loaded = media_repository.load_library(json_path, db_path)
+
+            self.assertEqual([item["id"] for item in loaded["items"]], ["db"])
+
+    def test_media_library_imports_json_once_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+            json_path.parent.mkdir()
+            item = {
+                "id": "movie:Films:Inception (2010)",
+                "path": "Films/Inception (2010)",
+                "title": "Inception",
+                "raw": "Inception (2010)",
+                "category": "Films",
+                "type": "movie",
+                "year": 2010,
+                "quality": {"score": 87},
+                "providers": ["Netflix"],
+            }
+            json_path.write_text(json.dumps({"version": 1, "items": [item]}), encoding="utf-8")
+
+            first = media_repository.load_library(json_path, db_path)
+            second = media_repository.load_library(json_path, db_path)
+            conn = db.initialize_database(db_path)
+            try:
+                media_count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+                provider_count = conn.execute("SELECT COUNT(*) FROM media_providers").fetchone()[0]
+            finally:
+                conn.close()
+
+            self.assertEqual(first["items"], second["items"])
+            self.assertEqual(media_count, 1)
+            self.assertEqual(provider_count, 1)
+            self.assertEqual(first["items"][0]["quality"]["score"], 87)
+
+    def test_media_library_tolerates_absent_and_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            missing_json = root / "data" / "missing_library.json"
+            invalid_json = root / "data" / "invalid_library.json"
+            invalid_json.parent.mkdir()
+            invalid_json.write_text("{ invalid", encoding="utf-8")
+
+            missing = media_repository.load_library(missing_json, root / "data" / "missing.db")
+            invalid = media_repository.load_library(invalid_json, root / "data" / "invalid.db")
+
+            self.assertIsNone(missing)
+            self.assertIsNone(invalid)
+
+    def test_media_library_fallback_when_sqlite_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("blocked", encoding="utf-8")
+
+            loaded = media_repository.load_library(root / "library.json", blocked_parent / "mml.db")
+
+            self.assertIsNone(loaded)
+
+    def test_media_library_save_updates_sqlite_and_exports_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+            movie = {
+                "id": "movie:Films:Inception (2010)",
+                "path": "Films/Inception (2010)",
+                "title": "Inception",
+                "category": "Films",
+                "type": "movie",
+                "resolution": "1080p",
+                "codec": "h264",
+                "audio_languages": ["eng", "fra"],
+                "subtitle_languages": ["fra"],
+                "providers": ["Netflix"],
+                "quality": {"score": 91},
+            }
+            series = {
+                "id": "tv:Series:Dark",
+                "path": "Series/Dark",
+                "title": "Dark",
+                "category": "Series",
+                "type": "tv",
+                "seasons": [{"season": 1, "episodes_found": 2, "resolution": "4K"}],
+            }
+            document = {"scanned_at": "2026-05-01T00:00:00", "library_path": "/library", "items": [movie, series]}
+
+            media_repository.save_library(document, json_path, db_path)
+
+            exported = json.loads(json_path.read_text(encoding="utf-8"))
+            conn = db.initialize_database(db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT id, media_type, quality_score, resolution, data_json FROM media ORDER BY id"
+                ).fetchall()
+                seasons = conn.execute("SELECT media_id, season_number, episodes_count, resolution FROM seasons").fetchall()
+                providers = conn.execute("SELECT COUNT(*) FROM media_providers").fetchone()[0]
+            finally:
+                conn.close()
+
+            self.assertEqual([item["id"] for item in exported["items"]], [movie["id"], series["id"]])
+            self.assertEqual([row["id"] for row in rows], [movie["id"], series["id"]])
+            self.assertEqual(rows[0]["quality_score"], 91)
+            self.assertEqual(rows[0]["resolution"], "1080p")
+            self.assertEqual(json.loads(rows[0]["data_json"])["audio_languages"], ["eng", "fra"])
+            self.assertEqual(seasons[0]["media_id"], series["id"])
+            self.assertEqual(seasons[0]["episodes_count"], 2)
+            self.assertEqual(providers, 1)
+
+    def test_scanner_library_write_uses_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            document = {"items": [{"id": "db", "path": "Films/Db", "title": "DB", "type": "movie"}]}
+            repo_payload = dict(document, total_items=1)
+
+            with patch.object(scanner, "OUTPUT_PATH", str(output_path)), \
+                 patch.object(scanner.media_repository, "save_library", return_value=repo_payload) as save:
+                scanner.write_json(document, str(output_path))
+
+            save.assert_called_once_with(document, str(output_path))
+
+    def test_scanner_library_load_prefers_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "library.json"
+            output_path.write_text(
+                json.dumps({"items": [{"id": "json", "path": "Films/Json", "title": "JSON"}]}),
+                encoding="utf-8",
+            )
+            repo_payload = {"items": [{"id": "db", "path": "Films/Db", "title": "DB"}]}
+
+            with patch.object(scanner.media_repository, "load_library", return_value=repo_payload):
+                loaded = scanner.load_library_document_non_blocking(str(output_path))
+                existing = scanner.load_existing(str(output_path))
+
+            self.assertEqual([item["id"] for item in loaded["items"]], ["db"])
+            self.assertEqual(existing["Films/Db"]["title"], "DB")
 
     def test_scanner_inventory_load_prefers_repository(self):
         with tempfile.TemporaryDirectory() as tmpdir:

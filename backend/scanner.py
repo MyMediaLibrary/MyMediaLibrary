@@ -56,13 +56,14 @@ except Exception:
     import runtime_paths  # type: ignore
 
 try:
-    from backend.repositories import config_repository, inventory_repository, providers_repository, recommendations_repository
+    from backend.repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository
 except Exception:
     try:
-        from repositories import config_repository, inventory_repository, providers_repository, recommendations_repository  # type: ignore
+        from repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
     except Exception:
         config_repository = None  # type: ignore
         inventory_repository = None  # type: ignore
+        media_repository = None  # type: ignore
         providers_repository = None  # type: ignore
         recommendations_repository = None  # type: ignore
 
@@ -2239,15 +2240,23 @@ def save_inventory_document_non_blocking(document: dict, path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def load_existing(output_path: str) -> dict:
+    data = load_library_document_non_blocking(output_path)
+    if not isinstance(data, dict):
+        return {}
     try:
-        with open(output_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return {item["path"]: item for item in data.get("items", [])}
+        return {item["path"]: item for item in data.get("items", []) if isinstance(item, dict) and item.get("path")}
     except Exception:
         return {}
 
 
 def write_json(data: dict, output_path: str) -> None:
+    if _is_library_output_path(output_path) and media_repository is not None:
+        try:
+            media_repository.save_library(data, output_path)
+            log.debug(f"Written: {output_path}")
+            return
+        except Exception as e:
+            log.warning("[library] Could not save through SQLite repository: %s. Falling back to JSON.", e)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = None
@@ -2274,6 +2283,68 @@ def write_json(data: dict, output_path: str) -> None:
                 tmp_path.unlink(missing_ok=True)
         raise
     log.debug(f"Written: {output_path}")
+
+
+def _is_library_output_path(output_path: str | Path) -> bool:
+    return str(Path(output_path)) == str(Path(OUTPUT_PATH))
+
+
+def load_library_document_non_blocking(path: str) -> dict | None:
+    """Load library document; prefer SQLite and fall back to JSON compatibility output."""
+    if media_repository is not None:
+        try:
+            document = media_repository.load_library(path)
+            if isinstance(document, dict):
+                items = document.get("items", [])
+                if isinstance(items, list):
+                    return document
+                raise ValueError("library.items must be an array")
+        except Exception as e:
+            log.warning("[library] Failed to load SQLite library: %s. Falling back to JSON.", e)
+    try:
+        with open(path, encoding="utf-8") as f:
+            document = json.load(f)
+        if not isinstance(document, dict):
+            raise ValueError("library root must be a JSON object")
+        if not isinstance(document.get("items", []), list):
+            raise ValueError("library.items must be an array")
+        return document
+    except Exception:
+        return None
+
+
+def library_document_exists(path: str | None = None) -> bool:
+    target_path = path or OUTPUT_PATH
+    if Path(target_path).exists():
+        return True
+    document = load_library_document_non_blocking(target_path)
+    if not isinstance(document, dict):
+        return False
+    try:
+        media_repository.save_library(document, target_path) if media_repository is not None else None
+    except Exception:
+        pass
+    return True
+
+
+def persist_library_json_to_sqlite(path: str | None = None) -> None:
+    """Import the current compatibility JSON into SQLite after external writers update it."""
+    if media_repository is None:
+        return
+    target_path = path or OUTPUT_PATH
+    document = None
+    try:
+        with open(target_path, encoding="utf-8") as f:
+            document = json.load(f)
+    except Exception as e:
+        log.debug("[library] Could not read %s for SQLite persistence: %s", target_path, e)
+        return
+    if not isinstance(document, dict):
+        return
+    try:
+        media_repository.save_library(document, target_path)
+    except Exception as e:
+        log.warning("[library] Could not persist %s to SQLite: %s", target_path, e)
 
 
 # ---------------------------------------------------------------------------
@@ -3275,7 +3346,7 @@ def run_quick(only_category: str | None = None) -> None:
         all_typed_folders = [f for f in cfg.get("folders", []) if f.get("type") in {"movie", "tv"}]
         if not all_typed_folders:
             # No folders with a recognised type configured at all
-            if not Path(OUTPUT_PATH).exists():
+            if not library_document_exists(OUTPUT_PATH):
                 log.info("%s No folder configured yet — skipping phase", _phase_prefix("1"))
             else:
                 log.warning("%s No folder configured with type 'movie' or 'tv'", _phase_prefix("1"))
@@ -3288,12 +3359,7 @@ def run_quick(only_category: str | None = None) -> None:
     existing = load_existing(OUTPUT_PATH)
 
     # Preserve previous file content for backward-compatible partial scans
-    prev_data: dict = {}
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as _f:
-            prev_data = json.load(_f)
-    except Exception:
-        pass
+    prev_data: dict = load_library_document_non_blocking(OUTPUT_PATH) or {}
 
     items = []
     scanned_paths = set()
@@ -3457,11 +3523,9 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
         return
 
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}: {e}")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3666,11 +3730,9 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
 
 
 def recompute_scores_only(score_config: dict | None = None) -> int:
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"[score] Cannot read {OUTPUT_PATH}: {e}")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"[score] Cannot read {OUTPUT_PATH}")
         return 0
 
     items = data.get("items")
@@ -3694,11 +3756,9 @@ def run_scoring(only_category: str | None = None) -> None:
         return
 
     _log_phase_start("3")
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}: {e}")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3774,11 +3834,9 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
         return
 
     _log_phase_start("4")
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            lib_data = json.load(f)
-    except Exception as e:
-        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}: {e}")
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(lib_data, dict):
+        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
         return
 
     root = Path(LIBRARY_PATH)
@@ -3906,11 +3964,9 @@ def run_recommendations() -> int:
 
     _log_phase_start("5")
     ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            lib_data = json.load(f)
-    except Exception as e:
-        log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}: {e}")
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(lib_data, dict):
+        log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}")
         save_recommendations_document_non_blocking([], RECOMMENDATIONS_OUTPUT_PATH)
         return 0
 
@@ -3980,7 +4036,7 @@ def _prepare_startup_configuration() -> dict:
 
 
 def _resolve_startup_phases(cfg: dict) -> list[int]:
-    library_exists = Path(OUTPUT_PATH).exists()
+    library_exists = library_document_exists(OUTPUT_PATH)
     if library_exists:
         return []
     if not _has_configured_media_folders(cfg):
@@ -4032,7 +4088,7 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
     if cfg["media_probe"].get("mode", "compare") != "compare":
         log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
         return
-    if not Path(OUTPUT_PATH).exists():
+    if not library_document_exists(OUTPUT_PATH):
         log.info("%s Skipping — library.json does not exist", _phase_prefix("1B"))
         return
     try:
@@ -4042,6 +4098,7 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
             library_root=LIBRARY_PATH,
             only_category=only_category,
         )
+        persist_library_json_to_sqlite(OUTPUT_PATH)
     except Exception as e:
         log.exception("%s Failed: %s", _phase_prefix("1B"), e)
 
@@ -4828,7 +4885,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 version = resp.get("applicationVersion") or resp.get("version") or "?"
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
         elif path == "/health":
-            ok = os.path.exists(OUTPUT_PATH)
+            ok = library_document_exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {
                 "status": "ok" if ok else "degraded",
                 "library_json": ok,
@@ -4850,7 +4907,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if (
                 cfg.get("system", {}).get("needs_onboarding") is True
                 and _has_usable_config(cfg)
-                and Path(OUTPUT_PATH).exists()
+                and library_document_exists(OUTPUT_PATH)
             ):
                 cfg["system"]["needs_onboarding"] = False
                 changed = True
