@@ -81,6 +81,11 @@ TECHNICAL_FIELDS = (
     "quality",
 )
 
+
+def _count_label(count: int, singular: str, plural: str | None = None) -> str:
+    plural = plural or f"{singular}s"
+    return f"{count} {singular if count == 1 else plural}"
+
 _TV_SE_EP_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 _TV_X_SE_EP_RE = re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.IGNORECASE)
 _TV_SEASON_HINT_RE = re.compile(r"(?:season|saison)[\s._-]*(\d{1,2})", re.IGNORECASE)
@@ -311,49 +316,49 @@ def _category_label(item: dict) -> str:
 def _log_category_summary(category: str, stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
     if cache_enabled:
         log.info(
-            "%s Folder [%s] completed in %.1fs — %s items / %s files / %s probed / %s cached / %s errors",
+            "%s Folder [%s] completed in %.1fs — %s / %s / %s probed / %s cached / %s",
             _PHASE_PREFIX,
             category,
             duration,
-            stats["items"],
-            stats["files_total"],
+            _count_label(stats["items"], "item"),
+            _count_label(stats["files_total"], "file"),
             stats["files_probed"],
             stats["files_cached"],
-            stats["errors"],
+            _count_label(stats["errors"], "error"),
         )
         return
     log.info(
-        "%s Folder [%s] completed in %.1fs — %s items / %s files / %s errors",
+        "%s Folder [%s] completed in %.1fs — %s / %s / %s",
         _PHASE_PREFIX,
         category,
         duration,
-        stats["items"],
-        stats["files_total"],
-        stats["errors"],
+        _count_label(stats["items"], "item"),
+        _count_label(stats["files_total"], "file"),
+        _count_label(stats["errors"], "error"),
     )
 
 
 def _log_final_summary(stats: dict[str, int], duration: float, cache_enabled: bool) -> None:
     if cache_enabled:
         log.info(
-            "%s Completed in %.1fs — %s items / %s files total / %s probed / %s cached / %s errors",
+            "%s Summary: %s / %s total / %s probed / %s cached / %s",
             _PHASE_PREFIX,
-            duration,
-            stats["items"],
-            stats["files_total"],
+            _count_label(stats["items"], "item"),
+            _count_label(stats["files_total"], "file"),
             stats["files_probed"],
             stats["files_cached"],
-            stats["errors"],
+            _count_label(stats["errors"], "error"),
         )
+        log.info("%s Completed in %.1fs", _PHASE_PREFIX, duration)
         return
     log.info(
-        "%s Completed in %.1fs — %s items / %s files probed / %s errors",
+        "%s Summary: %s / %s probed / %s",
         _PHASE_PREFIX,
-        duration,
-        stats["items"],
-        stats["files_probed"],
-        stats["errors"],
+        _count_label(stats["items"], "item"),
+        _count_label(stats["files_probed"], "file"),
+        _count_label(stats["errors"], "error"),
     )
+    log.info("%s Completed in %.1fs", _PHASE_PREFIX, duration)
 
 
 def _plan_item_probe(item: dict, library_root: Path) -> dict:

@@ -3298,7 +3298,7 @@ def run_quick(only_category: str | None = None) -> None:
         ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
     audio_parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    log.info(f"{_phase_prefix('1')} Audio codecs detected: {len(audio_dist)}")
+    log.debug(f"{_phase_prefix('1')} Audio codecs detected: {len(audio_dist)}")
     log.debug(f"{_phase_prefix('1')} Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
 
     # Audio language stats
@@ -3307,7 +3307,7 @@ def run_quick(only_category: str | None = None) -> None:
         for lang in (item.get("audio_languages") or []):
             lang_dist[lang] = lang_dist.get(lang, 0) + 1
     lang_parts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
-    log.info(f"{_phase_prefix('1')} Audio languages detected: {len(lang_dist)}")
+    log.debug(f"{_phase_prefix('1')} Audio languages detected: {len(lang_dist)}")
     if lang_parts:
         log.debug(f"{_phase_prefix('1')} Audio languages detail: {' / '.join(lang_parts)}")
 
@@ -3317,7 +3317,7 @@ def run_quick(only_category: str | None = None) -> None:
         vc = item.get("codec") or "unknown"
         video_dist[vc] = video_dist.get(vc, 0) + 1
     video_parts = [f"{k}×{v}" for k, v in sorted(video_dist.items(), key=lambda x: -x[1])]
-    log.info(f"{_phase_prefix('1')} Video codecs detected: {len(video_dist)}")
+    log.debug(f"{_phase_prefix('1')} Video codecs detected: {len(video_dist)}")
     log.debug(f"{_phase_prefix('1')} Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
 
     # Resolution stats
@@ -3326,17 +3326,25 @@ def run_quick(only_category: str | None = None) -> None:
         r = item.get("resolution") or "unknown"
         res_dist[r] = res_dist.get(r, 0) + 1
     res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
-    log.info(f"{_phase_prefix('1')} Resolutions detected: {len(res_dist)}")
+    log.debug(f"{_phase_prefix('1')} Resolutions detected: {len(res_dist)}")
     log.debug(f"{_phase_prefix('1')} Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    movie_count = len([item for item in items if item.get("type") != "tv"])
+    series_items = [item for item in items if item.get("type") == "tv"]
+    series_count = len(series_items)
+    series_episode_count = sum(int(item.get("episode_count") or 0) for item in series_items)
+    if series_episode_count <= 0 and tv_episodes_scanned > 0:
+        series_episode_count = tv_episodes_scanned
+    log.info(f"{_phase_prefix('1')} Movies summary: {_count_label(movie_count, 'movie')} analyzed")
     log.info(
-        f"{_phase_prefix('1')} TV summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
+        f"{_phase_prefix('1')} Series summary: {_count_label(series_count, 'series', 'series')} analyzed / "
+        f"{_count_label(series_episode_count, 'episode')} scanned"
     )
     if seerr_counts_active:
-        log.info(
+        log.debug(
             f"{_phase_prefix('1')} TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
         )
 
-    _log_phase_complete("1", elapsed, f"{len(items)} item(s) total ({size_str})")
+    _log_phase_complete("1", elapsed, f"{_count_label(len(items), 'item')} total ({size_str})")
 
     # Inventory update is handled explicitly by phase 4.
 
@@ -3423,7 +3431,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                         if resolved_tmdb not in (None, ""):
                             item["tmdb_id"] = str(resolved_tmdb)
                         if resolved_tvdb not in (None, ""):
-                            log.info(
+                            log.debug(
                                 f"{_phase_prefix('2')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
@@ -3440,7 +3448,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     elif isinstance(resolved_ids, dict):
                         resolved_tmdb = resolved_ids.get("tmdb_id")
                         if resolved_tmdb not in (None, ""):
-                            log.info(
+                            log.debug(
                                 f"{_phase_prefix('2')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
                             )
                             item["tmdb_id"] = str(resolved_tmdb)
@@ -3501,8 +3509,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
         log.warning(f"{_phase_prefix('2')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
-    if not_found_count: parts.append(f"{not_found_count} not found in Seerr")
-    if failed_count:    parts.append(f"{failed_count} errors")
+    if not_found_count: parts.append(f"{not_found_count} not found")
+    if failed_count:    parts.append(_count_label(failed_count, "error"))
     _log_phase_complete("2", elapsed, " / ".join(parts))
 
 
@@ -3614,7 +3622,7 @@ def run_scoring(only_category: str | None = None) -> None:
         by_cat[cat_name].append(item)
 
     if not by_cat:
-        _log_phase_complete("3", time.monotonic() - _t0, "0 item(s)")
+        _log_phase_complete("3", time.monotonic() - _t0, _count_label(0, "item"))
         return
 
     # Build category display-name → raw folder name lookup for consistent log labels
@@ -3635,7 +3643,7 @@ def run_scoring(only_category: str | None = None) -> None:
         log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
-    _log_phase_complete("3", elapsed, f"{scored_total} item(s) scored")
+    _log_phase_complete("3", elapsed, f"{_count_label(scored_total, 'item')} scored")
 
 
 def run_score_only() -> int:
@@ -3648,7 +3656,7 @@ def run_score_only() -> int:
         del defaults  # only used for lazy bootstrap and validation side-effects
         recalculated = recompute_scores_only(effective_score_config)
         elapsed = time.monotonic() - _t0
-        log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {recalculated} item(s) scored")
+        log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {_count_label(recalculated, 'item')} scored")
         return recalculated
 
 
@@ -3819,7 +3827,7 @@ def run_recommendations() -> int:
     rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
     recs = generate_recommendations(lib_data, rules)
     write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
-    _log_phase_complete("5", time.monotonic() - _t0, f"{len(recs)} recommendation(s)")
+    _log_phase_complete("5", time.monotonic() - _t0, _count_label(len(recs), "recommendation"))
     return len(recs)
 
 
@@ -4084,10 +4092,14 @@ def _log_phase_start(phase_id: str, *, suffix: str = "") -> None:
 
 
 def _log_phase_complete(phase_id: str, duration: float, summary: str | None = None) -> None:
-    msg = f"{_phase_prefix(phase_id)} Completed in {duration:.1f}s"
     if summary:
-        msg = f"{msg} — {summary}"
-    log.info(msg)
+        log.info("%s Summary: %s", _phase_prefix(phase_id), summary)
+    log.info("%s Completed in %.1fs", _phase_prefix(phase_id), duration)
+
+
+def _count_label(count: int, singular: str, plural: str | None = None) -> str:
+    plural = plural or f"{singular}s"
+    return f"{count} {singular if count == 1 else plural}"
 
 
 def _log_planned_phases(ordered: list[int]) -> list[str]:
@@ -4097,13 +4109,35 @@ def _log_planned_phases(ordered: list[int]) -> list[str]:
         if not phase_id:
             continue
         expanded.append(phase_id)
-        if phase == PHASE_SCAN:
+        if phase == PHASE_SCAN and _is_media_probe_phase_enabled():
             expanded.append("1B")
     log.info("[SCAN] Planned phases:")
     for phase_id in expanded:
         label = phase_id.lower() if phase_id == "1B" else phase_id
         log.info("[SCAN]   %-2s -> %s", label, _phase_display_name(phase_id))
     return expanded
+
+
+def _is_media_probe_phase_enabled() -> bool:
+    try:
+        cfg = load_config()
+    except Exception:
+        return False
+    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
+    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
+
+
+def _phases_display_csv(phases: list[int]) -> str:
+    expanded = []
+    include_probe = _is_media_probe_phase_enabled()
+    for phase in _normalize_phases(phases):
+        phase_id = _PHASE_ID_BY_NUMBER.get(phase)
+        if not phase_id:
+            continue
+        expanded.append(phase_id.lower() if phase_id == "1B" else phase_id)
+        if phase == PHASE_SCAN and include_probe:
+            expanded.append("1b")
+    return ",".join(expanded)
 
 
 def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
@@ -5132,7 +5166,7 @@ def main():
         mode_label = "--score-only"
     elif args.phases:
         lock_mode = "phased"
-        mode_label = f"--phases {args.phases}"
+        mode_label = f"--phases {_phases_display_csv(_parse_phases_csv(args.phases))}"
     else:
         lock_mode = "default"
         mode_label = "dynamic pipeline"
