@@ -88,7 +88,7 @@ def migrate_runtime_json_files_at_startup(
         if result.status not in ("ok", "skipped"):
             warnings = True
 
-    active_logger.info("[DB] JSON migration summary:")
+    active_logger.info("[DB] JSON migration cleanup summary:")
     for result in results:
         suffix = ""
         if result.status == "ok" and result.removed:
@@ -101,6 +101,44 @@ def migrate_runtime_json_files_at_startup(
     else:
         active_logger.info("[DB] JSON migration completed successfully")
     return results
+
+
+def seed_bundled_defaults(
+    conn: sqlite3.Connection,
+    *,
+    paths=runtime_paths,
+    logger: logging.Logger | None = None,
+) -> dict[str, int]:
+    """Seed bundled defaults directly into SQLite without writing runtime JSON files."""
+
+    active_logger = logger or log
+    seeds = {
+        "config": (Path(paths.DEFAULT_CONFIG_JSON), import_config, "config defaults"),
+        "provider_mappings": (
+            Path(paths.DEFAULT_PROVIDERS_MAPPING_JSON),
+            import_providers_mapping,
+            "provider_mappings",
+        ),
+        "provider_logos": (
+            Path(paths.DEFAULT_PROVIDERS_LOGO_JSON),
+            import_providers_logo,
+            "provider_logos",
+        ),
+        "recommendation_rules": (
+            Path(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON),
+            import_recommendation_rules,
+            "recommendation_rules",
+        ),
+    }
+    rows: dict[str, int] = {}
+    for key, (path, importer, label) in seeds.items():
+        inserted = importer(conn, path)
+        rows[key] = inserted
+        if path.exists():
+            active_logger.info("[DB] Seeded %s from bundled defaults — rows=%s", label, inserted)
+        else:
+            active_logger.info("[DB] Seed skipped — bundled default %s not found", path)
+    return rows
 
 
 def _startup_json_specs(paths) -> list[dict[str, Any]]:
@@ -187,7 +225,7 @@ def _migrate_one_startup_json(
     db_count = spec["db_count"](conn)
     if source_count == db_count:
         removed = False
-        active_logger.info("[DB] Imported %s — json=%s db=%s — OK", path.name, source_count, db_count)
+        active_logger.info("[DB] Import check %s — json=%s db=%s — OK", path.name, source_count, db_count)
         if remove_validated:
             try:
                 path.unlink()

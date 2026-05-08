@@ -66,6 +66,7 @@ def bootstrap_runtime_database(
         active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
         active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
         _migrate_runtime_json_sources(conn, active_logger)
+        _seed_bundled_defaults(conn, active_logger)
         return True
     finally:
         conn.close()
@@ -86,3 +87,14 @@ def _migrate_runtime_json_sources(conn: sqlite3.Connection, active_logger: loggi
         db_import.migrate_runtime_json_files_at_startup(conn, logger=active_logger)
     except Exception as exc:
         active_logger.warning("[DB] JSON migration completed with warnings — source files kept for review: %s", exc)
+
+
+def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logger) -> None:
+    try:
+        try:
+            from backend import db_import
+        except Exception:
+            import db_import  # type: ignore
+        db_import.seed_bundled_defaults(conn, logger=active_logger)
+    except Exception as exc:
+        active_logger.warning("[DB] Bundled default seed completed with warnings: %s", exc)

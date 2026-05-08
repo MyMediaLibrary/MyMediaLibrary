@@ -543,27 +543,17 @@ class SeerrConfigMigrationTest(unittest.TestCase):
 
 
 class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
-    def test_bootstrap_runtime_mapping_copies_source_once(self):
+    def test_bootstrap_runtime_mapping_warms_sqlite_without_copying_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
             src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
             with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
+                 patch.object(scanner.providers_repository, "load_provider_mappings", return_value={"Netflix": "Netflix"}) as load:
                 scanner._ensure_runtime_provider_mapping()
-            self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
-                {"Netflix": "Netflix"},
-            )
-
-            dst.write_text('{"Netflix":"NFX-custom"}', encoding="utf-8")
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
-                scanner._ensure_runtime_provider_mapping()
-            self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
-                {"Netflix": "NFX-custom"},
-            )
+            load.assert_called_once_with(str(dst))
+            self.assertFalse(dst.exists())
 
     def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
         with tempfile.TemporaryDirectory() as tmp:

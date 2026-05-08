@@ -101,7 +101,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             self.assertEqual(json.loads(secrets_path.read_text(encoding="utf-8")), {"seerr_apikey": "saved"})
             self.assertEqual(stat.S_IMODE(secrets_path.stat().st_mode), 0o600)
 
-    def test_provider_mapping_and_logo_bootstrap_to_conf(self):
+    def test_provider_mapping_and_logo_bootstrap_do_not_copy_defaults_to_conf(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             mapping_src = root / "defaults" / "providers_mapping.json"
@@ -115,12 +115,16 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(mapping_src)), \
                  patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(mapping_dst)), \
                  patch.object(scanner, "PROVIDERS_LOGO_SOURCE_PATH", str(logo_src)), \
-                 patch.object(scanner, "PROVIDERS_LOGO_PATH", str(logo_dst)):
+                 patch.object(scanner, "PROVIDERS_LOGO_PATH", str(logo_dst)), \
+                 patch.object(scanner.providers_repository, "load_provider_mappings", return_value={}) as load_mapping, \
+                 patch.object(scanner.providers_repository, "load_provider_logos", return_value={}) as load_logos:
                 scanner._ensure_runtime_provider_mapping()
                 scanner._ensure_runtime_providers_logo()
 
-            self.assertEqual(json.loads(mapping_dst.read_text(encoding="utf-8")), {"Netflix": "Netflix"})
-            self.assertEqual(json.loads(logo_dst.read_text(encoding="utf-8")), {"Netflix": "netflix.webp"})
+            load_mapping.assert_called_once_with(str(mapping_dst))
+            load_logos.assert_called_once_with(str(logo_dst))
+            self.assertFalse(mapping_dst.exists())
+            self.assertFalse(logo_dst.exists())
 
     def test_recommendations_phase_uses_conf_rules_and_data_outputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -144,7 +148,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
                  patch.object(scanner, "generate_recommendations", return_value=[]) as generate:
                 scanner.run_recommendations()
 
-            ensure_rules.assert_called_once_with(str(default_rules_path), str(rules_path))
+            ensure_rules.assert_not_called()
             load_rules.assert_called_once_with()
             generate.assert_called_once()
             self.assertTrue(recs_path.exists())

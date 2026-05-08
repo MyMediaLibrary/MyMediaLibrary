@@ -36,7 +36,6 @@ import math
 import os
 import re
 import secrets
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -678,35 +677,16 @@ def _jsr_get(path: str, jsr: dict | None = None):
 
 
 def _ensure_runtime_provider_mapping() -> None:
-    """Bootstrap providers mapping once: copy bundled file only if runtime file is absent."""
-    runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
-    if runtime_path.exists():
-        return
-    try:
-        runtime_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path = Path(PROVIDERS_MAPPING_SOURCE_PATH)
-        if source_path.exists():
-            shutil.copyfile(source_path, runtime_path)
-        else:
-            runtime_path.write_text("{}", encoding="utf-8")
-    except Exception as e:
-        log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
+    """Warm provider mappings from SQLite without materializing bundled defaults in /conf."""
+    if providers_repository is not None:
+        try:
+            providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
+        except Exception as e:
+            log.debug("[providers] Could not warm SQLite provider mappings: %s", e)
 
 
 def _ensure_runtime_providers_logo() -> None:
-    """Bootstrap providers logo mapping once without overwriting user config."""
-    runtime_path = Path(PROVIDERS_LOGO_PATH)
-    if not runtime_path.exists():
-        try:
-            runtime_path.parent.mkdir(parents=True, exist_ok=True)
-            source_path = Path(PROVIDERS_LOGO_SOURCE_PATH)
-            if source_path.exists():
-                shutil.copyfile(source_path, runtime_path)
-            else:
-                runtime_path.write_text("{}", encoding="utf-8")
-        except Exception as e:
-            log.warning(f"[providers] Could not bootstrap providers logo file: {e}")
-            return
+    """Warm provider logos from SQLite without materializing bundled defaults in /conf."""
     if providers_repository is not None:
         try:
             providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)
@@ -715,7 +695,6 @@ def _ensure_runtime_providers_logo() -> None:
 
 
 def _load_runtime_provider_mapping() -> dict:
-    _ensure_runtime_provider_mapping()
     if providers_repository is not None:
         try:
             payload = providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
@@ -1196,15 +1175,9 @@ def migrate_env_to_config() -> None:
     if changed:
         save_config(cfg)
         log.info("[MIGRATION] Env vars migrated to config.json")
-    # Bootstrap runtime providers mapping once (non-destructive).
+    # Warm DB-backed provider metadata; bundled defaults are seeded during DB bootstrap.
     _ensure_runtime_provider_mapping()
-    # Bootstrap runtime providers logo mapping once (non-destructive).
     _ensure_runtime_providers_logo()
-    # Bootstrap editable recommendations rules once (non-destructive).
-    try:
-        ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
-    except Exception as e:
-        log.warning("[recommendations] Could not bootstrap rules file: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -3971,7 +3944,6 @@ def run_recommendations() -> int:
         return 0
 
     _log_phase_start("5")
-    ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
     lib_data = load_library_document_non_blocking(OUTPUT_PATH)
     if not isinstance(lib_data, dict):
         log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}")
