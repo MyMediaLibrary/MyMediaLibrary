@@ -176,7 +176,7 @@ class DatabaseSchemaTest(unittest.TestCase):
             second.close()
 
             self.assertEqual([(row["key"], row["value_json"]) for row in rows], [("theme", '"dark"')])
-            self.assertEqual([row["version"] for row in migrations], [1, 2, 3, db_schema.SCHEMA_VERSION])
+            self.assertEqual([row["version"] for row in migrations], list(range(1, db_schema.SCHEMA_VERSION + 1)))
 
     def test_expected_tables_are_present(self):
         with tempfile.TemporaryDirectory() as tmpdir:

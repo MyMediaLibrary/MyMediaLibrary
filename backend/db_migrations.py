@@ -50,6 +50,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 4:
             _apply_v4_recommendations_indexes(conn)
             current_version = 4
+        if current_version < 5:
+            _apply_v5_active_sessions(conn)
+            current_version = 5
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -97,4 +100,23 @@ def _apply_v4_recommendations_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (4,),
+    )
+
+
+def _apply_v5_active_sessions(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS active_sessions (
+            token TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_active_sessions_expires_at ON active_sessions(expires_at)"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (5,),
     )

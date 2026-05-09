@@ -391,6 +391,7 @@ _AUTH_MIN_LOWERCASE = 2
 _AUTH_MIN_UPPERCASE = 2
 _AUTH_MIN_DIGITS = 2
 _AUTH_MIN_SPECIAL = 2
+_SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days
 
 
 def _auth_legacy_secret_paths() -> list[Path]:
@@ -673,6 +674,15 @@ def _jsr_cfg() -> dict:
     }
 
 
+def _validate_seerr_url(url: str) -> None:
+    """Raise ValueError if url uses a disallowed scheme or has no hostname."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Seerr URL must use http or https, got: {parsed.scheme!r}")
+    if not parsed.netloc:
+        raise ValueError("Seerr URL must include a hostname")
+
+
 def _jsr_get(path: str, jsr: dict | None = None):
     """
     Returns:
@@ -684,6 +694,11 @@ def _jsr_get(path: str, jsr: dict | None = None):
         jsr = _jsr_cfg()
     if not jsr["enabled"] or not jsr["url"] or not jsr["apikey"]:
         return _JSR_NOT_CONFIGURED
+    try:
+        _validate_seerr_url(jsr["url"])
+    except ValueError as exc:
+        log.warning("[seerr] URL rejected — %s", exc)
+        return _JSR_ERROR
     url = f"{jsr['url']}/api/v1{path}"
     log.debug(f"Seerr GET: {url}")
     req = urllib.request.Request(url, headers={
@@ -4131,8 +4146,7 @@ def _is_scan_locked() -> bool:
 # HTTP server (--serve mode)
 # ---------------------------------------------------------------------------
 
-_srv_lock      = threading.Lock()
-_valid_sessions: set = set()  # in-memory session tokens (cleared on restart)
+_srv_lock = threading.Lock()
 
 # Routes that don't require authentication
 _PUBLIC_GET  = {"/api/auth", "/health"}
@@ -4142,6 +4156,66 @@ _PUBLIC_POST = {"/api/auth", "/api/logout"}
 _auth_attempts: dict = {}   # ip → [timestamps]
 _AUTH_MAX_ATTEMPTS = 10
 _AUTH_WINDOW       = 60     # seconds
+
+
+# ---------------------------------------------------------------------------
+# Session management (SQLite-backed, survives restart)
+# ---------------------------------------------------------------------------
+
+def _session_add(token: str) -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO active_sessions(token, expires_at) "
+                    "VALUES (?, datetime('now', '+7 days'))",
+                    (token,),
+                )
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.error("[session] Failed to persist session: %s", exc)
+
+
+def _session_valid(token: str) -> bool:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM active_sessions WHERE token = ? AND expires_at > datetime('now')",
+                (token,),
+            ).fetchone()
+            return bool(row)
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.error("[session] Failed to validate session: %s", exc)
+        return False
+
+
+def _session_remove(token: str) -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute("DELETE FROM active_sessions WHERE token = ?", (token,))
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("[session] Failed to remove session: %s", exc)
+
+
+def _sessions_purge_expired() -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute("DELETE FROM active_sessions WHERE expires_at <= datetime('now')")
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("[session] Failed to purge expired sessions: %s", exc)
 
 _srv_state = {
     "status":     "idle",
@@ -4751,7 +4825,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         if not _auth_is_configured():
             return True
         token = self._session_token()
-        if token and token in _valid_sessions:
+        if token and _session_valid(token):
             return True
         return False
 
@@ -4763,9 +4837,22 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 return val
         return None
 
+    def _make_session_cookie(self, token: str | None, *, expire: bool = False) -> str:
+        """Build a Set-Cookie value; adds Secure flag when behind an HTTPS proxy."""
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+        if expire:
+            return (
+                f"mml_session=; HttpOnly; Path=/; SameSite=Lax{secure}; "
+                "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            )
+        return f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax{secure}; Max-Age={_SESSION_MAX_AGE}"
+
     def _is_rate_limited(self) -> bool:
         """Return True if the client IP has exceeded the auth attempt rate limit."""
-        ip  = self.client_address[0]
+        # Use X-Forwarded-For set by nginx (real client IP) to avoid all users
+        # sharing one rate-limit bucket when the proxy sits on 127.0.0.1.
+        forwarded = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        ip = forwarded if forwarded else self.client_address[0]
         now = time.time()
         ts  = _auth_attempts.get(ip, [])
         ts  = [t for t in ts if now - t < _AUTH_WINDOW]
@@ -4829,11 +4916,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
         elif path == "/health":
             ok = library_document_exists(OUTPUT_PATH)
-            self._json(200 if ok else 503, {
-                "status": "ok" if ok else "degraded",
-                "library": ok,
-                "scanner": "idle" if _srv_state["status"] != "running" else "running",
-            })
+            self._json(200 if ok else 503, {"status": "ok" if ok else "degraded"})
         elif path == "/api/library":
             self._json(200, _library_api_payload())
         elif path == "/api/config":
@@ -5058,18 +5141,16 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             ok = _auth_verify_password(entered)
             if ok:
                 token = secrets.token_hex(32)
-                _valid_sessions.add(token)
-                cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
-                self._json(200, {"ok": True}, set_cookie=cookie)
+                _session_add(token)
+                self._json(200, {"ok": True}, set_cookie=self._make_session_cookie(token))
             else:
                 self._json(200, {"ok": False})
             return
         if path == "/api/logout":
             token = self._session_token()
             if token:
-                _valid_sessions.discard(token)
-            expired = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-            self._json(200, {"ok": True}, set_cookie=expired)
+                _session_remove(token)
+            self._json(200, {"ok": True}, set_cookie=self._make_session_cookie(None, expire=True))
             return
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
@@ -5209,10 +5290,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             set_cookie = None
             if auth_action == "updated":
                 token = secrets.token_hex(32)
-                _valid_sessions.add(token)
-                set_cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
+                _session_add(token)
+                set_cookie = self._make_session_cookie(token)
             elif auth_action == "disabled":
-                set_cookie = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+                set_cookie = self._make_session_cookie(None, expire=True)
             self._json(200, response, set_cookie=set_cookie)
 
         elif path == "/api/settings/score":
@@ -5240,6 +5321,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 def serve():
     _bootstrap_sqlite_runtime()
+    _sessions_purge_expired()
     start_user_scan_scheduler()
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
     log.info("[server] Listening on 127.0.0.1:8095")

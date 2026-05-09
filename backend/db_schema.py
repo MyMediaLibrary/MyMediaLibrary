@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 CREATE_TABLES_SQL = (
@@ -307,6 +307,13 @@ CREATE_TABLES_SQL = (
         UNIQUE (file_path, size, mtime)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS active_sessions (
+        token TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -348,6 +355,7 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_path ON ffprobe_cache(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",
+    "CREATE INDEX IF NOT EXISTS idx_active_sessions_expires_at ON active_sessions(expires_at)",
 )
 
 
@@ -372,6 +380,7 @@ EXPECTED_TABLES = frozenset(
         "inventory_items",
         "scan_runs",
         "ffprobe_cache",
+        "active_sessions",
     }
 )
 

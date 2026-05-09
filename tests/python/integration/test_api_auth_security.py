@@ -1,5 +1,6 @@
 import http.server
 import json
+import os
 import pathlib
 import tempfile
 import threading
@@ -7,6 +8,7 @@ import unittest
 import urllib.error
 import urllib.request
 
+from backend import db as _db
 from backend import scanner
 
 
@@ -22,12 +24,15 @@ class TestApiAuthSecurity(unittest.TestCase):
         root = pathlib.Path(cls._tmp.name)
         cls._secrets_path = root / ".secrets"
         cls._config_path = root / "config.json"
+        cls._db_path = root / "test_auth.db"
         scanner.SECRETS_PATH = str(cls._secrets_path)
         scanner.CONFIG_PATH = str(cls._config_path)
+        os.environ[_db.DB_PATH_ENV] = str(cls._db_path)
+        conn = _db.initialize_database(cls._db_path)
+        conn.close()
         cls._seed_config()
         cls._write_auth_hash("test-password")
 
-        scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
 
         scanner._srv_state.update(
@@ -49,14 +54,13 @@ class TestApiAuthSecurity(unittest.TestCase):
         cls._server.server_close()
         cls._thread.join(timeout=2)
 
-        scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
+        os.environ.pop(_db.DB_PATH_ENV, None)
         scanner.SECRETS_PATH = cls._old_secrets_path
         scanner.CONFIG_PATH = cls._old_config_path
         cls._tmp.cleanup()
 
     def setUp(self):
-        scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
         self._seed_config()
         self._write_auth_hash("test-password")
