@@ -12,9 +12,10 @@ import time
 from pathlib import Path
 
 try:
-    from backend import db_migrations, runtime_paths
+    from backend import db_migrations, db_schema, runtime_paths
 except Exception:
     import db_migrations  # type: ignore
+    import db_schema  # type: ignore
     import runtime_paths  # type: ignore
 
 
@@ -109,6 +110,18 @@ def _migrate_runtime_json_sources(conn: sqlite3.Connection, active_logger: loggi
         active_logger.warning("[DB] JSON migration completed with warnings — source files kept for review: %s", exc)
 
 
+def _has_legacy_json_sources(active_logger: logging.Logger) -> bool:
+    try:
+        try:
+            from backend import db_import
+        except Exception:
+            import db_import  # type: ignore
+        return bool(db_import.has_legacy_json_files())
+    except Exception as exc:
+        active_logger.warning("[DB] Could not inspect legacy JSON files; running migration defensively: %s", exc)
+        return True
+
+
 def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logger) -> None:
     try:
         try:
@@ -120,6 +133,42 @@ def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logg
         active_logger.warning("[DB] Bundled default seed completed with warnings: %s", exc)
 
 
+def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
+    """Return True when the runtime DB has schema and minimum config seed data."""
+
+    if get_schema_version(conn) < db_schema.SCHEMA_VERSION:
+        return False
+    expected_tables = {
+        "app_config",
+        "score_settings",
+        "schema_migrations",
+        "provider_mappings",
+        "provider_logos",
+        "recommendation_rules",
+    }
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({})".format(
+            ",".join("?" for _ in expected_tables)
+        ),
+        tuple(expected_tables),
+    ).fetchall()
+    if {row["name"] for row in rows} != expected_tables:
+        return False
+    app_config_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
+    score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+    if app_config_count <= 0 or score_count <= 0:
+        return False
+    bundled_defaults = (
+        (runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON, "provider_mappings"),
+        (runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON, "provider_logos"),
+        (runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, "recommendation_rules"),
+    )
+    for default_path, table_name in bundled_defaults:
+        if Path(default_path).exists() and conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] <= 0:
+            return False
+    return True
+
+
 def _run_startup_tasks_once(conn: sqlite3.Connection, db_path: Path, active_logger: logging.Logger) -> None:
     """Run JSON cleanup/seed once across cooperating startup processes."""
 
@@ -128,11 +177,26 @@ def _run_startup_tasks_once(conn: sqlite3.Connection, db_path: Path, active_logg
     with lock_path.open("a+", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            if _startup_marker_is_fresh(marker_path):
+            has_legacy_json = _has_legacy_json_sources(active_logger)
+            bootstrapped = is_database_bootstrapped(conn)
+            if bootstrapped:
+                active_logger.info("[DB] Existing SQLite runtime detected")
+            if not has_legacy_json and bootstrapped:
+                active_logger.info("[DB] No legacy JSON files found — skipping migration")
+                active_logger.info("[DB] Database already initialized — skipping bundled default seed")
+                _write_startup_marker(marker_path)
+                return
+            if not has_legacy_json and _startup_marker_is_fresh(marker_path):
                 active_logger.debug("[DB] Startup JSON migration/seed already completed for this boot")
                 return
-            _migrate_runtime_json_sources(conn, active_logger)
-            _seed_bundled_defaults(conn, active_logger)
+            if has_legacy_json:
+                _migrate_runtime_json_sources(conn, active_logger)
+            else:
+                active_logger.info("[DB] No legacy JSON files found — skipping migration")
+            if bootstrapped:
+                active_logger.info("[DB] Database already initialized — skipping bundled default seed")
+            else:
+                _seed_bundled_defaults(conn, active_logger)
             _write_startup_marker(marker_path)
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

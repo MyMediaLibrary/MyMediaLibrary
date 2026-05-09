@@ -697,6 +697,21 @@ class DatabaseImportTest(unittest.TestCase):
             )
             conn.close()
 
+    def test_has_legacy_json_files_detects_only_migration_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+
+            self.assertFalse(db_import.has_legacy_json_files(paths=paths))
+
+            self.write_json(paths.LIBRARY_JSON, {"items": []})
+            self.assertTrue(db_import.has_legacy_json_files(paths=paths))
+
+            paths.LIBRARY_JSON.unlink()
+            paths.LIBRARY_PROBE_JSON.parent.mkdir(parents=True, exist_ok=True)
+            paths.LIBRARY_PROBE_JSON.write_text("{}", encoding="utf-8")
+            self.assertFalse(db_import.has_legacy_json_files(paths=paths))
+
     def test_upsert_library_item_prepares_scanner_db_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")

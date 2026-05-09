@@ -75,10 +75,85 @@ class DatabaseSchemaTest(unittest.TestCase):
             previous_done = db._startup_tasks_done
             db._startup_tasks_done = False
             try:
-                with patch.object(db, "_migrate_runtime_json_sources") as migrate, \
+                with patch.object(db, "_has_legacy_json_sources", return_value=False), \
+                     patch.object(db, "_migrate_runtime_json_sources") as migrate, \
                      patch.object(db, "_seed_bundled_defaults") as seed:
                     self.assertTrue(db.bootstrap_runtime_database(db_path))
                     db._startup_tasks_done = False
+                    self.assertTrue(db.bootstrap_runtime_database(db_path))
+            finally:
+                db._startup_tasks_done = previous_done
+
+            self.assertEqual(migrate.call_count, 0)
+            self.assertEqual(seed.call_count, 1)
+
+    def test_runtime_bootstrap_skips_migration_and_seed_when_already_initialized_without_legacy_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "mymedialibrary.db"
+            conn = db.initialize_database(db_path)
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
+            conn.execute(
+                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
+                ("default", 1, '{"weights":{"video":50,"audio":20,"languages":15,"size":15}}'),
+            )
+            conn.commit()
+            conn.close()
+            previous_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.object(db, "_has_legacy_json_sources", return_value=False), \
+                     patch.object(db, "_migrate_runtime_json_sources") as migrate, \
+                     patch.object(db, "_seed_bundled_defaults") as seed, \
+                     self.assertLogs("db-bootstrap-skip-test", level="INFO") as logs:
+                    self.assertTrue(db.bootstrap_runtime_database(
+                        db_path,
+                        logger=logging.getLogger("db-bootstrap-skip-test"),
+                    ))
+            finally:
+                db._startup_tasks_done = previous_done
+
+            self.assertEqual(migrate.call_count, 0)
+            self.assertEqual(seed.call_count, 0)
+            output = "\n".join(logs.output)
+            self.assertIn("[DB] Existing SQLite runtime detected", output)
+            self.assertIn("[DB] No legacy JSON files found — skipping migration", output)
+            self.assertIn("[DB] Database already initialized — skipping bundled default seed", output)
+            self.assertNotIn("Import skipped", output)
+            self.assertNotIn("rows=0", output)
+
+    def test_runtime_bootstrap_runs_migration_only_when_legacy_json_exists_on_initialized_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "mymedialibrary.db"
+            conn = db.initialize_database(db_path)
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
+            conn.execute(
+                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
+                ("default", 1, "{}"),
+            )
+            conn.commit()
+            conn.close()
+            previous_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.object(db, "_has_legacy_json_sources", return_value=True), \
+                     patch.object(db, "_migrate_runtime_json_sources") as migrate, \
+                     patch.object(db, "_seed_bundled_defaults") as seed:
+                    self.assertTrue(db.bootstrap_runtime_database(db_path))
+            finally:
+                db._startup_tasks_done = previous_done
+
+            self.assertEqual(migrate.call_count, 1)
+            self.assertEqual(seed.call_count, 0)
+
+    def test_runtime_bootstrap_runs_migration_and_seed_on_first_install_with_legacy_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "mymedialibrary.db"
+            previous_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.object(db, "_has_legacy_json_sources", return_value=True), \
+                     patch.object(db, "_migrate_runtime_json_sources") as migrate, \
+                     patch.object(db, "_seed_bundled_defaults") as seed:
                     self.assertTrue(db.bootstrap_runtime_database(db_path))
             finally:
                 db._startup_tasks_done = previous_done

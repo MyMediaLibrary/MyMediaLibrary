@@ -171,6 +171,27 @@ def seed_bundled_defaults(
     return rows
 
 
+def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
+    """Return legacy JSON sources that may be imported once into SQLite."""
+
+    return [
+        Path(paths.CONFIG_JSON),
+        Path(paths.PROVIDERS_MAPPING_JSON),
+        Path(paths.PROVIDERS_LOGO_JSON),
+        Path(paths.RECOMMENDATIONS_RULES_JSON),
+        Path(paths.MEDIA_PROBE_CACHE_JSON),
+        Path(paths.INVENTORY_JSON),
+        Path(paths.LIBRARY_JSON),
+        Path(paths.RECOMMENDATIONS_JSON),
+    ]
+
+
+def has_legacy_json_files(*, paths=runtime_paths) -> bool:
+    """Return True when at least one legacy runtime JSON source still exists."""
+
+    return any(path.exists() for path in legacy_json_paths(paths=paths))
+
+
 def _startup_json_specs(paths) -> list[dict[str, Any]]:
     return [
         {
