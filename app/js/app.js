@@ -60,9 +60,9 @@ let allItems=[], categories=[], groups=[];
     audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
-  let libraryExportSource = null; // raw library.json payload used for export
+  let libraryExportSource = null; // raw library API payload used for explicit export
   let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
-  let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /providers_logo.json
+  let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /api/providers-logo
   let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
   let audioLanguages = {};         // loaded from /audio_languages.json
 
@@ -70,7 +70,7 @@ let allItems=[], categories=[], groups=[];
     try {
       const [mapRes, logosRes] = await Promise.all([
         fetch('/api/providers-map?_=' + Date.now()),
-        fetch('/providers_logo.json?_=' + Date.now()),
+        fetch('/api/providers-logo?_=' + Date.now()),
       ]);
       if (mapRes.ok) {
         const data = await mapRes.json();
@@ -802,9 +802,9 @@ let allItems=[], categories=[], groups=[];
     }
 
     try {
-      const lib = await _fetchLibraryJsonWithRetry();
+      const lib = await _fetchLibraryWithRetry();
       if (lib.missing) {
-        // Missing library.json is expected before the first scan.
+        // An empty library is expected before the first scan.
         // If onboarding is still required (explicitly or legacy missing flag + no usable folders),
         // keep onboarding flow. Otherwise show an empty-library state with scan prompt.
         if (explicitNeedsOnboarding === true || (explicitNeedsOnboarding === null && !hasUsableFolders)) {
@@ -815,8 +815,16 @@ let allItems=[], categories=[], groups=[];
         return;
       }
       const data = lib.data;
-      libraryExportSource = data;
       allItems = safeArray(data.items);
+      if (!allItems.length) {
+        if (explicitNeedsOnboarding === null && !hasUsableFolders) {
+          finishWithOnboarding();
+        } else {
+          finishWithEmptyLibrary();
+        }
+        return;
+      }
+      libraryExportSource = data;
       categories = safeArray(data.categories);
       groups = safeArray(data.groups);
       if (visibleProviders === null) {
@@ -1098,10 +1106,10 @@ let allItems=[], categories=[], groups=[];
     }
   }
 
-  async function _fetchLibraryJsonWithRetry() {
+  async function _fetchLibraryWithRetry() {
     let parseError = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const libraryUrl = '/library.json?_=' + Date.now();
+      const libraryUrl = '/api/library?_=' + Date.now();
       const r = await fetch(libraryUrl);
       if (r.status === 404) return { missing: true };
       if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
@@ -1109,14 +1117,14 @@ let allItems=[], categories=[], groups=[];
       try {
         return { missing: false, data: JSON.parse(body) };
       } catch (_) {
-        parseError = new Error('Invalid JSON in /library.json');
+        parseError = new Error('Invalid JSON from /api/library');
         if (attempt === 0) {
           await new Promise(resolve => setTimeout(resolve, 250));
           continue;
         }
       }
     }
-    throw parseError || new Error('Invalid JSON in /library.json');
+    throw parseError || new Error('Invalid JSON from /api/library');
   }
 
   // ── STATS ────────────────────────────────────────────
@@ -2942,7 +2950,7 @@ let allItems=[], categories=[], groups=[];
         icon.innerHTML = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
       }
     }
-    // Persist to config.json and update in-memory appConfig
+    // Persist to SQLite config and update in-memory appConfig
     appConfig.ui = appConfig.ui || {};
     appConfig.ui.theme = newTheme;
     saveConfig({ ui: { theme: newTheme } }).catch(() => {
@@ -3042,7 +3050,7 @@ let allItems=[], categories=[], groups=[];
         if (data.status !== 'running') {
           clearInterval(_pollTimer);
           _pollTimer = null;
-          // Reload library.json on success
+          // Reload the SQLite-backed library on success
           if (data.status === 'done') {
             setTimeout(() => loadLibrary(), 800);
             setTimeout(() => closeScanLog(), 5000);
@@ -3400,7 +3408,7 @@ let allItems=[], categories=[], groups=[];
       const d = await r.json();
       if (!d.required) { initApp(); return; }
       // Load translations for the auth screen before the overlay is shown.
-      // Language comes from /api/auth (config.json system.language), fallback to English.
+      // Language comes from /api/auth (SQLite config system.language), fallback to English.
       // This ensures button labels and error messages are never shown as raw i18n keys.
       if (!Object.keys(TRANSLATIONS).length) {
         await loadTranslations(d.language || 'en');

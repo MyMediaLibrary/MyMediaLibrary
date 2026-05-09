@@ -79,7 +79,7 @@ async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     if (onboarding || missingLibrary) {
       await route.fulfill({ status: 404, body: 'not-found' });
       return;
@@ -99,7 +99,7 @@ async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false
       },
     });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({
       json: {
         'Netflix': 'netflix.webp',
@@ -126,7 +126,7 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
   await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
 });
 
-test('configured app with missing library.json shows empty-library state without onboarding', async ({ page }) => {
+test('configured app with missing library API shows empty-library state without onboarding', async ({ page }) => {
   await mockCoreRoutes(page, { onboarding: false, missingLibrary: true });
   await page.goto('/index.html');
 
@@ -241,7 +241,7 @@ test('settings do not expose or persist library root path', async ({ page }) => 
     capturedPayload = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -274,7 +274,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
     capturedPayload = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -317,7 +317,7 @@ test('folder active toggle persists using enabled without visible persistence', 
     capturedPayload = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -353,7 +353,7 @@ test('resetting persisted config makes onboarding visible again', async ({ page 
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -391,7 +391,7 @@ test('score settings tab renders dynamic keys and blocks save when weights total
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -400,7 +400,7 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
@@ -456,7 +456,7 @@ test('score tab remains visible and shows disabled state when score feature is o
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -465,7 +465,7 @@ test('score tab remains visible and shows disabled state when score feature is o
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
@@ -498,7 +498,7 @@ test('score tab updates immediately when score quality toggle changes in configu
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -507,7 +507,7 @@ test('score tab updates immediately when score quality toggle changes in configu
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
@@ -569,7 +569,7 @@ test('score settings displays friendly error when API load fails', async ({ page
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -578,7 +578,7 @@ test('score settings displays friendly error when API load fails', async ({ page
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 

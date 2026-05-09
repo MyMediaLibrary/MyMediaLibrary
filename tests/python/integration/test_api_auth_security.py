@@ -107,7 +107,14 @@ class TestApiAuthSecurity(unittest.TestCase):
             return err.code, err.read().decode("utf-8"), err.headers
 
     def test_protected_get_endpoints_require_auth(self):
-        for path in ("/api/config", "/api/scan/log", "/api/scan/status", "/api/settings/score"):
+        for path in (
+            "/api/config",
+            "/api/library",
+            "/api/providers-logo",
+            "/api/scan/log",
+            "/api/scan/status",
+            "/api/settings/score",
+        ):
             status, _, _ = self._request(path)
             self.assertEqual(status, 401, path)
 
@@ -299,15 +306,18 @@ class TestRecommendationsApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._old_config_path = scanner.CONFIG_PATH
+        cls._old_output_path = scanner.OUTPUT_PATH
         cls._old_recommendations_output_path = scanner.RECOMMENDATIONS_OUTPUT_PATH
         cls._old_secrets_path = scanner.SECRETS_PATH
         cls._tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(cls._tmp.name)
         cls._config_path = root / "config.json"
+        cls._library_path = root / "library.json"
         cls._recommendations_path = root / "recommendations.json"
         cls._secrets_path = root / ".secrets"
 
         scanner.CONFIG_PATH = str(cls._config_path)
+        scanner.OUTPUT_PATH = str(cls._library_path)
         scanner.RECOMMENDATIONS_OUTPUT_PATH = str(cls._recommendations_path)
         scanner.SECRETS_PATH = str(cls._secrets_path)
 
@@ -323,12 +333,14 @@ class TestRecommendationsApi(unittest.TestCase):
         cls._thread.join(timeout=2)
 
         scanner.CONFIG_PATH = cls._old_config_path
+        scanner.OUTPUT_PATH = cls._old_output_path
         scanner.RECOMMENDATIONS_OUTPUT_PATH = cls._old_recommendations_output_path
         scanner.SECRETS_PATH = cls._old_secrets_path
         cls._tmp.cleanup()
 
     def setUp(self):
         self._write_config(recommendations_enabled=True)
+        scanner.write_json({"version": 1, "items": []}, str(self._library_path))
         scanner.save_recommendations_document_non_blocking([], str(self._recommendations_path))
 
     @classmethod
@@ -389,3 +401,32 @@ class TestRecommendationsApi(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIs(payload["enabled"], False)
         self.assertEqual(payload["items"], [])
+
+    def test_get_library_reads_sqlite_without_json_file(self):
+        scanner.write_json(
+            {
+                "version": 1,
+                "items": [{"id": "movie:test", "type": "movie", "title": "Film DB", "path": "Movies/Film DB"}],
+                "categories": ["Movies"],
+            },
+            str(self._library_path),
+        )
+        self._library_path.unlink()
+
+        status, payload = self._request("/api/library")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total_items"], 1)
+        self.assertEqual(payload["items"][0]["title"], "Film DB")
+        self.assertEqual(payload["categories"], ["Movies"])
+
+    def test_get_library_returns_empty_payload_when_db_empty(self):
+        empty_path = self._library_path.parent / "empty-library.json"
+        old_output = scanner.OUTPUT_PATH
+        scanner.OUTPUT_PATH = str(empty_path)
+        try:
+            status, payload = self._request("/api/library")
+        finally:
+            scanner.OUTPUT_PATH = old_output
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["items"], [])
+        self.assertEqual(payload["categories"], [])

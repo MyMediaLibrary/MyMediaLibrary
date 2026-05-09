@@ -184,13 +184,13 @@ test('loadLibrary restores active tab only after data is loaded', () => {
   assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
 });
 
-test('loadLibrary treats missing library.json as a first-run/empty-library state (no hard error)', () => {
+test('loadLibrary loads from SQLite API and treats empty library as a first-run state', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
-  assert.match(block, /const lib = await _fetchLibraryJsonWithRetry\(\);/, 'loadLibrary should fetch library data through retry helper');
-  assert.match(appSource, /if \(r\.status === 404\) return \{ missing: true \};/, 'library fetch helper should branch explicitly on library.json 404');
+  assert.match(block, /const lib = await _fetchLibraryWithRetry\(\);/, 'loadLibrary should fetch library data through API retry helper');
+  assert.match(appSource, /const libraryUrl = '\/api\/library\?_=' \+ Date\.now\(\);/, 'library fetch helper should load SQLite-backed API');
+  assert.doesNotMatch(appSource, /\/library\.json/, 'frontend should not request legacy runtime library.json');
   assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
-  assert.doesNotMatch(appSource, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'library fetch helper should not throw a generic HTTP error for expected missing library.json');
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
@@ -574,7 +574,7 @@ test('provider size chart uses library-size reference base (not cumulative provi
 test('providers catalog loads runtime mapping API and logo catalog', () => {
   const block = functionBlock(appSource, 'loadProvidersCatalog');
   assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
-  assert.match(block, /fetch\('\/providers_logo\.json\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from dedicated logo catalog');
+  assert.match(block, /fetch\('\/api\/providers-logo\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from runtime API');
   assert.doesNotMatch(block, /\/providers\.json/, 'legacy providers.json bundle should no longer drive mapping');
 });
 

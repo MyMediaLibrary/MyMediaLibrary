@@ -1,27 +1,17 @@
 #!/bin/sh
 # entrypoint.sh — nginx + scanner + scan API server
 
-OUTPUT_PATH="${OUTPUT_PATH:-/data/library.json}"
 LOG_PATH="${LOG_PATH:-/data/scanner.log}"
 TZ="${TZ:-UTC}"
 export TZ
 
 echo "=== MyMediaLibrary ==="
 echo "LIBRARY_DIR  : /library"
-echo "OUTPUT_PATH  : ${OUTPUT_PATH}"
 echo "LOG_PATH     : ${LOG_PATH}"
 echo ""
 
 # Migrate legacy runtime files before any service starts.
 PYTHONPATH=/app python3 -m backend.storage_migration || exit 1
-
-# Keep persisted JSON artifacts readable by nginx worker (fix legacy 0600 files).
-if [ -f "$OUTPUT_PATH" ]; then
-  chmod 644 "$OUTPUT_PATH" || true
-fi
-if [ -f "/data/library_inventory.json" ]; then
-  chmod 644 "/data/library_inventory.json" || true
-fi
 
 # Start nginx in background
 nginx -g "daemon off;" &

@@ -303,7 +303,7 @@
       "synopsis": "Synopsis on hover",
       "synopsis_hint": "Shows the synopsis when hovering over a card",
       "inventory_enabled": "Generate raw inventory",
-      "inventory_enabled_hint": "Generates library_inventory.json in addition to library.json during scans.",
+      "inventory_enabled_hint": "Tracks present and missing media during scans.",
       "media_probe_enabled": "ffprobe technical analysis",
       "media_probe_enabled_hint": "Enriches the library with technical data extracted by ffprobe.",
       "cron": "Automatic scan (cron)",

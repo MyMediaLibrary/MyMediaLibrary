@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
 Media Library Scanner
-Scans LIBRARY_PATH and generates a library.json file.
+Scans LIBRARY_PATH and persists runtime state to SQLite.
 
 Modes:
   --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
   --full     All 4 phases: filesystem scan, Seerr (force re-fetch), scoring, inventory.
-  --score-only Recompute quality scores from existing library.json only.
-  --reset    Delete library.json and exit.
+  --score-only Recompute quality scores from the SQLite media library.
+  --reset    Reset legacy runtime output if present.
   (default)  Same as --full.
 
 Phases:
-  1. Filesystem + NFO scan — builds library.json, writes after each folder.
+  1. Filesystem + NFO scan — builds the media library, writes after each folder.
   2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
-  4. Inventory            — updates library_inventory.json, writes after each folder + final pass.
+  4. Inventory            — updates SQLite inventory after each folder + final pass.
 
 Filters (combinable with any mode):
   --category <n>   Restrict scan to a single category name.
@@ -223,13 +223,18 @@ def _set_global_log_level(raw_level: str | None) -> None:
     root_logger.setLevel(level)
     for handler in root_logger.handlers:
         handler.setLevel(level)
-# Apply log_level from config.json if available (may be adjusted later via API too)
-try:
-    with open(CONFIG_PATH, encoding="utf-8") as _cfg_f:
-        _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
-    _set_global_log_level(_cfg_loglevel)
-except Exception:
-    pass
+
+
+def _apply_configured_log_level() -> None:
+    """Apply log_level from SQLite config after DB bootstrap."""
+    try:
+        cfg = load_config()
+        _cfg_loglevel = cfg.get("system", {}).get("log_level", "INFO") if isinstance(cfg, dict) else "INFO"
+        _set_global_log_level(_cfg_loglevel)
+    except Exception as exc:
+        logging.getLogger("scanner").debug("[config] Could not apply SQLite log level: %s", exc)
+
+
 log = logging.getLogger("scanner")
 
 try:
@@ -653,15 +658,14 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
 
 
 def _jsr_cfg() -> dict:
-    """Read Seerr settings. API key comes from the secrets file, rest from config.json."""
+    """Read Seerr settings. API key comes from the secrets file, rest from SQLite config."""
     cfg = load_config()
     jsr = cfg.get("seerr", {}) or cfg.get("jellyseerr", {})
     secrets = _load_secrets()
     secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
     if secrets_changed:
         _save_secrets(secrets)
-    # Prefer secrets file for apikey; fall back to config.json (legacy / migration)
-    apikey = secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey") or jsr.get("apikey", "")
+    apikey = secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey") or ""
     return {
         "enabled": jsr.get("enabled", False),
         "url":     jsr.get("url", "").rstrip("/"),
@@ -726,6 +730,15 @@ def _load_runtime_provider_mapping() -> dict:
         if isinstance(payload, dict):
             return payload
     log.error("[providers] SQLite provider mappings repository unavailable")
+    return {}
+
+
+def _load_runtime_provider_logos() -> dict:
+    if providers_repository is not None:
+        payload = providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)
+        if isinstance(payload, dict):
+            return payload
+    log.error("[providers] SQLite provider logos repository unavailable")
     return {}
 
 
@@ -1082,7 +1095,7 @@ def sync_folders(root: Path, cfg: dict) -> bool:
 def migrate_env_to_config() -> None:
     """
     One-time migration: read legacy env vars (MOVIES_FOLDERS, SERIES_FOLDERS,
-    SEERR_URL, etc.) and populate config.json if the corresponding fields
+    SEERR_URL, etc.) and populate SQLite config if the corresponding fields
     are still at their defaults/empty. Idempotent — safe to call every startup.
     """
     cfg = load_config()
@@ -1124,7 +1137,7 @@ def migrate_env_to_config() -> None:
         secrets["seerr_apikey"] = env_apikey
         _save_secrets(secrets)
         log.info("[migrate] Seerr API key migrated to %s", SECRETS_PATH)
-    # Remove apikey from config.json if still present (migration cleanup)
+    # Remove apikey from SQLite config if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
 
@@ -1180,7 +1193,7 @@ def migrate_env_to_config() -> None:
 
     if changed:
         save_config(cfg)
-        log.info("[MIGRATION] Env vars migrated to config.json")
+        log.info("[MIGRATION] Env vars migrated to SQLite config")
     # Warm DB-backed provider metadata; bundled defaults are seeded during DB bootstrap.
     _ensure_runtime_provider_mapping()
     _ensure_runtime_providers_logo()
@@ -2289,7 +2302,7 @@ def persist_library_json_to_sqlite(path: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Config helpers (config.json)
+# Config helpers (SQLite)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_CONFIG: dict = {
@@ -2818,7 +2831,7 @@ def get_effective_score_config(cfg: dict | None = None) -> tuple[dict, dict, dic
 # ---------------------------------------------------------------------------
 
 def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: bool, output_path: str) -> None:
-    """Write current library state to JSON (used for incremental per-folder writes)."""
+    """Persist current library state (used for incremental per-folder writes)."""
     clean_items = [_sanitize_item_for_library_json(item) for item in items]
     all_categories = sorted({i["category"] for i in clean_items})
     data = {
@@ -3070,9 +3083,9 @@ def scan_media_item(
 ) -> dict:
     """
     Build one item dict from filesystem + NFO.
-    `prev` is the existing item from library.json (may be empty dict).
-    `id` is computed using the same helper as library_inventory.json so both
-    files share identical stable IDs.
+    `prev` is the existing SQLite library item (may be empty dict).
+    `id` is computed using the same helper as inventory so records share
+    identical stable IDs.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
@@ -3154,7 +3167,7 @@ def scan_media_item(
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
-        # id must be first — identical to library_inventory.json for cross-file matching
+        # id must be first — identical to inventory ids for cross-table matching
         "id":                lib_id,
         "path":              item_path,
         "title":             title,
@@ -3189,7 +3202,7 @@ def scan_media_item(
         "video_bitrate":     (series_agg.get("video_bitrate") if is_tv else nfo_meta.get("video_bitrate")) or prev.get("video_bitrate"),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
-        # Enriched fields preserved from previous library.json — overwritten by full scan phases
+        # Enriched fields preserved from previous SQLite library snapshot — overwritten by full scan phases
         "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
@@ -3233,7 +3246,7 @@ def run_quick(only_category: str | None = None) -> None:
         log.error(f"{_phase_prefix('1')} Library path not found: {LIBRARY_PATH}")
         return
 
-    # One-time migration of legacy env vars → config.json
+    # One-time migration of legacy env vars → SQLite config
     migrate_env_to_config()
 
     # Sync folders with filesystem (adds new, marks missing)
@@ -3310,7 +3323,7 @@ def run_quick(only_category: str | None = None) -> None:
             # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
-            # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
+            # scan_media_item computes id = _inventory_item_id(...) for inventory joins
             item = scan_media_item(
                 media_dir,
                 root,
@@ -3437,7 +3450,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("%s Disabled in config.json — skipping phase", _phase_prefix("2"))
+        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("2"))
         return
     if not jsr["url"] or not jsr["apikey"]:
         log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
@@ -4651,6 +4664,24 @@ def _recommendations_api_payload(cfg: dict | None = None) -> dict:
     return payload
 
 
+def _library_api_payload() -> dict:
+    payload = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(payload, dict):
+        return {"items": [], "categories": [], "total_items": 0}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    categories = payload.get("categories")
+    if not isinstance(categories, list):
+        categories = sorted({
+            item.get("category")
+            for item in items
+            if isinstance(item, dict) and item.get("category")
+        })
+    payload["items"] = items
+    payload["categories"] = categories
+    payload["total_items"] = len(items)
+    return payload
+
+
 def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
     global _srv_proc
     cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
@@ -4800,9 +4831,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             ok = library_document_exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {
                 "status": "ok" if ok else "degraded",
-                "library_json": ok,
+                "library": ok,
                 "scanner": "idle" if _srv_state["status"] != "running" else "running",
             })
+        elif path == "/api/library":
+            self._json(200, _library_api_payload())
         elif path == "/api/config":
             cfg = load_config()
             cfg, changed = _ensure_needs_onboarding(cfg)
@@ -4862,6 +4895,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 })
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
+        elif path == "/api/providers-logo":
+            self._json(200, _load_runtime_provider_logos())
         elif path == "/api/recommendations":
             self._json(200, _recommendations_api_payload())
         else:
@@ -5123,7 +5158,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             merged, _, _ = normalize_score_configuration_sections(merged)
             merged, _ = normalize_recommendations_configuration(merged)
             _finalize_needs_onboarding_after_config_update(merged)
-            # Ensure apikey never persists in config.json
+            # Ensure apikey never persists in SQLite config
             if "seerr" in merged:
                 merged["seerr"].pop("apikey", None)
                 merged["seerr"].pop("clear_apikey", None)
@@ -5215,7 +5250,9 @@ def _bootstrap_sqlite_runtime() -> bool:
     """Create and migrate the runtime SQLite DB early so production startup is observable."""
     if sqlite_db is None:
         raise RuntimeError("SQLite module import failed")
-    return bool(sqlite_db.bootstrap_runtime_database(logger=log))
+    bootstrapped = bool(sqlite_db.bootstrap_runtime_database(logger=log))
+    _apply_configured_log_level()
+    return bootstrapped
 
 
 # ---------------------------------------------------------------------------
@@ -5236,11 +5273,11 @@ def main():
     mode_group.add_argument("--phases", default=None, metavar="LIST",
         help="Explicit phases list, comma-separated (e.g. 1,2,3,4)")
     mode_group.add_argument("--score-only", action="store_true",
-        help="Recompute score fields from existing library.json only")
+        help="Recompute score fields from the SQLite media library")
     mode_group.add_argument("--serve", action="store_true",
         help="Start HTTP API server on 127.0.0.1:8095")
     mode_group.add_argument("--reset", action="store_true",
-        help="Delete library.json and exit")
+        help="Remove legacy runtime output if present and exit")
     parser.add_argument("--category", default=None, metavar="NAME",
         help="Restrict scan to a single category name")
     parser.add_argument("--origin", default="manual",

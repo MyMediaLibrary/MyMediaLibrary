@@ -851,7 +851,7 @@
 
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
-    // Accent color — from appConfig (persisted in config.json)
+    // Accent color — from appConfig (persisted in SQLite config)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
       accentEl.value = appConfig.ui?.accent_color || _DEFAULT_ACCENT;
@@ -865,7 +865,7 @@
     _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);
     _rw('cfgEnableSeries',  appConfig.enable_series  ?? true);
 
-    // Scan cron / log level / language — from appConfig.system (editable, stored in config.json)
+    // Scan cron / log level / language — from appConfig.system (editable, stored in SQLite config)
     const sys = appConfig.system || {};
     _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
@@ -1455,7 +1455,7 @@
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');
     if (btn) {
-      btn.style.display = 'block'; // always show — config.json is always writable
+      btn.style.display = 'block'; // always show — SQLite config is always writable
       btn.disabled = false;
     }
     applySettingsMobileLayout({ resetMobile: true, resetDesktop: true });
