@@ -8,7 +8,7 @@
 4. [Structure de la bibliothèque](#4-structure-de-la-bibliothèque)
 5. [Configuration initiale](#5-configuration-initiale)
 6. [Scanner](#6-scanner)
-7. [Modèles de données](#7-modèles-de-données)
+7. [Format des items](#7-format-des-items)
 8. [Interface web](#8-interface-web)
 9. [Filtres](#9-filtres)
 10. [Plateformes de streaming](#10-plateformes-de-streaming)
@@ -24,10 +24,9 @@
 **MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker avec une base de données SQLite embarquée.
 
 **Flux :**
-1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et persiste les données dans `data/mymedialibrary.db`.
-2. Les phases optionnelles enrichissent les données dans SQLite : Seerr, score qualité, inventaire et recommandations.
-3. L'interface web (vanilla JS) appelle des endpoints REST (`/api/library`, `/api/recommendations`, etc.) alimentés par SQLite et affiche bibliothèque, filtres, statistiques et recommandations.
-4. Tout l'état runtime — configuration, paramètres de scan, auth, bibliothèque, inventaire, recommandations — est stocké dans SQLite.
+1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et sonde les fichiers vidéo avec ffprobe pour collecter les métadonnées techniques précises.
+2. Les phases optionnelles enrichissent les données : Seerr (plateformes streaming), score qualité, inventaire de présence et recommandations.
+3. L'interface web appelle des endpoints REST (`/api/library`, `/api/recommendations`, etc.) et affiche bibliothèque, filtres, statistiques et recommandations.
 
 ---
 
@@ -100,8 +99,6 @@ Montez toujours vos médias dans `/library` en lecture seule. L'authentification
 - `/data` contient la base SQLite `mymedialibrary.db`, `scanner.log` et `.secrets`.
 - `/library` est le point de montage fixe des médias.
 - `/tmp` est interne au conteneur et contient notamment `scan.lock`.
-
-Au démarrage, l'application importe automatiquement les anciens JSON runtime dans SQLite et les supprime après validation. Les anciennes installations avec `/conf/.secrets` sont migrées vers `/data/.secrets`; si `/data/.secrets` existe déjà, `/conf/.secrets` est ignoré et ne l'écrase jamais.
 
 ### Mise à jour
 
@@ -184,14 +181,12 @@ Le scanner (`scanner.py`) analyse le contenu de `/library` et écrit les résult
 | `recommendations` | Recommandations générées (optionnel, nécessite le score qualité) |
 | `ffprobe_cache` | Cache des résultats ffprobe |
 
-> **Fichiers pipeline internes** : lors d'un scan multi-phase, des fichiers JSON intermédiaires (`library.json`, `library_inventory.json`, `recommendations.json`) sont encore écrits dans `/data` comme buffers de pipeline entre les phases. Ils ne sont jamais servis aux clients (nginx retourne 410 sur accès direct). L'interface web lit exclusivement via l'API SQLite (`/api/library`, `/api/recommendations`, etc.).
-
 ### Modes de scan
 
 #### Scan rapide (quick)
 
-- Parcourt le filesystem et parse les fichiers `.nfo`, écrit les résultats dans SQLite de façon incrémentale
-- Conserve les données enrichies du scan précédent (providers streaming, score qualité) via des lookups SQLite
+- Parcourt le filesystem et parse les fichiers `.nfo`, écrit les résultats de façon incrémentale
+- Conserve les données enrichies du scan précédent (providers streaming, score qualité) sans les recalculer
 - N'appelle **pas** Seerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
 
 #### Scan complet (full)
@@ -201,25 +196,28 @@ Enchaîne les phases activées dans l'ordre :
 1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
 2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
 3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
-4. **Inventaire** — mise à jour des tables d'inventaire dans SQLite (si activé dans les paramètres)
-5. **Recommandations** — génération des recommandations dans SQLite (si score et recommandations sont activés)
+4. **Inventaire** — mise à jour de l'inventaire de présence (si activé dans les paramètres)
+5. **Recommandations** — génération des recommandations (si score et recommandations sont activés)
 
-> Chaque phase lit la sortie de la phase précédente (via des fichiers pipeline intermédiaires et SQLite). Les phases sont entièrement séparées.
+> Les phases sont séquentielles et indépendantes — chacune produit les données consommées par la suivante.
 
-### Parsing NFO enrichi (v0.3.4)
+### Parsing NFO
 
-Le parsing NFO extrait désormais aussi :
-- `genres`
-- `audio_channels`
-- `subtitle_languages`
-- `video_bitrate`
+Les fichiers NFO (format Kodi/Jellyfin/Emby) sont la source principale de métadonnées. Le scanner extrait :
+- Titre, année, synopsis, durée
+- Résolution, codec vidéo, codec audio, HDR, channels audio, langues audio, sous-titres, bitrate vidéo, genres
 
-Comportement :
-- **Films** : champs lus directement depuis le NFO film
-- **Séries** : champs techniques lus au niveau épisode puis agrégés vers saison puis série
-- **Genres séries** : lus depuis `tvshow.nfo`
+Comportement par type :
+- **Films** : tous les champs lus directement depuis le NFO film
+- **Séries** : champs techniques lus au niveau épisode puis agrégés vers saison et série ; genres lus depuis `tvshow.nfo`
 
-Les genres sont normalisés via un mapping externe : `app/mapping_genres.json`.
+Les genres sont normalisés via un fichier de mapping inclus dans l'application.
+
+### Analyse technique des fichiers (ffprobe)
+
+Quand les données NFO sont absentes ou incomplètes, le scanner sonde directement le fichier vidéo avec **ffprobe** pour extraire les métadonnées techniques précises : résolution, codecs vidéo et audio, channels audio, langues audio, bitrate vidéo et type HDR.
+
+Les résultats ffprobe sont mis en cache entre les scans pour ne pas re-sonder les fichiers inchangés.
 
 ### Déclencheurs
 
@@ -233,7 +231,7 @@ Les genres sont normalisés via un mapping externe : `app/mapping_genres.json`.
 
 ### Verrou anti-concurrence
 
-Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/tmp/scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI) et éviter des écritures simultanées corrompant `library.json`. `/tmp` reste interne au conteneur et ne doit pas être monté.
+Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/tmp/scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI). `/tmp` reste interne au conteneur et ne doit pas être monté.
 
 Si un scan est déjà en cours :
 - Un scan déclenché via l'UI reçoit une réponse d'erreur (HTTP 409)
@@ -254,26 +252,22 @@ Lors d'un scan rapide, les données enrichies par les scans complets précédent
 
 | Champ | Source | Comportement |
 |---|---|---|
-| `providers` | Phase 2 (Seerr) | Copié depuis le `library.json` existant |
-| `providers_fetched` | Phase 2 | Copié depuis le `library.json` existant |
-| `quality` | Phase 3 (scoring) | Copié depuis le `library.json` existant |
+| `providers` | Phase 2 (Seerr) | Conservé depuis le scan précédent |
+| `providers_fetched` | Phase 2 | Conservé depuis le scan précédent |
+| `quality` | Phase 3 (scoring) | Conservé depuis le scan précédent |
 
-Le `library.json` existant est chargé **une seule fois** au démarrage du scan, puis utilisé comme référence immuable pour tous les lookups. Les nouveaux items n'ayant pas d'entrée précédente sont créés sans enrichissement — leurs données seront calculées lors du prochain scan complet.
+Les données enrichies sont chargées une seule fois au démarrage du scan. Les nouveaux items sans entrée précédente sont créés sans enrichissement — leurs données seront calculées lors du prochain scan complet.
 
 ---
 
-## 7. Modèles de données
+## 7. Format des items
 
-### `library.json`
-
-Fichier principal consommé par l'interface web. Structure globale :
+Le endpoint `/api/library` retourne les items au format suivant :
 
 ```json
 {
   "scanned_at": "2025-04-14T20:00:00.000000",
-  "library_path": "/library",
   "total_items": 3289,
-  "categories": ["Movies", "Series"],
   "items": [ ... ]
 }
 ```
@@ -305,40 +299,25 @@ Exemple d'item :
     "audio": 26,
     "languages": 15,
     "size": 8,
-    "video_w": 35.0,
-    "audio_w": 17.3333,
-    "languages_w": 15.0,
-    "size_w": 8.0,
     "score": 75
   }
 }
 ```
 
-Le champ `id` est la clé stable de chaque item. Format : `{type}:{category}:{nom_du_dossier}`. Il est identique dans `library.json` et `library_inventory.json` pour le même média, ce qui permet le croisement des deux fichiers.
+Le champ `id` est la clé stable de chaque item. Format : `{type}:{category}:{nom_du_dossier}`.
 
-### `library_inventory.json`
+### Inventaire de présence
 
-Fichier optionnel (activer dans Paramètres > Système) qui conserve l'historique de présence de chaque média et de ses fichiers vidéo à travers les scans successifs.
-
-Champs principaux de chaque item :
+Quand la fonctionnalité d'inventaire est activée (Paramètres > Système), le scanner suit l'historique de présence de chaque item à travers les scans successifs :
 
 | Champ | Description |
 |---|---|
-| `id` | Identifiant partagé avec `library.json` |
 | `status` | `"present"` ou `"missing"` |
 | `first_seen_at` | Date de première apparition sur le filesystem (jamais modifiée ensuite) |
 | `last_seen_at` | Dernière date à laquelle l'item a été détecté sur le filesystem |
 | `last_checked_at` | Date du dernier scan l'ayant évalué (mis à jour même si l'item est absent) |
-| `video_files` | Liste des fichiers vidéo avec leur propre historique de présence |
 
-**Logique présent / absent :**
-
-```
-present → last_seen_at = maintenant, last_checked_at = maintenant
-missing → last_seen_at inchangé,     last_checked_at = maintenant
-```
-
-Un item passe à `"missing"` lorsque son dossier n'est plus détecté lors d'un scan complet couvrant tous les dossiers. L'historique est conservé et l'item n'est pas supprimé.
+Un item passe à `"missing"` lorsque son dossier n'est plus détecté lors d'un scan complet. L'historique est conservé et l'item n'est pas supprimé.
 
 ---
 
@@ -419,7 +398,7 @@ URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration i
 
 ### Modèle actuel
 
-- Chaque média contient une liste plate de providers bruts dans `library.json` (`item.providers`).
+- Chaque média contient une liste plate de providers bruts retournés par Seerr.
 - L'application applique ensuite un mapping pour déterminer les providers affichés.
 - Si un provider brut est non mappé (ou mappé à `null`), il est regroupé sous **Autres**.
 - Si un média n'a aucun provider, l'UI affiche **Aucun provider** (comportement spécifique conservé).
@@ -672,10 +651,6 @@ Le score qualité est visible dans toute l'interface :
 - export CSV
 - statistiques
 
-Dans `library.json`, le détail est stocké dans `quality` avec :
-- `video_details` (`resolution`, `codec`, `hdr`)
-- `audio_details` (`codec`, `channels`)
-
 ### Infobulle
 
 Au survol du badge, une infobulle détaillée est affichée :
@@ -687,7 +662,7 @@ Le paramètre `score.enabled` stocké dans SQLite permet de couper totalement la
 
 Si désactivé :
 - le backend bypass complètement le calcul de score pendant le scan
-- les champs score sont retirés du `library.json` (pas de dataset mixte score/sans score après un scan)
+- les champs score sont effacés (pas de dataset mixte score/sans score après un scan)
 - le score est masqué dans l'UI (badges, colonne score, infobulle score)
 - le slider de filtre score disparaît
 - les tris/statistiques liés au score sont désactivés
@@ -695,7 +670,7 @@ Si désactivé :
 
 Si réactivé :
 - les contrôles UI liés au score réapparaissent immédiatement
-- un nouveau scan est nécessaire pour régénérer les scores dans `library.json`
+- un nouveau scan est nécessaire pour régénérer les scores
 
 ### Comportements clés
 
@@ -723,10 +698,8 @@ Les recommandations transforment l'analyse de la bibliothèque en liste d'action
 
 ### Fonctionnement
 
-- Les recommandations sont générées en **phase 5 du scan**.
-- Le scan écrit `/data/recommendations.json`.
-- `library.json` n'est jamais modifié par cette phase.
-- Le fichier est relié à `library.json` via l'identifiant stable du média (`media_ref.id`).
+- Les recommandations sont générées en **phase 5 du scan** (nécessite le score qualité activé).
+- Chaque recommandation est reliée à un média via son identifiant stable.
 
 ### Moteur
 
@@ -788,10 +761,6 @@ L'onglet **Stats > Recommandations** affiche :
 
 Les graphes se recalculent selon les filtres globaux et les filtres locaux recommandations.
 
-### `recommendations.json`
-
-Fichier généré automatiquement dans `/data`. Il contient uniquement les recommandations et ne duplique pas `library.json`. Chaque entrée pointe vers le média via `media_ref.id`.
-
 ---
 
 ## 13. Statistiques
@@ -850,11 +819,11 @@ Accessible via l'icône ⚙️ en bas de la barre latérale.
 - Synopsis au survol (on/off, **désactivé par défaut**)
 - Score de qualité (on/off, **désactivé par défaut**)
 - Recommandations (on/off, nécessite le score qualité, **désactivé par défaut**)
-- Inventaire brut `library_inventory.json` (on/off, **désactivé par défaut**)
+- Inventaire de présence (on/off, **désactivé par défaut**)
 - Scan automatique (cron)
 - Niveau de log
 - Version
 
-> Le synopsis au survol, le score qualité et l'inventaire sont considérés comme des fonctionnalités avancées : ils sont opt-in et doivent être activés explicitement dans les paramètres.
+> Le synopsis au survol, le score qualité et l'inventaire de présence sont considérés comme des fonctionnalités avancées : ils sont opt-in et doivent être activés explicitement dans les paramètres.
 
 ---

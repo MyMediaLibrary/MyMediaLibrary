@@ -73,8 +73,6 @@ Stockage runtime :
 - `/library` est le point de montage fixe des médias dans le conteneur
 - `/tmp` reste interne au conteneur et n'est pas à monter
 
-Les anciens fichiers JSON sont importés automatiquement dans SQLite au démarrage puis supprimés si la validation réussit. Les anciennes installations avec `/conf/.secrets` sont migrées vers `/data/.secrets`; si `/data/.secrets` existe déjà, `/conf/.secrets` est ignoré et ne l'écrase jamais.
-
 > Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système**.
 
 ### Mise à jour
@@ -162,8 +160,6 @@ Runtime storage:
 - `./data` contains `mymedialibrary.db`, `scanner.log`, and `.secrets`
 - `/library` is the fixed media mount point inside the container
 - `/tmp` stays internal to the container and should not be mounted
-
-Old JSON files are imported into SQLite automatically on startup and removed after successful validation. Existing installs with `/conf/.secrets` are migrated to `/data/.secrets`; if `/data/.secrets` already exists, `/conf/.secrets` is ignored and never overwrites it.
 
 > Auto-scan schedule and log level are configured in **Settings > System**.
 

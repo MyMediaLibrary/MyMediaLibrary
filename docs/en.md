@@ -8,7 +8,7 @@
 4. [Library structure](#4-library-structure)
 5. [Onboarding](#5-onboarding)
 6. [Scanner](#6-scanner)
-7. [Data models](#7-data-models)
+7. [Item format](#7-item-format)
 8. [Web interface](#8-web-interface)
 9. [Filters](#9-filters)
 10. [Streaming providers](#10-streaming-providers)
@@ -24,10 +24,9 @@
 **MyMediaLibrary** is a self-hosted dashboard to visualize a movie and TV show library. It runs in a single Docker container backed by an SQLite database.
 
 **Flow:**
-1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and persists media data to `data/mymedialibrary.db`.
-2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations — each phase also writes to SQLite.
-3. The web interface (vanilla JS) calls REST API endpoints (`/api/library`, `/api/recommendations`, etc.) backed by SQLite, and renders library, filters, statistics, and recommendations.
-4. All runtime state — configuration, scan settings, auth, library, inventory, recommendations — lives in SQLite.
+1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and probes video files with ffprobe to collect accurate technical metadata.
+2. Optional enrichment phases add streaming provider data (Seerr), quality scores, inventory tracking, and recommendations.
+3. The web interface reads from REST API endpoints (`/api/library`, `/api/recommendations`, etc.) and renders the library, filters, statistics, and recommendations.
 
 ---
 
@@ -99,8 +98,6 @@ Always mount your media to `/library` read-only. Password authentication is conf
 - `/data` contains the SQLite database `mymedialibrary.db`, `scanner.log`, and `.secrets`.
 - `/library` is the fixed media mount point.
 - `/tmp` is internal to the container and contains `scan.lock`.
-
-On startup, the app automatically imports old runtime JSON files into SQLite and removes them after successful validation. Existing installs with `/conf/.secrets` are migrated to `/data/.secrets`; if `/data/.secrets` already exists, `/conf/.secrets` is ignored and never overwrites it.
 
 ### Updating
 
@@ -183,15 +180,12 @@ The scanner (`scanner.py`) analyses the content of `/library` and writes results
 | `recommendations` | Generated recommendations (optional, requires quality scoring) |
 | `ffprobe_cache` | Technical probe results cache |
 
-> **Internal pipeline files**: during a multi-phase scan, intermediate JSON files (`library.json`, `library_inventory.json`, `recommendations.json`) are still written to `/data` as pipeline buffers between phases. They are never served to clients (nginx returns 410 on direct access). The web interface reads exclusively from the SQLite API (`/api/library`, `/api/recommendations`, etc.).
-
 ### Scan modes
 
 #### Quick scan
 
-- Walks the filesystem and parses `.nfo` files
-- Walks the filesystem and parses `.nfo` files, writes results to SQLite incrementally
-- Preserves enriched data from the previous scan (streaming providers, quality score) using SQLite lookups
+- Walks the filesystem and parses `.nfo` files, writes results incrementally
+- Carries forward enriched data from the previous scan (streaming providers, quality score) without recomputing
 - Does **not** call Seerr, does **not** recompute scores, does **not** update the inventory
 
 #### Full scan (default)
@@ -201,25 +195,28 @@ Runs enabled phases in sequence:
 1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
 2. **Seerr** — fetch FR streaming providers for each title
 3. **Scoring** — compute quality score (if enabled in settings)
-4. **Inventory** — update inventory tables in SQLite (if enabled in settings)
-5. **Recommendations** — generate recommendations in SQLite (if score and recommendations are enabled)
+4. **Inventory** — update inventory tracking (if enabled in settings)
+5. **Recommendations** — generate recommendations (if score and recommendations are enabled)
 
-> Each phase reads from the output of the previous phase (via intermediate pipeline files and SQLite). Phases are fully independent.
+> Phases are sequential and independent — each produces output consumed by the next.
 
-### Enriched NFO parsing (v0.3.4)
+### NFO parsing
 
-NFO parsing now also extracts:
-- `genres`
-- `audio_channels`
-- `subtitle_languages`
-- `video_bitrate`
+NFO files (Kodi/Jellyfin/Emby format) are the primary metadata source. The scanner extracts:
+- Title, year, synopsis, runtime
+- Resolution, video codec, audio codec, HDR, audio channels, audio languages, subtitle languages, video bitrate, genres
 
-Behavior:
-- **Movies**: fields are read directly from movie NFO
-- **Series**: technical fields are read at episode level, then aggregated to season and series
-- **Series genres**: read from `tvshow.nfo`
+Behavior by type:
+- **Movies**: all fields read directly from the movie NFO
+- **Series**: technical fields read at episode level, then aggregated to season and series; genres read from `tvshow.nfo`
 
-Genres are normalized through an external mapping file: `app/mapping_genres.json`.
+Genres are normalized through a bundled mapping file.
+
+### Technical media probing (ffprobe)
+
+When NFO data is missing or incomplete, the scanner probes the video file directly with **ffprobe** to extract accurate technical metadata: resolution, video and audio codecs, audio channels, audio languages, video bitrate, and HDR type.
+
+ffprobe results are cached between scans so unchanged files are never re-probed.
 
 ### Scan triggers
 
@@ -233,7 +230,7 @@ Genres are normalized through an external mapping file: `app/mapping_genres.json
 
 ### Anti-concurrency lock
 
-Only one scan can run at a time. The scanner uses an inter-process file lock (`/tmp/scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent concurrent SQLite writes. `/tmp` stays internal to the container and should not be mounted.
+Only one scan can run at a time. The scanner uses an inter-process file lock (`/tmp/scan.lock`) to coordinate all trigger origins (startup, cron, UI). `/tmp` stays internal to the container and should not be mounted.
 
 If a scan is already running:
 - A UI-triggered scan receives an error response (HTTP 409)
@@ -254,32 +251,22 @@ During a quick scan, enriched data accumulated by previous full scans is carried
 
 | Field | Source | Behavior |
 |---|---|---|
-| `providers` | Phase 2 (Seerr) | Carried forward from the previous scan via SQLite lookup |
-| `providers_fetched` | Phase 2 | Carried forward from the previous scan via SQLite lookup |
-| `quality` | Phase 3 (scoring) | Carried forward from the previous scan via SQLite lookup |
+| `providers` | Phase 2 (Seerr) | Carried forward from the previous scan |
+| `providers_fetched` | Phase 2 | Carried forward from the previous scan |
+| `quality` | Phase 3 (scoring) | Carried forward from the previous scan |
 
-SQLite is queried **once** at the start of the scan to build an immutable reference for all enrichment lookups. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
+Enriched data is loaded once at the start of the scan. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
 
 ---
 
-## 7. Data models
+## 7. Item format
 
-### `/api/library` response — item format
-
-The web interface loads library data from the `/api/library` REST endpoint (SQLite-backed). The response format is:
-
-### `library.json` (internal pipeline file)
-
-> **Note:** `library.json` is an internal scan pipeline buffer still written to `/data` by the scanner. It is not served to clients (nginx returns HTTP 410). Client-facing data comes from the `/api/library` endpoint backed by SQLite. The JSON format below describes the item schema, which is identical to the API response.
-
-Top-level structure:
+The `/api/library` endpoint returns items in the following structure:
 
 ```json
 {
   "scanned_at": "2025-04-14T20:00:00.000000",
-  "library_path": "/library",
   "total_items": 3289,
-  "categories": ["Movies", "Series"],
   "items": [ ... ]
 }
 ```
@@ -311,40 +298,25 @@ Example item:
     "audio": 26,
     "languages": 15,
     "size": 8,
-    "video_w": 35.0,
-    "audio_w": 17.3333,
-    "languages_w": 15.0,
-    "size_w": 8.0,
     "score": 75
   }
 }
 ```
 
-The `id` field is the stable key for each item. Format: `{type}:{category}:{folder_name}`. It is identical in `library.json` and `library_inventory.json` for the same media item, enabling cross-file matching.
+The `id` field is the stable key for each item. Format: `{type}:{category}:{folder_name}`.
 
-### `library_inventory.json`
+### Inventory tracking
 
-Optional file (enable in Settings > System) that preserves the presence history of each media item and its video files across successive scans.
-
-Main fields per item:
+When the inventory feature is enabled (Settings > System), the scanner tracks the presence history of each item across successive scans:
 
 | Field | Description |
 |---|---|
-| `id` | Shared identifier with `library.json` |
 | `status` | `"present"` or `"missing"` |
 | `first_seen_at` | Date first detected on filesystem (never updated afterwards) |
 | `last_seen_at` | Last date the item was found on the filesystem |
 | `last_checked_at` | Date of the last scan that evaluated this item (updated even when missing) |
-| `video_files` | List of video files with their own presence history |
 
-**Present / missing logic:**
-
-```
-present → last_seen_at = now, last_checked_at = now
-missing → last_seen_at unchanged, last_checked_at = now
-```
-
-An item becomes `"missing"` when its folder is no longer detected during a full scan covering all folders. History is preserved and the item is not deleted.
+An item becomes `"missing"` when its folder is no longer detected during a full scan. History is preserved and the item is not deleted.
 
 ---
 
@@ -425,8 +397,8 @@ URL + API key in settings (Seerr tab) or during onboarding. A "Test connection" 
 
 ### Current model
 
-- Each media item stores a flat list of raw providers in `library.json` (`item.providers`).
-- The app then applies a mapping to compute displayed providers.
+- Each media item stores a flat list of raw providers returned by Seerr.
+- The app applies a mapping to compute displayed providers.
 - If a raw provider is unmapped (or mapped to `null`), it is grouped under **Autres**.
 - If a media item has no providers, the UI shows **No provider** (dedicated behavior kept).
 
@@ -678,10 +650,6 @@ Quality scoring is visible throughout the interface:
 - CSV export
 - statistics
 
-In `library.json`, quality breakdown is stored with:
-- `video_details` (`resolution`, `codec`, `hdr`)
-- `audio_details` (`codec`, `channels`)
-
 ### Tooltip
 
 Hovering the quality badge shows a complete detailed tooltip:
@@ -693,7 +661,7 @@ The `score.enabled` setting stored in SQLite can disable the feature entirely.
 
 When disabled:
 - backend scan fully bypasses quality score computation
-- score fields are removed from `library.json` (no mixed score/no-score dataset after a scan)
+- score fields are cleared (no mixed score/no-score dataset after a scan)
 - score UI is hidden (badges, score column, score tooltip)
 - score filter slider is hidden
 - score-based sorting and score statistics are disabled
@@ -701,7 +669,7 @@ When disabled:
 
 When re-enabled:
 - score UI controls become available again immediately
-- a new scan is required to regenerate score data in `library.json`
+- a new scan is required to regenerate scores
 
 ### Key behaviors
 
@@ -729,10 +697,8 @@ Recommendations turn library analysis into concrete actions: improve quality, op
 
 ### Runtime behavior
 
-- Recommendations are generated during **scan phase 5**.
-- The scan writes `/data/recommendations.json`.
-- `library.json` is never modified by this phase.
-- The file is linked to `library.json` through each media's stable identifier (`media_ref.id`).
+- Recommendations are generated during **scan phase 5** (requires quality scoring enabled).
+- Each recommendation is linked to a media item via its stable identifier.
 
 ### Engine
 
@@ -794,10 +760,6 @@ The **Stats > Recommendations** tab shows:
 
 Charts update according to global filters and local recommendation filters.
 
-### `recommendations.json`
-
-Generated automatically in `/data`. It contains only recommendations and does not duplicate `library.json`. Each entry points to media via `media_ref.id`.
-
 ---
 
 ## 13. Statistics
@@ -856,11 +818,11 @@ Accessible via the ⚙️ icon at the bottom of the sidebar.
 - Synopsis on hover (on/off, **disabled by default**)
 - Quality score (on/off, **disabled by default**)
 - Recommendations (on/off, requires quality score, **disabled by default**)
-- Raw inventory `library_inventory.json` (on/off, **disabled by default**)
+- Presence inventory (on/off, **disabled by default**)
 - Auto-scan (cron)
 - Log level
 - Version
 
-> Synopsis on hover, quality scoring, and raw inventory are advanced features: they are opt-in and must be enabled manually in settings.
+> Synopsis on hover, quality scoring, and presence inventory are advanced features: they are opt-in and must be enabled manually in settings.
 
 ---
