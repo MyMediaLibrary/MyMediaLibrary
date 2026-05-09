@@ -39,6 +39,7 @@ class StartupJsonMigrationResult:
     path: Path
     status: str
     source_count: int | None = None
+    source_total_count: int | None = None
     db_count: int | None = None
     removed: bool = False
     warning: str | None = None
@@ -147,6 +148,7 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
         {
             "name": "config",
             "path": Path(paths.CONFIG_JSON),
+            "source_total_count": _count_config_total_source,
             "source_count": _count_config_source,
             "db_count": _count_config_db,
             "import": import_config,
@@ -223,12 +225,22 @@ def _migrate_one_startup_json(
         return StartupJsonMigrationResult(name=name, path=path, status="warning", warning="invalid_json")
 
     source_count = spec["source_count"](payload)
+    source_total_count = (spec.get("source_total_count") or spec["source_count"])(payload)
     spec["import"](conn, path)
     db_count = spec["db_count"](conn)
     valid_when = spec.get("valid_when") or (lambda source_count, db_count: source_count == db_count)
     if valid_when(source_count, db_count):
         removed = False
-        active_logger.info("[DB] Import check %s — json=%s db=%s — OK", path.name, source_count, db_count)
+        if source_total_count != source_count:
+            active_logger.info(
+                "[DB] Import check %s — json=%s importable=%s db=%s — OK",
+                path.name,
+                source_total_count,
+                source_count,
+                db_count,
+            )
+        else:
+            active_logger.info("[DB] Import check %s — json=%s db=%s — OK", path.name, source_count, db_count)
         if remove_validated:
             try:
                 path.unlink()
@@ -251,21 +263,32 @@ def _migrate_one_startup_json(
             path=path,
             status="ok",
             source_count=source_count,
+            source_total_count=source_total_count,
             db_count=db_count,
             removed=removed,
         )
 
-    active_logger.warning(
-        "[DB] Import check failed for %s — json=%s db=%s — keeping source file for review",
-        path.name,
-        source_count,
-        db_count,
-    )
+    if source_total_count != source_count:
+        active_logger.warning(
+            "[DB] Import check failed for %s — json=%s importable=%s db=%s — keeping source file for review",
+            path.name,
+            source_total_count,
+            source_count,
+            db_count,
+        )
+    else:
+        active_logger.warning(
+            "[DB] Import check failed for %s — json=%s db=%s — keeping source file for review",
+            path.name,
+            source_count,
+            db_count,
+        )
     return StartupJsonMigrationResult(
         name=name,
         path=path,
         status="warning",
         source_count=source_count,
+        source_total_count=source_total_count,
         db_count=db_count,
         warning="count_mismatch",
     )
@@ -628,6 +651,17 @@ def _count_config_source(payload: Any) -> int:
     return count
 
 
+def _count_config_total_source(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    count = len(payload)
+    if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
+        count += 1
+    if isinstance(payload.get("media_probe"), dict):
+        count += 1
+    return count
+
+
 def _count_config_db(conn: sqlite3.Connection) -> int:
     app_config = conn.execute(
         "SELECT COUNT(*) FROM app_config WHERE key != ?",
@@ -688,7 +722,7 @@ _SKIP_VALUE = object()
 
 def _strip_sensitive_value(key: str, value: Any) -> Any:
     lowered = str(key).casefold()
-    if any(token in lowered for token in ("apikey", "api_key", "token", "secret", "password")):
+    if any(token in lowered for token in ("apikey", "api_key", "token", "secret", "password", "access_token", "refresh_token")):
         return _SKIP_VALUE
     if isinstance(value, dict):
         clean = {}
@@ -696,14 +730,14 @@ def _strip_sensitive_value(key: str, value: Any) -> Any:
             stripped = _strip_sensitive_value(child_key, child_value)
             if stripped is not _SKIP_VALUE:
                 clean[child_key] = stripped
-        return clean
+        return clean if clean or not value else _SKIP_VALUE
     if isinstance(value, list):
         clean_list = []
         for item in value:
             stripped = _strip_sensitive_value(key, item)
             if stripped is not _SKIP_VALUE:
                 clean_list.append(stripped)
-        return clean_list
+        return clean_list if clean_list or not value else _SKIP_VALUE
     return value
 
 

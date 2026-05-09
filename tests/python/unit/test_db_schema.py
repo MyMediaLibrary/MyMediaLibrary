@@ -28,12 +28,17 @@ class DatabaseSchemaTest(unittest.TestCase):
     def test_runtime_bootstrap_creates_database_and_logs_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = pathlib.Path(tmpdir) / "nested" / "mymedialibrary.db"
+            previous_done = db._startup_tasks_done
+            db._startup_tasks_done = False
 
-            with self.assertLogs("db-bootstrap-test", level="INFO") as logs:
-                ok = db.bootstrap_runtime_database(
-                    db_path,
-                    logger=logging.getLogger("db-bootstrap-test"),
-                )
+            try:
+                with self.assertLogs("db-bootstrap-test", level="INFO") as logs:
+                    ok = db.bootstrap_runtime_database(
+                        db_path,
+                        logger=logging.getLogger("db-bootstrap-test"),
+                    )
+            finally:
+                db._startup_tasks_done = previous_done
 
             self.assertTrue(ok)
             self.assertTrue(db_path.is_file())
@@ -53,6 +58,23 @@ class DatabaseSchemaTest(unittest.TestCase):
                 )
 
         self.assertIn("[DB] SQLite unavailable — runtime storage unavailable", "\n".join(logs.output))
+
+    def test_runtime_bootstrap_runs_startup_tasks_once_across_calls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "mymedialibrary.db"
+            previous_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.object(db, "_migrate_runtime_json_sources") as migrate, \
+                     patch.object(db, "_seed_bundled_defaults") as seed:
+                    self.assertTrue(db.bootstrap_runtime_database(db_path))
+                    db._startup_tasks_done = False
+                    self.assertTrue(db.bootstrap_runtime_database(db_path))
+            finally:
+                db._startup_tasks_done = previous_done
+
+            self.assertEqual(migrate.call_count, 1)
+            self.assertEqual(seed.call_count, 1)
 
     def test_initialization_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmpdir:

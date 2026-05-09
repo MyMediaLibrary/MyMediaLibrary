@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import contextlib
+import fcntl
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 try:
@@ -20,6 +23,7 @@ DEFAULT_DB_PATH = runtime_paths.SQLITE_DB
 log = logging.getLogger(__name__)
 _startup_tasks_lock = threading.Lock()
 _startup_tasks_done = False
+_STARTUP_TASKS_MARKER_TTL_SECONDS = 300
 
 
 def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
@@ -75,8 +79,7 @@ def bootstrap_runtime_database(
             return True
         with _startup_tasks_lock:
             if not _startup_tasks_done:
-                _migrate_runtime_json_sources(conn, active_logger)
-                _seed_bundled_defaults(conn, active_logger)
+                _run_startup_tasks_once(conn, target, active_logger)
                 _startup_tasks_done = True
         return True
     finally:
@@ -109,3 +112,45 @@ def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logg
         db_import.seed_bundled_defaults(conn, logger=active_logger)
     except Exception as exc:
         active_logger.warning("[DB] Bundled default seed completed with warnings: %s", exc)
+
+
+def _run_startup_tasks_once(conn: sqlite3.Connection, db_path: Path, active_logger: logging.Logger) -> None:
+    """Run JSON cleanup/seed once across cooperating startup processes."""
+
+    lock_path, marker_path = _startup_task_paths(db_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if _startup_marker_is_fresh(marker_path):
+                active_logger.debug("[DB] Startup JSON migration/seed already completed for this boot")
+                return
+            _migrate_runtime_json_sources(conn, active_logger)
+            _seed_bundled_defaults(conn, active_logger)
+            _write_startup_marker(marker_path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _startup_task_paths(db_path: Path) -> tuple[Path, Path]:
+    if db_path == DEFAULT_DB_PATH:
+        base = runtime_paths.TMP_DIR
+    else:
+        base = db_path.parent
+    return base / "mml_sqlite_startup_tasks.lock", base / "mml_sqlite_startup_tasks.done"
+
+
+def _startup_marker_is_fresh(path: Path) -> bool:
+    try:
+        age = time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+    return 0 <= age <= _STARTUP_TASKS_MARKER_TTL_SECONDS
+
+
+def _write_startup_marker(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(Exception):
+        path.write_text(str(time.time()), encoding="utf-8")

@@ -28,6 +28,7 @@ class DatabaseImportTest(unittest.TestCase):
             RECOMMENDATIONS_RULES_JSON=conf / "recommendations_rules.json",
             CONFIG_JSON=conf / "config.json",
             MEDIA_PROBE_CACHE_JSON=data / "media_probe_cache.json",
+            LIBRARY_PROBE_JSON=data / "library_probe.json",
             INVENTORY_JSON=data / "library_inventory.json",
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
@@ -299,6 +300,50 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertFalse(paths.INVENTORY_JSON.exists())
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM media").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0], 1)
+            conn.close()
+
+    def test_startup_migration_removes_config_when_only_sensitive_keys_are_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(
+                paths.CONFIG_JSON,
+                {
+                    "folders": [],
+                    "system": {"log_level": "INFO"},
+                    "seerr": {"api_key": "secret"},
+                    "score": {"enabled": False},
+                },
+            )
+            paths.SECRETS_FILE.write_text('{"seerr_apikey":"secret"}', encoding="utf-8")
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            with self.assertLogs("db-import", level="INFO") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertEqual(config_result.source_total_count, 5)
+            self.assertEqual(config_result.source_count, config_result.db_count)
+            self.assertFalse(paths.CONFIG_JSON.exists())
+            self.assertTrue(paths.SECRETS_FILE.exists())
+            self.assertIn("json=5 importable=4 db=4", "\n".join(logs.output))
+            conn.close()
+
+    def test_startup_migration_removes_obsolete_library_probe_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            paths.LIBRARY_PROBE_JSON.write_text('{"items":[]}', encoding="utf-8")
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            self.assertFalse(paths.LIBRARY_PROBE_JSON.exists())
             conn.close()
 
     def test_startup_migration_keeps_json_when_validation_fails(self):
