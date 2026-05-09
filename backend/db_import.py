@@ -18,6 +18,15 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
+_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "media_probe"}
+_CONFIG_NON_CONFIG_KEYS = {
+    "runtime_library_document",
+    "library",
+    "items",
+    "categories",
+    "media",
+}
+
 
 @dataclass
 class ImportReport:
@@ -386,9 +395,10 @@ def import_config(
     *,
     overwrite: bool = False,
 ) -> int:
-    payload = _read_json(path, "config", report)
-    if not isinstance(payload, dict):
+    raw_payload = _read_json(path, "config", report)
+    if not isinstance(raw_payload, dict):
         return 0
+    payload = sanitize_config_for_db(raw_payload)
     rows = 0
     app_config_sql = (
         """
@@ -434,12 +444,11 @@ def import_config(
         """
     )
     with conn:
-        structured_keys = {"auth", "score", "score_configuration", "media_probe"}
         for key, value in payload.items():
             if key == "auth":
                 _import_auth_settings(conn, value, overwrite=overwrite)
                 continue
-            if key in structured_keys:
+            if key in _CONFIG_STRUCTURED_KEYS:
                 continue
             clean_value = _strip_sensitive_value(key, value)
             if clean_value is _SKIP_VALUE:
@@ -472,6 +481,23 @@ def import_config(
             )
     _record(report, "config", rows)
     return rows
+
+
+def sanitize_config_for_db(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove runtime/cache payloads and secrets from a legacy config document."""
+
+    if not isinstance(config, dict):
+        return {}
+    sanitized: dict[str, Any] = {}
+    for key, value in config.items():
+        key_str = str(key)
+        if key_str in _CONFIG_NON_CONFIG_KEYS:
+            continue
+        cleaned = _strip_sensitive_value(key_str, value)
+        if cleaned is _SKIP_VALUE:
+            continue
+        sanitized[key_str] = cleaned
+    return sanitized
 
 
 def import_media_probe_cache(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
@@ -697,14 +723,14 @@ def _count_items_source(payload: Any) -> int:
 def _count_config_source(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
+    payload = sanitize_config_for_db(payload)
     count = 0
-    structured_keys = {"auth", "score", "score_configuration", "media_probe"}
     for key, value in payload.items():
         if key == "auth":
             if isinstance(value, dict):
                 count += 1
             continue
-        if key in structured_keys:
+        if key in _CONFIG_STRUCTURED_KEYS:
             continue
         if _strip_sensitive_value(key, value) is not _SKIP_VALUE:
             count += 1
@@ -718,6 +744,7 @@ def _count_config_source(payload: Any) -> int:
 def _count_config_total_source(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
+    payload = sanitize_config_for_db(payload)
     count = len(payload)
     if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
         count += 1
@@ -769,11 +796,14 @@ def _log_config_diff(conn: sqlite3.Connection, payload: Any, active_logger: logg
 def _config_source_document(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
+    payload = sanitize_config_for_db(payload)
     document: dict[str, Any] = {}
     for key, value in payload.items():
         if key == "auth":
             if isinstance(value, dict):
                 document["auth"] = {"enabled": value.get("enabled") is True}
+            continue
+        if key in _CONFIG_STRUCTURED_KEYS:
             continue
         clean_value = _strip_sensitive_value(key, value)
         if clean_value is not _SKIP_VALUE:

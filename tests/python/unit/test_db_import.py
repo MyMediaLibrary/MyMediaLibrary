@@ -352,11 +352,51 @@ class DatabaseImportTest(unittest.TestCase):
 
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
-            self.assertEqual(config_result.source_total_count, 5)
+            self.assertEqual(config_result.source_total_count, 4)
             self.assertEqual(config_result.source_count, config_result.db_count)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=5 importable=3 db=3", "\n".join(logs.output))
+            self.assertIn("json=4 importable=3 db=3", "\n".join(logs.output))
+            conn.close()
+
+    def test_startup_migration_ignores_runtime_library_document_in_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(
+                paths.CONFIG_JSON,
+                {
+                    "system": {"scan_cron": "0 3 * * *"},
+                    "score": {"enabled": True},
+                    "runtime_library_document": {
+                        "categories": ["movies"],
+                        "items": [{"title": "Example"}],
+                    },
+                },
+            )
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            with self.assertLogs("db-import", level="INFO") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertEqual(config_result.source_total_count, 3)
+            self.assertEqual(config_result.source_count, 2)
+            self.assertEqual(config_result.db_count, 2)
+            self.assertFalse(paths.CONFIG_JSON.exists())
+            self.assertIsNone(
+                conn.execute("SELECT 1 FROM app_config WHERE key = ?", ("runtime_library_document",)).fetchone()
+            )
+            joined = "\n".join(logs.output)
+            self.assertIn("json=3 importable=2 db=2", joined)
+            self.assertNotIn("runtime_library_document", joined)
+            self.assertNotIn("categories", joined)
+            self.assertNotIn("items", joined)
             conn.close()
 
     def test_startup_migration_updates_seeded_config_and_preserves_score_configuration(self):
@@ -403,12 +443,12 @@ class DatabaseImportTest(unittest.TestCase):
 
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
-            self.assertEqual(config_result.source_total_count, 14)
+            self.assertEqual(config_result.source_total_count, 13)
             self.assertEqual(config_result.source_count, 10)
             self.assertEqual(config_result.db_count, 10)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=14 importable=10 db=10", "\n".join(logs.output))
+            self.assertIn("json=13 importable=10 db=10", "\n".join(logs.output))
             cfg = config_repository.load_config(paths.CONFIG_JSON, db_path)
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
             self.assertEqual(cfg["score"], {"enabled": True})
