@@ -282,11 +282,8 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-system"]');
-    if (btn) switchStab(btn, 'stab-system');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-system"]').click();
   await expect(page.locator('#stab-system')).toBeVisible();
 
   const inventoryToggle = page.locator('#cfgInventoryEnabled');
@@ -405,11 +402,8 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#stab-score')).toBeVisible();
   const scoreSections = page.locator('#scoreSettingsContainer .settings-collapsible');
@@ -470,11 +464,8 @@ test('score tab remains visible and shows disabled state when score feature is o
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#stab-score')).toBeVisible();
   await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
@@ -512,44 +503,33 @@ test('score tab updates immediately when score quality toggle changes in configu
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
   await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
 
+  await page.locator('.stab[data-stab="stab-configuration"]').click();
   await page.evaluate(() => {
-    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
-    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
     const toggle = document.getElementById('cfgEnableScore');
     if (toggle) {
       toggle.checked = false;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
-  await page.evaluate(() => {
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
   await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
   await expect(page.locator('#scoreResetRow')).toBeHidden();
 
+  await page.locator('.stab[data-stab="stab-configuration"]').click();
   await page.evaluate(() => {
-    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
-    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
     const toggle = document.getElementById('cfgEnableScore');
     if (toggle) {
       toggle.checked = true;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
-  await page.evaluate(() => {
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
   await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
   await expect(page.locator('#scoreResetRow')).toBeVisible();
@@ -583,11 +563,8 @@ test('score settings displays friendly error when API load fails', async ({ page
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#scoreSettingsStatus')).toBeVisible();
   await expect(page.locator('#scoreSettingsStatus')).toContainText('Impossible de charger la configuration du score');
