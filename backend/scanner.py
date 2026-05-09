@@ -2342,24 +2342,24 @@ def _load_default_config() -> dict:
 
 
 def load_config() -> dict:
-    cfg = None
-    if config_repository is not None:
-        try:
-            cfg = config_repository.load_config(CONFIG_PATH)
-        except Exception as e:
-            log.error("[config] SQLite config unavailable: %s", e)
+    if config_repository is None:
+        raise RuntimeError("SQLite config repository unavailable")
+    try:
+        cfg = config_repository.load_config(CONFIG_PATH)
+    except Exception as e:
+        log.error("[config] SQLite config unavailable: %s", e)
+        raise
     if not isinstance(cfg, dict):
-        cfg = _load_default_config()
-    if isinstance(cfg, dict):
-        cfg, seerr_changed = normalize_seerr_config(cfg)
-        cfg, changed, _ = normalize_score_configuration_sections(cfg)
-        cfg, rec_changed = normalize_recommendations_configuration(cfg)
-        cfg, probe_changed = normalize_media_probe_configuration(cfg)
-        if seerr_changed or changed or rec_changed or probe_changed:
-            try:
-                save_config(cfg)
-            except Exception as e:
-                log.warning("[config] Could not normalize SQLite config: %s", e)
+        raise RuntimeError("SQLite config is empty; run database bootstrap/seed before loading config")
+    cfg, seerr_changed = normalize_seerr_config(cfg)
+    cfg, changed, _ = normalize_score_configuration_sections(cfg)
+    cfg, rec_changed = normalize_recommendations_configuration(cfg)
+    cfg, probe_changed = normalize_media_probe_configuration(cfg)
+    if seerr_changed or changed or rec_changed or probe_changed:
+        try:
+            save_config(cfg)
+        except Exception as e:
+            log.warning("[config] Could not normalize SQLite config: %s", e)
     return cfg
 
 
@@ -2665,13 +2665,6 @@ def _compute_derived_max_score(score_config: dict) -> dict:
 
 
 def load_score_defaults() -> dict:
-    try:
-        with open(SCORE_DEFAULTS_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return payload
-    except Exception as e:
-        log.warning(f"[score] Could not load score defaults from {SCORE_DEFAULTS_PATH}: {e}")
     return get_builtin_score_defaults()
 
 
@@ -3666,9 +3659,10 @@ def recompute_scores_only(score_config: dict | None = None) -> int:
     if not isinstance(items, list) or not items:
         return 0
 
-    _, effective_score_config, _ = get_effective_score_config()
     if isinstance(score_config, dict):
         effective_score_config, _ = validate_score_config(score_config, defaults=load_score_defaults())
+    else:
+        _, effective_score_config, _ = get_effective_score_config()
 
     recalculated = recompute_scores_for_items(items, effective_score_config)
     write_json(data, OUTPUT_PATH)

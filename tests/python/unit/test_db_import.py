@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -392,6 +393,66 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(cfg["media_probe"]["workers"], 6)
             self.assertNotIn("api_key", cfg)
             self.assertNotIn("apikey", cfg["seerr"])
+            conn.close()
+
+    def test_startup_migration_logs_config_missing_and_mismatch_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(
+                paths.CONFIG_JSON,
+                {
+                    "system": {"log_level": "DEBUG"},
+                    "folders": [],
+                    "score": {"enabled": True},
+                    "score_configuration": {"weights": {"video": 40}},
+                },
+            )
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
+            conn.execute(
+                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
+                ("default", 1, '{"weights":{"video":30}}'),
+            )
+            conn.commit()
+
+            with patch.object(db_import, "import_config", return_value=0), \
+                 self.assertLogs("db-import", level="WARNING") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            joined = "\n".join(logs.output)
+            self.assertEqual(config_result.status, "warning")
+            self.assertTrue(paths.CONFIG_JSON.exists())
+            self.assertIn("missing in DB: folders", joined)
+            self.assertIn("value mismatch: score_configuration.weights.video json=40 db=30", joined)
+            self.assertIn('value mismatch: system.log_level json="DEBUG" db="INFO"', joined)
+            conn.close()
+
+    def test_startup_migration_logs_config_extra_db_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(paths.CONFIG_JSON, {"system": {"log_level": "INFO"}})
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("migrated_at", '"now"'))
+            conn.commit()
+
+            with self.assertLogs("db-import", level="WARNING") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "warning")
+            self.assertTrue(paths.CONFIG_JSON.exists())
+            self.assertIn("extra in DB: migrated_at", "\n".join(logs.output))
             conn.close()
 
     def test_startup_migration_removes_obsolete_library_probe_json(self):

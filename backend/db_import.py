@@ -283,6 +283,8 @@ def _migrate_one_startup_json(
             source_count,
             db_count,
         )
+    if name == "config":
+        _log_config_diff(conn, payload, active_logger)
     return StartupJsonMigrationResult(
         name=name,
         path=path,
@@ -721,6 +723,106 @@ def _count_config_db(conn: sqlite3.Connection) -> int:
     return int(app_config) + int(score) + int(scan) + int(auth)
 
 
+def _log_config_diff(conn: sqlite3.Connection, payload: Any, active_logger: logging.Logger) -> None:
+    source = _config_source_document(payload)
+    current = _config_db_document(conn)
+    source_flat = _flatten_config_document(source)
+    current_flat = _flatten_config_document(current)
+
+    missing = sorted(path for path in source_flat if path not in current_flat)
+    extra = sorted(path for path in current_flat if path not in source_flat)
+    mismatched = sorted(
+        path
+        for path in source_flat.keys() & current_flat.keys()
+        if source_flat[path] != current_flat[path]
+    )
+    for path in missing[:20]:
+        active_logger.warning("[DB] config diff: missing in DB: %s", path)
+    for path in mismatched[:20]:
+        active_logger.warning(
+            "[DB] config diff: value mismatch: %s json=%s db=%s",
+            path,
+            _diagnostic_json(source_flat[path]),
+            _diagnostic_json(current_flat[path]),
+        )
+    for path in extra[:20]:
+        active_logger.warning("[DB] config diff: extra in DB: %s", path)
+    remaining = len(missing) + len(extra) + len(mismatched) - 60
+    if remaining > 0:
+        active_logger.warning("[DB] config diff: %s additional difference(s) omitted", remaining)
+
+
+def _config_source_document(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    document: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == "auth":
+            if isinstance(value, dict):
+                document["auth"] = {"enabled": value.get("enabled") is True}
+            continue
+        clean_value = _strip_sensitive_value(key, value)
+        if clean_value is not _SKIP_VALUE:
+            document[str(key)] = clean_value
+    if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
+        score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
+        document["score"] = {"enabled": score.get("enabled") is True}
+        document["score_configuration"] = payload.get("score_configuration") if isinstance(payload.get("score_configuration"), dict) else {}
+    if isinstance(payload.get("media_probe"), dict):
+        document["media_probe"] = payload["media_probe"]
+    return document
+
+
+def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
+    document: dict[str, Any] = {}
+    rows = conn.execute(
+        "SELECT key, value_json FROM app_config WHERE key != ? ORDER BY key",
+        (_LIBRARY_DOCUMENT_KEY,),
+    ).fetchall()
+    for row in rows:
+        document[row["key"]] = _from_json(row["value_json"], None)
+
+    score_row = conn.execute(
+        "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
+    ).fetchone()
+    if score_row is not None:
+        document["score"] = {"enabled": bool(score_row["enabled"])}
+        document["score_configuration"] = _from_json(score_row["configuration_json"], {})
+
+    scan_rows = conn.execute("SELECT id, value_json FROM scan_settings ORDER BY id").fetchall()
+    for row in scan_rows:
+        document[row["id"]] = _from_json(row["value_json"], {})
+
+    auth_row = conn.execute("SELECT auth_enabled FROM auth_settings WHERE id = 1").fetchone()
+    if auth_row is not None:
+        document["auth"] = {"enabled": bool(auth_row["auth_enabled"])}
+    return document
+
+
+def _flatten_config_document(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        if not value and prefix:
+            return {prefix: {}}
+        flattened: dict[str, Any] = {}
+        for key in sorted(value):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.update(_flatten_config_document(value[key], path))
+        return flattened
+    if isinstance(value, list):
+        if not value and prefix:
+            return {prefix: []}
+        flattened = {}
+        for index, item in enumerate(value):
+            path = f"{prefix}[{index}]"
+            flattened.update(_flatten_config_document(item, path))
+        return flattened
+    return {prefix: value} if prefix else {"<root>": value}
+
+
+def _diagnostic_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
 
@@ -763,6 +865,15 @@ def _existing_media_id(conn: sqlite3.Connection, value: Any) -> str | None:
 
 def _to_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _from_json(value: str | None, default: Any) -> Any:
+    if not isinstance(value, str):
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
 
 
 _SKIP_VALUE = object()

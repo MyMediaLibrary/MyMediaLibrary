@@ -72,9 +72,5 @@ CONFIG_FILES = (
 )
 
 LEGACY_MIGRATIONS = (
-    LegacyMigration(DATA_DIR / "config.json", CONFIG_JSON),
-    LegacyMigration(DATA_DIR / "providers_mapping.json", PROVIDERS_MAPPING_JSON),
-    LegacyMigration(DATA_DIR / "providers_logo.json", PROVIDERS_LOGO_JSON),
-    LegacyMigration(DATA_DIR / "recommendations_rules.json", RECOMMENDATIONS_RULES_JSON),
     LegacyMigration(APP_DIR / ".secrets", SECRETS_FILE),
 )

@@ -19,6 +19,12 @@ except Exception:
 
 
 DEFAULT_DB_PATH = runtime_paths.SQLITE_DB
+DB_PATH_ENV = "MYMEDIALIBRARY_DB_PATH"
+
+
+def default_db_path() -> Path:
+    configured = os.environ.get(DB_PATH_ENV)
+    return Path(configured) if configured else DEFAULT_DB_PATH
 
 log = logging.getLogger(__name__)
 _startup_tasks_lock = threading.Lock()
@@ -29,7 +35,7 @@ _STARTUP_TASKS_MARKER_TTL_SECONDS = 300
 def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     """Open a SQLite connection with MyMediaLibrary runtime pragmas."""
 
-    path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    path = Path(db_path) if db_path is not None else default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(path)
@@ -59,7 +65,7 @@ def bootstrap_runtime_database(
     """Initialize the runtime database once at process startup and log its state."""
 
     global _startup_tasks_done
-    target = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    target = Path(db_path) if db_path is not None else default_db_path()
     active_logger = logger or log
     try:
         conn = initialize_database(target)

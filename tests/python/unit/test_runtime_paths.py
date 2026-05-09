@@ -42,10 +42,6 @@ class RuntimePathsTest(unittest.TestCase):
     def test_legacy_paths_are_migration_only_sources(self):
         migrations = {(item.source, item.destination) for item in paths.LEGACY_MIGRATIONS}
         self.assertEqual(migrations, {
-            (pathlib.Path("/data/config.json"), pathlib.Path("/conf/config.json")),
-            (pathlib.Path("/data/providers_mapping.json"), pathlib.Path("/conf/providers_mapping.json")),
-            (pathlib.Path("/data/providers_logo.json"), pathlib.Path("/conf/providers_logo.json")),
-            (pathlib.Path("/data/recommendations_rules.json"), pathlib.Path("/conf/recommendations_rules.json")),
             (pathlib.Path("/app/.secrets"), pathlib.Path("/conf/.secrets")),
         })
 

@@ -41,7 +41,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 scanner._bootstrap_sqlite_runtime()
 
-    def test_load_config_uses_defaults_without_creating_conf_json(self):
+    def test_load_config_requires_seeded_sqlite_config_without_creating_conf_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
             default_path = pathlib.Path(tmpdir) / "defaults" / "config.json"
@@ -50,11 +50,10 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
                  patch.object(scanner.config_repository, "load_config", return_value=None), \
                  patch.object(scanner, "DEFAULT_CONFIG_PATH", str(default_path)):
-                cfg = scanner.load_config()
+                with self.assertRaises(RuntimeError):
+                    scanner.load_config()
 
             self.assertFalse(config_path.exists())
-            self.assertEqual(cfg["folders"], [])
-            self.assertEqual(cfg["system"]["log_level"], "DEBUG")
 
     def test_load_config_prefers_sqlite_repository(self):
         with tempfile.TemporaryDirectory() as tmpdir:

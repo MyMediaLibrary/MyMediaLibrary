@@ -25,6 +25,16 @@ class DatabaseSchemaTest(unittest.TestCase):
 
             self.assertTrue(db_path.is_file())
 
+    def test_default_database_path_can_be_overridden_for_tests(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "data" / "mymedialibrary.db"
+
+            with patch.dict("os.environ", {db.DB_PATH_ENV: str(db_path)}):
+                conn = db.initialize_database()
+                conn.close()
+
+            self.assertTrue(db_path.is_file())
+
     def test_runtime_bootstrap_creates_database_and_logs_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = pathlib.Path(tmpdir) / "nested" / "mymedialibrary.db"

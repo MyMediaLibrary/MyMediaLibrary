@@ -25,92 +25,28 @@ def fake_paths(root: pathlib.Path):
         TMP_DIR=tmp,
         SECRETS_FILE=conf / ".secrets",
         LEGACY_MIGRATIONS=(
-            runtime_paths.LegacyMigration(data / "config.json", conf / "config.json"),
-            runtime_paths.LegacyMigration(data / "providers_mapping.json", conf / "providers_mapping.json"),
-            runtime_paths.LegacyMigration(data / "providers_logo.json", conf / "providers_logo.json"),
-            runtime_paths.LegacyMigration(data / "recommendations_rules.json", conf / "recommendations_rules.json"),
             runtime_paths.LegacyMigration(app / ".secrets", conf / ".secrets"),
         ),
     )
 
 
 class StorageMigrationTest(unittest.TestCase):
-    def test_simple_migration_moves_source_to_destination(self):
+    def test_creates_runtime_directories_without_moving_json_config_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            paths = fake_paths(pathlib.Path(tmpdir))
+            root = pathlib.Path(tmpdir)
+            paths = fake_paths(root)
             paths.DATA_DIR.mkdir()
-            src = paths.DATA_DIR / "config.json"
-            src.write_text('{"ok": true}', encoding="utf-8")
+            paths.CONF_DIR.mkdir()
+            data_config = paths.DATA_DIR / "config.json"
+            conf_config = paths.CONF_DIR / "config.json"
+            data_config.write_text('{"legacy": true}', encoding="utf-8")
+            conf_config.write_text('{"current": true}', encoding="utf-8")
 
             storage_migration.run_storage_migration(paths)
 
-            self.assertFalse(src.exists())
-            self.assertEqual((paths.CONF_DIR / "config.json").read_text(encoding="utf-8"), '{"ok": true}')
             self.assertTrue(paths.TMP_DIR.is_dir())
-
-    def test_already_migrated_is_noop(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = fake_paths(pathlib.Path(tmpdir))
-            paths.CONF_DIR.mkdir()
-            dst = paths.CONF_DIR / "config.json"
-            dst.write_text('{"kept": true}', encoding="utf-8")
-
-            storage_migration.run_storage_migration(paths)
-
-            self.assertEqual(dst.read_text(encoding="utf-8"), '{"kept": true}')
-
-    def test_identical_source_and_destination_removes_legacy_source(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = fake_paths(pathlib.Path(tmpdir))
-            paths.DATA_DIR.mkdir()
-            paths.CONF_DIR.mkdir()
-            src = paths.DATA_DIR / "providers_mapping.json"
-            dst = paths.CONF_DIR / "providers_mapping.json"
-            src.write_text('{"same": true}', encoding="utf-8")
-            dst.write_text('{"same": true}', encoding="utf-8")
-
-            storage_migration.run_storage_migration(paths)
-
-            self.assertFalse(src.exists())
-            self.assertEqual(dst.read_text(encoding="utf-8"), '{"same": true}')
-
-    def test_different_source_and_destination_blocks_migration(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = fake_paths(pathlib.Path(tmpdir))
-            paths.DATA_DIR.mkdir()
-            paths.CONF_DIR.mkdir()
-            src = paths.DATA_DIR / "config.json"
-            dst = paths.CONF_DIR / "config.json"
-            src.write_text('{"legacy": true}', encoding="utf-8")
-            dst.write_text('{"current": true}', encoding="utf-8")
-
-            with self.assertRaises(storage_migration.StorageMigrationError):
-                storage_migration.run_storage_migration(paths)
-
-            self.assertEqual(src.read_text(encoding="utf-8"), '{"legacy": true}')
-            self.assertEqual(dst.read_text(encoding="utf-8"), '{"current": true}')
-
-    def test_conflict_preflight_does_not_cleanup_other_legacy_files(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = fake_paths(pathlib.Path(tmpdir))
-            paths.DATA_DIR.mkdir()
-            paths.CONF_DIR.mkdir()
-            same_src = paths.DATA_DIR / "providers_mapping.json"
-            same_dst = paths.CONF_DIR / "providers_mapping.json"
-            conflict_src = paths.DATA_DIR / "config.json"
-            conflict_dst = paths.CONF_DIR / "config.json"
-            same_src.write_text('{"same": true}', encoding="utf-8")
-            same_dst.write_text('{"same": true}', encoding="utf-8")
-            conflict_src.write_text('{"legacy": true}', encoding="utf-8")
-            conflict_dst.write_text('{"current": true}', encoding="utf-8")
-
-            with self.assertRaises(storage_migration.StorageMigrationError):
-                storage_migration.run_storage_migration(paths)
-
-            self.assertTrue(same_src.exists())
-            self.assertEqual(same_dst.read_text(encoding="utf-8"), '{"same": true}')
-            self.assertTrue(conflict_src.exists())
-            self.assertEqual(conflict_dst.read_text(encoding="utf-8"), '{"current": true}')
+            self.assertEqual(data_config.read_text(encoding="utf-8"), '{"legacy": true}')
+            self.assertEqual(conf_config.read_text(encoding="utf-8"), '{"current": true}')
 
     def test_secrets_are_migrated_and_chmod_600(self):
         with tempfile.TemporaryDirectory() as tmpdir:
