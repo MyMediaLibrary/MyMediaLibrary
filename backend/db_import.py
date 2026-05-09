@@ -19,13 +19,32 @@ except Exception:
 log = logging.getLogger(__name__)
 
 _CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "media_probe"}
+_CONFIG_IMPORTABLE_KEYS = {
+    "system",
+    "scan",
+    "auth",
+    "score",
+    "score_configuration",
+    "recommendations",
+    "seerr",
+    "folders",
+    "enable_movies",
+    "enable_series",
+    "providers_visible",
+    "ui",
+    "media_probe",
+}
 _CONFIG_NON_CONFIG_KEYS = {
     "runtime_library_document",
     "library",
     "items",
     "categories",
     "media",
+    ".secrets",
+    "secrets",
 }
+_CONFIG_DIFF_LIMIT = 50
+_SENSITIVE_TOKENS = ("apikey", "api_key", "token", "secret", "password", "access_token", "refresh_token", "hash")
 
 
 @dataclass
@@ -237,6 +256,32 @@ def _migrate_one_startup_json(
     source_total_count = (spec.get("source_total_count") or spec["source_count"])(payload)
     spec["import"](conn, path)
     db_count = spec["db_count"](conn)
+    if name == "config":
+        validation = _validate_config_import(conn, payload)
+        if validation["valid"]:
+            active_logger.info("[DB] Import check passed for %s — removing migrated source file", path.name)
+            removed = _remove_validated_source(path, active_logger) if remove_validated else False
+            return StartupJsonMigrationResult(
+                name=name,
+                path=path,
+                status="ok",
+                source_count=source_count,
+                source_total_count=source_total_count,
+                db_count=db_count,
+                removed=removed,
+            )
+        active_logger.warning("[DB] Import check failed for %s — keeping source file for review", path.name)
+        _log_config_import_diff(validation["differences"], active_logger)
+        return StartupJsonMigrationResult(
+            name=name,
+            path=path,
+            status="warning",
+            source_count=source_count,
+            source_total_count=source_total_count,
+            db_count=db_count,
+            warning="config_diff",
+        )
+
     valid_when = spec.get("valid_when") or (lambda source_count, db_count: source_count == db_count)
     if valid_when(source_count, db_count):
         removed = False
@@ -252,13 +297,8 @@ def _migrate_one_startup_json(
             active_logger.info("[DB] Import check %s — json=%s db=%s — OK", path.name, source_count, db_count)
         if remove_validated:
             try:
-                path.unlink()
-                removed = True
-                active_logger.info("[DB] Removed migrated file %s", path)
-            except FileNotFoundError:
-                removed = True
+                removed = _remove_validated_source(path, active_logger)
             except Exception as exc:
-                active_logger.warning("[DB] Could not remove migrated file %s: %s", path, exc)
                 return StartupJsonMigrationResult(
                     name=name,
                     path=path,
@@ -292,8 +332,6 @@ def _migrate_one_startup_json(
             source_count,
             db_count,
         )
-    if name == "config":
-        _log_config_diff(conn, payload, active_logger)
     return StartupJsonMigrationResult(
         name=name,
         path=path,
@@ -303,6 +341,18 @@ def _migrate_one_startup_json(
         db_count=db_count,
         warning="count_mismatch",
     )
+
+
+def _remove_validated_source(path: Path, active_logger: logging.Logger) -> bool:
+    try:
+        path.unlink()
+        active_logger.info("[DB] Removed migrated file %s", path)
+        return True
+    except FileNotFoundError:
+        return True
+    except Exception as exc:
+        active_logger.warning("[DB] Could not remove migrated file %s: %s", path, exc)
+        raise
 
 
 def _remove_obsolete_runtime_files(paths, active_logger: logging.Logger) -> None:
@@ -398,7 +448,7 @@ def import_config(
     raw_payload = _read_json(path, "config", report)
     if not isinstance(raw_payload, dict):
         return 0
-    payload = sanitize_config_for_db(raw_payload)
+    payload = sanitize_importable_config(raw_payload)
     rows = 0
     app_config_sql = (
         """
@@ -483,21 +533,27 @@ def import_config(
     return rows
 
 
-def sanitize_config_for_db(config: dict[str, Any]) -> dict[str, Any]:
-    """Remove runtime/cache payloads and secrets from a legacy config document."""
+def sanitize_importable_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return only real, non-secret configuration keys that belong in SQLite."""
 
     if not isinstance(config, dict):
         return {}
     sanitized: dict[str, Any] = {}
     for key, value in config.items():
         key_str = str(key)
-        if key_str in _CONFIG_NON_CONFIG_KEYS:
+        if key_str in _CONFIG_NON_CONFIG_KEYS or key_str not in _CONFIG_IMPORTABLE_KEYS:
             continue
         cleaned = _strip_sensitive_value(key_str, value)
         if cleaned is _SKIP_VALUE:
             continue
         sanitized[key_str] = cleaned
     return sanitized
+
+
+def sanitize_config_for_db(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove runtime/cache payloads and secrets from a legacy config document."""
+
+    return sanitize_importable_config(config)
 
 
 def import_media_probe_cache(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
@@ -723,7 +779,7 @@ def _count_items_source(payload: Any) -> int:
 def _count_config_source(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
-    payload = sanitize_config_for_db(payload)
+    payload = sanitize_importable_config(payload)
     count = 0
     for key, value in payload.items():
         if key == "auth":
@@ -744,7 +800,7 @@ def _count_config_source(payload: Any) -> int:
 def _count_config_total_source(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
-    payload = sanitize_config_for_db(payload)
+    payload = sanitize_importable_config(payload)
     count = len(payload)
     if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
         count += 1
@@ -764,39 +820,56 @@ def _count_config_db(conn: sqlite3.Connection) -> int:
     return int(app_config) + int(score) + int(scan) + int(auth)
 
 
-def _log_config_diff(conn: sqlite3.Connection, payload: Any, active_logger: logging.Logger) -> None:
-    source = _config_source_document(payload)
-    current = _config_db_document(conn)
-    source_flat = _flatten_config_document(source)
-    current_flat = _flatten_config_document(current)
+def _validate_config_import(conn: sqlite3.Connection, payload: Any) -> dict[str, Any]:
+    expected = _config_source_document(payload)
+    actual = _config_db_document(conn)
+    expected_flat = _flatten_config_document(expected)
+    actual_flat = _flatten_config_document(actual)
+    differences: list[tuple[str, str, Any, Any]] = []
 
-    missing = sorted(path for path in source_flat if path not in current_flat)
-    extra = sorted(path for path in current_flat if path not in source_flat)
-    mismatched = sorted(
-        path
-        for path in source_flat.keys() & current_flat.keys()
-        if source_flat[path] != current_flat[path]
-    )
-    for path in missing[:20]:
-        active_logger.warning("[DB] config diff: missing in DB: %s", path)
-    for path in mismatched[:20]:
-        active_logger.warning(
-            "[DB] config diff: value mismatch: %s json=%s db=%s",
-            path,
-            _diagnostic_json(source_flat[path]),
-            _diagnostic_json(current_flat[path]),
-        )
-    for path in extra[:20]:
-        active_logger.warning("[DB] config diff: extra in DB: %s", path)
-    remaining = len(missing) + len(extra) + len(mismatched) - 60
+    for path in sorted(expected_flat):
+        if path not in actual_flat:
+            differences.append(("missing", path, expected_flat[path], None))
+            continue
+        expected_value = expected_flat[path]
+        actual_value = actual_flat[path]
+        if type(expected_value) is not type(actual_value):
+            differences.append(("type", path, expected_value, actual_value))
+        elif expected_value != actual_value:
+            differences.append(("value", path, expected_value, actual_value))
+    return {"valid": not differences, "differences": differences}
+
+
+def _log_config_import_diff(
+    differences: list[tuple[str, str, Any, Any]],
+    active_logger: logging.Logger,
+) -> None:
+    for kind, path, expected_value, actual_value in differences[:_CONFIG_DIFF_LIMIT]:
+        if kind == "missing":
+            active_logger.warning("[DB] config import diff: missing in DB: %s", path)
+        elif kind == "type":
+            active_logger.warning(
+                "[DB] config import diff: type mismatch: %s json=%s db=%s",
+                path,
+                type(expected_value).__name__,
+                type(actual_value).__name__,
+            )
+        else:
+            active_logger.warning(
+                "[DB] config import diff: value mismatch: %s json=%s db=%s",
+                path,
+                _diagnostic_json(path, expected_value),
+                _diagnostic_json(path, actual_value),
+            )
+    remaining = len(differences) - _CONFIG_DIFF_LIMIT
     if remaining > 0:
-        active_logger.warning("[DB] config diff: %s additional difference(s) omitted", remaining)
+        active_logger.warning("[DB] config import diff: %s additional difference(s) omitted", remaining)
 
 
 def _config_source_document(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
-    payload = sanitize_config_for_db(payload)
+    payload = sanitize_importable_config(payload)
     document: dict[str, Any] = {}
     for key, value in payload.items():
         if key == "auth":
@@ -808,10 +881,22 @@ def _config_source_document(payload: Any) -> dict[str, Any]:
         clean_value = _strip_sensitive_value(key, value)
         if clean_value is not _SKIP_VALUE:
             document[str(key)] = clean_value
-    if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
+    if isinstance(payload.get("score"), dict):
         score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
         document["score"] = {"enabled": score.get("enabled") is True}
-        document["score_configuration"] = payload.get("score_configuration") if isinstance(payload.get("score_configuration"), dict) else {}
+    score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
+    legacy_score_configuration = {
+        key: value
+        for key, value in score.items()
+        if key in {"weights", "video", "audio", "languages", "size"}
+    }
+    if isinstance(payload.get("score_configuration"), dict) or legacy_score_configuration:
+        score_configuration = (
+            payload.get("score_configuration")
+            if isinstance(payload.get("score_configuration"), dict)
+            else {}
+        )
+        document["score_configuration"] = _deep_merge(legacy_score_configuration, score_configuration)
     if isinstance(payload.get("media_probe"), dict):
         document["media_probe"] = payload["media_probe"]
     return document
@@ -863,8 +948,15 @@ def _flatten_config_document(value: Any, prefix: str = "") -> dict[str, Any]:
     return {prefix: value} if prefix else {"<root>": value}
 
 
-def _diagnostic_json(value: Any) -> str:
+def _diagnostic_json(path: str, value: Any) -> str:
+    if _is_sensitive_path(path):
+        return "<redacted>"
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _is_sensitive_path(path: str) -> bool:
+    lowered = path.casefold()
+    return any(token in lowered for token in _SENSITIVE_TOKENS)
 
 
 def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
@@ -935,7 +1027,7 @@ _SKIP_VALUE = object()
 
 def _strip_sensitive_value(key: str, value: Any) -> Any:
     lowered = str(key).casefold()
-    if any(token in lowered for token in ("apikey", "api_key", "token", "secret", "password", "access_token", "refresh_token")):
+    if any(token in lowered for token in _SENSITIVE_TOKENS):
         return _SKIP_VALUE
     if isinstance(value, dict):
         clean = {}

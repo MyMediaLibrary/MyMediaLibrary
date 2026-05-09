@@ -353,10 +353,10 @@ class DatabaseImportTest(unittest.TestCase):
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
             self.assertEqual(config_result.source_total_count, 4)
-            self.assertEqual(config_result.source_count, config_result.db_count)
+            self.assertEqual(config_result.source_count, 3)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=4 importable=3 db=3", "\n".join(logs.output))
+            self.assertIn("Import check passed for config.json", "\n".join(logs.output))
             conn.close()
 
     def test_startup_migration_ignores_runtime_library_document_in_config(self):
@@ -393,7 +393,7 @@ class DatabaseImportTest(unittest.TestCase):
                 conn.execute("SELECT 1 FROM app_config WHERE key = ?", ("runtime_library_document",)).fetchone()
             )
             joined = "\n".join(logs.output)
-            self.assertIn("json=3 importable=2 db=2", joined)
+            self.assertIn("Import check passed for config.json", joined)
             self.assertNotIn("runtime_library_document", joined)
             self.assertNotIn("categories", joined)
             self.assertNotIn("items", joined)
@@ -448,7 +448,7 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(config_result.db_count, 10)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=13 importable=10 db=10", "\n".join(logs.output))
+            self.assertIn("Import check passed for config.json", "\n".join(logs.output))
             cfg = config_repository.load_config(paths.CONFIG_JSON, db_path)
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
             self.assertEqual(cfg["score"], {"enabled": True})
@@ -491,21 +491,25 @@ class DatabaseImportTest(unittest.TestCase):
             joined = "\n".join(logs.output)
             self.assertEqual(config_result.status, "warning")
             self.assertTrue(paths.CONFIG_JSON.exists())
-            self.assertIn("missing in DB: folders", joined)
-            self.assertIn("value mismatch: score_configuration.weights.video json=40 db=30", joined)
-            self.assertIn('value mismatch: system.log_level json="DEBUG" db="INFO"', joined)
+            self.assertIn("config import diff: missing in DB: folders", joined)
+            self.assertIn("config import diff: value mismatch: score_configuration.weights.video json=40 db=30", joined)
+            self.assertIn('config import diff: value mismatch: system.log_level json="DEBUG" db="INFO"', joined)
             conn.close()
 
-    def test_startup_migration_logs_config_extra_db_details(self):
+    def test_startup_migration_logs_config_type_mismatch_details(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = self.make_paths(root)
-            self.write_json(paths.CONFIG_JSON, {"system": {"log_level": "INFO"}})
+            self.write_json(paths.CONFIG_JSON, {"recommendations": {"enabled": True}})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
-            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("migrated_at", '"now"'))
+            conn.execute(
+                "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                ("recommendations", '{"enabled":"true"}'),
+            )
             conn.commit()
 
-            with self.assertLogs("db-import", level="WARNING") as logs:
+            with patch.object(db_import, "import_config", return_value=0), \
+                 self.assertLogs("db-import", level="WARNING") as logs:
                 results = db_import.migrate_runtime_json_files_at_startup(
                     conn,
                     paths=paths,
@@ -515,7 +519,66 @@ class DatabaseImportTest(unittest.TestCase):
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "warning")
             self.assertTrue(paths.CONFIG_JSON.exists())
-            self.assertIn("extra in DB: migrated_at", "\n".join(logs.output))
+            self.assertIn(
+                "config import diff: type mismatch: recommendations.enabled json=bool db=str",
+                "\n".join(logs.output),
+            )
+            conn.close()
+
+    def test_startup_migration_ignores_and_never_logs_sensitive_config_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(
+                paths.CONFIG_JSON,
+                {
+                    "system": {"log_level": "INFO"},
+                    "seerr": {"enabled": True, "api_key": "super-secret-token"},
+                    "api_key": "top-level-secret",
+                },
+            )
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+
+            with self.assertLogs("db-import", level="INFO") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertFalse(paths.CONFIG_JSON.exists())
+            joined = "\n".join(logs.output)
+            self.assertNotIn("super-secret-token", joined)
+            self.assertNotIn("top-level-secret", joined)
+            exported = config_repository.load_config(paths.CONFIG_JSON, root / "data" / "mymedialibrary.db")
+            self.assertEqual(exported["seerr"], {"enabled": True})
+            self.assertNotIn("api_key", exported)
+            conn.close()
+
+    def test_startup_migration_allows_extra_db_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            self.write_json(paths.CONFIG_JSON, {"system": {"log_level": "INFO"}})
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("migrated_at", '"now"'))
+            conn.commit()
+
+            with self.assertLogs("db-import", level="INFO") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertFalse(paths.CONFIG_JSON.exists())
+            joined = "\n".join(logs.output)
+            self.assertIn("Import check passed for config.json", joined)
+            self.assertNotIn("migrated_at", joined)
             conn.close()
 
     def test_startup_migration_removes_obsolete_library_probe_json(self):
