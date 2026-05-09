@@ -615,3 +615,18 @@ test('score filter UI uses a standard section label and avoids header range dupl
   assert.doesNotMatch(block, /score-filter-title/, 'score filter should not use a custom embedded title row');
   assert.doesNotMatch(block, /score-filter-range/, 'score filter should not render the old top-right range label');
 });
+
+test('filter inline-clear handler is ordered before trigger handler in events.js', () => {
+  // .filter-dropdown-inline-clear is a child of .filter-dropdown-trigger.
+  // If the trigger check runs first it intercepts the click and calls
+  // toggleDropdown() instead of the clear function — the cross does nothing.
+  // Search for the specific closest() call lines (not comments containing the class names).
+  const clearIdx  = eventsSource.indexOf("closest('.filter-dropdown-inline-clear')");
+  const triggerIdx = eventsSource.indexOf("closest('.filter-dropdown-trigger')");
+  assert.ok(clearIdx !== -1, 'events.js must handle .filter-dropdown-inline-clear');
+  assert.ok(triggerIdx !== -1, 'events.js must handle .filter-dropdown-trigger');
+  assert.ok(
+    clearIdx < triggerIdx,
+    'inline-clear handler must be checked before trigger handler so the ✕ click is not swallowed'
+  );
+});

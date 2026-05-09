@@ -569,3 +569,34 @@ test('score settings displays friendly error when API load fails', async ({ page
   await expect(page.locator('#scoreSettingsStatus')).toBeVisible();
   await expect(page.locator('#scoreSettingsStatus')).toContainText('Impossible de charger la configuration du score');
 });
+
+test('filter inline-clear resets only that filter without affecting other active filters', async ({ page }) => {
+  await openConfiguredLibrary(page);
+
+  // Activate two independent filters
+  await page.evaluate(() => {
+    toggleProviderFilter('Netflix');
+    toggleGenreFilter('Action');
+  });
+
+  // Both filters active: library should show only Netflix+Action items
+  await expect(page.locator('#globalFilterResetBtn')).toBeEnabled();
+
+  // Open the provider filter dropdown so the clear button is rendered
+  await page.evaluate(() => toggleDropdown('providerSection'));
+
+  // The inline ✕ is inside .filter-dropdown-trigger — this is exactly the
+  // element whose click was previously intercepted by the trigger handler.
+  const clearSpan = page.locator('#providerSection .filter-dropdown-inline-clear');
+  await expect(clearSpan).toBeVisible();
+  await clearSpan.click();
+
+  // Provider filter cleared; genre filter still active
+  const providerActive = await page.evaluate(() => activeProviders.size);
+  expect(providerActive).toBe(0);
+  const genreActive = await page.evaluate(() => activeGenres.size);
+  expect(genreActive).toBeGreaterThan(0);
+
+  // Reset button still enabled because genre filter remains
+  await expect(page.locator('#globalFilterResetBtn')).toBeEnabled();
+});

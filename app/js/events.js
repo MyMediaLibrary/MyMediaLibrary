@@ -216,21 +216,24 @@
       return;
     }
 
-    // Filter dropdown — open/close trigger
-    var fdTrigger = e.target.closest('.filter-dropdown-trigger');
-    if (fdTrigger) {
-      var cid = fdTrigger.closest('.filter-dropdown[data-container-id]')?.dataset.containerId;
-      if (cid) toggleDropdown(cid);
-      return;
-    }
-
-    // Filter dropdown — inline ✕ clear button
+    // Filter dropdown — inline ✕ clear button.
+    // Must be checked BEFORE .filter-dropdown-trigger because the clear span
+    // is a child of that div; checking the trigger first would intercept the
+    // click and call toggleDropdown() instead of the clear function.
     var fdClear = e.target.closest('.filter-dropdown-inline-clear');
     if (fdClear) {
       e.stopPropagation();
       var fdEl = fdClear.closest('.filter-dropdown[data-container-id]');
       var clearFn = fdEl?.dataset.clearFn;
       if (clearFn && typeof window[clearFn] === 'function') window[clearFn]();
+      return;
+    }
+
+    // Filter dropdown — open/close trigger
+    var fdTrigger = e.target.closest('.filter-dropdown-trigger');
+    if (fdTrigger) {
+      var cid = fdTrigger.closest('.filter-dropdown[data-container-id]')?.dataset.containerId;
+      if (cid) toggleDropdown(cid);
       return;
     }
 
