@@ -491,7 +491,7 @@
             const nestedBodyId = _scoreSectionBodyId(videoPath, `${idx}-${nestedIdx}`);
             nestedIdx += 1;
             videoHtml += '<div class="score-nested-section">'
-              + `<button type="button" class="settings-collapsible score-nested-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
+              + `<button type="button" class="settings-collapsible score-nested-collapsible" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
               + `<span class="settings-collapsible-title">${escH(_scoreLabel(videoPath, videoKey))}</span>`
               + '<span class="settings-collapsible-icon">▾</span>'
               + '</button>'
@@ -535,7 +535,7 @@
       bodyHtml = _renderScoreInput(sectionKey, sectionKey, sectionValue);
     }
     return '<div class="settings-group settings-subgroup score-settings-section">'
-      + `<button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(bodyId)}" aria-expanded="false">`
+      + `<button type="button" class="settings-collapsible" data-target="${escH(bodyId)}" aria-expanded="false">`
       + `<span class="settings-collapsible-title">${escH(_scoreLabel(sectionKey, sectionKey))}</span>`
       + '<span class="settings-collapsible-icon">▾</span>'
       + '</button>'
@@ -1074,7 +1074,7 @@
         + '<td style="padding:6px 8px">'
           + (isMissing
             ? '<span style="color:var(--muted);font-size:12px">'+(f.type==='movie'?t('settings.library.folder_types.movie'):f.type==='tv'?t('settings.library.folder_types.tv'):'—')+'</span>'
-            : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type" onchange="onFolderTypeChange(this)">'
+            : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type">'
               + typeOpts + '</select>')
           + '</td>'
         + '<td style="padding:6px 8px">'
@@ -1413,8 +1413,7 @@
         targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
       }
       stabButtons.forEach(btn => {
-        const onclick = btn.getAttribute('onclick') || '';
-        btn.classList.toggle('active', onclick.includes(`'${targetPanel}'`));
+        btn.classList.toggle('active', btn.dataset.stab === targetPanel);
       });
     }
   }
@@ -1669,8 +1668,8 @@
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
       // Language selector
       + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
-        + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
-        + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
+        + '<button id="onbLangFr" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
+        + '<button id="onbLangEn" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
       + '</div>'
       // Auto-toggling content
       + '<div id="onbWelcomeTitle" style="font-family:var(--font-display);font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
@@ -1686,7 +1685,7 @@
           + '<span>📘 Documentation</span>'
         + '</a>'
       + '</div>'
-      + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
+      + '<button id="onbCommencerBtn" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
         + '<span id="onbWelcomeStart">Commencer →</span>'
       + '</button>'
       + '</div>';
@@ -1714,7 +1713,7 @@
         + '<span style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escH(f.name)+'">'+escH(f.name)+'</span>'
         + (isMissing
           ? '<span style="font-size:11px;color:#f97316">'+t('onboarding.folder_missing')+'</span>'
-          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" onchange="_onbFolderChange('+idx+',this.value);this.classList.toggle(\'has-value\',!!this.value)">'
+          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" data-onb-folder-idx="'+idx+'">'
             + '<option value="">'+t('onboarding.folder_choose')+'</option>'
             + '<option value="movie"'+(cur==='movie'?' selected':'')+'>'+t('onboarding.folder_movie')+'</option>'
             + '<option value="tv"'+(cur==='tv'?' selected':'')+'>'+t('onboarding.folder_tv')+'</option>'
@@ -1789,13 +1788,13 @@
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
         + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://seerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
         + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row">'
-        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
+        + '<button class="scan-btn" id="onbJsrTestBtn"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
         + '<span id="onbJsrTestResult" style="font-size:12px;margin-left:10px;color:var(--muted)"></span>'
       + '</div>'
       + '</div>';
@@ -1809,11 +1808,11 @@
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row">'
         + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '<div class="settings-row">'
         + '<label class="settings-label">'+t('onboarding.features_inventory_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_inventory_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '</div>';
   }
@@ -1828,12 +1827,12 @@
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+' onchange="_onbAuthToggle()"/><span class="toggle-switch-slider"></span></label></div>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
       + '<div id="onbAuthFields">'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
-        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'" oninput="_onbAuthPasswordInput()"/></div>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
-        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'" oninput="_onbAuthPasswordInput()"/></div>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
       + '</div>'
       + '</div>';
@@ -2044,7 +2043,7 @@
       + '</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
-        + '<button onclick="document.getElementById(\'onboardingOverlay\').style.display=\'none\';loadLibrary();" '
+        + '<button id="onbOpenLibraryBtn" '
           + 'style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'+t('onboarding.open_library')+'</button>'
       + '</div>'
       + '</div>';

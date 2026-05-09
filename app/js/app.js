@@ -307,9 +307,7 @@ let allItems=[], categories=[], groups=[];
     const levelClass = getQualityLevelClass(getItemQualityLevel(item));
     const tooltip = getQualityTooltipText(item);
     const tooltipAttr = tooltip ? ' data-quality-tooltip="'+escapeAttrMultiline(tooltip)+'"' : '';
-    const tooltipHandlers = tooltip
-      ? ' onmouseenter="showQualityTooltip(this,event)" onmousemove="moveQualityTooltip(event)" onmouseleave="handleQualityBadgeLeave(this)"'
-      : '';
+    const tooltipHandlers = '';
     return '<span class="quality-badge '+levelClass+(extraClass ? ' '+extraClass : '')+'"'+tooltipAttr+tooltipHandlers+'>'+Math.round(Number(score))+'</span>';
   }
 
@@ -886,7 +884,7 @@ let allItems=[], categories=[], groups=[];
       const d=new Date(data.scanned_at);
       const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
       document.getElementById('scanInfo').innerHTML=
-        t('library.last_scan')+' <span class="scan-ts-link" onclick="openLogViewer()" title="Voir le log">'+
+        t('library.last_scan')+' <span class="scan-ts-link" title="Voir le log">'+
         d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
       enableScore = resolveScoreEnabled();
       enableRecommendations = resolveRecommendationsEnabled();
@@ -1172,12 +1170,11 @@ let allItems=[], categories=[], groups=[];
     if (!total) return '';
     const sorted=Object.entries(byKey).sort((a,b)=>b[1]-a[1]);
     const resetCls='leg leg-reset'+(activeKey==='all'?' active':'');
-    let pills='<div class="'+resetCls+'" onclick="'+resetFn+'()">'+t('filters.all')+'</div>';
+    let pills='<div class="'+resetCls+'" data-bar-fn="'+escH(resetFn)+'">'+t('filters.all')+'</div>';
     sorted.forEach(([k,v])=>{
       const col=cmap[k]||'#888';
       const cls='leg'+(activeKey===k?' active':'');
-      const pct=(v/total*100).toFixed(1);
-      pills+='<div class="'+cls+'" onclick="'+clickFn+"('"+escJ(k)+"')"+'" title="'+escH(k)+' — '+fmtSize(v)+'">'
+      pills+='<div class="'+cls+'" data-bar-fn="'+escH(clickFn)+'" data-bar-key="'+escH(k)+'" title="'+escH(k)+' — '+fmtSize(v)+'">'
         +'<div class="leg-dot" style="background:'+col+'"></div>'
         +'<span>'+escH(k)+'</span>'
         +'</div>';
@@ -1396,7 +1393,7 @@ let allItems=[], categories=[], groups=[];
     }
 
     const clearBtn = hasValue
-      ? '<span class="filter-dropdown-inline-clear" onclick="event.stopPropagation();' + clearFn + '()">✕</span>'
+      ? '<span class="filter-dropdown-inline-clear">✕</span>'
       : '';
 
     // Select-all state
@@ -1405,31 +1402,43 @@ let allItems=[], categories=[], groups=[];
     const indeterminate = !allSelected && !noneSelected;
     const selectAllId = 'sa_' + containerId;
 
+    // Store toggle/clear/exclude function names as data attributes on the container
+    // so the events.js delegation layer can invoke the right function without eval.
+    const toggleFnStr = typeof toggleFn === 'function' ? (toggleFn.name || '') : String(toggleFn || '');
+    const clearFnStr  = typeof clearFn  === 'function' ? (clearFn.name  || '') : String(clearFn  || '');
+    const excludeFnStr = onToggleExclude
+      ? (typeof onToggleExclude === 'function' ? (onToggleExclude.name || '') : String(onToggleExclude))
+      : '';
+
     let html = '<div class="storage-block">'
       + '<div class="storage-title">' + escH(label) + '</div>'
-      + '<div class="filter-dropdown">'
-      + '<div class="filter-dropdown-trigger' + (hasValue ? ' has-value' : '') + '" onclick="toggleDropdown(\'' + containerId + '\')">'
+      + '<div class="filter-dropdown"'
+      + ' data-container-id="' + escH(containerId) + '"'
+      + ' data-toggle-fn="' + escH(toggleFnStr) + '"'
+      + ' data-clear-fn="' + escH(clearFnStr) + '"'
+      + (excludeFnStr ? ' data-exclude-fn="' + escH(excludeFnStr) + '"' : '')
+      + '>'
+      + '<div class="filter-dropdown-trigger' + (hasValue ? ' has-value' : '') + '">'
       + '<span class="filter-dropdown-label">' + triggerLabel + '</span>'
       + clearBtn
       + '<svg class="filter-dropdown-chevron' + (isOpen ? ' open' : '') + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
       + '</div>'
       + '<div class="filter-dropdown-panel"' + (isOpen ? '' : ' style="display:none"') + '>'
       + '<div class="filter-dropdown-header">'
-      + '<label class="filter-dropdown-select-all" onclick="event.stopPropagation()">'
-      + '<input type="checkbox" id="' + selectAllId + '"' + (allSelected ? ' checked' : '')
-      + ' onchange="event.stopPropagation();_dropdownSelectAll(\'' + containerId + '\',\'' + clearFn + '\',this.checked)">'
+      + '<label class="filter-dropdown-select-all">'
+      + '<input type="checkbox" id="' + selectAllId + '"' + (allSelected ? ' checked' : '') + '>'
       + '<span>' + t('filters.select_all') + '</span>'
       + '</label>';
     if (onToggleExclude) {
       const modeClass = excludeMode ? ' is-exclude' : ' is-include';
       const modeLabel = excludeMode ? t('filters.exclude') : t('filters.include');
-      html += '<button class="filter-mode-toggle' + modeClass + '" type="button" onclick="event.stopPropagation();' + onToggleExclude + '()">' + modeLabel + '</button>';
+      html += '<button class="filter-mode-toggle' + modeClass + '" type="button">' + modeLabel + '</button>';
     }
     html += '</div>';
     keys.forEach(function(key) {
       const checked = activeSet.has(key);
       const prefixHtml = typeof getOptionPrefixHtml === 'function' ? getOptionPrefixHtml(key) : '';
-      html += '<div class="filter-dropdown-option" onclick="event.stopPropagation();' + toggleFn + '(this.dataset.key)" data-key="' + escH(key) + '">'
+      html += '<div class="filter-dropdown-option" data-key="' + escH(key) + '">'
         + '<input type="checkbox"' + (checked ? ' checked' : '') + ' tabindex="-1">'
         + prefixHtml
         + '<span class="filter-dropdown-option-label">' + escH(getDisplay(key)) + '</span>'
@@ -2335,7 +2344,7 @@ let allItems=[], categories=[], groups=[];
     return values.map((value) => {
       const active = activeSet.has(value) ? ' active' : '';
       const extra = classPrefix ? ' '+classPrefix+' '+classPrefix+'-'+value : '';
-      return '<button class="rec-filter-btn'+extra+active+'" onclick="'+fnName+'(\''+escH(value)+'\')">'+escH(labelPrefix(value))+'</button>';
+      return '<button class="rec-filter-btn'+extra+active+'" data-rec-fn="'+escH(fnName)+'" data-rec-val="'+escH(value)+'">'+escH(labelPrefix(value))+'</button>';
     }).join('');
   }
 
@@ -2384,7 +2393,7 @@ let allItems=[], categories=[], groups=[];
       return '<option value="'+escH(key)+'"'+selected+'>'+escH(label)+'</option>';
     }).join('');
     return '<div class="rec-filter-group rec-sort-group"><div class="rec-filter-label">'+t('recommendations.sort_by')+'</div>'
-      + '<select class="tab-sort-select rec-sort-select" onchange="setRecommendationSort(this.value)">'+options+'</select></div>';
+      + '<select class="tab-sort-select rec-sort-select">'+options+'</select></div>';
   }
 
   function exportRecommendationsCSV() {
@@ -2723,7 +2732,7 @@ let allItems=[], categories=[], groups=[];
     +'</div>';
   }
 
-  function th(col,label){ const s=tSortCol===col,i=s?(tSortDir===1?' &uarr;':' &darr;'):' &updownarrow;'; return '<th class="'+(s?'sorted':'')+'" onclick="sortByCol(\''+col+'\')">'+label+'<span class="si">'+i+'</span></th>'; }
+  function th(col,label){ const s=tSortCol===col,i=s?(tSortDir===1?' &uarr;':' &darr;'):' &updownarrow;'; return '<th class="'+(s?'sorted':'')+'" data-sort-col="'+escH(col)+'">'+label+'<span class="si">'+i+'</span></th>'; }
 
   function tblProvidersHTML(item) {
     if (!enableSeerr) return '-';
