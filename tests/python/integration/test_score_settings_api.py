@@ -1,6 +1,7 @@
 import http.server
 import copy
 import json
+import os
 import pathlib
 import tempfile
 import threading
@@ -21,6 +22,14 @@ class TestScoreSettingsApi(unittest.TestCase):
         cls.config_path = cls._tmp_path / "config.json"
         cls.output_path = cls._tmp_path / "library.json"
         cls.scan_lock_path = cls._tmp_path / ".scan.lock"
+
+        # Isolate SQLite DB so tests never touch /data
+        cls._db_path = cls._tmp_path / "data" / "mymedialibrary.db"
+        cls._db_path.parent.mkdir(parents=True, exist_ok=True)
+        cls._old_db_path_env = os.environ.get(db.DB_PATH_ENV)
+        os.environ[db.DB_PATH_ENV] = str(cls._db_path)
+        conn = db.initialize_database(cls._db_path)
+        conn.close()
 
         cls._patches = [
             patch.object(scanner, "CONFIG_PATH", str(cls.config_path)),
@@ -93,6 +102,10 @@ class TestScoreSettingsApi(unittest.TestCase):
         cls._thread.join(timeout=2)
         for p in reversed(cls._patches):
             p.stop()
+        if cls._old_db_path_env is None:
+            os.environ.pop(db.DB_PATH_ENV, None)
+        else:
+            os.environ[db.DB_PATH_ENV] = cls._old_db_path_env
         cls._tmp.cleanup()
 
     @classmethod

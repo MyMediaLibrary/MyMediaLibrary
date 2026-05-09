@@ -259,10 +259,11 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             library_json.parent.mkdir()
             library_json.write_text('{"items":[]}', encoding="utf-8")
             cfg = {"media_probe": {"enabled": True, "mode": "compare"}, "score": {"enabled": True}}
+            probed_doc = {"items": [], "scanned_at": "2025-01-01T00:00:00"}
             with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
                  patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
                  patch.object(scanner, "load_config", return_value=cfg), \
-                 patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
+                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe:
                 scanner._run_media_probe_phase1b(only_category="Movies")
 
             run_probe.assert_called_once()

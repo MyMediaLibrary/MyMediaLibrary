@@ -1,3 +1,4 @@
+import os
 import pathlib
 import sys
 import tempfile
@@ -11,8 +12,30 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import scanner  # noqa: E402
 
+try:
+    from backend import db as _db
+except Exception:
+    import db as _db  # type: ignore
+
 
 class ScannerInventoryStep2Test(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._cls_tmp = tempfile.TemporaryDirectory()
+        cls._db_path = pathlib.Path(cls._cls_tmp.name) / "mymedialibrary.db"
+        cls._old_db_env = os.environ.get(_db.DB_PATH_ENV)
+        os.environ[_db.DB_PATH_ENV] = str(cls._db_path)
+        conn = _db.initialize_database(cls._db_path)
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._old_db_env is None:
+            os.environ.pop(_db.DB_PATH_ENV, None)
+        else:
+            os.environ[_db.DB_PATH_ENV] = cls._old_db_env
+        cls._cls_tmp.cleanup()
+
     def test_build_library_inventory_with_movie_and_tv_items(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)

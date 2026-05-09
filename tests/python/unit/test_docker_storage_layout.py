@@ -65,13 +65,11 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
             self.assertNotIn("LIBRARY_PATH", source, name)
             self.assertNotRegex(source, r":/tmp\b|:/tmp:", name)
 
-    def test_docs_describe_storage_migration_to_data_secrets(self):
+    def test_docs_describe_secrets_in_data_not_conf(self):
         for source in (self.readme, self.docs_fr, self.docs_en):
             self.assertIn("/data/.secrets", source)
-            self.assertIn("/conf/.secrets", source)
+            self.assertNotIn("/conf/.secrets", source)
             self.assertNotIn("config.json, providers, rules, .secrets", source)
-        self.assertRegex(self.docs_en, re.compile(r"/conf/\.secrets.*migrated.*?/data/\.secrets", re.I | re.S))
-        self.assertRegex(self.docs_fr, re.compile(r"/conf/\.secrets.*migré.*?/data/\.secrets", re.I | re.S))
 
     def test_nginx_blocks_runtime_storage_and_dotfiles(self):
         self.assertIn("location ~ /\\.", self.nginx)

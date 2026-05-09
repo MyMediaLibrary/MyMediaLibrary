@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import stat
 import sys
@@ -13,8 +14,30 @@ sys.path.insert(0, str(ROOT / "backend"))
 import runtime_paths  # noqa: E402
 import scanner  # noqa: E402
 
+try:
+    from backend import db as _db
+except Exception:
+    import db as _db  # type: ignore
+
 
 class ScannerRuntimePathsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._cls_tmp = tempfile.TemporaryDirectory()
+        cls._db_path = pathlib.Path(cls._cls_tmp.name) / "mymedialibrary.db"
+        cls._old_db_env = os.environ.get(_db.DB_PATH_ENV)
+        os.environ[_db.DB_PATH_ENV] = str(cls._db_path)
+        conn = _db.initialize_database(cls._db_path)
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._old_db_env is None:
+            os.environ.pop(_db.DB_PATH_ENV, None)
+        else:
+            os.environ[_db.DB_PATH_ENV] = cls._old_db_env
+        cls._cls_tmp.cleanup()
+
     def test_scanner_defaults_use_canonical_paths(self):
         self.assertEqual(scanner.LIBRARY_PATH, str(runtime_paths.LIBRARY_DIR))
         self.assertEqual(scanner.OUTPUT_PATH, str(runtime_paths.LIBRARY_JSON))

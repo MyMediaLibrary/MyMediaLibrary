@@ -1117,6 +1117,7 @@ def migrate_env_to_config() -> None:
     """
     cfg = load_config()
     changed = False
+    env_migrated = False  # True only when actual env var values are consumed
 
     # Seerr bootstrap (supports both SEERR_* and legacy JELLYSEERR_* spellings)
     cfg, seerr_cfg_changed = normalize_seerr_config(cfg)
@@ -1146,6 +1147,7 @@ def migrate_env_to_config() -> None:
         jsr["url"]     = env_url
         jsr["enabled"] = env_jsr_on.lower() == "true" if env_jsr_on else True
         changed = True
+        env_migrated = True
     secrets = _load_secrets()
     secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
     if secrets_changed:
@@ -1154,6 +1156,7 @@ def migrate_env_to_config() -> None:
         secrets["seerr_apikey"] = env_apikey
         _save_secrets(secrets)
         log.info("[migrate] Seerr API key migrated to %s", SECRETS_PATH)
+        env_migrated = True
     # Remove apikey from SQLite config if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
@@ -1164,11 +1167,13 @@ def migrate_env_to_config() -> None:
         if env_em:
             cfg["enable_movies"] = env_em.lower() == "true"
             changed = True
+            env_migrated = True
     if "enable_series" not in cfg:
         env_es = os.environ.get("ENABLE_SERIES", "")
         if env_es:
             cfg["enable_series"] = env_es.lower() == "true"
             changed = True
+            env_migrated = True
 
     # Folders from MOVIES_FOLDERS / SERIES_FOLDERS
     env_movies = [f.strip() for f in os.environ.get("MOVIES_FOLDERS", "").split(",") if f.strip()]
@@ -1180,6 +1185,7 @@ def migrate_env_to_config() -> None:
         for fname in env_series:
             cfg["folders"].append({"name": fname, "type": "tv",    "enabled": True})
         changed = True
+        env_migrated = True
 
     # system block defaults
     sys_cfg = cfg.setdefault("system", {})
@@ -1210,7 +1216,10 @@ def migrate_env_to_config() -> None:
 
     if changed:
         save_config(cfg)
-        log.info("[MIGRATION] Env vars migrated to SQLite config")
+        if env_migrated:
+            log.info("[MIGRATION] Env vars migrated to SQLite config")
+        else:
+            log.debug("[MIGRATION] Config defaults applied to SQLite config")
     # Warm DB-backed provider metadata; bundled defaults are seeded during DB bootstrap.
     _ensure_runtime_provider_mapping()
     _ensure_runtime_providers_logo()
@@ -2303,6 +2312,7 @@ def load_library_document_non_blocking(path: str) -> dict | None:
             if isinstance(items, list):
                 return document
             raise ValueError("library.items must be an array")
+        return None  # Empty or new library — not an error
     log.error("[library] SQLite media repository unavailable")
     return None
 
@@ -4037,9 +4047,11 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
             library_root=LIBRARY_PATH,
             only_category=only_category,
         )
-        if result is not None:
+        if isinstance(result, tuple) and len(result) == 2:
             updated_document, _stats = result
             write_json(updated_document, OUTPUT_PATH)
+        elif result is not None:
+            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("1B"))
     except Exception as e:
         log.exception("%s Failed: %s", _phase_prefix("1B"), e)
 
