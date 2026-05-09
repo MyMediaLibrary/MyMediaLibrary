@@ -517,9 +517,29 @@ let allItems=[], categories=[], groups=[];
     if (payload !== undefined) console.info('[filters]', message, payload);
     else console.info('[filters]', message);
   }
+
+  function isPerfDebugEnabled() {
+    try {
+      return window.__MML_DEBUG_PERF__ === true || localStorage.getItem('mml_debug_perf') === '1';
+    } catch (e) {
+      return window.__MML_DEBUG_PERF__ === true;
+    }
+  }
+
+  function perfNow() {
+    return window.performance?.now ? performance.now() : Date.now();
+  }
+
+  function logPerf(label, payload) {
+    if (!isPerfDebugEnabled()) return;
+    if (payload !== undefined) console.info('[perf]', label, payload);
+    else console.info('[perf]', label);
+  }
+
   let appConfig = {};            // loaded from /api/config
   let appVersionInfo = null;     // loaded from /version.json
   let recommendationsDoc = null;
+  let recommendationsLoadPromise = null;
   let recommendationTypeFilters = new Set();
   let recommendationPriorityFilters = new Set();
   let recommendationSort = { key: 'priority', dir: 'desc' };
@@ -595,6 +615,7 @@ let allItems=[], categories=[], groups=[];
     if (controls) controls.style.display = show && currentTab === 'recommendations' ? '' : 'none';
     if (!show) {
       recommendationsDoc = null;
+      recommendationsLoadPromise = null;
       recommendationTypeFilters.clear();
       recommendationPriorityFilters.clear();
       if (currentTab === 'recommendations') currentTab = 'library';
@@ -704,6 +725,7 @@ let allItems=[], categories=[], groups=[];
   }
   let currentView='grid', currentTab='library';
   let tSortCol=null, tSortDir=1;
+  let searchFilterTimer = null;
 
   const PALETTE = window.MMLCore.PALETTE;
 
@@ -890,7 +912,7 @@ let allItems=[], categories=[], groups=[];
       enableRecommendations = resolveRecommendationsEnabled();
       applyScoreFeatureVisibility();
       applyRecommendationsFeatureVisibility();
-      await loadRecommendations();
+      if (currentTab === 'recommendations') await ensureRecommendationsLoaded();
       renderStorageBar();
       renderFolderFilter();
       renderGenreFilter();
@@ -1077,14 +1099,22 @@ let allItems=[], categories=[], groups=[];
   }
 
   async function loadRecommendations() {
+    const started = perfNow();
     if (!isRecommendationsEnabled()) {
       recommendationsDoc = null;
       return;
     }
     try {
+      const fetchStarted = perfNow();
       const r = await fetch('/api/recommendations?_=' + Date.now());
       if (!r.ok) throw new Error('HTTP ' + r.status);
+      const jsonStarted = perfNow();
       const doc = await r.json();
+      logPerf('recommendations fetch', {
+        fetch_ms: Math.round(jsonStarted - fetchStarted),
+        parse_ms: Math.round(perfNow() - jsonStarted),
+        items: Array.isArray(doc?.items) ? doc.items.length : 0,
+      });
       if (doc?.enabled === false) {
         recommendationsDoc = { enabled: false, generated_at: null, version: doc?.version || 1, items: [], error: null };
         enableRecommendations = false;
@@ -1101,19 +1131,44 @@ let allItems=[], categories=[], groups=[];
     } catch (e) {
       console.warn('loadRecommendations error:', e);
       recommendationsDoc = { enabled: true, generated_at: null, version: 1, items: [], error: true };
+    } finally {
+      logPerf('recommendations load total', { duration_ms: Math.round(perfNow() - started) });
     }
+  }
+
+  async function ensureRecommendationsLoaded() {
+    if (!isRecommendationsEnabled()) return null;
+    if (recommendationsDoc) return recommendationsDoc;
+    if (!recommendationsLoadPromise) {
+      recommendationsLoadPromise = loadRecommendations().finally(() => {
+        recommendationsLoadPromise = null;
+      });
+    }
+    await recommendationsLoadPromise;
+    return recommendationsDoc;
   }
 
   async function _fetchLibraryWithRetry() {
     let parseError = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const libraryUrl = '/api/library?_=' + Date.now();
+      const fetchStarted = perfNow();
       const r = await fetch(libraryUrl);
       if (r.status === 404) return { missing: true };
       if (!r.ok) throw new Error('HTTP ' + r.status + ' while loading ' + libraryUrl);
+      const textStarted = perfNow();
       const body = await r.text();
       try {
-        return { missing: false, data: JSON.parse(body) };
+        const parseStarted = perfNow();
+        const data = JSON.parse(body);
+        logPerf('library fetch', {
+          fetch_ms: Math.round(textStarted - fetchStarted),
+          text_ms: Math.round(parseStarted - textStarted),
+          parse_ms: Math.round(perfNow() - parseStarted),
+          bytes: body.length,
+          items: Array.isArray(data?.items) ? data.items.length : 0,
+        });
+        return { missing: false, data };
       } catch (_) {
         parseError = new Error('Invalid JSON from /api/library');
         if (attempt === 0) {
@@ -1127,6 +1182,7 @@ let allItems=[], categories=[], groups=[];
 
   // ── STATS ────────────────────────────────────────────
   function renderStats(items) {
+    const started = perfNow();
     const bytes=items.reduce((s,i)=>s+(i.size_b||0),0);
     const files=items.reduce((s,i)=>s+(i.file_count||0),0);
     const cats=new Set(items.map(i=>i.category)).size;
@@ -1140,6 +1196,7 @@ let allItems=[], categories=[], groups=[];
       '<div class="stat"><div class="stat-val">'+files.toLocaleString('fr-FR')+'</div><div class="stat-label">'+t('stats.files')+'</div></div>'+
       '<div class="stat"><div class="stat-val">'+fmtSize(bytes)+'</div><div class="stat-label">'+t('stats.disk')+'</div></div>';
     document.querySelectorAll('#mobileStatsBar').forEach(el=>{ el.innerHTML=document.getElementById('statsBar').innerHTML; });
+    logPerf('renderStats', { items: items.length, duration_ms: Math.round(perfNow() - started) });
 
   }
 
@@ -1934,6 +1991,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onFilter() {
+    const items = filterItems();
     syncTypePills();
     renderStorageBar();
     renderFolderFilter();
@@ -1947,16 +2005,34 @@ let allItems=[], categories=[], groups=[];
     renderAudioLanguageFilter();
     renderQualityFilter();
     ensureScoreFilterLast();
-    renderStats(filterItems());
-    if (currentTab==='library') render();
-    else if (currentTab==='stats') window.MMLStats.renderStatsPanel();
-    else if (currentTab==='recommendations') {
-      renderRecommendationsPanel();
-      syncRecommendationSummaryStats();
+    if (currentTab==='library') render(items);
+    else {
+      renderStats(items);
+      if (currentTab==='stats') window.MMLStats.renderStatsPanel();
+      else if (currentTab==='recommendations') {
+        if (recommendationsDoc) {
+          renderRecommendationsPanel();
+          syncRecommendationSummaryStats();
+        } else {
+          ensureRecommendationsLoaded().then(() => {
+            if (currentTab !== 'recommendations') return;
+            renderRecommendationsPanel();
+            syncRecommendationSummaryStats();
+          });
+        }
+      }
     }
     saveState();
     syncMobileFilters();
     updateGlobalResetButtons();
+  }
+
+  function scheduleSearchFilter() {
+    if (searchFilterTimer) clearTimeout(searchFilterTimer);
+    searchFilterTimer = setTimeout(() => {
+      searchFilterTimer = null;
+      onFilter();
+    }, 120);
   }
 
   function syncTypePills() {
@@ -2449,6 +2525,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function renderRecommendationsPanel() {
+    const started = perfNow();
     const host = document.getElementById('recommendationsContent');
     if (!host) return;
     if (!isRecommendationsEnabled()) {
@@ -2547,6 +2624,11 @@ let allItems=[], categories=[], groups=[];
       + '<th>'+t('recommendations.table.action')+'</th>'
       + '</tr></thead><tbody>'+rows+'</tbody></table></div>'
       + '<div class="rec-card-list">'+cards+'</div></div>';
+    logPerf('renderRecommendations', {
+      items: sortedRecs.length,
+      dom_nodes: host.querySelectorAll('*').length,
+      duration_ms: Math.round(perfNow() - started),
+    });
   }
 
   // ── TABS ─────────────────────────────────────────────
@@ -2573,17 +2655,30 @@ let allItems=[], categories=[], groups=[];
       el.classList.toggle('active', t === tab);
     });
     if (tab==='library') render();
-    else if (tab==='stats') window.MMLStats.renderStatsPanel();
+    else if (tab==='stats') {
+      window.MMLStats.renderStatsPanel();
+      ensureRecommendationsLoaded().then(() => {
+        if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+      });
+    }
     else if (tab==='recommendations') {
-      renderRecommendationsPanel();
-      syncRecommendationSummaryStats();
+      const host = document.getElementById('recommendationsContent');
+      if (!recommendationsDoc && host) {
+        host.innerHTML = '<div class="empty rec-empty"><p>'+t('library.loading')+'</p></div>';
+      }
+      ensureRecommendationsLoaded().then(() => {
+        if (currentTab !== 'recommendations') return;
+        renderRecommendationsPanel();
+        syncRecommendationSummaryStats();
+      });
     }
     saveState();
   }
 
   // ── RENDER LIBRARY ───────────────────────────────────
-  function render() {
-    let items=filterItems();
+  function render(precomputedItems) {
+    const started = perfNow();
+    let items=Array.isArray(precomputedItems) ? precomputedItems : filterItems();
     renderStats(items);
     const c=document.getElementById('library');
     if (!items.length) {
@@ -2593,10 +2688,17 @@ let allItems=[], categories=[], groups=[];
       } else {
         c.innerHTML='<div class="empty"><p>'+t('library.no_results')+'</p><small>'+t('library.no_results_hint')+'</small></div>';
       }
+      logPerf('renderLibrary', { view: currentView, items: 0, dom_nodes: c ? c.querySelectorAll('*').length : 0, duration_ms: Math.round(perfNow() - started) });
       return;
     }
     if (currentView==='grid') { c.className=''; c.innerHTML=sortItems(items).map(cardHTML).join(''); }
     else { c.className='table-view'; c.innerHTML=tableHTML(sortItemsTable(items)); }
+    logPerf('renderLibrary', {
+      view: currentView,
+      items: items.length,
+      dom_nodes: c ? c.querySelectorAll('*').length : 0,
+      duration_ms: Math.round(perfNow() - started),
+    });
   }
 
   function getSidebarSortValue() {
@@ -2676,7 +2778,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function posterBlock(item) {
-    if (item.poster) return '<div class="tl-poster"><img src="'+escH(item.poster)+'" alt="" loading="lazy"/></div>';
+    if (item.poster) return '<div class="tl-poster"><img src="'+escH(item.poster)+'" alt="" loading="lazy" decoding="async"/></div>';
     return '<div class="tl-poster"><div class="tl-poster-ph">🎬</div></div>';
   }
   function providersBlock(item) {
@@ -2772,7 +2874,7 @@ let allItems=[], categories=[], groups=[];
         +(()=>{ const p=tblProvidersHTML(item); return p?'<div style="margin-top:4px">'+p+'</div>':''; })()
         +'</td>';
       return '<tr>'
-        +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy"/>':'<div class="ph">🎬</div>')+'</td>':'')
+        +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy" decoding="async"/>':'<div class="ph">🎬</div>')+'</td>':'')
         +mobileInfo
         +'<td class="col-title">'+escH(item.title)+'</td>'
         +'<td class="col-year">'+escH(String(item.year||'-'))+'</td>'
@@ -2878,7 +2980,7 @@ let allItems=[], categories=[], groups=[];
   document.getElementById('searchInput').addEventListener('input', function() {
     const btn = document.getElementById('searchClear');
     if (btn) btn.style.display = this.value.length > 0 ? 'block' : 'none';
-    onFilter();
+    scheduleSearchFilter();
   });
 
   function clearSearch() {
@@ -2896,7 +2998,7 @@ let allItems=[], categories=[], groups=[];
     if (btn) btn.style.display = val.length > 0 ? 'block' : 'none';
     const btnD = document.getElementById('searchClear');
     if (btnD) btnD.style.display = val.length > 0 ? 'block' : 'none';
-    onFilter();
+    scheduleSearchFilter();
   }
 
   function clearSearchMobile() {
@@ -3206,8 +3308,23 @@ let allItems=[], categories=[], groups=[];
     const rc2 = document.getElementById('recommendationsControls');
     if (rc2) rc2.style.display = tab==='recommendations' ? '' : 'none';
     if (tab === 'library') render();
-    else if (tab === 'stats') window.MMLStats.renderStatsPanel();
-    else if (tab === 'recommendations') renderRecommendationsPanel();
+    else if (tab === 'stats') {
+      window.MMLStats.renderStatsPanel();
+      ensureRecommendationsLoaded().then(() => {
+        if (currentTab === 'stats') window.MMLStats.renderStatsPanel();
+      });
+    }
+    else if (tab === 'recommendations') {
+      const host = document.getElementById('recommendationsContent');
+      if (!recommendationsDoc && host) {
+        host.innerHTML = '<div class="empty rec-empty"><p>'+t('library.loading')+'</p></div>';
+      }
+      ensureRecommendationsLoaded().then(() => {
+        if (currentTab !== 'recommendations') return;
+        renderRecommendationsPanel();
+        syncRecommendationSummaryStats();
+      });
+    }
   }
 
   function syncMobileFilters() {

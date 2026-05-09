@@ -4751,10 +4751,49 @@ def _recommendations_api_payload(cfg: dict | None = None) -> dict:
     return payload
 
 
+_library_api_cache: dict[str, object] = {
+    "signature": None,
+    "payload": None,
+}
+
+
+def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
+    if Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON:
+        db_path = sqlite_db.default_db_path() if sqlite_db is not None else runtime_paths.SQLITE_DB
+    else:
+        db_path = Path(OUTPUT_PATH).parent / "mymedialibrary.db"
+    paths = [Path(db_path), Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")]
+    signature: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+            signature.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns))
+        except FileNotFoundError:
+            signature.append((str(path), -1, -1))
+        except Exception:
+            signature.append((str(path), -2, -2))
+    return tuple(signature)
+
+
 def _library_api_payload() -> dict:
+    started = time.perf_counter()
+    cache_enabled = Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
+    signature = _runtime_db_signature()
+    if cache_enabled and _library_api_cache.get("signature") == signature and isinstance(_library_api_cache.get("payload"), dict):
+        payload = _library_api_cache["payload"]
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        log.debug("[perf] /api/library cache=hit items=%s duration_ms=%.1f", len(items), (time.perf_counter() - started) * 1000)
+        return payload
+
+    load_started = time.perf_counter()
     payload = load_library_document_non_blocking(OUTPUT_PATH)
+    load_ms = (time.perf_counter() - load_started) * 1000
     if not isinstance(payload, dict):
-        return {"items": [], "categories": [], "total_items": 0}
+        payload = {"items": [], "categories": [], "total_items": 0}
+        if cache_enabled:
+            _library_api_cache.update({"signature": signature, "payload": payload})
+        log.debug("[perf] /api/library cache=miss sql_ms=%.1f items=0 duration_ms=%.1f", load_ms, (time.perf_counter() - started) * 1000)
+        return payload
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
     categories = payload.get("categories")
     if not isinstance(categories, list):
@@ -4766,6 +4805,15 @@ def _library_api_payload() -> dict:
     payload["items"] = items
     payload["categories"] = categories
     payload["total_items"] = len(items)
+    if cache_enabled:
+        _library_api_cache.update({"signature": signature, "payload": payload})
+    log.debug(
+        "[perf] /api/library cache=miss sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        load_ms,
+        len(items),
+        len(categories),
+        (time.perf_counter() - started) * 1000,
+    )
     return payload
 
 
@@ -4824,7 +4872,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         pass
 
     def _json(self, code, data, *, set_cookie=None):
+        encode_started = time.perf_counter()
         body = json.dumps(data).encode()
+        encode_ms = (time.perf_counter() - encode_started) * 1000
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -4832,6 +4882,17 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
+        if getattr(self, "_request_path", "").startswith("/api/"):
+            request_started = getattr(self, "_request_started", None)
+            duration_ms = ((time.perf_counter() - request_started) * 1000) if request_started else 0.0
+            log.debug(
+                "[perf] endpoint=%s status=%s bytes=%s json_ms=%.1f duration_ms=%.1f",
+                self._request_path,
+                code,
+                len(body),
+                encode_ms,
+                duration_ms,
+            )
 
     def _check_auth(self) -> bool:
         """Return True if request carries a valid mml_session cookie."""
@@ -4880,7 +4941,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         if path not in _PUBLIC_GET and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
             return
@@ -5120,7 +5183,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             })
 
     def do_PUT(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
             return
@@ -5139,7 +5204,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b"{}"
         if path == "/api/auth":

@@ -325,6 +325,26 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
   assert.match(settingsBlock, /if \(!scoreEnabled\) recEl\.checked = false;/, 'settings should clear recommendations when score is off');
 });
 
+test('recommendations load lazily after initial library render', () => {
+  assert.match(appSource, /let recommendationsLoadPromise = null;/, 'recommendations should guard concurrent lazy loads');
+  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(loadLibraryBlock, /if \(currentTab === 'recommendations'\) await ensureRecommendationsLoaded\(\);/, 'initial load should fetch recommendations only when restoring recommendations tab');
+  assert.doesNotMatch(loadLibraryBlock, /await loadRecommendations\(\);/, 'initial library load should not always fetch recommendations');
+  const switchBlock = functionBlock(appSource, 'switchTab', 'render');
+  assert.match(switchBlock, /ensureRecommendationsLoaded\(\)\.then/, 'opening recommendations should trigger lazy loading');
+  assert.match(switchBlock, /library\.loading/, 'lazy recommendations load should render a loading state');
+});
+
+test('library perf diagnostics and search debounce are debug-gated', () => {
+  assert.match(appSource, /function isPerfDebugEnabled\(\)/, 'frontend perf logging should be explicitly gated');
+  assert.match(appSource, /localStorage\.getItem\('mml_debug_perf'\) === '1'/, 'perf logs should be opt-in through localStorage');
+  assert.match(appSource, /function scheduleSearchFilter\(\)[\s\S]*setTimeout\(\(\) => \{[\s\S]*onFilter\(\);[\s\S]*\}, 120\)/, 'search should debounce expensive filtering and rendering');
+  assert.match(appSource, /logPerf\('library fetch'/, 'library fetch should expose debug timing');
+  assert.match(appSource, /logPerf\('renderLibrary'/, 'library render should expose debug timing');
+  assert.match(scannerSource, /\[perf\] \/api\/library cache=hit/, 'backend should expose debug cache timing for library API');
+  assert.match(scannerSource, /\[perf\] endpoint=%s status=%s bytes=%s json_ms=%.1f duration_ms=%.1f/, 'backend should expose debug endpoint timing and payload size');
+});
+
 test('recommendations page joins recommendations to filtered library items', () => {
   const visibleBlock = functionBlock(appSource, 'visibleRecommendations', 'recMedia');
   assert.match(visibleBlock, /const mediaById = new Map\(allItems\.map/, 'recommendations should join by library item id');
