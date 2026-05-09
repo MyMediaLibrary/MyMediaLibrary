@@ -151,7 +151,7 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "source_total_count": _count_config_total_source,
             "source_count": _count_config_source,
             "db_count": _count_config_db,
-            "import": import_config,
+            "import": lambda conn, path: import_config(conn, path, overwrite=True),
         },
         {
             "name": "providers_mapping",
@@ -377,35 +377,74 @@ def import_recommendation_rules(conn: sqlite3.Connection, path: str | Path, repo
     return rows
 
 
-def import_config(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
+def import_config(
+    conn: sqlite3.Connection,
+    path: str | Path,
+    report: ImportReport | None = None,
+    *,
+    overwrite: bool = False,
+) -> int:
     payload = _read_json(path, "config", report)
     if not isinstance(payload, dict):
         return 0
     rows = 0
+    app_config_sql = (
+        """
+        INSERT INTO app_config(key, value_json)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = CURRENT_TIMESTAMP
+        """
+        if overwrite
+        else """
+        INSERT OR IGNORE INTO app_config(key, value_json)
+        VALUES (?, ?)
+        """
+    )
+    score_sql = (
+        """
+        INSERT INTO score_settings(id, enabled, configuration_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            enabled = excluded.enabled,
+            configuration_json = excluded.configuration_json,
+            updated_at = CURRENT_TIMESTAMP
+        """
+        if overwrite
+        else """
+        INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json)
+        VALUES (?, ?, ?)
+        """
+    )
+    scan_sql = (
+        """
+        INSERT INTO scan_settings(id, value_json)
+        VALUES (?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = CURRENT_TIMESTAMP
+        """
+        if overwrite
+        else """
+        INSERT OR IGNORE INTO scan_settings(id, value_json)
+        VALUES (?, ?)
+        """
+    )
     with conn:
         for key, value in payload.items():
             if key == "auth":
-                _import_auth_settings(conn, value)
+                _import_auth_settings(conn, value, overwrite=overwrite)
                 continue
             clean_value = _strip_sensitive_value(key, value)
             if clean_value is _SKIP_VALUE:
                 continue
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO app_config(key, value_json)
-                VALUES (?, ?)
-                """,
-                (str(key), _to_json(clean_value)),
-            )
+            rows += _insert_count(conn, app_config_sql, (str(key), _to_json(clean_value)))
         if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
             score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
             rows += _insert_count(
                 conn,
-                """
-                INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json)
-                VALUES (?, ?, ?)
-                """,
+                score_sql,
                 (
                     "default",
                     1 if score.get("enabled") is True else 0,
@@ -415,10 +454,7 @@ def import_config(conn: sqlite3.Connection, path: str | Path, report: ImportRepo
         if isinstance(payload.get("media_probe"), dict):
             rows += _insert_count(
                 conn,
-                """
-                INSERT OR IGNORE INTO scan_settings(id, value_json)
-                VALUES (?, ?)
-                """,
+                scan_sql,
                 ("media_probe", _to_json(payload["media_probe"])),
             )
     _record(report, "config", rows)
@@ -576,15 +612,27 @@ def upsert_library_item(conn: sqlite3.Connection, item: dict[str, Any], *, overw
     return _insert_count(conn, _MEDIA_INSERT_IGNORE_SQL, params)
 
 
-def _import_auth_settings(conn: sqlite3.Connection, value: Any) -> None:
+def _import_auth_settings(conn: sqlite3.Connection, value: Any, *, overwrite: bool = False) -> None:
     if not isinstance(value, dict):
         return
     password_hash = value.get("password_hash") if isinstance(value.get("password_hash"), str) else None
-    conn.execute(
+    sql = (
         """
+        INSERT INTO auth_settings(id, auth_enabled, password_hash)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            auth_enabled = excluded.auth_enabled,
+            password_hash = excluded.password_hash,
+            updated_at = CURRENT_TIMESTAMP
+        """
+        if overwrite
+        else """
         INSERT OR IGNORE INTO auth_settings(id, auth_enabled, password_hash)
         VALUES (1, ?, ?)
-        """,
+        """
+    )
+    conn.execute(
+        sql,
         (1 if value.get("enabled") is True else 0, password_hash),
     )
 

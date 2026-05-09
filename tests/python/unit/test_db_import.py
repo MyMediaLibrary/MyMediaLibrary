@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import db  # noqa: E402
 import db_export  # noqa: E402
 import db_import  # noqa: E402
+from repositories import config_repository  # noqa: E402
 
 
 class DatabaseImportTest(unittest.TestCase):
@@ -332,6 +333,65 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
             self.assertIn("json=5 importable=4 db=4", "\n".join(logs.output))
+            conn.close()
+
+    def test_startup_migration_updates_seeded_config_and_preserves_score_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+            db_path = root / "data" / "mymedialibrary.db"
+            self.write_json(
+                paths.DEFAULT_CONFIG_JSON,
+                {
+                    "system": {"log_level": "INFO"},
+                    "folders": [],
+                    "score": {"enabled": False},
+                    "media_probe": {"enabled": False},
+                },
+            )
+            self.write_json(
+                paths.CONFIG_JSON,
+                {
+                    "system": {"log_level": "DEBUG", "scan_cron": "*/10 * * * *"},
+                    "folders": [{"name": "Movies", "type": "movie", "path": "/movies"}],
+                    "enable_movies": True,
+                    "enable_series": True,
+                    "seerr": {"enabled": True, "url": "https://seerr.test", "apikey": "secret"},
+                    "providers_visible": ["Netflix"],
+                    "ui": {"theme": "dark"},
+                    "score": {"enabled": True},
+                    "recommendations": {"enabled": True},
+                    "media_probe": {"enabled": True, "workers": 6},
+                    "score_configuration": {"weights": {"video": 49, "audio": 21, "languages": 15, "size": 15}},
+                    "api_key": "legacy-secret",
+                },
+            )
+            paths.SECRETS_FILE.write_text('{"seerr_apikey":"secret"}', encoding="utf-8")
+            conn = db.initialize_database(db_path)
+            db_import.seed_bundled_defaults(conn, paths=paths)
+
+            with self.assertLogs("db-import", level="INFO") as logs:
+                results = db_import.migrate_runtime_json_files_at_startup(
+                    conn,
+                    paths=paths,
+                    logger=__import__("logging").getLogger("db-import"),
+                )
+
+            config_result = next(result for result in results if result.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertEqual(config_result.source_total_count, 14)
+            self.assertEqual(config_result.source_count, 13)
+            self.assertEqual(config_result.db_count, 13)
+            self.assertFalse(paths.CONFIG_JSON.exists())
+            self.assertTrue(paths.SECRETS_FILE.exists())
+            self.assertIn("json=14 importable=13 db=13", "\n".join(logs.output))
+            cfg = config_repository.load_config(paths.CONFIG_JSON, db_path)
+            self.assertEqual(cfg["system"]["log_level"], "DEBUG")
+            self.assertEqual(cfg["score"], {"enabled": True})
+            self.assertEqual(cfg["score_configuration"]["weights"]["video"], 49)
+            self.assertEqual(cfg["media_probe"]["workers"], 6)
+            self.assertNotIn("api_key", cfg)
+            self.assertNotIn("apikey", cfg["seerr"])
             conn.close()
 
     def test_startup_migration_removes_obsolete_library_probe_json(self):
