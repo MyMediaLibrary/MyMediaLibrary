@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Audit no runtime JSON
+        run: scripts/audit-no-runtime-json.sh
       - name: Run Python unit/integration tests
         run: python3 -m unittest discover -s tests/python -p 'test_*.py'
 

@@ -1,5 +1,6 @@
 import pathlib
 import re
+import subprocess
 import unittest
 
 
@@ -36,6 +37,8 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertIn("COPY backend/scanner.py /app/scanner.py", self.dockerfile)
         self.assertIn('VOLUME ["/data"]', self.dockerfile)
         self.assertNotIn("/app/.secrets", self.dockerfile)
+        self.assertNotIn("/app/score_defaults.json", self.dockerfile)
+        self.assertNotIn("/app/recommendations_rules.json", self.dockerfile)
         self.assertNotIn("/data/config.json", self.dockerfile)
 
     def test_docker_context_does_not_exclude_backend_sqlite_runtime(self):
@@ -74,6 +77,19 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
     def test_nginx_blocks_runtime_storage_and_dotfiles(self):
         self.assertIn("location ~ /\\.", self.nginx)
         self.assertRegex(self.nginx, r"location ~ \^/\(data\|conf\)")
+
+    def test_no_runtime_json_audit_script_passes(self):
+        script = ROOT / "scripts" / "audit-no-runtime-json.sh"
+        self.assertTrue(script.exists())
+        result = subprocess.run(
+            [str(script)],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

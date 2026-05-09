@@ -402,11 +402,11 @@ URL + API key in settings (Seerr tab) or during onboarding. A "Test connection" 
 - If a raw provider is unmapped (or mapped to `null`), it is grouped under **Autres**.
 - If a media item has no providers, the UI shows **No provider** (dedicated behavior kept).
 
-### `providers_mapping.json` (key file)
+### Provider mapping
 
 - Runtime mapping used by the app is stored in SQLite.
-- On first startup, it is initialized from the bundled mapping file.
-- After that, it is **never auto-overwritten**.
+- On first startup, the table is initialized from bundled defaults.
+- After that, DB customizations are **never auto-overwritten**.
 - After providers enrichment, newly detected raw providers are appended with `null`.
 
 Example:
@@ -423,12 +423,12 @@ Interpretation:
 - non-`null` mapping → displayed provider
 - `null` mapping → grouped into `Autres`
 
-> Important: for a provider to appear in the selectable provider list in settings, it must have a **non-null** mapping in `providers_mapping.json`.
+> Important: for a provider to appear in the selectable provider list in settings, it must have a **non-null** mapping in DB.
 > If a provider is set to `null`, it is grouped into `Autres` and is not individually selectable.
 
 ### Provider logos
 
-- Logos are defined in `providers_logo.json`.
+- Runtime provider logos are stored in SQLite and seeded from bundled defaults.
 - Logo lookup is done on the **final displayed provider** (after mapping).
 - If no logo is found, fallback uses the **Autres** logo.
 - **No provider** keeps its dedicated icon (red blocked circle).

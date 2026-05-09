@@ -403,11 +403,11 @@ URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration i
 - Si un provider brut est non mappé (ou mappé à `null`), il est regroupé sous **Autres**.
 - Si un média n'a aucun provider, l'UI affiche **Aucun provider** (comportement spécifique conservé).
 
-### `providers_mapping.json` (fichier clé)
+### Mapping providers
 
 - Le mapping runtime utilisé par l'application est stocké dans SQLite.
-- Au premier démarrage, ce fichier est initialisé automatiquement depuis le fichier embarqué.
-- Ensuite, il n'est **jamais écrasé** automatiquement.
+- Au premier démarrage, la table est initialisée depuis les defaults embarqués.
+- Ensuite, les personnalisations stockées en DB ne sont **jamais écrasées** automatiquement.
 - À la fin d'un enrichissement providers, les nouveaux providers bruts détectés sont ajoutés avec valeur `null`.
 
 Exemple :
@@ -424,12 +424,12 @@ Interprétation :
 - mapping non `null` → provider affiché
 - mapping `null` → regroupé dans `Autres`
 
-> Point important : pour qu'un provider apparaisse dans la liste des providers activables dans les paramètres, il doit avoir un mapping **non null** dans `providers_mapping.json`.
+> Point important : pour qu'un provider apparaisse dans la liste des providers activables dans les paramètres, il doit avoir un mapping **non null** en DB.
 > Si un provider est à `null`, il est regroupé dans `Autres` et n'est pas sélectionnable individuellement.
 
 ### Logos providers
 
-- Les logos sont définis dans `providers_logo.json`.
+- Les logos providers runtime sont stockés dans SQLite et seedés depuis les defaults embarqués.
 - Résolution du logo sur le **provider affiché final** (après mapping).
 - Si aucun logo n'est trouvé, fallback vers le logo **Autres**.
 - Le cas **Aucun provider** garde son icône dédiée (rond rouge barré).
