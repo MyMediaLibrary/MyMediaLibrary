@@ -10,6 +10,7 @@ const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.j
 const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
 const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
 const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
+const eventsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/events.js'), 'utf8');
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
 const frI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/fr.json'), 'utf8'));
 const enI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/en.json'), 'utf8'));
@@ -253,7 +254,9 @@ test('auth password is configured through onboarding/settings and never via envi
   assert.match(authRulesBlock, /special:[\s\S]*>= 2/, 'frontend auth validation should require 2 special characters');
 
   const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
-  assert.match(authStepBlock, /id="onbAuthEnabled"[\s\S]*onchange="_onbAuthToggle\(\)"/, 'onboarding auth should be controlled by a toggle');
+  assert.match(authStepBlock, /id="onbAuthEnabled"/, 'onboarding auth should be controlled by a toggle');
+  assert.doesNotMatch(authStepBlock, /onchange=/, 'onboarding auth toggle must not use an inline handler (CSP)');
+  assert.match(eventsSource, /onbAuthEnabled[\s\S]*_onbAuthToggle/, 'onboarding auth toggle must be bound in events.js');
   assert.match(authStepBlock, /id="onbAuthFields"/, 'onboarding auth fields should always be rendered');
   assert.doesNotMatch(authStepBlock, /display:none/, 'onboarding auth fields should remain visible when auth starts disabled');
   assert.match(authStepBlock, /const dis = _onbAuth\.enabled \? '' : ' disabled';/, 'onboarding auth fields should start disabled when auth is off');
@@ -342,7 +345,8 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(appSource, /'subtitle_languages'[\s\S]*'message'[\s\S]*'action'/, 'recommendations CSV should export one localized message/action pair');
   assert.doesNotMatch(appSource, /'message_fr'|'message_en'|'action_fr'|'action_en'/, 'recommendations CSV should not export both languages');
   assert.match(appSource, /csvC\(recText\(rec\.message\)\)[\s\S]*csvC\(recText\(rec\.suggested_action\)\)/, 'recommendations CSV should use the current UI language fallback');
-  assert.match(indexSource, /id="recommendationsControls"[\s\S]*exportRecommendationsCSV\(\)[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
+  assert.match(indexSource, /id="recommendationsControls"[\s\S]*id="exportRecCsvBtn"[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
+  assert.match(eventsSource, /exportRecCsvBtn[\s\S]*exportRecommendationsCSV/, 'recommendations CSV button must be bound in events.js');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 
