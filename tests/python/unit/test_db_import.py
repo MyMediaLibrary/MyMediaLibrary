@@ -114,6 +114,29 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(score["enabled"], 1)
             self.assertEqual(json.loads(probe["value_json"])["workers"], 2)
 
+    def test_import_config_migrates_legacy_score_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.json"
+            self.write_json(
+                path,
+                {
+                    "score": {
+                        "enabled": True,
+                        "weights": {"video": 48, "audio": 22, "languages": 15, "size": 15},
+                        "audio": {"codec": {"aac": 7, "default": 8}},
+                    },
+                },
+            )
+            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
+
+            db_import.import_config(conn, path)
+            exported = config_repository.load_config(path, pathlib.Path(tmp) / "db.sqlite")
+            conn.close()
+
+            self.assertEqual(exported["score"], {"enabled": True})
+            self.assertEqual(exported["score_configuration"]["weights"]["video"], 48)
+            self.assertEqual(exported["score_configuration"]["audio"]["codec"]["aac"], 7)
+
     def test_import_media_probe_cache_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "media_probe_cache.json"
@@ -333,7 +356,7 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(config_result.source_count, config_result.db_count)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=5 importable=4 db=4", "\n".join(logs.output))
+            self.assertIn("json=5 importable=3 db=3", "\n".join(logs.output))
             conn.close()
 
     def test_startup_migration_updates_seeded_config_and_preserves_score_configuration(self):
@@ -381,11 +404,11 @@ class DatabaseImportTest(unittest.TestCase):
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
             self.assertEqual(config_result.source_total_count, 14)
-            self.assertEqual(config_result.source_count, 13)
-            self.assertEqual(config_result.db_count, 13)
+            self.assertEqual(config_result.source_count, 10)
+            self.assertEqual(config_result.db_count, 10)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
-            self.assertIn("json=14 importable=13 db=13", "\n".join(logs.output))
+            self.assertIn("json=14 importable=10 db=10", "\n".join(logs.output))
             cfg = config_repository.load_config(paths.CONFIG_JSON, db_path)
             self.assertEqual(cfg["system"]["log_level"], "DEBUG")
             self.assertEqual(cfg["score"], {"enabled": True})

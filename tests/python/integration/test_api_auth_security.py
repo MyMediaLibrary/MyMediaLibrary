@@ -24,6 +24,7 @@ class TestApiAuthSecurity(unittest.TestCase):
         cls._config_path = root / "config.json"
         scanner.SECRETS_PATH = str(cls._secrets_path)
         scanner.CONFIG_PATH = str(cls._config_path)
+        cls._seed_config()
         cls._write_auth_hash("test-password")
 
         scanner._valid_sessions.clear()
@@ -57,7 +58,29 @@ class TestApiAuthSecurity(unittest.TestCase):
     def setUp(self):
         scanner._valid_sessions.clear()
         scanner._auth_attempts.clear()
+        self._seed_config()
         self._write_auth_hash("test-password")
+
+    @classmethod
+    def _seed_config(cls):
+        scanner.save_config({
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "score": {"enabled": True},
+            "score_configuration": {
+                "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
+                "video": {},
+                "audio": {},
+                "languages": {},
+                "size": {},
+            },
+            "recommendations": {"enabled": True},
+            "folders": [],
+            "enable_movies": True,
+            "enable_series": True,
+            "seerr": {"enabled": False, "url": ""},
+            "providers_visible": [],
+            "ui": {"synopsis_on_hover": False},
+        })
 
     @classmethod
     def _write_auth_hash(cls, password: str):
@@ -306,8 +329,7 @@ class TestRecommendationsApi(unittest.TestCase):
 
     def setUp(self):
         self._write_config(recommendations_enabled=True)
-        if self._recommendations_path.exists():
-            self._recommendations_path.unlink()
+        scanner.save_recommendations_document_non_blocking([], str(self._recommendations_path))
 
     @classmethod
     def _url(cls, path: str) -> str:
@@ -323,10 +345,24 @@ class TestRecommendationsApi(unittest.TestCase):
             return err.code, json.loads(err.read().decode("utf-8"))
 
     def _write_config(self, *, recommendations_enabled: bool):
-        self._config_path.write_text(json.dumps({
+        scanner.save_config({
             "score": {"enabled": True},
+            "score_configuration": {
+                "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
+                "video": {},
+                "audio": {},
+                "languages": {},
+                "size": {},
+            },
             "recommendations": {"enabled": recommendations_enabled},
-        }), encoding="utf-8")
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "folders": [],
+            "enable_movies": True,
+            "enable_series": True,
+            "seerr": {"enabled": False, "url": ""},
+            "providers_visible": [],
+            "ui": {"synopsis_on_hover": False},
+        })
 
     def test_get_recommendations_returns_empty_state_when_file_is_absent(self):
         status, payload = self._request("/api/recommendations")
@@ -336,16 +372,15 @@ class TestRecommendationsApi(unittest.TestCase):
         self.assertIsNone(payload["generated_at"])
 
     def test_get_recommendations_returns_generated_items(self):
-        self._recommendations_path.write_text(json.dumps({
-            "generated_at": "2026-04-24T18:00:00Z",
-            "version": 1,
-            "items": [{"id": "rec:movie:test:low_score", "media_ref": {"id": "movie:test", "type": "movie"}}],
-        }), encoding="utf-8")
+        scanner.save_recommendations_document_non_blocking(
+            [{"id": "rec:movie:test:low_score", "media_ref": {"id": "movie:test", "type": "movie"}}],
+            str(self._recommendations_path),
+        )
 
         status, payload = self._request("/api/recommendations")
         self.assertEqual(status, 200)
         self.assertIs(payload["enabled"], True)
-        self.assertEqual(payload["generated_at"], "2026-04-24T18:00:00Z")
+        self.assertIsNotNone(payload["generated_at"])
         self.assertEqual(len(payload["items"]), 1)
 
     def test_get_recommendations_returns_disabled_state_without_404(self):

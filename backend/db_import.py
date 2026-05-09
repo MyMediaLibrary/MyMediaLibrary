@@ -434,9 +434,12 @@ def import_config(
         """
     )
     with conn:
+        structured_keys = {"auth", "score", "score_configuration", "media_probe"}
         for key, value in payload.items():
             if key == "auth":
                 _import_auth_settings(conn, value, overwrite=overwrite)
+                continue
+            if key in structured_keys:
                 continue
             clean_value = _strip_sensitive_value(key, value)
             if clean_value is _SKIP_VALUE:
@@ -444,13 +447,21 @@ def import_config(
             rows += _insert_count(conn, app_config_sql, (str(key), _to_json(clean_value)))
         if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
             score = payload.get("score") if isinstance(payload.get("score"), dict) else {}
+            score_configuration = payload.get("score_configuration") if isinstance(payload.get("score_configuration"), dict) else {}
+            legacy_score_configuration = {
+                key: value
+                for key, value in score.items()
+                if key in {"weights", "video", "audio", "languages", "size"}
+            }
+            if legacy_score_configuration:
+                score_configuration = _deep_merge(legacy_score_configuration, score_configuration)
             rows += _insert_count(
                 conn,
                 score_sql,
                 (
                     "default",
                     1 if score.get("enabled") is True else 0,
-                    _to_json(payload.get("score_configuration") or {}),
+                    _to_json(score_configuration),
                 ),
             )
         if isinstance(payload.get("media_probe"), dict):
@@ -687,10 +698,13 @@ def _count_config_source(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
     count = 0
+    structured_keys = {"auth", "score", "score_configuration", "media_probe"}
     for key, value in payload.items():
         if key == "auth":
             if isinstance(value, dict):
                 count += 1
+            continue
+        if key in structured_keys:
             continue
         if _strip_sensitive_value(key, value) is not _SKIP_VALUE:
             count += 1
@@ -865,6 +879,16 @@ def _existing_media_id(conn: sqlite3.Connection, value: Any) -> str | None:
 
 def _to_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _deep_merge(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in update.items():
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 def _from_json(value: str | None, default: Any) -> Any:
