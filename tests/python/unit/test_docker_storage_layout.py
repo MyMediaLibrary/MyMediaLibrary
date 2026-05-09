@@ -18,9 +18,9 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         cls.docs_fr = (ROOT / "docs" / "fr.md").read_text(encoding="utf-8")
         cls.docs_en = (ROOT / "docs" / "en.md").read_text(encoding="utf-8")
 
-    def test_compose_uses_data_conf_and_fixed_library_volume(self):
+    def test_compose_uses_data_and_fixed_library_volume(self):
         self.assertIn("./data:/data", self.compose)
-        self.assertIn("./conf:/conf", self.compose)
+        self.assertNotIn("./conf:/conf", self.compose)
         self.assertRegex(self.compose, r":/library:ro\b")
         self.assertNotIn("LIBRARY_PATH", self.compose)
         self.assertNotRegex(self.compose, r":/tmp\b|:/tmp:")
@@ -34,7 +34,7 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertRegex(self.dockerfile, r"apk add --no-cache .*sqlite")
         self.assertIn("COPY backend/ /app/backend/", self.dockerfile)
         self.assertIn("COPY backend/scanner.py /app/scanner.py", self.dockerfile)
-        self.assertIn('VOLUME ["/data", "/conf"]', self.dockerfile)
+        self.assertIn('VOLUME ["/data"]', self.dockerfile)
         self.assertNotIn("/app/.secrets", self.dockerfile)
         self.assertNotIn("/data/config.json", self.dockerfile)
 
@@ -60,23 +60,22 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
             "docs/en.md": self.docs_en,
         }.items():
             self.assertIn("./data:/data", source, name)
-            self.assertIn("./conf:/conf", source, name)
+            self.assertNotIn("./conf:/conf", source, name)
             self.assertRegex(source, r":/library:ro\b", name)
             self.assertNotIn("LIBRARY_PATH", source, name)
             self.assertNotRegex(source, r":/tmp\b|:/tmp:", name)
 
-    def test_docs_describe_storage_migration_conflicts(self):
+    def test_docs_describe_storage_migration_to_data_secrets(self):
         for source in (self.readme, self.docs_fr, self.docs_en):
-            self.assertIn("/data/config.json", source)
-            self.assertIn("/conf/config.json", source)
-            self.assertIn("/data/providers_mapping.json", source)
-            self.assertIn("/conf/providers_mapping.json", source)
-            self.assertIn("/data/recommendations_rules.json", source)
-            self.assertIn("/conf/recommendations_rules.json", source)
-            self.assertIn("/app/.secrets", source)
+            self.assertIn("/data/.secrets", source)
             self.assertIn("/conf/.secrets", source)
-        self.assertRegex(self.docs_en, re.compile(r"different contents.*startup stops", re.I | re.S))
-        self.assertRegex(self.docs_fr, re.compile(r"contenu différent.*démarrage est interrompu", re.I | re.S))
+            self.assertNotIn("config.json, providers, rules, .secrets", source)
+        self.assertRegex(self.docs_en, re.compile(r"/conf/\.secrets.*migrated.*?/data/\.secrets", re.I | re.S))
+        self.assertRegex(self.docs_fr, re.compile(r"/conf/\.secrets.*migré.*?/data/\.secrets", re.I | re.S))
+
+    def test_nginx_blocks_runtime_storage_and_dotfiles(self):
+        self.assertIn("location ~ /\\.", self.nginx)
+        self.assertRegex(self.nginx, r"location ~ \^/\(data\|conf\)")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 DATA_DIR = Path("/data")
-CONF_DIR = Path("/conf")
+LEGACY_CONF_DIR = Path("/conf")
 TMP_DIR = Path("/tmp")
 LIBRARY_DIR = Path("/library")
 APP_DIR = Path("/app")
@@ -25,11 +25,12 @@ RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
 SCANNER_LOG = DATA_DIR / "scanner.log"
 SQLITE_DB = DATA_DIR / "mymedialibrary.db"
 
-CONFIG_JSON = CONF_DIR / "config.json"
-PROVIDERS_MAPPING_JSON = CONF_DIR / "providers_mapping.json"
-PROVIDERS_LOGO_JSON = CONF_DIR / "providers_logo.json"
-RECOMMENDATIONS_RULES_JSON = CONF_DIR / "recommendations_rules.json"
-SECRETS_FILE = CONF_DIR / ".secrets"
+CONFIG_JSON = LEGACY_CONF_DIR / "config.json"
+PROVIDERS_MAPPING_JSON = LEGACY_CONF_DIR / "providers_mapping.json"
+PROVIDERS_LOGO_JSON = LEGACY_CONF_DIR / "providers_logo.json"
+RECOMMENDATIONS_RULES_JSON = LEGACY_CONF_DIR / "recommendations_rules.json"
+SECRETS_FILE = DATA_DIR / ".secrets"
+LEGACY_SECRETS_FILE = LEGACY_CONF_DIR / ".secrets"
 
 SCAN_LOCK = TMP_DIR / "scan.lock"
 
@@ -72,5 +73,6 @@ CONFIG_FILES = (
 )
 
 LEGACY_MIGRATIONS = (
+    LegacyMigration(LEGACY_SECRETS_FILE, SECRETS_FILE),
     LegacyMigration(APP_DIR / ".secrets", SECRETS_FILE),
 )

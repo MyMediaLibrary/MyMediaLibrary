@@ -32,8 +32,8 @@ COPY docker/entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
 
-# Persistent runtime volumes: generated data and user configuration.
-VOLUME ["/data", "/conf"]
+# Persistent runtime volume: SQLite DB, scanner log, and .secrets.
+VOLUME ["/data"]
 
 EXPOSE 80
 

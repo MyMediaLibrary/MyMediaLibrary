@@ -27,7 +27,7 @@
 1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
 2. Les phases optionnelles enrichissent les données : Seerr, score qualité, inventaire et recommandations.
 3. L'interface web (vanilla JS) charge les fichiers JSON générés et affiche bibliothèque, filtres, statistiques et recommandations.
-4. La configuration est persistée dans `conf/config.json` (dossiers, Seerr, préférences UI).
+4. La configuration est persistée dans SQLite (dossiers, Seerr, préférences UI).
 
 ---
 
@@ -39,12 +39,12 @@
 - **Frontend** : HTML/CSS + vanilla JS (aucun framework)
 - **Backend** : serveur Python minimal (`backend/scanner.py`) — routes API REST + service des fichiers statiques
 - **Scanner** : Python (`backend/scanner.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
-- **Persistance** : `conf/config.json` (config), `data/library.json` (index), `localStorage` (état UI)
+- **Persistance** : SQLite dans `data/mymedialibrary.db`, `data/.secrets` pour les secrets hors DB, `localStorage` (état UI)
 
 
 ### Internationalisation
 
-Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans `config.json` côté serveur et dans `localStorage` côté client.
+Fichiers `app/i18n/fr.json` et `app/i18n/en.json`. Fonction `t('namespace.key')` avec support `{n}` et pluriel `{s}`. La langue est persistée dans SQLite côté serveur et dans `localStorage` côté client.
 
 ### Fuseau horaire (`TZ`)
 
@@ -80,8 +80,7 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                             # library.json, inventaire, recommandations, scanner.log
-      - ./conf:/conf                             # config.json, providers, règles, .secrets
+      - ./data:/data                             # DB SQLite, scanner.log, .secrets
       - /chemin/vers/ta/mediatheque:/library:ro  # médiathèque en lecture seule
     environment:
       TZ: Europe/Paris
@@ -94,24 +93,15 @@ services:
 |---|---|---|---|
 | `TZ` | ❌ | `UTC` | Fuseau horaire du conteneur (logs et timestamps) |
 
-Montez toujours vos médias dans `/library` en lecture seule. L'authentification par mot de passe se configure dans l'onboarding puis dans **Paramètres > Configuration** ; seul un hash est stocké dans `/conf/.secrets`. Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans `config.json`.
+Montez toujours vos médias dans `/library` en lecture seule. L'authentification par mot de passe se configure dans l'onboarding puis dans **Paramètres > Configuration** ; seul un hash est stocké dans `/data/.secrets`. Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système** et sont persistés dans SQLite.
 
 ### Stockage runtime
 
-- `/data` contient les fichiers générés : `library.json`, `library_inventory.json`, `recommendations.json`, `scanner.log`.
-- `/conf` contient la configuration persistante : `config.json`, `providers_mapping.json`, `providers_logo.json`, `recommendations_rules.json`, `.secrets`.
+- `/data` contient la base SQLite `mymedialibrary.db`, `scanner.log` et `.secrets`.
 - `/library` est le point de montage fixe des médias.
 - `/tmp` est interne au conteneur et contient notamment `scan.lock`.
 
-Au démarrage, l'application migre automatiquement les anciens fichiers de configuration :
-
-- `/data/config.json` → `/conf/config.json`
-- `/data/providers_mapping.json` → `/conf/providers_mapping.json`
-- `/data/providers_logo.json` → `/conf/providers_logo.json`
-- `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`
-- `/app/.secrets` → `/conf/.secrets`
-
-Après migration réussie, les anciens fichiers sont supprimés. Si une source legacy et une destination existent avec un contenu différent, le démarrage est interrompu pour éviter d'écraser une configuration utilisateur.
+Au démarrage, l'application importe automatiquement les anciens JSON runtime dans SQLite et les supprime après validation. Les anciennes installations avec `/conf/.secrets` sont migrées vers `/data/.secrets`; si `/data/.secrets` existe déjà, `/conf/.secrets` est ignoré et ne l'écrase jamais.
 
 ### Mise à jour
 
@@ -162,14 +152,13 @@ volumes:
   - /nas1/movies:/library/movies:ro
   - /nas2/series:/library/series:ro
   - ./data:/data
-  - ./conf:/conf
 ```
 
 ---
 
 ## 5. Configuration initiale
 
-L'assistant de configuration s'affiche au premier démarrage (ou si `config.json` est absent/vide dans `./conf`).
+L'assistant de configuration s'affiche au premier démarrage quand la configuration SQLite est vide.
 
 **Étapes :**
 
@@ -437,7 +426,7 @@ URL + clé API dans les paramètres (onglet Seerr) ou lors de la configuration i
 
 ### `providers_mapping.json` (fichier clé)
 
-- Le mapping runtime utilisé par l'application est `/conf/providers_mapping.json`.
+- Le mapping runtime utilisé par l'application est stocké dans SQLite.
 - Au premier démarrage, ce fichier est initialisé automatiquement depuis le fichier embarqué.
 - Ensuite, il n'est **jamais écrasé** automatiquement.
 - À la fin d'un enrichissement providers, les nouveaux providers bruts détectés sont ajoutés avec valeur `null`.
@@ -468,7 +457,7 @@ Interprétation :
 
 ### Personnaliser les providers affichés
 
-1. Ouvrir `/conf/providers_mapping.json`.
+1. Modifier le mapping depuis l'interface ou via une future migration/import contrôlée.
 2. Modifier les mappings.
 3. Recharger l'application (ou redémarrer le conteneur si nécessaire).
 
@@ -694,7 +683,7 @@ Au survol du badge, une infobulle détaillée est affichée :
 
 ### Désactivation complète du score (`score.enabled`)
 
-Le paramètre `score.enabled` dans `config.json` permet de couper totalement la fonctionnalité.
+Le paramètre `score.enabled` stocké dans SQLite permet de couper totalement la fonctionnalité.
 
 Si désactivé :
 - le backend bypass complètement le calcul de score pendant le scan
@@ -742,7 +731,7 @@ Les recommandations transforment l'analyse de la bibliothèque en liste d'action
 ### Moteur
 
 - Règles déterministes, sans IA générative.
-- Règles métier simples configurables via `/conf/recommendations_rules.json`.
+- Règles métier simples configurables et stockées dans SQLite.
 - Règles structurelles côté backend pour les données manquantes et les incohérences de séries.
 
 ### Structure

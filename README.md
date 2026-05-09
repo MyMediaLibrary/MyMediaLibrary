@@ -51,7 +51,6 @@ services:
       - "8094:80"
     volumes:
       - ./data:/data
-      - ./conf:/conf
       - /chemin/vers/ta/mediatheque:/library:ro
     environment:
       TZ: Europe/Paris
@@ -61,22 +60,20 @@ services:
 ```
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
 # créer compose.yaml ci-dessus, puis :
 docker compose up -d
 ```
 
 Accéder à `http://localhost:8094` — un assistant de configuration s'affiche au premier démarrage.
-L'authentification par mot de passe se configure dans cet assistant, puis dans **Paramètres > Configuration**. Le mot de passe n'est jamais passé par variable d'environnement et seul son hash est stocké dans `/conf/.secrets`.
+L'authentification par mot de passe se configure dans cet assistant, puis dans **Paramètres > Configuration**. Le mot de passe n'est jamais passé par variable d'environnement et seul son hash est stocké dans `/data/.secrets`.
 
 Stockage runtime :
-- `./data` contient les fichiers générés (`library.json`, inventaire, recommandations, `scanner.log`)
-- `./conf` contient la configuration persistante (`config.json`, providers, règles, `.secrets`)
+- `./data` contient `mymedialibrary.db`, `scanner.log` et `.secrets`
 - `/library` est le point de montage fixe des médias dans le conteneur
 - `/tmp` reste interne au conteneur et n'est pas à monter
 
-Les anciens fichiers de configuration sont migrés automatiquement au démarrage :
-`/data/config.json` → `/conf/config.json`, `/data/providers_mapping.json` → `/conf/providers_mapping.json`, `/data/providers_logo.json` → `/conf/providers_logo.json`, `/data/recommendations_rules.json` → `/conf/recommendations_rules.json` et `/app/.secrets` → `/conf/.secrets`. En cas de conflit entre source legacy et destination, l'application refuse de démarrer pour éviter tout écrasement.
+Les anciens fichiers JSON sont importés automatiquement dans SQLite au démarrage puis supprimés si la validation réussit. Les anciennes installations avec `/conf/.secrets` sont migrées vers `/data/.secrets`; si `/data/.secrets` existe déjà, `/conf/.secrets` est ignoré et ne l'écrase jamais.
 
 > Le cron de scan automatique et le niveau de log se configurent dans **Paramètres > Système**.
 
@@ -144,7 +141,6 @@ services:
       - "8094:80"
     volumes:
       - ./data:/data
-      - ./conf:/conf
       - /path/to/your/library:/library:ro
     environment:
       TZ: Europe/Paris
@@ -154,22 +150,20 @@ services:
 ```
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
 # create compose.yaml above, then:
 docker compose up -d
 ```
 
 Open `http://localhost:8094` — a setup wizard appears on first launch.
-Password authentication is configured in that wizard, then in **Settings > Configuration**. The password is never passed through an environment variable and only its hash is stored in `/conf/.secrets`.
+Password authentication is configured in that wizard, then in **Settings > Configuration**. The password is never passed through an environment variable and only its hash is stored in `/data/.secrets`.
 
 Runtime storage:
-- `./data` contains generated files (`library.json`, inventory, recommendations, `scanner.log`)
-- `./conf` contains persistent configuration (`config.json`, providers, rules, `.secrets`)
+- `./data` contains `mymedialibrary.db`, `scanner.log`, and `.secrets`
 - `/library` is the fixed media mount point inside the container
 - `/tmp` stays internal to the container and should not be mounted
 
-Old configuration files are migrated automatically on startup:
-`/data/config.json` → `/conf/config.json`, `/data/providers_mapping.json` → `/conf/providers_mapping.json`, `/data/providers_logo.json` → `/conf/providers_logo.json`, `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`, and `/app/.secrets` → `/conf/.secrets`. If a legacy source and destination conflict, startup stops to avoid overwriting user configuration.
+Old JSON files are imported into SQLite automatically on startup and removed after successful validation. Existing installs with `/conf/.secrets` are migrated to `/data/.secrets`; if `/data/.secrets` already exists, `/conf/.secrets` is ignored and never overwrites it.
 
 > Auto-scan schedule and log level are configured in **Settings > System**.
 

@@ -5,8 +5,7 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                              # library.json, inventory, recommendations, scanner.log
-      - ./conf:/conf                              # config.json, providers, rules, .secrets
+      - ./data:/data                              # SQLite DB, scanner.log, .secrets
       - /chemin/vers/ta/mediatheque:/library:ro   # adapter ce chemin à ta médiathèque
     environment:
       TZ: Europe/Paris

@@ -27,7 +27,7 @@
 1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
 2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations.
 3. The web interface (vanilla JS) loads the generated JSON files and renders library, filters, statistics, and recommendations.
-4. Configuration is persisted in `conf/config.json` (folders, Seerr, UI preferences).
+4. Configuration is persisted in SQLite (folders, Seerr, UI preferences).
 
 ---
 
@@ -39,11 +39,11 @@
 - **Frontend**: HTML/CSS + vanilla JS (no framework)
 - **Backend**: minimal Python server (`backend/scanner.py`) — REST API routes + static file serving
 - **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, `library.json` writing
-- **Persistence**: `conf/config.json` (config), `data/library.json` (index), `localStorage` (UI state)
+- **Persistence**: SQLite in `data/mymedialibrary.db`, `data/.secrets` for secrets outside the DB, `localStorage` (UI state)
 
 ### Internationalisation
 
-Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in `config.json` server-side and in `localStorage` client-side.
+Files `app/i18n/fr.json` and `app/i18n/en.json`. Function `t('namespace.key')` with `{n}` substitution and `{s}` plural support. Language is persisted in SQLite server-side and in `localStorage` client-side.
 
 ### Timezone (`TZ`)
 
@@ -79,8 +79,7 @@ services:
     ports:
       - "8094:80"
     volumes:
-      - ./data:/data                        # library.json, inventory, recommendations, scanner.log
-      - ./conf:/conf                        # config.json, providers, rules, .secrets
+      - ./data:/data                        # SQLite DB, scanner.log, .secrets
       - /path/to/your/library:/library:ro   # your media library, read-only
     environment:
       TZ: Europe/Paris
@@ -93,24 +92,15 @@ services:
 |---|---|---|---|
 | `TZ` | ❌ | `UTC` | Container timezone (logs and timestamps) |
 
-Always mount your media to `/library` read-only. Password authentication is configured during onboarding and later in **Settings > Configuration**; only a hash is stored in `/conf/.secrets`. Auto-scan schedule and log level are configured in **Settings > System** and persisted in `config.json`.
+Always mount your media to `/library` read-only. Password authentication is configured during onboarding and later in **Settings > Configuration**; only a hash is stored in `/data/.secrets`. Auto-scan schedule and log level are configured in **Settings > System** and persisted in SQLite.
 
 ### Runtime storage
 
-- `/data` contains generated files: `library.json`, `library_inventory.json`, `recommendations.json`, `scanner.log`.
-- `/conf` contains persistent configuration: `config.json`, `providers_mapping.json`, `providers_logo.json`, `recommendations_rules.json`, `.secrets`.
+- `/data` contains the SQLite database `mymedialibrary.db`, `scanner.log`, and `.secrets`.
 - `/library` is the fixed media mount point.
 - `/tmp` is internal to the container and contains `scan.lock`.
 
-On startup, the app automatically migrates old configuration files:
-
-- `/data/config.json` → `/conf/config.json`
-- `/data/providers_mapping.json` → `/conf/providers_mapping.json`
-- `/data/providers_logo.json` → `/conf/providers_logo.json`
-- `/data/recommendations_rules.json` → `/conf/recommendations_rules.json`
-- `/app/.secrets` → `/conf/.secrets`
-
-After a successful migration, legacy files are removed. If both source and destination exist with different contents, startup stops to avoid overwriting user configuration.
+On startup, the app automatically imports old runtime JSON files into SQLite and removes them after successful validation. Existing installs with `/conf/.secrets` are migrated to `/data/.secrets`; if `/data/.secrets` already exists, `/conf/.secrets` is ignored and never overwrites it.
 
 ### Updating
 
@@ -161,14 +151,13 @@ volumes:
   - /nas1/movies:/library/movies:ro
   - /nas2/series:/library/series:ro
   - ./data:/data
-  - ./conf:/conf
 ```
 
 ---
 
 ## 5. Onboarding
 
-The setup wizard appears on first launch (or when `config.json` is missing/empty in `./conf`).
+The setup wizard appears on first launch when the SQLite configuration is empty.
 
 **Steps:**
 
@@ -436,7 +425,7 @@ URL + API key in settings (Seerr tab) or during onboarding. A "Test connection" 
 
 ### `providers_mapping.json` (key file)
 
-- Runtime mapping used by the app is `/conf/providers_mapping.json`.
+- Runtime mapping used by the app is stored in SQLite.
 - On first startup, it is initialized from the bundled mapping file.
 - After that, it is **never auto-overwritten**.
 - After providers enrichment, newly detected raw providers are appended with `null`.
@@ -467,7 +456,7 @@ Interpretation:
 
 ### Customize displayed providers
 
-1. Open `/conf/providers_mapping.json`.
+1. Edit the mapping from the UI or through a future controlled migration/import.
 2. Edit mappings.
 3. Reload the app (or restart the container if needed).
 
@@ -693,7 +682,7 @@ Hovering the quality badge shows a complete detailed tooltip:
 
 ### Full score disable (`score.enabled`)
 
-The `score.enabled` setting in `config.json` can disable the feature entirely.
+The `score.enabled` setting stored in SQLite can disable the feature entirely.
 
 When disabled:
 - backend scan fully bypasses quality score computation
@@ -741,7 +730,7 @@ Recommendations turn library analysis into concrete actions: improve quality, op
 ### Engine
 
 - Deterministic rules, no generative AI.
-- Simple business rules configurable through `/conf/recommendations_rules.json`.
+- Simple business rules configurable and stored in SQLite.
 - Backend structural rules for missing data and series inconsistencies.
 
 ### Structure

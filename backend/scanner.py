@@ -395,11 +395,13 @@ _SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days
 
 
 def _auth_legacy_secret_paths() -> list[Path]:
-    current_conf_dir = Path(SECRETS_PATH).parent
+    current_path = Path(SECRETS_PATH)
     return [
-        Path(SECRETS_PATH),
-        current_conf_dir / ".secret",
+        current_path,
+        current_path.with_name(".secret"),
         Path(runtime_paths.DATA_DIR) / ".secret",
+        Path(getattr(runtime_paths, "LEGACY_SECRETS_FILE", Path("/conf/.secrets"))),
+        Path(getattr(runtime_paths, "LEGACY_CONF_DIR", Path("/conf"))) / ".secret",
         Path(runtime_paths.APP_DIR) / ".secret",
     ]
 
@@ -722,7 +724,7 @@ def _jsr_get(path: str, jsr: dict | None = None):
 
 
 def _ensure_runtime_provider_mapping() -> None:
-    """Warm provider mappings from SQLite without materializing bundled defaults in /conf."""
+    """Warm provider mappings from SQLite without materializing bundled default JSON files."""
     if providers_repository is not None:
         try:
             providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
@@ -731,7 +733,7 @@ def _ensure_runtime_provider_mapping() -> None:
 
 
 def _ensure_runtime_providers_logo() -> None:
-    """Warm provider logos from SQLite without materializing bundled defaults in /conf."""
+    """Warm provider logos from SQLite without materializing bundled default JSON files."""
     if providers_repository is not None:
         try:
             providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)

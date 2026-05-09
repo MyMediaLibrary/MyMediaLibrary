@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import filecmp
 import logging
 import os
 import shutil
@@ -46,7 +45,7 @@ def _chmod_secrets(path: Path) -> None:
 def run_storage_migration(paths) -> None:
     """Move legacy runtime files into the canonical v0.5.0 layout."""
 
-    for directory in (paths.DATA_DIR, paths.CONF_DIR, paths.TMP_DIR):
+    for directory in (paths.DATA_DIR, paths.TMP_DIR):
         Path(directory).mkdir(parents=True, exist_ok=True)
 
     migrations = tuple(paths.LEGACY_MIGRATIONS)
@@ -59,10 +58,8 @@ def run_storage_migration(paths) -> None:
     for item in migrations:
         src = Path(item.source)
         dst = Path(item.destination)
-        if src.exists() and dst.exists() and not filecmp.cmp(src, dst, shallow=False):
-            log.error("[MIGRATION] conflict detected: %s and %s differ", src, dst)
-            log.error("[MIGRATION] aborted")
-            raise StorageMigrationError(f"Storage migration conflict: {src} and {dst} differ")
+        if src.exists() and dst.exists():
+            log.warning("[secrets] legacy %s ignored because %s already exists", src, dst)
 
     for item in migrations:
         src = Path(item.source)
@@ -71,20 +68,15 @@ def run_storage_migration(paths) -> None:
         dst_exists = dst.exists()
 
         if src_exists and dst_exists:
-            log.info("[MIGRATION] remove legacy %s", src)
-            os.remove(src)
+            try:
+                os.remove(src)
+            except OSError as exc:
+                log.warning("[secrets] could not remove ignored legacy %s: %s", src, exc)
             continue
 
         if src_exists:
-            log.info("[MIGRATION] move %s -> %s", src, dst)
+            log.info("[secrets] migrated legacy %s to %s", src, dst)
             _move_file(src, dst)
-
-    for item in migrations:
-        src = Path(item.source)
-        dst = Path(item.destination)
-        if src.exists() and dst.exists() and filecmp.cmp(src, dst, shallow=False):
-            log.info("[MIGRATION] remove legacy %s", src)
-            os.remove(src)
 
     _chmod_secrets(Path(paths.SECRETS_FILE))
     log.info("[MIGRATION] done")

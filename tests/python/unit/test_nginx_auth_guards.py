@@ -51,6 +51,11 @@ class TestNginxAuthGuards(unittest.TestCase):
         body = block.group("body")
         self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
 
+    def test_runtime_storage_and_dotfiles_are_blocked(self):
+        self.assertRegex(self.conf, r"location ~ /\\\.")
+        self.assertRegex(self.conf, r"location ~ \^/\(data\|conf\)")
+        self.assertIn("return 404;", self.conf)
+
     def test_posters_use_fixed_library_root(self):
         block = re.search(r"location /posters/ \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
         self.assertIsNotNone(block)

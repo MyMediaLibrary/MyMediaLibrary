@@ -12,7 +12,7 @@ import runtime_paths as paths  # noqa: E402
 class RuntimePathsTest(unittest.TestCase):
     def test_canonical_directories_are_fixed(self):
         self.assertEqual(paths.DATA_DIR, pathlib.Path("/data"))
-        self.assertEqual(paths.CONF_DIR, pathlib.Path("/conf"))
+        self.assertEqual(paths.LEGACY_CONF_DIR, pathlib.Path("/conf"))
         self.assertEqual(paths.TMP_DIR, pathlib.Path("/tmp"))
         self.assertEqual(paths.LIBRARY_DIR, pathlib.Path("/library"))
 
@@ -29,12 +29,13 @@ class RuntimePathsTest(unittest.TestCase):
             pathlib.Path("/data/mymedialibrary.db"),
         })
 
-    def test_config_files_stay_under_conf(self):
+    def test_legacy_json_import_sources_stay_under_legacy_conf(self):
         self.assertEqual(paths.CONFIG_JSON, pathlib.Path("/conf/config.json"))
         self.assertEqual(paths.PROVIDERS_MAPPING_JSON, pathlib.Path("/conf/providers_mapping.json"))
         self.assertEqual(paths.PROVIDERS_LOGO_JSON, pathlib.Path("/conf/providers_logo.json"))
         self.assertEqual(paths.RECOMMENDATIONS_RULES_JSON, pathlib.Path("/conf/recommendations_rules.json"))
-        self.assertEqual(paths.SECRETS_FILE, pathlib.Path("/conf/.secrets"))
+        self.assertEqual(paths.SECRETS_FILE, pathlib.Path("/data/.secrets"))
+        self.assertEqual(paths.LEGACY_SECRETS_FILE, pathlib.Path("/conf/.secrets"))
 
     def test_tmp_only_contains_scan_lock(self):
         self.assertEqual(paths.SCAN_LOCK, pathlib.Path("/tmp/scan.lock"))
@@ -42,8 +43,10 @@ class RuntimePathsTest(unittest.TestCase):
     def test_legacy_paths_are_migration_only_sources(self):
         migrations = {(item.source, item.destination) for item in paths.LEGACY_MIGRATIONS}
         self.assertEqual(migrations, {
-            (pathlib.Path("/app/.secrets"), pathlib.Path("/conf/.secrets")),
+            (pathlib.Path("/app/.secrets"), pathlib.Path("/data/.secrets")),
+            (pathlib.Path("/conf/.secrets"), pathlib.Path("/data/.secrets")),
         })
+        self.assertEqual(paths.LEGACY_MIGRATIONS[0].source, pathlib.Path("/conf/.secrets"))
 
     def test_fresh_install_defaults_are_bundled_under_app_defaults_conf(self):
         self.assertEqual(paths.DEFAULT_CONF_DIR, pathlib.Path("/app/defaults/conf"))
@@ -52,7 +55,7 @@ class RuntimePathsTest(unittest.TestCase):
         self.assertEqual(defaults[pathlib.Path("/conf/providers_mapping.json")], pathlib.Path("/app/defaults/conf/providers_mapping.json"))
         self.assertEqual(defaults[pathlib.Path("/conf/providers_logo.json")], pathlib.Path("/app/defaults/conf/providers_logo.json"))
         self.assertEqual(defaults[pathlib.Path("/conf/recommendations_rules.json")], pathlib.Path("/app/defaults/conf/recommendations_rules.json"))
-        self.assertIsNone(defaults[pathlib.Path("/conf/.secrets")])
+        self.assertIsNone(defaults[pathlib.Path("/data/.secrets")])
 
 
 if __name__ == "__main__":

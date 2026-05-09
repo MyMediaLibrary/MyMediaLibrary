@@ -86,13 +86,13 @@ class ScannerRuntimePathsTest(unittest.TestCase):
 
             self.assertFalse(config_path.exists())
 
-    def test_secrets_are_loaded_from_conf_and_saved_0600(self):
+    def test_secrets_are_loaded_from_data_and_saved_0600(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            secrets_path = pathlib.Path(tmpdir) / "conf" / ".secrets"
+            secrets_path = pathlib.Path(tmpdir) / "data" / ".secrets"
             secrets_path.parent.mkdir()
-            secrets_path.write_text('{"seerr_apikey": "from-conf"}', encoding="utf-8")
+            secrets_path.write_text('{"seerr_apikey": "from-data"}', encoding="utf-8")
             with patch.object(scanner, "SECRETS_PATH", str(secrets_path)):
-                self.assertEqual(scanner._load_secrets()["seerr_apikey"], "from-conf")
+                self.assertEqual(scanner._load_secrets()["seerr_apikey"], "from-data")
                 scanner._save_secrets({"seerr_apikey": "saved"})
 
             self.assertEqual(json.loads(secrets_path.read_text(encoding="utf-8")), {"seerr_apikey": "saved"})
@@ -123,7 +123,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             self.assertFalse(mapping_dst.exists())
             self.assertFalse(logo_dst.exists())
 
-    def test_recommendations_phase_uses_conf_rules_and_data_outputs(self):
+    def test_recommendations_phase_uses_sqlite_rules_and_no_json_outputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             recs_path = root / "data" / "recommendations.json"
