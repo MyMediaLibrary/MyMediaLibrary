@@ -361,10 +361,6 @@
     "running": "Scan en cours...",
     "done": "Scan terminé ✓",
     "open_library": "Accéder à la bibliothèque",
-    "mode_quick": "Scan rapide",
-    "mode_quick_desc": "Fichiers et métadonnées locales uniquement, sans appel réseau",
-    "mode_full": "Scan complet",
-    "mode_full_desc": "Resynchronisation complète incluant les disponibilités streaming",
     "log_title": "Log du dernier scan",
     "log_loading": "Chargement…",
     "log_error": "Impossible de charger le log.",
@@ -543,8 +539,6 @@
     "stats": "Stats",
     "recommendations": "Recos",
     "scan_library": "Scanner la bibliothèque",
-    "scan_quick_desc": "Détecte rapidement les changements récents.",
-    "scan_full_desc": "Relance une analyse complète de la médiathèque.",
     "toggle_theme": "Thème sombre / clair"
   },
   "table": {

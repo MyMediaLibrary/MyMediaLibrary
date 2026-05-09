@@ -181,25 +181,18 @@ Le scanner (`scanner.py`) analyse le contenu de `/library` et écrit les résult
 | `recommendations` | Recommandations générées (optionnel, nécessite le score qualité) |
 | `ffprobe_cache` | Cache des résultats ffprobe |
 
-### Modes de scan
+### Pipeline de scan dynamique
 
-#### Scan rapide (quick)
+MyMediaLibrary utilise un pipeline de scan dynamique composé de plusieurs phases séquentielles. Seules les phases correspondant aux fonctionnalités activées sont exécutées.
 
-- Parcourt le filesystem et parse les fichiers `.nfo`, écrit les résultats de façon incrémentale
-- Conserve les données enrichies du scan précédent (providers streaming, score qualité) sans les recalculer
-- N'appelle **pas** Seerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
+1. **Phase 1 — Filesystem + NFO** : toujours exécutée. Elle analyse les dossiers médias et parse les fichiers `.nfo`.
+2. **Phase 1B — FFprobe** : exécutée si l'analyse ffprobe est activée. Elle fiabilise les métadonnées techniques directement depuis les fichiers médias.
+3. **Phase 2 — Enrichissement Seerr** : exécutée si Seerr est configuré et activé. Elle récupère les providers streaming et les métadonnées complémentaires.
+4. **Phase 3 — Scoring** : exécutée si le score qualité est activé.
+5. **Phase 4 — Inventaire** : exécutée si l'inventaire est activé.
+6. **Phase 5 — Recommandations** : exécutée si les recommandations sont activées.
 
-#### Scan complet (full)
-
-Enchaîne les phases activées dans l'ordre :
-
-1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
-2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
-3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
-4. **Inventaire** — mise à jour de l'inventaire de présence (si activé dans les paramètres)
-5. **Recommandations** — génération des recommandations (si score et recommandations sont activés)
-
-> Les phases sont séquentielles et indépendantes — chacune produit les données consommées par la suivante.
+> Les phases sont séquentielles et indépendantes — chacune produit les données consommées par les phases suivantes.
 
 ### Parsing NFO
 
@@ -221,17 +214,17 @@ Les résultats ffprobe sont mis en cache entre les scans pour ne pas re-sonder l
 
 ### Déclencheurs
 
-| Origine | Mode | Déclenchement |
-|---|---|---|
-| Démarrage du conteneur | Rapide | Automatique via `entrypoint.sh` |
-| Assistant de configuration | Rapide | Bouton "Lancer le scan" en fin d'onboarding |
-| Bouton "Scan" dans l'UI | Complet | Via la page Scanner |
-| Cron | Complet | Planification automatique (Paramètres > Système) |
-| Modification des dossiers | Rapide | Automatique après une sauvegarde dans Paramètres > Bibliothèque |
+| Origine | Déclenchement |
+|---|---|
+| Démarrage du conteneur | Automatique via `entrypoint.sh` |
+| Assistant de configuration | Bouton "Lancer le scan" en fin d'onboarding |
+| Bouton "Scan" dans l'UI | Via la page Scanner |
+| Cron | Planification automatique (Paramètres > Système) |
+| Modification des dossiers | Automatique après une sauvegarde dans Paramètres > Bibliothèque |
 
 ### Verrou anti-concurrence
 
-Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/tmp/scan.lock`) pour coordonner tous les modes de déclenchement (démarrage, cron, UI). `/tmp` reste interne au conteneur et ne doit pas être monté.
+Un seul scan peut tourner à la fois. Le scanner utilise un verrou fichier inter-processus (`/tmp/scan.lock`) pour coordonner tous les déclenchements (démarrage, cron, UI). `/tmp` reste interne au conteneur et ne doit pas être monté.
 
 Si un scan est déjà en cours :
 - Un scan déclenché via l'UI reçoit une réponse d'erreur (HTTP 409)
@@ -246,9 +239,9 @@ Les logs sont disponibles dans `data/scanner.log` (chemin hôte) et consultables
 | `INFO` | Progression des phases, avancement par dossier, durées, statistiques détectées (codecs vidéo/audio, langues, résolutions) |
 | `DEBUG` | Détails techniques : résultats Seerr par item, parsing NFO, items non trouvés, détails inventaire |
 
-### Préservation des données (scan rapide)
+### Préservation des données entre phases
 
-Lors d'un scan rapide, les données enrichies par les scans complets précédents sont conservées sans être recalculées :
+Le pipeline conserve les données déjà présentes tant qu'une phase activée ne les remplace pas. Cela permet à une phase filesystem/NFO de préserver les enrichissements existants lorsque les fonctionnalités correspondantes ne sont pas exécutées :
 
 | Champ | Source | Comportement |
 |---|---|---|
@@ -256,7 +249,7 @@ Lors d'un scan rapide, les données enrichies par les scans complets précédent
 | `providers_fetched` | Phase 2 | Conservé depuis le scan précédent |
 | `quality` | Phase 3 (scoring) | Conservé depuis le scan précédent |
 
-Les données enrichies sont chargées une seule fois au démarrage du scan. Les nouveaux items sans entrée précédente sont créés sans enrichissement — leurs données seront calculées lors du prochain scan complet.
+Les données enrichies sont chargées depuis SQLite au démarrage du pipeline. Les nouveaux items sans entrée précédente sont créés sans enrichissement — leurs données seront calculées lorsque les phases correspondantes seront activées.
 
 ---
 
@@ -317,7 +310,7 @@ Quand la fonctionnalité d'inventaire est activée (Paramètres > Système), le 
 | `last_seen_at` | Dernière date à laquelle l'item a été détecté sur le filesystem |
 | `last_checked_at` | Date du dernier scan l'ayant évalué (mis à jour même si l'item est absent) |
 
-Un item passe à `"missing"` lorsque son dossier n'est plus détecté lors d'un scan complet. L'historique est conservé et l'item n'est pas supprimé.
+Un item passe à `"missing"` lorsque son dossier n'est plus détecté pendant une exécution du pipeline avec l'inventaire activé. L'historique est conservé et l'item n'est pas supprimé.
 
 ---
 

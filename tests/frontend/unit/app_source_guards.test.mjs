@@ -194,6 +194,22 @@ test('loadLibrary loads from SQLite API and treats empty library as a first-run 
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
 });
 
+test('user-facing scan copy describes one dynamic phase pipeline', () => {
+  const publicCopy = [
+    readmeSource,
+    docsFrSource,
+    docsEnSource,
+    JSON.stringify(frI18n),
+    JSON.stringify(enI18n),
+  ].join('\n');
+  assert.match(readmeSource, /pipeline de scan dynamique/i, 'README FR should describe the dynamic scan pipeline');
+  assert.match(readmeSource, /dynamic scan pipeline/i, 'README EN should describe the dynamic scan pipeline');
+  assert.match(docsFrSource, /Pipeline de scan dynamique/, 'French docs should name the dynamic scan pipeline');
+  assert.match(docsEnSource, /Dynamic scan pipeline/, 'English docs should name the dynamic scan pipeline');
+  assert.doesNotMatch(publicCopy, /scan rapide|\bscan complet\b|quick scan|\bfull scan\b|modes de scan|scan modes/i, 'public copy should not describe quick/full scan modes');
+  assert.doesNotMatch(publicCopy, /mode_quick|mode_full|scan_quick_desc|scan_full_desc/, 'i18n should not keep obsolete scan-mode keys');
+});
+
 test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');

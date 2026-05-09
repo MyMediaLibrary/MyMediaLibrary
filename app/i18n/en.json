@@ -361,10 +361,6 @@
     "running": "Scan in progress...",
     "done": "Scan complete ✓",
     "open_library": "Open library",
-    "mode_quick": "Quick scan",
-    "mode_quick_desc": "Local files and metadata only, no network calls",
-    "mode_full": "Full scan",
-    "mode_full_desc": "Full resync including streaming availability",
     "log_title": "Last scan log",
     "log_loading": "Loading…",
     "log_error": "Unable to load log.",
@@ -543,8 +539,6 @@
     "stats": "Stats",
     "recommendations": "Recos",
     "scan_library": "Scan library",
-    "scan_quick_desc": "Quickly detects recent changes.",
-    "scan_full_desc": "Reruns a full media library analysis.",
     "toggle_theme": "Dark / light theme"
   },
   "table": {

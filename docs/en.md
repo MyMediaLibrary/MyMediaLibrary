@@ -180,25 +180,18 @@ The scanner (`scanner.py`) analyses the content of `/library` and writes results
 | `recommendations` | Generated recommendations (optional, requires quality scoring) |
 | `ffprobe_cache` | Technical probe results cache |
 
-### Scan modes
+### Dynamic scan pipeline
 
-#### Quick scan
+MyMediaLibrary uses a dynamic scan pipeline composed of sequential phases. Only the phases related to enabled features are executed.
 
-- Walks the filesystem and parses `.nfo` files, writes results incrementally
-- Carries forward enriched data from the previous scan (streaming providers, quality score) without recomputing
-- Does **not** call Seerr, does **not** recompute scores, does **not** update the inventory
+1. **Phase 1 — Filesystem + NFO**: always executed. It analyzes media folders and parses `.nfo` files.
+2. **Phase 1B — FFprobe**: executed when ffprobe analysis is enabled. It makes technical metadata more reliable by reading media files directly.
+3. **Phase 2 — Seerr enrichment**: executed when Seerr is configured and enabled. It fetches streaming providers and additional metadata.
+4. **Phase 3 — Scoring**: executed when quality scoring is enabled.
+5. **Phase 4 — Inventory**: executed when inventory is enabled.
+6. **Phase 5 — Recommendations**: executed when recommendations are enabled.
 
-#### Full scan (default)
-
-Runs enabled phases in sequence:
-
-1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
-2. **Seerr** — fetch FR streaming providers for each title
-3. **Scoring** — compute quality score (if enabled in settings)
-4. **Inventory** — update inventory tracking (if enabled in settings)
-5. **Recommendations** — generate recommendations (if score and recommendations are enabled)
-
-> Phases are sequential and independent — each produces output consumed by the next.
+> Phases are sequential and independent — each produces output consumed by later phases.
 
 ### NFO parsing
 
@@ -220,13 +213,13 @@ ffprobe results are cached between scans so unchanged files are never re-probed.
 
 ### Scan triggers
 
-| Origin | Mode | How |
-|---|---|---|
-| Container startup | Quick | Automatic via `entrypoint.sh` |
-| Onboarding wizard | Quick | "Launch scan" button at the end of onboarding |
-| "Scan" button in the UI | Full | Via the Scanner page |
-| Cron | Full | Automatic schedule (Settings > System) |
-| Folder configuration change | Quick | Automatic after saving in Settings > Library |
+| Origin | How |
+|---|---|
+| Container startup | Automatic via `entrypoint.sh` |
+| Onboarding wizard | "Launch scan" button at the end of onboarding |
+| "Scan" button in the UI | Via the Scanner page |
+| Cron | Automatic schedule (Settings > System) |
+| Folder configuration change | Automatic after saving in Settings > Library |
 
 ### Anti-concurrency lock
 
@@ -245,9 +238,9 @@ Logs are available in `data/scanner.log` (host path) and viewable in Settings > 
 | `INFO` | Phase progression, per-folder progress, durations, detected statistics (video/audio codecs, languages, resolutions) |
 | `DEBUG` | Technical details: Seerr results per item, NFO parsing, not-found items, inventory details |
 
-### Data preservation (quick scan)
+### Data preservation between phases
 
-During a quick scan, enriched data accumulated by previous full scans is carried forward without being recomputed:
+The pipeline preserves existing data until an enabled phase replaces it. This lets the filesystem/NFO phase keep previous enrichments when the related features are not executed:
 
 | Field | Source | Behavior |
 |---|---|---|
@@ -255,7 +248,7 @@ During a quick scan, enriched data accumulated by previous full scans is carried
 | `providers_fetched` | Phase 2 | Carried forward from the previous scan |
 | `quality` | Phase 3 (scoring) | Carried forward from the previous scan |
 
-Enriched data is loaded once at the start of the scan. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
+Enriched data is loaded from SQLite at pipeline startup. New items with no previous entry are created without enrichment — their data will be computed when the related phases are enabled.
 
 ---
 
@@ -316,7 +309,7 @@ When the inventory feature is enabled (Settings > System), the scanner tracks th
 | `last_seen_at` | Last date the item was found on the filesystem |
 | `last_checked_at` | Date of the last scan that evaluated this item (updated even when missing) |
 
-An item becomes `"missing"` when its folder is no longer detected during a full scan. History is preserved and the item is not deleted.
+An item becomes `"missing"` when its folder is no longer detected during a pipeline run with inventory enabled. History is preserved and the item is not deleted.
 
 ---
 
@@ -489,7 +482,7 @@ You can customize everything and go back to defaults anytime using **Reset**.
 ### Runtime behavior
 
 Scores are computed during scans when the feature is enabled.
-After changing score settings, the backend runs a **targeted score recomputation** without a full library rescan.
+After changing score settings, the backend runs a **targeted score recomputation** without rescanning the media library.
 
 ### Philosophy
 

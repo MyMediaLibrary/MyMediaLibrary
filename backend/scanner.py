@@ -3,18 +3,18 @@
 Media Library Scanner
 Scans LIBRARY_PATH and persists runtime state to SQLite.
 
-Modes:
-  --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
-  --full     All 4 phases: filesystem scan, Seerr (force re-fetch), scoring, inventory.
+Runtime:
+  The default scan is a dynamic pipeline. Phase 1 always runs; optional
+  phases run only when their feature is enabled in SQLite config.
   --score-only Recompute quality scores from the SQLite media library.
   --reset    Reset legacy runtime output if present.
-  (default)  Same as --full.
 
 Phases:
   1. Filesystem + NFO scan — builds the media library, writes after each folder.
   2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
   4. Inventory            — updates SQLite inventory after each folder + final pass.
+  5. Recommendations      — replaces generated recommendations in SQLite.
 
 Filters (combinable with any mode):
   --category <n>   Restrict scan to a single category name.
@@ -3228,7 +3228,7 @@ def scan_media_item(
         "video_bitrate":     (series_agg.get("video_bitrate") if is_tv else nfo_meta.get("video_bitrate")) or prev.get("video_bitrate"),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
-        # Enriched fields preserved from previous SQLite library snapshot — overwritten by full scan phases
+        # Enriched fields preserved from previous SQLite library snapshot — overwritten by later enabled phases.
         "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
@@ -3251,7 +3251,7 @@ def scan_media_item(
             if isinstance(preserved_quality, dict):
                 q = dict(preserved_quality)
                 q.pop("level", None)
-                item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+                item["quality"] = q  # preserved during phase 1; overwritten by phase 3 when enabled
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
@@ -3388,7 +3388,7 @@ def run_quick(only_category: str | None = None) -> None:
             _strip_score_fields(item)
 
     # Only_category: final write is required to include preserved items from other categories.
-    # Normal full scan: the last per-folder incremental write already captured all items — skip.
+    # Whole-library pipeline: the last per-folder incremental write already captured all items — skip.
     if only_category:
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
@@ -5362,9 +5362,9 @@ def main():
     )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--quick", action="store_true",
-        help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
+        help="Compatibility alias: run phase 1 only")
     mode_group.add_argument("--full",  action="store_true",
-        help="Automatic phased scan based on current config (default)")
+        help="Compatibility alias: run the dynamic phase pipeline")
     mode_group.add_argument("--phases", default=None, metavar="LIST",
         help="Explicit phases list, comma-separated (e.g. 1,2,3,4)")
     mode_group.add_argument("--score-only", action="store_true",

@@ -453,7 +453,7 @@ def parse_video_bitrate(root: ET.Element) -> int | None:
     return bitrate if bitrate > 0 else None
 
 
-# NFO parse stats — reset at each run_quick() call, reported as grouped summary
+# NFO parse stats — reset for each phase 1 run, reported as grouped summary.
 _nfo_stats: dict = {"ok": 0, "failed": 0}
 
 
