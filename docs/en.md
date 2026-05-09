@@ -21,13 +21,13 @@
 
 ## 1. Overview
 
-**MyMediaLibrary** is a self-hosted dashboard to visualize a movie and TV show library. It runs in a single Docker container with no database.
+**MyMediaLibrary** is a self-hosted dashboard to visualize a movie and TV show library. It runs in a single Docker container backed by an SQLite database.
 
 **Flow:**
-1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and generates `data/library.json`.
-2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations.
-3. The web interface (vanilla JS) loads the generated JSON files and renders library, filters, statistics, and recommendations.
-4. Configuration is persisted in SQLite (folders, Seerr, UI preferences).
+1. The Python scanner reads subdirectories of `/library`, parses `.nfo` files (Kodi/Jellyfin/Emby format), and persists media data to `data/mymedialibrary.db`.
+2. Optional phases enrich the data: Seerr, quality score, inventory, and recommendations — each phase also writes to SQLite.
+3. The web interface (vanilla JS) calls REST API endpoints (`/api/library`, `/api/recommendations`, etc.) backed by SQLite, and renders library, filters, statistics, and recommendations.
+4. All runtime state — configuration, scan settings, auth, library, inventory, recommendations — lives in SQLite.
 
 ---
 
@@ -38,7 +38,7 @@
 - **Container**: nginx:alpine + Python 3 + dcron (single image)
 - **Frontend**: HTML/CSS + vanilla JS (no framework)
 - **Backend**: minimal Python server (`backend/scanner.py`) — REST API routes + static file serving
-- **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, `library.json` writing
+- **Scanner**: Python (`backend/scanner.py`) — `.nfo` parsing, metadata computation, SQLite persistence
 - **Persistence**: SQLite in `data/mymedialibrary.db`, `data/.secrets` for secrets outside the DB, `localStorage` (UI state)
 
 ### Internationalisation
@@ -61,7 +61,7 @@ Main impact areas:
 **Requirements:** Docker + Docker Compose, library with `.nfo` files.
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 # edit compose.yaml — update the volume path
 docker compose up -d
@@ -170,27 +170,28 @@ The setup wizard appears on first launch when the SQLite configuration is empty.
 
 ## 6. Scanner
 
-The scanner is the core component of MyMediaLibrary. It reads the filesystem, parses `.nfo` files, and produces the JSON files consumed by the web interface.
+The scanner is the core component of MyMediaLibrary. It reads the filesystem, parses `.nfo` files, and persists all data to SQLite.
 
 ### Overview
 
-The scanner (`scanner.py`) analyses the content of `/library` and generates:
+The scanner (`scanner.py`) analyses the content of `/library` and writes results to `data/mymedialibrary.db`:
 
-| File | Purpose |
+| SQLite table | Content |
 |---|---|
-| `/data/library.json` | Main index — loaded by the web interface |
-| `/data/library_inventory.json` | Media presence/absence tracking (optional, enable in Settings > System) |
-| `/data/recommendations.json` | Generated recommendations (optional, requires quality scoring) |
+| `media`, `seasons`, `episodes`, `files`, `streams` | Library items with all metadata |
+| `inventory_items` | Media presence/absence tracking (optional, enable in Settings > System) |
+| `recommendations` | Generated recommendations (optional, requires quality scoring) |
+| `ffprobe_cache` | Technical probe results cache |
 
-The detailed format of these files is described in the [Data models](#7-data-models) chapter.
+> **Internal pipeline files**: during a multi-phase scan, intermediate JSON files (`library.json`, `library_inventory.json`, `recommendations.json`) are still written to `/data` as pipeline buffers between phases. They are never served to clients (nginx returns 410 on direct access). The web interface reads exclusively from the SQLite API (`/api/library`, `/api/recommendations`, etc.).
 
 ### Scan modes
 
 #### Quick scan
 
 - Walks the filesystem and parses `.nfo` files
-- Writes `library.json` incrementally, folder by folder
-- Preserves enriched data from the previous scan (streaming providers, quality score)
+- Walks the filesystem and parses `.nfo` files, writes results to SQLite incrementally
+- Preserves enriched data from the previous scan (streaming providers, quality score) using SQLite lookups
 - Does **not** call Seerr, does **not** recompute scores, does **not** update the inventory
 
 #### Full scan (default)
@@ -200,10 +201,10 @@ Runs enabled phases in sequence:
 1. **Filesystem + NFO** — folder traversal, `.nfo` parsing
 2. **Seerr** — fetch FR streaming providers for each title
 3. **Scoring** — compute quality score (if enabled in settings)
-4. **Inventory** — update `library_inventory.json` (if enabled in settings)
-5. **Recommendations** — generate `recommendations.json` (if score and recommendations are enabled)
+4. **Inventory** — update inventory tables in SQLite (if enabled in settings)
+5. **Recommendations** — generate recommendations in SQLite (if score and recommendations are enabled)
 
-> Each phase reads from the output of the previous phase on disk. Phases are fully independent.
+> Each phase reads from the output of the previous phase (via intermediate pipeline files and SQLite). Phases are fully independent.
 
 ### Enriched NFO parsing (v0.3.4)
 
@@ -232,7 +233,7 @@ Genres are normalized through an external mapping file: `app/mapping_genres.json
 
 ### Anti-concurrency lock
 
-Only one scan can run at a time. The scanner uses an inter-process file lock (`/tmp/scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent simultaneous writes that would corrupt `library.json`. `/tmp` stays internal to the container and should not be mounted.
+Only one scan can run at a time. The scanner uses an inter-process file lock (`/tmp/scan.lock`) to coordinate all trigger origins (startup, cron, UI) and prevent concurrent SQLite writes. `/tmp` stays internal to the container and should not be mounted.
 
 If a scan is already running:
 - A UI-triggered scan receives an error response (HTTP 409)
@@ -253,19 +254,25 @@ During a quick scan, enriched data accumulated by previous full scans is carried
 
 | Field | Source | Behavior |
 |---|---|---|
-| `providers` | Phase 2 (Seerr) | Copied from the existing `library.json` |
-| `providers_fetched` | Phase 2 | Copied from the existing `library.json` |
-| `quality` | Phase 3 (scoring) | Copied from the existing `library.json` |
+| `providers` | Phase 2 (Seerr) | Carried forward from the previous scan via SQLite lookup |
+| `providers_fetched` | Phase 2 | Carried forward from the previous scan via SQLite lookup |
+| `quality` | Phase 3 (scoring) | Carried forward from the previous scan via SQLite lookup |
 
-The existing `library.json` is loaded **once** at the start of the scan and used as an immutable reference for all lookups. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
+SQLite is queried **once** at the start of the scan to build an immutable reference for all enrichment lookups. New items with no previous entry are created without enrichment — their data will be computed on the next full scan.
 
 ---
 
 ## 7. Data models
 
-### `library.json`
+### `/api/library` response — item format
 
-Main file consumed by the web interface. Top-level structure:
+The web interface loads library data from the `/api/library` REST endpoint (SQLite-backed). The response format is:
+
+### `library.json` (internal pipeline file)
+
+> **Note:** `library.json` is an internal scan pipeline buffer still written to `/data` by the scanner. It is not served to clients (nginx returns HTTP 410). Client-facing data comes from the `/api/library` endpoint backed by SQLite. The JSON format below describes the item schema, which is identical to the API response.
+
+Top-level structure:
 
 ```json
 {

@@ -21,13 +21,13 @@
 
 ## 1. Vue d'ensemble
 
-**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker sans base de données.
+**MyMediaLibrary** est un tableau de bord auto-hébergé pour visualiser une bibliothèque de films et séries. Il tourne dans un unique conteneur Docker avec une base de données SQLite embarquée.
 
 **Flux :**
-1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et génère `data/library.json`.
-2. Les phases optionnelles enrichissent les données : Seerr, score qualité, inventaire et recommandations.
-3. L'interface web (vanilla JS) charge les fichiers JSON générés et affiche bibliothèque, filtres, statistiques et recommandations.
-4. La configuration est persistée dans SQLite (dossiers, Seerr, préférences UI).
+1. Le scanner Python lit les sous-dossiers de `/library`, parse les fichiers `.nfo` (format Kodi/Jellyfin/Emby) et persiste les données dans `data/mymedialibrary.db`.
+2. Les phases optionnelles enrichissent les données dans SQLite : Seerr, score qualité, inventaire et recommandations.
+3. L'interface web (vanilla JS) appelle des endpoints REST (`/api/library`, `/api/recommendations`, etc.) alimentés par SQLite et affiche bibliothèque, filtres, statistiques et recommandations.
+4. Tout l'état runtime — configuration, paramètres de scan, auth, bibliothèque, inventaire, recommandations — est stocké dans SQLite.
 
 ---
 
@@ -38,7 +38,7 @@
 - **Conteneur** : nginx:alpine + Python 3 + dcron (image unique)
 - **Frontend** : HTML/CSS + vanilla JS (aucun framework)
 - **Backend** : serveur Python minimal (`backend/scanner.py`) — routes API REST + service des fichiers statiques
-- **Scanner** : Python (`backend/scanner.py`) — lecture `.nfo`, calcul métadonnées, écriture `library.json`
+- **Scanner** : Python (`backend/scanner.py`) — lecture `.nfo`, calcul métadonnées, persistance SQLite
 - **Persistance** : SQLite dans `data/mymedialibrary.db`, `data/.secrets` pour les secrets hors DB, `localStorage` (état UI)
 
 
@@ -62,7 +62,7 @@ Impacts principaux :
 **Prérequis :** Docker + Docker Compose, bibliothèque avec fichiers `.nfo`.
 
 ```bash
-mkdir mymedialibrary && cd mymedialibrary && mkdir data conf
+mkdir mymedialibrary && cd mymedialibrary && mkdir data
 curl -O https://raw.githubusercontent.com/MyMediaLibrary/MyMediaLibrary/main/compose.yaml
 # éditer compose.yaml — ajuster le chemin du volume
 docker compose up -d
@@ -171,27 +171,27 @@ L'assistant de configuration s'affiche au premier démarrage quand la configurat
 
 ## 6. Scanner
 
-Le scanner est le composant central de MyMediaLibrary. Il lit le filesystem, parse les fichiers `.nfo` et produit les fichiers JSON consommés par l'interface web.
+Le scanner est le composant central de MyMediaLibrary. Il lit le filesystem, parse les fichiers `.nfo` et persiste toutes les données dans SQLite.
 
 ### Vue d'ensemble
 
-Le scanner (`scanner.py`) analyse le contenu de `/library` et génère :
+Le scanner (`scanner.py`) analyse le contenu de `/library` et écrit les résultats dans `data/mymedialibrary.db` :
 
-| Fichier | Rôle |
+| Table SQLite | Contenu |
 |---|---|
-| `/data/library.json` | Index principal — chargé par l'interface web |
-| `/data/library_inventory.json` | Suivi présence/absence des médias (optionnel, activable dans Paramètres > Système) |
-| `/data/recommendations.json` | Recommandations générées (optionnel, nécessite le score qualité) |
+| `media`, `seasons`, `episodes`, `files`, `streams` | Items bibliothèque avec toutes les métadonnées |
+| `inventory_items` | Suivi présence/absence des médias (optionnel, activable dans Paramètres > Système) |
+| `recommendations` | Recommandations générées (optionnel, nécessite le score qualité) |
+| `ffprobe_cache` | Cache des résultats ffprobe |
 
-Le format détaillé de ces fichiers est décrit dans le chapitre [Modèles de données](#7-modèles-de-données).
+> **Fichiers pipeline internes** : lors d'un scan multi-phase, des fichiers JSON intermédiaires (`library.json`, `library_inventory.json`, `recommendations.json`) sont encore écrits dans `/data` comme buffers de pipeline entre les phases. Ils ne sont jamais servis aux clients (nginx retourne 410 sur accès direct). L'interface web lit exclusivement via l'API SQLite (`/api/library`, `/api/recommendations`, etc.).
 
 ### Modes de scan
 
 #### Scan rapide (quick)
 
-- Parcourt le filesystem et parse les fichiers `.nfo`
-- Écrit `library.json` de façon incrémentale, dossier par dossier
-- Conserve les données enrichies du scan précédent (providers streaming, score qualité)
+- Parcourt le filesystem et parse les fichiers `.nfo`, écrit les résultats dans SQLite de façon incrémentale
+- Conserve les données enrichies du scan précédent (providers streaming, score qualité) via des lookups SQLite
 - N'appelle **pas** Seerr, ne recalcule **pas** les scores, ne met **pas** à jour l'inventaire
 
 #### Scan complet (full)
@@ -201,10 +201,10 @@ Enchaîne les phases activées dans l'ordre :
 1. **Filesystem + NFO** — lecture des dossiers, parsing des `.nfo`
 2. **Seerr** — récupération des plateformes de streaming FR pour chaque titre
 3. **Scoring** — calcul du score de qualité (si activé dans les paramètres)
-4. **Inventaire** — mise à jour de `library_inventory.json` (si activé dans les paramètres)
-5. **Recommandations** — génération de `recommendations.json` (si score et recommandations sont activés)
+4. **Inventaire** — mise à jour des tables d'inventaire dans SQLite (si activé dans les paramètres)
+5. **Recommandations** — génération des recommandations dans SQLite (si score et recommandations sont activés)
 
-> Chaque phase lit la sortie de la phase précédente depuis le disque. Les phases sont entièrement séparées.
+> Chaque phase lit la sortie de la phase précédente (via des fichiers pipeline intermédiaires et SQLite). Les phases sont entièrement séparées.
 
 ### Parsing NFO enrichi (v0.3.4)
 
