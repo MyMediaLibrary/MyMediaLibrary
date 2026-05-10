@@ -29,6 +29,14 @@ except Exception:
         ffprobe_repository = None  # type: ignore
 
 try:
+    from backend.repositories import media_probe_cache_repository
+except Exception:
+    try:
+        from repositories import media_probe_cache_repository  # type: ignore
+    except Exception:
+        media_probe_cache_repository = None  # type: ignore
+
+try:
     from backend.nfo import (
         classify_resolution,
         normalize_audio_channels,
@@ -62,7 +70,7 @@ MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v",
     ".ts", ".m2ts", ".mpg", ".mpeg", ".flv", ".webm",
 }
-_PHASE_PREFIX = "[SCAN] [PHASE 1B] [FFPROBE]"
+_PHASE_PREFIX = "[SCAN] [PHASE 2] [FFPROBE]"
 _SCAN_SEPARATOR = "─" * 47
 
 TECHNICAL_FIELDS = (
@@ -292,6 +300,7 @@ def _generate_probe_document(
             log.debug("%s Item planning failed for %s: %s", _PHASE_PREFIX, item.get("path"), exc)
 
     cache_repo = _open_probe_cache_repository(cache_path) if cache_enabled else None
+    mpc_repo = _open_media_probe_cache_repo() if cache_enabled else None
     try:
         disk_cache = {}
         next_cache: dict[str, dict] = {}
@@ -300,10 +309,21 @@ def _generate_probe_document(
         for index, (category, category_plans) in enumerate(grouped_plans, start=1):
             category_started_at = time.monotonic()
             category_stats = {"items": len(category_plans), "files_total": 0, "files_probed": 0, "files_cached": 0, "errors": 0}
+
+            # Check media_probe_cache first; only send cache-miss files to ffprobe
+            mpc_pre_resolved: dict[str, dict] = {}
             files_to_resolve: list[Path] = []
             for plan in category_plans:
-                files_to_resolve.extend(plan.get("files") or [])
-            category_stats["files_total"] = len(files_to_resolve)
+                media_id = str(plan["item"].get("id") or "")
+                for file_path in (plan.get("files") or []):
+                    if mpc_repo is not None:
+                        cached = mpc_repo.get(media_id, file_path.name, file_path)
+                        if cached is not None:
+                            mpc_pre_resolved[str(file_path)] = cached
+                            continue
+                    files_to_resolve.append(file_path)
+
+            category_stats["files_total"] = len(files_to_resolve) + len(mpc_pre_resolved)
             stats["files_total"] += category_stats["files_total"]
 
             log.info("%s Folder [%s] (%s/%s) started", _PHASE_PREFIX, category, index, total_groups)
@@ -318,6 +338,19 @@ def _generate_probe_document(
                 write_cache=False,
                 cache_repo=cache_repo,
             )
+            # Merge media_probe_cache hits into results
+            probe_results.update(mpc_pre_resolved)
+            probe_stats["files_cached"] += len(mpc_pre_resolved)
+
+            # Write newly probed results to media_probe_cache
+            if mpc_repo is not None:
+                for plan in category_plans:
+                    media_id = str(plan["item"].get("id") or "")
+                    for file_path in (plan.get("files") or []):
+                        key = str(file_path)
+                        if key not in mpc_pre_resolved and key in probe_results:
+                            mpc_repo.upsert(media_id, file_path.name, file_path, probe_results[key])
+
             category_stats["files_probed"] = probe_stats["files_probed"]
             category_stats["files_cached"] = probe_stats["files_cached"]
             stats["files_probed"] += category_stats["files_probed"]
@@ -343,6 +376,8 @@ def _generate_probe_document(
     finally:
         if cache_repo is not None:
             cache_repo.close()
+        if mpc_repo is not None:
+            mpc_repo.close()
 
     if not include_diagnostics:
         _strip_probe_diagnostics(probe_doc)
@@ -639,6 +674,16 @@ def _open_probe_cache_repository(cache_path: str | Path):
     if ffprobe_repository is None:
         raise RuntimeError("SQLite ffprobe repository unavailable")
     return ffprobe_repository.open_cache(json_path=cache_path)
+
+
+def _open_media_probe_cache_repo():
+    if media_probe_cache_repository is None:
+        return None
+    try:
+        return media_probe_cache_repository.open_cache()
+    except Exception as exc:
+        log.debug("%s media_probe_cache unavailable: %s", _PHASE_PREFIX, exc)
+        return None
 
 
 def _cache_repo_get(cache_repo, path: Path) -> dict | None:

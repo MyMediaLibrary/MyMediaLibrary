@@ -113,7 +113,7 @@ except Exception:
         from media_probe import run_media_probe_document_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
-            "[SCAN] [PHASE 1B] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
+            "[SCAN] [PHASE 2] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
             e,
         )
 
@@ -3727,25 +3727,25 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> list[t
     if not ordered:
         log.info("[SCAN] No phase selected — nothing to run")
         return []
-    planned_phase_ids = _log_planned_phases(ordered)
+    _log_planned_phases(ordered)
     durations: list[tuple[str, float]] = []
     for phase in ordered:
         if phase == PHASE_SCAN:
             phase_started_at = time.monotonic()
             run_quick(only_category=only_category)
             durations.append(("1", time.monotonic() - phase_started_at))
-            if "1B" in planned_phase_ids:
-                phase_started_at = time.monotonic()
-                _run_media_probe_phase1b(only_category=only_category)
-                durations.append(("1B", time.monotonic() - phase_started_at))
+        elif phase == PHASE_PROBE:
+            phase_started_at = time.monotonic()
+            run_probe(only_category=only_category)
+            durations.append(("2", time.monotonic() - phase_started_at))
         elif phase == PHASE_ENRICH:
             phase_started_at = time.monotonic()
             run_enrich(force=True, only_category=only_category)
-            durations.append(("2", time.monotonic() - phase_started_at))
+            durations.append(("3", time.monotonic() - phase_started_at))
         elif phase == PHASE_SCORE:
             phase_started_at = time.monotonic()
             run_scoring(only_category=only_category)
-            durations.append(("3", time.monotonic() - phase_started_at))
+            durations.append(("4", time.monotonic() - phase_started_at))
         elif phase == PHASE_RECOMMENDATIONS:
             phase_started_at = time.monotonic()
             run_recommendations()
@@ -3753,20 +3753,20 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> list[t
     return durations
 
 
-def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
+def run_probe(*, only_category: str | None = None) -> None:
     cfg = load_config()
     if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
         return
     if cfg["media_probe"].get("mode", "compare") != "compare":
-        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
+        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("2"), cfg["media_probe"].get("mode"))
         return
     if not library_document_exists(OUTPUT_PATH):
-        log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
+        log.info("%s Skipping — media library is empty", _phase_prefix("2"))
         return
     try:
         document = load_library_document_non_blocking(OUTPUT_PATH)
         if not isinstance(document, dict):
-            log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
+            log.info("%s Skipping — media library is empty", _phase_prefix("2"))
             return
         result = run_media_probe_pipeline_if_enabled(
             cfg,
@@ -3780,9 +3780,9 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
             updated_document, _stats = result
             write_json(updated_document, OUTPUT_PATH)
         elif result is not None:
-            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("1B"))
+            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("2"))
     except Exception as e:
-        log.exception("%s Failed: %s", _phase_prefix("1B"), e)
+        log.exception("%s Failed: %s", _phase_prefix("2"), e)
 
 
 # ---------------------------------------------------------------------------
@@ -3996,24 +3996,26 @@ _cron_job = {
 }
 
 PHASE_SCAN = 1
-PHASE_ENRICH = 2
-PHASE_SCORE = 3
+PHASE_PROBE = 2
+PHASE_ENRICH = 3
+PHASE_SCORE = 4
 PHASE_RECOMMENDATIONS = 5
-_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_RECOMMENDATIONS]
+_PHASE_ORDER = [PHASE_SCAN, PHASE_PROBE, PHASE_ENRICH, PHASE_SCORE, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 _SCAN_SEPARATOR = "─" * 47
 _SCAN_FINAL_SEPARATOR = "═" * 47
 _PHASE_LABELS = {
     "1": ("FILESYSTEM+NFO", "Filesystem + NFO"),
-    "1B": ("FFPROBE", "FFprobe technical scan"),
-    "2": ("SEERR", "Seerr enrichment"),
-    "3": ("SCORING", "Scoring"),
+    "2": ("FFPROBE", "FFprobe technical scan"),
+    "3": ("SEERR", "Seerr enrichment"),
+    "4": ("SCORING", "Scoring"),
     "5": ("RECOMMENDATIONS", "Recommendations"),
 }
 _PHASE_ID_BY_NUMBER = {
     PHASE_SCAN: "1",
-    PHASE_ENRICH: "2",
-    PHASE_SCORE: "3",
+    PHASE_PROBE: "2",
+    PHASE_ENRICH: "3",
+    PHASE_SCORE: "4",
     PHASE_RECOMMENDATIONS: "5",
 }
 
@@ -4051,13 +4053,15 @@ def _log_planned_phases(ordered: list[int]) -> list[str]:
         if not phase_id:
             continue
         expanded.append(phase_id)
-        if phase == PHASE_SCAN and _is_media_probe_phase_enabled():
-            expanded.append("1B")
     log.info("[SCAN] Planned phases:")
     for phase_id in expanded:
-        label = phase_id.lower() if phase_id == "1B" else phase_id
-        log.info("[SCAN]   %-2s -> %s", label, _phase_display_name(phase_id))
+        log.info("[SCAN]   %-2s -> %s", phase_id, _phase_display_name(phase_id))
     return expanded
+
+
+def _is_media_probe_enabled(cfg: dict | None) -> bool:
+    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
+    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
 
 
 def _is_media_probe_phase_enabled() -> bool:
@@ -4065,20 +4069,16 @@ def _is_media_probe_phase_enabled() -> bool:
         cfg = load_config()
     except Exception:
         return False
-    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
-    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
+    return _is_media_probe_enabled(cfg)
 
 
 def _phases_display_csv(phases: list[int]) -> str:
     expanded = []
-    include_probe = _is_media_probe_phase_enabled()
     for phase in _normalize_phases(phases):
         phase_id = _PHASE_ID_BY_NUMBER.get(phase)
         if not phase_id:
             continue
-        expanded.append(phase_id.lower() if phase_id == "1B" else phase_id)
-        if phase == PHASE_SCAN and include_probe:
-            expanded.append("1b")
+        expanded.append(phase_id)
     return ",".join(expanded)
 
 
@@ -4167,6 +4167,8 @@ def _phase_plan_from_config(
     phases: list[int] = []
     if include_phase1 and _has_configured_media_folders(cfg):
         phases.append(PHASE_SCAN)
+    if _is_media_probe_enabled(cfg):
+        phases.append(PHASE_PROBE)
     if _is_seerr_enrichment_active(cfg, secrets=secrets):
         phases.append(PHASE_ENRICH)
     if _is_score_enabled(cfg):
@@ -4206,6 +4208,7 @@ def _compute_phases_for_config_change(
     next_secrets = secrets_after if isinstance(secrets_after, dict) else _load_secrets()
 
     folders_changed = _folder_scan_signature(prev_cfg.get("folders")) != _folder_scan_signature(new_cfg.get("folders"))
+    probe_changed = _is_media_probe_enabled(prev_cfg) != _is_media_probe_enabled(new_cfg)
     seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
     score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
     recommendations_changed = _is_recommendations_enabled(prev_cfg) != _is_recommendations_enabled(new_cfg)
@@ -4218,6 +4221,8 @@ def _compute_phases_for_config_change(
         if PHASE_SCAN not in phases:
             phases.insert(0, PHASE_SCAN)
     else:
+        if probe_changed and _is_media_probe_enabled(new_cfg):
+            phases.append(PHASE_PROBE)
         if seerr_changed:
             phases.append(PHASE_ENRICH)
         if score_changed:
@@ -4472,10 +4477,9 @@ def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
 
 _SCAN_PHASE_STATE = {
     "1": "filesystem",
-    "1B": "ffprobe",
-    "2": "seerr",
-    "3": "scoring",
-    
+    "2": "ffprobe",
+    "3": "seerr",
+    "4": "scoring",
     "5": "recommendations",
 }
 
@@ -5280,7 +5284,7 @@ def main():
                 for phase_id, duration in phase_durations:
                     log.info(
                         "[SCAN]   Phase %-2s (%s): %.1fs",
-                        phase_id.lower() if phase_id == "1B" else phase_id,
+                        phase_id,
                         _phase_display_name(phase_id).replace(" + ", "+"),
                         duration,
                     )

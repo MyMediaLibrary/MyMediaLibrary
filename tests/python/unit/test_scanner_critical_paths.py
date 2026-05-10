@@ -237,7 +237,7 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             self.assertIn("filesystem", scanner._srv_state["completed_phases"])
             self.assertTrue(scanner._srv_state["initial_library_ready"])
 
-            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1B] [FFPROBE] Starting phase")
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 2] [FFPROBE] Starting phase")
             self.assertEqual(scanner._srv_state["phase"], "ffprobe")
             self.assertTrue(scanner._srv_state["initial_library_ready"])
             scanner._srv_state.clear()
@@ -256,13 +256,13 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             "cache_enabled": True,
         })
 
-    def test_media_probe_phase1b_disabled_does_not_run(self):
+    def test_media_probe_run_probe_disabled_does_not_run(self):
         with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
-             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
-            scanner._run_media_probe_phase1b()
-        run_probe.assert_not_called()
+             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe_pipeline:
+            scanner.run_probe()
+        run_probe_pipeline.assert_not_called()
 
-    def test_media_probe_phase1b_enabled_runs_before_later_phases(self):
+    def test_media_probe_run_probe_enabled_runs_as_phase_2(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             library_json = root / "data" / "library.json"
@@ -273,38 +273,38 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
                  patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
                  patch.object(scanner, "load_config", return_value=cfg), \
-                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe:
-                scanner._run_media_probe_phase1b(only_category="Movies")
+                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe_pipeline:
+                scanner.run_probe(only_category="Movies")
 
-            run_probe.assert_called_once()
-            kwargs = run_probe.call_args.kwargs
+            run_probe_pipeline.assert_called_once()
+            kwargs = run_probe_pipeline.call_args.kwargs
             self.assertEqual(kwargs["library_json_path"], str(library_json))
             self.assertEqual(kwargs["only_category"], "Movies")
 
-    def test_run_phases_places_media_probe_between_scan_and_enrich(self):
+    def test_run_phases_places_probe_between_scan_and_enrich(self):
         calls = []
         with patch.object(scanner, "run_quick", side_effect=lambda **_: calls.append("scan")), \
-             patch.object(scanner, "_run_media_probe_phase1b", side_effect=lambda **_: calls.append("probe")), \
+             patch.object(scanner, "run_probe", side_effect=lambda **_: calls.append("probe")), \
              patch.object(scanner, "run_enrich", side_effect=lambda **_: calls.append("enrich")), \
-             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
+             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")):
             scanner.run_phases([
                 scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
                 scanner.PHASE_ENRICH,
                 scanner.PHASE_SCORE,
             ])
 
         self.assertEqual(calls, ["scan", "probe", "enrich", "score"])
 
-    def test_run_phases_logs_explicit_phase_1b_plan(self):
+    def test_run_phases_logs_phase_2_probe_plan(self):
         with patch.object(scanner, "run_quick"), \
-             patch.object(scanner, "_run_media_probe_phase1b"), \
+             patch.object(scanner, "run_probe"), \
              patch.object(scanner, "run_enrich"), \
              patch.object(scanner, "run_scoring"), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}), \
              self.assertLogs("scanner", level="INFO") as logs:
             scanner.run_phases([
                 scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
                 scanner.PHASE_ENRICH,
                 scanner.PHASE_SCORE,
             ])
@@ -312,15 +312,14 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertIn("[SCAN] Planned phases:", joined)
         self.assertIn("1  -> Filesystem + NFO", joined)
-        self.assertIn("1b -> FFprobe technical scan", joined)
-        self.assertIn("2  -> Seerr enrichment", joined)
-        self.assertIn("3  -> Scoring", joined)
+        self.assertIn("2  -> FFprobe technical scan", joined)
+        self.assertIn("3  -> Seerr enrichment", joined)
+        self.assertIn("4  -> Scoring", joined)
 
-    def test_run_phases_hides_phase_1b_when_media_probe_disabled(self):
+    def test_run_phases_skips_probe_when_not_in_phases(self):
         with patch.object(scanner, "run_quick"), \
-             patch.object(scanner, "_run_media_probe_phase1b") as run_probe, \
+             patch.object(scanner, "run_probe") as run_probe, \
              patch.object(scanner, "run_enrich"), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
              self.assertLogs("scanner", level="INFO") as logs:
             scanner.run_phases([
                 scanner.PHASE_SCAN,
@@ -328,28 +327,27 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             ])
 
         joined = "\n".join(logs.output)
-        self.assertNotIn("1b -> FFprobe technical scan", joined)
+        self.assertNotIn("FFprobe technical scan", joined)
         run_probe.assert_not_called()
 
-    def test_phases_display_csv_includes_phase_1b_only_when_enabled(self):
-        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
-            self.assertEqual(
-                scanner._phases_display_csv([
-                    scanner.PHASE_SCAN,
-                    scanner.PHASE_ENRICH,
-                    scanner.PHASE_SCORE,
-                ]),
-                "1,1b,2,3",
-            )
-        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}):
-            self.assertEqual(
-                scanner._phases_display_csv([
-                    scanner.PHASE_SCAN,
-                    scanner.PHASE_ENRICH,
-                    scanner.PHASE_SCORE,
-                ]),
-                "1,2,3",
-            )
+    def test_phases_display_csv(self):
+        self.assertEqual(
+            scanner._phases_display_csv([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ]),
+            "1,2,3,4",
+        )
+        self.assertEqual(
+            scanner._phases_display_csv([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ]),
+            "1,3,4",
+        )
 
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))

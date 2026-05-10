@@ -470,13 +470,13 @@ class MediaProbeTest(unittest.TestCase):
             )
 
         joined = "\n".join(logs.output)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Starting phase — workers=4, cache=disabled", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] (1/1) started", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] completed in", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Starting phase — workers=4, cache=disabled", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] (1/1) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] completed in", joined)
         self.assertIn("1 item / 1 file / 0 errors", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Summary:", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Summary:", joined)
         self.assertIn("1 item / 1 file probed / 0 errors", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Completed in", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Completed in", joined)
 
     def test_category_progress_logs_include_cache_counts_and_duration(self):
         movie_dir = self.library_root / "Movies" / "Film"
@@ -502,13 +502,13 @@ class MediaProbeTest(unittest.TestCase):
 
         self.assertEqual(stats, {"items": 2, "files_total": 2, "files_probed": 2, "files_cached": 0, "errors": 0})
         joined = "\n".join(logs.output)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Starting phase", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] (1/2) started", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Series] (2/2) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Starting phase", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] (1/2) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Series] (2/2) started", joined)
         self.assertIn("Folder [Movies] completed in", joined)
         self.assertIn("1 item / 1 file / 1 probed / 0 cached / 0 errors", joined)
         self.assertIn("Folder [Series] completed in", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Summary:", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Summary:", joined)
         self.assertIn("2 items / 2 files total / 2 probed / 0 cached / 0 errors", joined)
         self.assertIn("Completed in", joined)
 
