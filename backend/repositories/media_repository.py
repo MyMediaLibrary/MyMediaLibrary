@@ -103,6 +103,11 @@ def replace_library(conn: sqlite3.Connection, document: dict[str, Any]) -> None:
     _save_library_payload(conn, _normalize_library_document(document), replace=True)
 
 
+def clear_library_snapshot(conn: sqlite3.Connection) -> None:
+    """Remove the runtime library snapshot from app_config (called during full reset)."""
+    conn.execute("DELETE FROM app_config WHERE key = ?", (_LIBRARY_DOCUMENT_KEY,))
+
+
 def upsert_media_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
     if not isinstance(item, dict):
         return 0

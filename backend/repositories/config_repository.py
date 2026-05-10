@@ -153,9 +153,31 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     return sanitize_config(cfg)
 
 
+# Keys owned exclusively by save_config (user configuration).
+# Runtime-internal keys like runtime_library_document must never appear here.
+_APP_CONFIG_USER_KEYS = frozenset({
+    "system",
+    "scan",
+    "recommendations",
+    "seerr",
+    "folders",
+    "enable_movies",
+    "enable_series",
+    "providers_visible",
+    "ui",
+})
+
+
 def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
     structured_keys = {"auth", "score", "score_configuration", "media_probe"}
-    conn.execute("DELETE FROM app_config")
+    # Wipe only user-config keys — never touch runtime keys (e.g. runtime_library_document).
+    incoming_keys = {str(k) for k in config if k not in structured_keys}
+    managed_keys = tuple(_APP_CONFIG_USER_KEYS | incoming_keys)
+    if managed_keys:
+        conn.execute(
+            f"DELETE FROM app_config WHERE key IN ({','.join('?' * len(managed_keys))})",
+            managed_keys,
+        )
     for key, value in config.items():
         if key in structured_keys:
             continue
@@ -163,10 +185,7 @@ def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> Non
         if sanitized is _SKIP:
             continue
         conn.execute(
-            """
-            INSERT INTO app_config(key, value_json, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            """,
+            "INSERT INTO app_config(key, value_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
             (str(key), _to_json(sanitized)),
         )
 

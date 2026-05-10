@@ -1010,6 +1010,84 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual(rules, [])
 
+    def test_save_config_preserves_runtime_library_snapshot(self):
+        """Bug fix: save_config must not wipe runtime_library_document from app_config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+            cfg_path = root / "data" / "config.json"
+
+            # Write a library snapshot into app_config
+            conn = db.initialize_database(db_path)
+            try:
+                media_repository.replace_library(conn, {"items": [{"id": "m1", "title": "Test", "path": "/t", "type": "movie"}]})
+                snapshot_before = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'runtime_library_document'"
+                ).fetchone()
+                self.assertIsNotNone(snapshot_before)
+            finally:
+                conn.close()
+
+            # Save user config — must NOT touch runtime_library_document
+            config_repository.save_config(
+                {"system": {"log_level": "DEBUG"}, "folders": [], "score": {"enabled": False}},
+                cfg_path,
+                db_path,
+            )
+
+            # Snapshot must still be present and unchanged
+            conn = db.initialize_database(db_path)
+            try:
+                snapshot_after = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'runtime_library_document'"
+                ).fetchone()
+                self.assertIsNotNone(snapshot_after)
+                self.assertEqual(snapshot_before["value_json"], snapshot_after["value_json"])
+            finally:
+                conn.close()
+
+            # load_library must still return the snapshot
+            loaded = media_repository.load_library(json_path, db_path)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(len(loaded["items"]), 1)
+            self.assertEqual(loaded["items"][0]["id"], "m1")
+
+    def test_reset_clears_runtime_library_snapshot(self):
+        """Bug fix: run_reset must delete runtime_library_document so /api/library returns empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "data" / "library.json"
+
+            conn = db.initialize_database(db_path)
+            try:
+                media_repository.replace_library(conn, {"items": [{"id": "m1", "title": "T", "path": "/t", "type": "movie"}]})
+                # Verify snapshot is present
+                row = conn.execute("SELECT 1 FROM app_config WHERE key = 'runtime_library_document'").fetchone()
+                self.assertIsNotNone(row)
+                # Simulate reset
+                with conn:
+                    conn.execute("DELETE FROM media")
+                    conn.execute("DELETE FROM recommendations")
+                    conn.execute("DELETE FROM inventory_items")
+                    conn.execute("DELETE FROM scan_runs")
+                    media_repository.clear_library_snapshot(conn)
+            finally:
+                conn.close()
+
+            # Snapshot must be gone
+            conn = db.initialize_database(db_path)
+            try:
+                row = conn.execute("SELECT 1 FROM app_config WHERE key = 'runtime_library_document'").fetchone()
+                self.assertIsNone(row)
+            finally:
+                conn.close()
+
+            # load_library must return None (empty library)
+            loaded = media_repository.load_library(json_path, db_path)
+            self.assertIsNone(loaded)
+
     def test_scanner_provider_mapping_uses_repository(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mapping_path = pathlib.Path(tmpdir) / "providers_mapping.json"
