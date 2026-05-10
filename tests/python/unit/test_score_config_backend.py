@@ -178,7 +178,6 @@ class ScoreConfigBackendTest(unittest.TestCase):
         with patch("scanner.run_quick") as run_quick, \
              patch("scanner.run_enrich") as run_enrich, \
              patch("scanner.run_scoring") as run_scoring, \
-             patch("scanner.run_inventory") as run_inventory, \
              patch("scanner.recompute_scores_only", return_value=0), \
              patch("scanner._scan_lock"), \
              patch("scanner.get_effective_score_config", return_value=({}, scanner.load_score_defaults(), {})):
@@ -187,4 +186,3 @@ class ScoreConfigBackendTest(unittest.TestCase):
         run_quick.assert_not_called()
         run_enrich.assert_not_called()
         run_scoring.assert_not_called()
-        run_inventory.assert_not_called()

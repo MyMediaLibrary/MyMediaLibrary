@@ -29,7 +29,6 @@ class DatabaseImportTest(unittest.TestCase):
             CONFIG_JSON=data / "config.json",
             MEDIA_PROBE_CACHE_JSON=data / "media_probe_cache.json",
             LIBRARY_PROBE_JSON=data / "library_probe.json",
-            INVENTORY_JSON=data / "library_inventory.json",
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
             SECRETS_FILE=data / ".secrets",
@@ -162,29 +161,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(exported["files"]["/library/movie.mkv"]["size_b"], 123)
             self.assertTrue(exported["files"]["/library/movie.mkv"]["probe"]["ok"])
 
-    def test_import_library_inventory_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "library_inventory.json"
-            item = {
-                "id": "movie:Films:Inception (2010)",
-                "media_type": "movie",
-                "category": "Films",
-                "title": "Inception",
-                "root_folder_path": "/library/Films/Inception (2010)",
-                "status": "present",
-            }
-            self.write_json(path, {"version": 1, "items": [item]})
-            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
-
-            inserted = db_import.import_library_inventory(conn, path)
-            rows = conn.execute("SELECT id, status, data_json FROM inventory_items").fetchall()
-            conn.close()
-
-            self.assertEqual(inserted, 1)
-            self.assertEqual(rows[0]["id"], item["id"])
-            self.assertEqual(rows[0]["status"], "present")
-            self.assertEqual(json.loads(rows[0]["data_json"])["title"], "Inception")
-
     def test_import_recommendations_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "recommendations.json"
@@ -288,7 +264,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.write_json(paths.RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low"}]})
             self.write_json(paths.CONFIG_JSON, {"folders": [], "score": {"enabled": False}})
             self.write_json(paths.MEDIA_PROBE_CACHE_JSON, {"version": 1, "files": {}})
-            self.write_json(paths.INVENTORY_JSON, {"version": 1, "items": []})
             self.write_json(paths.RECOMMENDATIONS_JSON, {"version": 1, "items": []})
             self.write_json(paths.LIBRARY_JSON, {"version": 1, "items": []})
 
@@ -310,7 +285,6 @@ class DatabaseImportTest(unittest.TestCase):
                 paths.MEDIA_PROBE_CACHE_JSON,
                 {"version": 1, "files": {"/movie.mkv": {"size_b": 1, "mtime": 2.0, "probe": {"ok": True}}}},
             )
-            self.write_json(paths.INVENTORY_JSON, {"version": 1, "items": [{"id": "inv-1", "status": "present"}]})
             self.write_json(paths.LIBRARY_JSON, {"version": 1, "items": [{"id": "m-1", "type": "movie", "title": "M", "path": "/m"}]})
             self.write_json(paths.RECOMMENDATIONS_JSON, {"version": 1, "items": [{"id": "r-1", "title": "R"}]})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
@@ -320,7 +294,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertTrue(all(result.status == "ok" for result in results))
             self.assertFalse(paths.LIBRARY_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_JSON.exists())
-            self.assertFalse(paths.INVENTORY_JSON.exists())
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM media").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0], 1)
             conn.close()

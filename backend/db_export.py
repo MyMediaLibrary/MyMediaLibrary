@@ -58,11 +58,6 @@ def export_media_probe_cache(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-def export_library_inventory(conn: sqlite3.Connection) -> dict[str, Any]:
-    rows = conn.execute("SELECT data_json FROM inventory_items ORDER BY id").fetchall()
-    return {"version": 1, "items": [_from_json(row["data_json"], {}) for row in rows]}
-
-
 def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute("SELECT details_json FROM recommendations ORDER BY id").fetchall()
     return {"version": 1, "items": [_from_json(row["details_json"], {}) for row in rows]}

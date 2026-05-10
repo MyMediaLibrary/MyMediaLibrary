@@ -68,7 +68,7 @@ class TestApiAuthSecurity(unittest.TestCase):
     @classmethod
     def _seed_config(cls):
         scanner.save_config({
-            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO"},
             "score": {"enabled": True},
             "score_configuration": {
                 "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
@@ -371,7 +371,7 @@ class TestRecommendationsApi(unittest.TestCase):
                 "size": {},
             },
             "recommendations": {"enabled": recommendations_enabled},
-            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO"},
             "folders": [],
             "enable_movies": True,
             "enable_series": True,

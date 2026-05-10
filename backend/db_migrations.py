@@ -56,6 +56,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 6:
             _apply_v6_media_availability(conn)
             current_version = 6
+        if current_version < 7:
+            _apply_v7_drop_inventory(conn)
+            current_version = 7
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -80,14 +83,20 @@ def _apply_v2_ffprobe_lookup_index(conn: sqlite3.Connection) -> None:
 
 
 def _apply_v3_inventory_indexes(conn: sqlite3.Connection) -> None:
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
-        "CREATE INDEX IF NOT EXISTS idx_inventory_items_folder ON inventory_items(folder)",
-        "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_type ON inventory_items(media_type)",
-        "CREATE INDEX IF NOT EXISTS idx_inventory_items_last_seen_at ON inventory_items(last_seen_at)",
-        "CREATE INDEX IF NOT EXISTS idx_inventory_items_missing_since ON inventory_items(missing_since)",
-    ):
-        conn.execute(statement)
+    # inventory_items no longer exists on fresh installs (dropped in v7).
+    # Skip index creation silently; v7 will drop the table on existing DBs.
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='inventory_items'"
+    ).fetchone()
+    if table_exists:
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
+            "CREATE INDEX IF NOT EXISTS idx_inventory_items_folder ON inventory_items(folder)",
+            "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_type ON inventory_items(media_type)",
+            "CREATE INDEX IF NOT EXISTS idx_inventory_items_last_seen_at ON inventory_items(last_seen_at)",
+            "CREATE INDEX IF NOT EXISTS idx_inventory_items_missing_since ON inventory_items(missing_since)",
+        ):
+            conn.execute(statement)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (3,),
@@ -103,6 +112,15 @@ def _apply_v4_recommendations_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (4,),
+    )
+
+
+def _apply_v7_drop_inventory(conn: sqlite3.Connection) -> None:
+    """Remove the inventory_items table — superseded by media.is_available tracking."""
+    conn.execute("DROP TABLE IF EXISTS inventory_items")
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (7,),
     )
 
 

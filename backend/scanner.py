@@ -13,7 +13,6 @@ Phases:
   1. Filesystem + NFO scan — builds the media library, writes after each folder.
   2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
-  4. Inventory            — updates SQLite inventory after each folder + final pass.
   5. Recommendations      — replaces generated recommendations in SQLite.
 
 Filters (combinable with any mode):
@@ -63,57 +62,16 @@ except Exception:
         sqlite_db = None  # type: ignore
 
 try:
-    from backend.repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository
+    from backend.repositories import config_repository, media_repository, providers_repository, recommendations_repository
 except Exception:
     try:
-        from repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
+        from repositories import config_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
     except Exception:
         config_repository = None  # type: ignore
-        inventory_repository = None  # type: ignore
         media_repository = None  # type: ignore
         providers_repository = None  # type: ignore
         recommendations_repository = None  # type: ignore
 
-try:
-    from backend.inventory_helpers import (
-        apply_forced_missing_by_categories,
-        cleanup_inventory_transient_fields,
-        mark_disabled_inventory_items_missing,
-        merge_inventory_documents,
-        reconcile_inventory_missing_states,
-    )
-except Exception:
-    try:
-        from inventory_helpers import (
-            apply_forced_missing_by_categories,
-            cleanup_inventory_transient_fields,
-            mark_disabled_inventory_items_missing,
-            merge_inventory_documents,
-            reconcile_inventory_missing_states,
-        )
-    except Exception as e:
-        def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
-            return current_doc
-
-        def reconcile_inventory_missing_states(document: dict) -> dict:
-            return document
-
-        def cleanup_inventory_transient_fields(document: dict) -> dict:
-            return document
-
-        def mark_disabled_inventory_items_missing(
-            document: dict,
-            disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
-        ) -> dict:
-            return document
-
-        def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
-            return document
-
-        logging.getLogger("scanner").warning(
-            "[SCAN] inventory_helpers import failed (%s). Inventory helpers disabled; continuing non-blocking.",
-            e,
-        )
 
 try:
     from backend.recommendations import (
@@ -194,7 +152,6 @@ def run_media_probe_pipeline_if_enabled(
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
-INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
 RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
 DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
 RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
@@ -1194,10 +1151,6 @@ def migrate_env_to_config() -> None:
     if not sys_cfg.get("log_level"):
         sys_cfg["log_level"] = "INFO"
         changed = True
-    if "inventory_enabled" not in sys_cfg:
-        sys_cfg["inventory_enabled"] = False
-        changed = True
-
     ui_cfg = cfg.setdefault("ui", {})
     if "synopsis_on_hover" not in ui_cfg:
         ui_cfg["synopsis_on_hover"] = False
@@ -2153,140 +2106,6 @@ def _list_video_files(path: Path) -> list[str]:
     return files
 
 
-def _make_inventory_video_file(name: str, now_utc: str) -> dict:
-    return {
-        "name": name,
-        "status": "present",
-        "first_seen_at": now_utc,
-        "last_seen_at": now_utc,
-        "last_checked_at": now_utc,
-    }
-
-
-def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -> dict:
-    media_type = "tv" if cat["type"] == "tv" else "movie"
-    item = {
-        "id": _inventory_item_id(media_type, cat["name"], media_dir.name),
-        "media_type": media_type,
-        "category": cat["name"],
-        "title": title,
-        "root_folder_path": str(media_dir),
-        "status": "present",
-        "first_seen_at": now_utc,
-        "last_seen_at": now_utc,
-        "last_checked_at": now_utc,  # always after last_seen_at, before video_files
-        "video_files": [_make_inventory_video_file(vf, now_utc) for vf in _list_video_files(media_dir)],
-    }
-    if media_type == "tv":
-        subfolders: list[dict] = []
-        try:
-            for subdir in sorted(media_dir.iterdir(), key=lambda p: p.name.lower()):
-                if not subdir.is_dir() or subdir.name.startswith((".", "@")):
-                    continue
-                sub_video_files = _list_video_files(subdir)
-                if not sub_video_files:
-                    continue
-                subfolders.append({
-                    "name": subdir.name,
-                    "status": "present",
-                    "first_seen_at": now_utc,
-                    "last_seen_at": now_utc,
-                    "last_checked_at": now_utc,  # always after last_seen_at, before video_files
-                    "video_files": [_make_inventory_video_file(vf, now_utc) for vf in sub_video_files],
-                })
-        except Exception:
-            subfolders = []
-        item["subfolders"] = subfolders
-    return item
-
-
-def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: datetime | None = None) -> dict:
-    now_dt = now or datetime.now(timezone.utc)
-    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    inventory_items = [
-        build_inventory_item(entry["media_dir"], entry["cat"], entry["title"], now_utc)
-        for entry in scanned_entries
-    ]
-    return {
-        "version": 1,
-        "generated_at": now_utc,
-        "scan_mode": scan_mode,
-        "missing_reconciliation": False,
-        "items": inventory_items,
-    }
-
-
-def write_inventory_json_non_blocking(
-    scanned_entries: list[dict],
-    scan_mode: str,
-    reconcile_missing: bool | None = None,
-    forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
-    forced_missing_categories: set[str] | list[str] | None = None,
-) -> None:
-    log.debug("%s Inventory write started", _phase_prefix("4"))
-    try:
-        current_inventory = build_library_inventory(scanned_entries, scan_mode)
-        existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
-        inventory_to_write = current_inventory
-        if existing_inventory is not None:
-            try:
-                inventory_to_write = merge_inventory_documents(existing_inventory, current_inventory)
-            except Exception as e:
-                log.warning(
-                    f"{_phase_prefix('4')} Inventory merge failed: {e}. Falling back to current scan inventory."
-                )
-        should_reconcile_missing = (scan_mode == "full") if reconcile_missing is None else bool(reconcile_missing)
-        if should_reconcile_missing:
-            try:
-                inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
-                inventory_to_write["missing_reconciliation"] = True
-            except Exception as e:
-                inventory_to_write["missing_reconciliation"] = False
-                log.warning(
-                    f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing with merged inventory."
-                )
-        else:
-            inventory_to_write["missing_reconciliation"] = False
-        if forced_missing_folder_refs:
-            inventory_to_write = mark_disabled_inventory_items_missing(
-                inventory_to_write,
-                forced_missing_folder_refs,
-            )
-        elif forced_missing_categories:
-            inventory_to_write = apply_forced_missing_by_categories(
-                inventory_to_write,
-                forced_missing_categories,
-            )
-        inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
-        save_inventory_document_non_blocking(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.debug(f"{_phase_prefix('4')} Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
-    except Exception as e:
-        log.warning(f"{_phase_prefix('4')} Inventory write failed: {e}")
-
-
-def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
-    """Load inventory for merge from SQLite."""
-    if inventory_repository is not None:
-        document = inventory_repository.load_inventory(path)
-        if not isinstance(document, dict):
-            return None
-        items = document.get("items", [])
-        if isinstance(items, list):
-            return document
-        if items is not None:
-            raise ValueError("inventory.items must be an array")
-        return None  # items is None — treat as empty
-    log.error("%s SQLite inventory repository unavailable", _phase_prefix("4"))
-    return None
-
-
-def save_inventory_document_non_blocking(document: dict, path: str) -> None:
-    """Persist inventory through SQLite."""
-    if inventory_repository is None:
-        raise RuntimeError("SQLite inventory repository unavailable")
-    inventory_repository.save_inventory(document, path)
-
-
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
@@ -2324,7 +2143,6 @@ def _is_canonical_runtime_json_path(output_path: str | Path) -> bool:
         runtime_paths.PROVIDERS_LOGO_JSON,
         runtime_paths.RECOMMENDATIONS_RULES_JSON,
         runtime_paths.LIBRARY_JSON,
-        runtime_paths.INVENTORY_JSON,
         runtime_paths.RECOMMENDATIONS_JSON,
         runtime_paths.MEDIA_PROBE_CACHE_JSON,
         runtime_paths.LIBRARY_PROBE_JSON,
@@ -2376,7 +2194,6 @@ _DEFAULT_CONFIG: dict = {
         "scan_cron": "0 3 * * *",
         "log_level": "INFO",
         "needs_onboarding": True,
-        "inventory_enabled": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -2491,11 +2308,6 @@ def _finalize_needs_onboarding_after_config_update(cfg: dict) -> bool:
         return False
     system["needs_onboarding"] = False
     return True
-
-
-def _is_inventory_enabled(cfg: dict | None) -> bool:
-    system = (cfg or {}).get("system") or {}
-    return system.get("inventory_enabled") is True
 
 
 def _is_score_enabled(cfg: dict | None) -> bool:
@@ -3524,8 +3336,6 @@ def run_quick(only_category: str | None = None) -> None:
 
     _log_phase_complete("1", elapsed, f"{_count_label(len(items), 'item')} total ({size_str})")
 
-    # Inventory update is handled explicitly by phase 4.
-
 
 # ---------------------------------------------------------------------------
 # ENRICH (providers via Seerr)
@@ -3834,144 +3644,6 @@ def run_score_only() -> int:
 
 
 # ---------------------------------------------------------------------------
-# INVENTORY PHASE
-# ---------------------------------------------------------------------------
-
-def _stamp_last_checked_at(doc: dict, now_utc: str) -> None:
-    """Set last_checked_at = now_utc on all items, subfolders, and video_files in-place."""
-    for item in doc.get("items", []):
-        item["last_checked_at"] = now_utc
-        for vf in item.get("video_files", []):
-            vf["last_checked_at"] = now_utc
-        for sf in item.get("subfolders", []):
-            sf["last_checked_at"] = now_utc
-            for vf in sf.get("video_files", []):
-                vf["last_checked_at"] = now_utc
-
-
-def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> None:
-    _t0 = time.monotonic()
-    cfg = load_config()
-    if not _is_inventory_enabled(cfg):
-        log.info("%s Disabled (system.inventory_enabled=false) — skipping phase", _phase_prefix("4"))
-        return
-
-    _log_phase_start("4")
-    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
-    if not isinstance(lib_data, dict):
-        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
-        return
-
-    root = Path(LIBRARY_PATH)
-    now_dt = datetime.now(timezone.utc)
-    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-    # Snapshot existing inventory for merge (fixed reference throughout)
-    existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
-
-    # Disabled folder refs → mark their items missing
-    force_missing_folder_refs = {
-        ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
-        for folder in cfg.get("folders", [])
-        if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
-    }
-
-    categories = build_categories_from_config(cfg)
-
-    # Path → library item lookup for title resolution
-    items_by_path: dict[str, dict] = {
-        item["path"]: item for item in lib_data.get("items", []) if item.get("path")
-    }
-
-    all_new_items: list[dict] = []
-
-    active_inv_cats = [c for c in categories if not only_category or c["name"] == only_category]
-    n_inv_cats = len(active_inv_cats)
-
-    for cat_idx, cat in enumerate(active_inv_cats, 1):
-        cat_dir = root / cat["folder"]
-        if not cat_dir.exists():
-            log.warning(f"{_phase_prefix('4')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
-            continue
-
-        cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) started — type={cat['type']}")
-        cat_inv_items: list[dict] = []
-        for media_dir in sorted(cat_dir.iterdir()):
-            if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
-                continue
-            item_path = str(media_dir.relative_to(root))
-            lib_item = items_by_path.get(item_path, {})
-            title = lib_item.get("title") or media_dir.name
-
-            inv_item = build_inventory_item(media_dir, cat, title, now_utc)
-            cat_inv_items.append(inv_item)
-
-        all_new_items.extend(cat_inv_items)
-
-        # Incremental write: merge scanned-so-far against snapshot
-        partial_doc = {
-            "version": 1,
-            "generated_at": now_utc,
-            "scan_mode": scan_mode,
-            "missing_reconciliation": False,
-            "items": list(all_new_items),
-        }
-        if existing_inventory is not None:
-            merged = merge_inventory_documents(existing_inventory, partial_doc)
-        else:
-            merged = partial_doc
-        merged = cleanup_inventory_transient_fields(merged)
-        save_inventory_document_non_blocking(merged, INVENTORY_OUTPUT_PATH)
-        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_inv_items)} item(s)")
-
-    # Final pass: full merge + optional missing reconciliation
-    final_doc = {
-        "version": 1,
-        "generated_at": now_utc,
-        "scan_mode": scan_mode,
-        "missing_reconciliation": False,
-        "items": list(all_new_items),
-    }
-    if existing_inventory is not None:
-        final_merged = merge_inventory_documents(existing_inventory, final_doc)
-    else:
-        final_merged = final_doc
-
-    if force_missing_folder_refs:
-        final_merged = mark_disabled_inventory_items_missing(final_merged, force_missing_folder_refs)
-
-    should_reconcile = scan_mode == "full" and not only_category
-    if should_reconcile:
-        try:
-            final_merged = reconcile_inventory_missing_states(final_merged)
-            final_merged["missing_reconciliation"] = True
-        except Exception as e:
-            final_merged["missing_reconciliation"] = False
-            log.warning(f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing.")
-    else:
-        final_merged["missing_reconciliation"] = False
-
-    # Stamp last_checked_at = now for all items regardless of status
-    _stamp_last_checked_at(final_merged, now_utc)
-    final_merged = cleanup_inventory_transient_fields(final_merged)
-    save_inventory_document_non_blocking(final_merged, INVENTORY_OUTPUT_PATH)
-
-    # Missing summary
-    missing_items = [i for i in final_merged.get("items", []) if i.get("status") == "missing"]
-    if missing_items:
-        names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
-        suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
-        log.info(f"{_phase_prefix('4')} {len(missing_items)} missing item(s)")
-        log.debug(f"{_phase_prefix('4')} Missing items: {', '.join(names)}{suffix}")
-    else:
-        log.info(f"{_phase_prefix('4')} No missing items")
-
-    elapsed = time.monotonic() - _t0
-    _log_phase_complete("4", elapsed, f"{len(all_new_items)} present / {len(missing_items)} missing")
-
-
-# ---------------------------------------------------------------------------
 # RECOMMENDATIONS PHASE
 # ---------------------------------------------------------------------------
 
@@ -4074,11 +3746,6 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> list[t
             phase_started_at = time.monotonic()
             run_scoring(only_category=only_category)
             durations.append(("3", time.monotonic() - phase_started_at))
-        elif phase == PHASE_INVENTORY:
-            phase_started_at = time.monotonic()
-            scan_mode = "full" if PHASE_SCAN in ordered else "partial"
-            run_inventory(scan_mode=scan_mode, only_category=only_category)
-            durations.append(("4", time.monotonic() - phase_started_at))
         elif phase == PHASE_RECOMMENDATIONS:
             phase_started_at = time.monotonic()
             run_recommendations()
@@ -4131,12 +3798,11 @@ def run_reset() -> None:
                 count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
                 conn.execute("DELETE FROM media")
                 conn.execute("DELETE FROM recommendations")
-                conn.execute("DELETE FROM inventory_items")
                 conn.execute("DELETE FROM scan_runs")
                 if media_repository is not None:
                     media_repository.clear_library_snapshot(conn)
             conn.close()
-            log.info("[reset] Cleared %d items from SQLite (media, recommendations, inventory, scan_runs, snapshot)", count)
+            log.info("[reset] Cleared %d items from SQLite (media, recommendations, scan_runs, snapshot)", count)
         except Exception as exc:
             log.error("[reset] Failed to clear SQLite data: %s", exc)
     else:
@@ -4332,9 +3998,8 @@ _cron_job = {
 PHASE_SCAN = 1
 PHASE_ENRICH = 2
 PHASE_SCORE = 3
-PHASE_INVENTORY = 4
 PHASE_RECOMMENDATIONS = 5
-_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
+_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 _SCAN_SEPARATOR = "─" * 47
 _SCAN_FINAL_SEPARATOR = "═" * 47
@@ -4343,14 +4008,12 @@ _PHASE_LABELS = {
     "1B": ("FFPROBE", "FFprobe technical scan"),
     "2": ("SEERR", "Seerr enrichment"),
     "3": ("SCORING", "Scoring"),
-    "4": ("INVENTORY", "Inventory"),
     "5": ("RECOMMENDATIONS", "Recommendations"),
 }
 _PHASE_ID_BY_NUMBER = {
     PHASE_SCAN: "1",
     PHASE_ENRICH: "2",
     PHASE_SCORE: "3",
-    PHASE_INVENTORY: "4",
     PHASE_RECOMMENDATIONS: "5",
 }
 
@@ -4508,8 +4171,6 @@ def _phase_plan_from_config(
         phases.append(PHASE_ENRICH)
     if _is_score_enabled(cfg):
         phases.append(PHASE_SCORE)
-    if _is_inventory_enabled(cfg):
-        phases.append(PHASE_INVENTORY)
     if _is_recommendations_enabled(cfg):
         phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
@@ -4547,7 +4208,6 @@ def _compute_phases_for_config_change(
     folders_changed = _folder_scan_signature(prev_cfg.get("folders")) != _folder_scan_signature(new_cfg.get("folders"))
     seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
     score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
-    inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
     recommendations_changed = _is_recommendations_enabled(prev_cfg) != _is_recommendations_enabled(new_cfg)
 
     phases: list[int] = []
@@ -4562,8 +4222,6 @@ def _compute_phases_for_config_change(
             phases.append(PHASE_ENRICH)
         if score_changed:
             phases.append(PHASE_SCORE)
-        if inventory_changed:
-            phases.append(PHASE_INVENTORY)
         if recommendations_changed:
             if _is_score_enabled(new_cfg):
                 phases.append(PHASE_SCORE)
@@ -4817,7 +4475,7 @@ _SCAN_PHASE_STATE = {
     "1B": "ffprobe",
     "2": "seerr",
     "3": "scoring",
-    "4": "inventory",
+    
     "5": "recommendations",
 }
 

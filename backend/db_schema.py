@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 CREATE_TABLES_SQL = (
@@ -268,25 +268,6 @@ CREATE_TABLES_SQL = (
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS inventory_items (
-        id TEXT PRIMARY KEY,
-        media_id TEXT,
-        inventory_key TEXT NOT NULL UNIQUE,
-        media_type TEXT,
-        title TEXT,
-        category TEXT,
-        folder TEXT,
-        path TEXT,
-        first_seen_at TEXT,
-        last_seen_at TEXT,
-        last_checked_at TEXT,
-        missing_since TEXT,
-        status TEXT,
-        data_json TEXT,
-        FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS scan_runs (
         id INTEGER PRIMARY KEY,
         mode TEXT,
@@ -363,14 +344,6 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_recommendations_type_priority ON recommendations(recommendation_type, priority)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_priority ON recommendations(priority)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_created_at ON recommendations(created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_id ON inventory_items(media_id)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_inventory_key ON inventory_items(inventory_key)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_path ON inventory_items(path)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_status ON inventory_items(status)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_folder ON inventory_items(folder)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_media_type ON inventory_items(media_type)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_last_seen_at ON inventory_items(last_seen_at)",
-    "CREATE INDEX IF NOT EXISTS idx_inventory_items_missing_since ON inventory_items(missing_since)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_path ON ffprobe_cache(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",
@@ -400,7 +373,6 @@ EXPECTED_TABLES = frozenset(
         "providers",
         "media_providers",
         "recommendations",
-        "inventory_items",
         "scan_runs",
         "ffprobe_cache",
         "active_sessions",

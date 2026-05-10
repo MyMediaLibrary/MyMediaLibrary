@@ -118,23 +118,6 @@ class OnboardingFlagCriticalTest(unittest.TestCase):
         self.assertFalse(scanner._derive_needs_onboarding(cfg, config_exists=False))
 
 
-class InventoryFlagCriticalTest(unittest.TestCase):
-    def test_default_config_inventory_flag_is_disabled(self):
-        self.assertIs(scanner._DEFAULT_CONFIG["system"]["inventory_enabled"], False)
-
-    def test_missing_inventory_flag_falls_back_to_disabled(self):
-        self.assertFalse(scanner._is_inventory_enabled({"system": {}}))
-        self.assertFalse(scanner._is_inventory_enabled({"system": {"inventory_enabled": "true"}}))
-        self.assertTrue(scanner._is_inventory_enabled({"system": {"inventory_enabled": True}}))
-
-    def test_deep_merge_system_inventory_flag_preserves_other_system_fields(self):
-        base = {"system": {"scan_cron": "0 3 * * *", "log_level": "INFO"}}
-        merged = scanner.deep_merge(base, {"system": {"inventory_enabled": True}})
-        self.assertEqual(merged["system"]["scan_cron"], "0 3 * * *")
-        self.assertEqual(merged["system"]["log_level"], "INFO")
-        self.assertTrue(merged["system"]["inventory_enabled"])
-
-
 class ScheduledScanCronCriticalTest(unittest.TestCase):
     def test_cron_matches_every_minute_wildcards(self):
         when = scanner.datetime(2026, 4, 24, 12, 34)
@@ -179,7 +162,7 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
             "seerr": {"enabled": False, "url": ""},
             "score": {"enabled": True},
-            "system": {"inventory_enabled": False},
+            "system": {},
         }
 
         self.assertEqual(scanner._phase_plan_from_config(cfg, include_phase1=True), [scanner.PHASE_SCAN, scanner.PHASE_SCORE])

@@ -71,7 +71,7 @@ class ScoreCleanupTest(unittest.TestCase):
 
             cfg = {
                 "score": {"enabled": False},
-                "system": {"inventory_enabled": False},
+                "system": {},
                 "folders": [
                     {"name": "Movies", "folder": "Movies", "type": "movie", "enabled": True},
                     {"name": "Series", "folder": "Series", "type": "tv", "enabled": True},
@@ -131,7 +131,7 @@ class ScoreCleanupTest(unittest.TestCase):
 
             cfg = {
                 "score": {"enabled": True},
-                "system": {"inventory_enabled": False},
+                "system": {},
                 "folders": [
                     {"name": "Movies", "folder": "Movies", "type": "movie", "enabled": True},
                     {"name": "Series", "folder": "Series", "type": "tv", "enabled": True},

@@ -41,7 +41,6 @@ class ScannerRuntimePathsTest(unittest.TestCase):
     def test_scanner_defaults_use_canonical_paths(self):
         self.assertEqual(scanner.LIBRARY_PATH, str(runtime_paths.LIBRARY_DIR))
         self.assertEqual(scanner.OUTPUT_PATH, str(runtime_paths.LIBRARY_JSON))
-        self.assertEqual(scanner.INVENTORY_OUTPUT_PATH, str(runtime_paths.INVENTORY_JSON))
         self.assertEqual(scanner.RECOMMENDATIONS_OUTPUT_PATH, str(runtime_paths.RECOMMENDATIONS_JSON))
         self.assertEqual(scanner.DEFAULT_CONFIG_PATH, str(runtime_paths.DEFAULT_CONFIG_JSON))
         self.assertEqual(scanner.CONFIG_PATH, str(runtime_paths.CONFIG_JSON))

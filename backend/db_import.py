@@ -88,7 +88,6 @@ def import_runtime_json_files(
         import_recommendation_rules(conn, paths.RECOMMENDATIONS_RULES_JSON, report)
         import_config(conn, paths.CONFIG_JSON, report)
         import_media_probe_cache(conn, paths.MEDIA_PROBE_CACHE_JSON, report)
-        import_library_inventory(conn, paths.INVENTORY_JSON, report)
         import_recommendations(conn, paths.RECOMMENDATIONS_JSON, report)
         import_library(conn, paths.LIBRARY_JSON, report)
         return report
@@ -182,7 +181,6 @@ def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
         Path(paths.PROVIDERS_LOGO_JSON),
         Path(paths.RECOMMENDATIONS_RULES_JSON),
         Path(paths.MEDIA_PROBE_CACHE_JSON),
-        Path(paths.INVENTORY_JSON),
         Path(paths.LIBRARY_JSON),
         Path(paths.RECOMMENDATIONS_JSON),
     ]
@@ -237,13 +235,6 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "db_count": lambda conn: _table_count(conn, "ffprobe_cache"),
             "import": import_media_probe_cache,
             "valid_when": lambda source_count, db_count: db_count >= source_count,
-        },
-        {
-            "name": "library_inventory",
-            "path": Path(paths.INVENTORY_JSON),
-            "source_count": _count_items_source,
-            "db_count": lambda conn: _table_count(conn, "inventory_items"),
-            "import": import_library_inventory,
         },
         {
             "name": "library",
@@ -611,49 +602,6 @@ def import_media_probe_cache(conn: sqlite3.Connection, path: str | Path, report:
                 ),
             )
     _record(report, "media_probe_cache", rows)
-    return rows
-
-
-def import_library_inventory(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
-    payload = _read_json(path, "library_inventory", report)
-    items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        return 0
-    rows = 0
-    with conn:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            inventory_id = str(item.get("id") or item.get("inventory_key") or item.get("path") or "")
-            if not inventory_id:
-                continue
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO inventory_items(
-                    id, media_id, inventory_key, media_type, title, category, folder, path,
-                    first_seen_at, last_seen_at, last_checked_at, missing_since, status, data_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    inventory_id,
-                    item.get("media_id"),
-                    inventory_id,
-                    item.get("media_type"),
-                    item.get("title"),
-                    item.get("category"),
-                    item.get("root_folder_name") or item.get("folder"),
-                    item.get("root_folder_path") or item.get("path"),
-                    item.get("first_seen_at"),
-                    item.get("last_seen_at"),
-                    item.get("last_checked_at"),
-                    item.get("missing_since"),
-                    item.get("status"),
-                    _to_json(item),
-                ),
-            )
-    _record(report, "library_inventory", rows)
     return rows
 
 

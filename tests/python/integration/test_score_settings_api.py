@@ -49,7 +49,7 @@ class TestScoreSettingsApi(unittest.TestCase):
     @classmethod
     def _write_baseline_files(cls):
         scanner.save_config({
-            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
+            "system": {"scan_cron": "0 3 * * *", "log_level": "INFO"},
             "score": {"enabled": True},
             "score_configuration": {
                 "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
