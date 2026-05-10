@@ -233,6 +233,33 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             with scanner._srv_lock:
                 scanner._srv_state["status"] = previous_status
 
+    def test_scan_status_marks_initial_library_ready_after_phase_1(self):
+        with scanner._srv_lock:
+            previous = dict(scanner._srv_state)
+            scanner._srv_state.update(
+                status="running",
+                phase=None,
+                completed_phases=[],
+                initial_library_ready=False,
+                log=[],
+            )
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Starting phase")
+            self.assertEqual(scanner._srv_state["phase"], "filesystem")
+            self.assertFalse(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Folder [Movies] completed in 1.0s — 12 item(s)")
+            self.assertFalse(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Completed in 12.3s")
+            self.assertIn("filesystem", scanner._srv_state["completed_phases"])
+            self.assertTrue(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1B] [FFPROBE] Starting phase")
+            self.assertEqual(scanner._srv_state["phase"], "ffprobe")
+            self.assertTrue(scanner._srv_state["initial_library_ready"])
+            scanner._srv_state.clear()
+            scanner._srv_state.update(previous)
+
 
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):
     def test_default_config_score_flag_is_disabled(self):

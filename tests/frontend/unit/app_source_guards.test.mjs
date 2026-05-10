@@ -301,6 +301,24 @@ test('auth password is configured through onboarding/settings and never via envi
   assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
 });
 
+test('onboarding features and initial scan access match dynamic pipeline', () => {
+  const featuresBlock = functionBlock(settingsSource, '_onbStep3HTML', '_onbStep4HTML');
+  ['onbSynopsisEnabled', 'onbInventoryEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
+    assert.match(featuresBlock, new RegExp(`id="${id}"`), `onboarding should render ${id}`);
+  });
+  const captureBlock = functionBlock(settingsSource, '_captureOnbFeatures', '_onbFeaturesToggle');
+  assert.match(captureBlock, /recommendationsEnabled = scoreEnabled && recommendationsInput\?\.checked === true/, 'recommendations should depend on score in onboarding state');
+  const toggleBlock = functionBlock(settingsSource, '_onbFeaturesToggle', '_captureOnbAuth');
+  assert.match(toggleBlock, /rec\.disabled = !_onbFeatures\.scoreEnabled;/, 'recommendations toggle should be disabled when score is off');
+  assert.match(toggleBlock, /rec\.checked = false;/, 'recommendations toggle should be cleared when score is off');
+  const launchBlock = functionBlock(settingsSource, 'onbLaunchScan');
+  assert.match(launchBlock, /recommendations: \{ enabled: _onbFeatures\.scoreEnabled && _onbFeatures\.recommendationsEnabled \}/, 'onboarding should persist recommendations only when score is enabled');
+  assert.match(launchBlock, /media_probe:[\s\S]*enabled: _onbFeatures\.mediaProbeEnabled/, 'onboarding should persist ffprobe feature choice');
+  assert.match(launchBlock, /ui: \{ theme: _onbTheme, synopsis_on_hover: _onbFeatures\.synopsisEnabled \}/, 'onboarding should persist synopsis feature choice');
+  assert.match(launchBlock, /initial_library_ready === true \|\| d\.status === 'done'/, 'onboarding should unlock UI after phase 1 readiness');
+  assert.match(launchBlock, /onboarding\.initial_ready/, 'onboarding should explain background phases after phase 1');
+});
+
 test('frontend does not expose or persist library root path settings', () => {
   assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
   assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');

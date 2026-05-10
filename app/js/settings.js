@@ -34,7 +34,13 @@
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
   let _onbJsr = { enabled: false, url: '', key: '' };
-  let _onbFeatures = { scoreEnabled: false, inventoryEnabled: false };
+  let _onbFeatures = {
+    synopsisEnabled: false,
+    inventoryEnabled: false,
+    mediaProbeEnabled: false,
+    scoreEnabled: false,
+    recommendationsEnabled: false,
+  };
   let _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
   let _onbLogSeen = 0;
   let _langTimer = null;
@@ -1592,8 +1598,11 @@
       key:     '',
     };
     _onbFeatures = {
-      scoreEnabled: !!(appConfig?.score?.enabled),
+      synopsisEnabled: appConfig?.ui?.synopsis_on_hover === true,
       inventoryEnabled: appConfig?.system?.inventory_enabled === true,
+      mediaProbeEnabled: appConfig?.media_probe?.enabled === true,
+      scoreEnabled: !!(appConfig?.score?.enabled),
+      recommendationsEnabled: !!(appConfig?.score?.enabled && appConfig?.recommendations?.enabled === true),
     };
     _onbAuth = { enabled: _isAuthEnabled(), password: '', confirm: '', saved: false };
     _onbLogSeen = 0;
@@ -1801,18 +1810,33 @@
   }
 
   function _onbStep3HTML() {
+    const recDisabled = !_onbFeatures.scoreEnabled;
+    const recDisabledAttrs = recDisabled ? ' disabled' : '';
+    const recDisabledStyle = recDisabled ? ';opacity:.45' : '';
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_features_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_features_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row">'
-        + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+        + '<label class="settings-label">'+t('onboarding.features_synopsis_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_synopsis_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbSynopsisEnabled"'+(_onbFeatures.synopsisEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '<div class="settings-row">'
         + '<label class="settings-label">'+t('onboarding.features_inventory_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_inventory_desc')+'</span></label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_ffprobe_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_ffprobe_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbMediaProbeEnabled"'+(_onbFeatures.mediaProbeEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label" style="'+recDisabledStyle+'">'+t('onboarding.features_recommendations_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_recommendations_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbRecommendationsEnabled"'+(_onbFeatures.recommendationsEnabled ? ' checked' : '')+recDisabledAttrs+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '</div>';
   }
@@ -1854,23 +1878,38 @@
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
       + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>👁️ Synopsis : '+(_onbFeatures.synopsisEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🎞️ FFprobe : '+(_onbFeatures.mediaProbeEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>💡 Recommandations : '+(_onbFeatures.recommendationsEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🗂️ Inventaire : '+(_onbFeatures.inventoryEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
       + '</div>';
   }
 
   function _captureOnbFeatures() {
-    const scoreEnabled = document.getElementById('onbScoreEnabled')?.checked;
-    const inventoryEnabled = document.getElementById('onbInventoryEnabled')?.checked;
+    const scoreEnabled = document.getElementById('onbScoreEnabled')?.checked === true;
+    const recommendationsInput = document.getElementById('onbRecommendationsEnabled');
+    const recommendationsEnabled = scoreEnabled && recommendationsInput?.checked === true;
     _onbFeatures = {
-      scoreEnabled: !!scoreEnabled,
-      inventoryEnabled: !!inventoryEnabled,
+      synopsisEnabled: document.getElementById('onbSynopsisEnabled')?.checked === true,
+      inventoryEnabled: document.getElementById('onbInventoryEnabled')?.checked === true,
+      mediaProbeEnabled: document.getElementById('onbMediaProbeEnabled')?.checked === true,
+      scoreEnabled,
+      recommendationsEnabled,
     };
   }
 
   function _onbFeaturesToggle() {
     _captureOnbFeatures();
+    const rec = document.getElementById('onbRecommendationsEnabled');
+    if (rec) {
+      rec.disabled = !_onbFeatures.scoreEnabled;
+      if (!_onbFeatures.scoreEnabled) {
+        rec.checked = false;
+        _onbFeatures.recommendationsEnabled = false;
+      }
+    }
   }
 
   function _captureOnbAuth() {
@@ -1993,11 +2032,18 @@
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
       score: { enabled: _onbFeatures.scoreEnabled },
+      recommendations: { enabled: _onbFeatures.scoreEnabled && _onbFeatures.recommendationsEnabled },
+      media_probe: {
+        enabled: _onbFeatures.mediaProbeEnabled,
+        mode: 'compare',
+        workers: appConfig?.media_probe?.workers || 4,
+        cache_enabled: appConfig?.media_probe?.cache_enabled !== false,
+      },
       ...(!_onbAuth.saved ? { auth: (_onbAuth.enabled
         ? { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm }
         : { enabled: false }) } : {}),
-      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled },
-      ui: { theme: _onbTheme },
+      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled, media_probe_enabled: _onbFeatures.mediaProbeEnabled },
+      ui: { theme: _onbTheme, synopsis_on_hover: _onbFeatures.synopsisEnabled },
     };
 
     let savePayload = {};
@@ -2041,6 +2087,7 @@
         + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
         + '<span style="font-family:var(--font-display);font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
       + '</div>'
+      + '<div id="onbReadyText" style="display:none;margin-bottom:12px;color:#34d399;font-size:13px;font-weight:600">'+t('onboarding.initial_ready')+'</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
         + '<button id="onbOpenLibraryBtn" '
@@ -2074,16 +2121,22 @@
           logBox.scrollTop = logBox.scrollHeight;
         }
       }
+      const initialReady = d.initial_library_ready === true || d.status === 'done';
+      if (initialReady) {
+        const readyText = document.getElementById('onbReadyText');
+        if (readyText) readyText.style.display = '';
+        const doneBtn = document.getElementById('onbDoneBtn');
+        if (doneBtn) doneBtn.style.display = '';
+      }
       if (d.status === 'done') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
-        const doneBtn = document.getElementById('onbDoneBtn');
-        if (doneBtn) doneBtn.style.display = '';
         return;
       }
       if (d.status === 'error') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
+        if (initialReady) return;
         if (logBox) {
           const div = document.createElement('div');
           div.style.color = '#f97316';

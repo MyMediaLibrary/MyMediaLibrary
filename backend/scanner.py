@@ -4245,6 +4245,9 @@ _srv_state = {
     "mode":       None,
     "started_at": None,
     "ended_at":   None,
+    "phase":      None,
+    "completed_phases": [],
+    "initial_library_ready": False,
     "log":        [],
 }
 _srv_proc = None
@@ -4740,6 +4743,35 @@ def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
     return True
 
 
+_SCAN_PHASE_STATE = {
+    "1": "filesystem",
+    "1B": "ffprobe",
+    "2": "seerr",
+    "3": "scoring",
+    "4": "inventory",
+    "5": "recommendations",
+}
+
+
+def _update_scan_phase_state_from_log(line: str) -> None:
+    match = re.search(r"\[PHASE\s+([0-9A-Z]+)\]", line or "")
+    if not match:
+        return
+    phase_id = match.group(1).upper()
+    phase_name = _SCAN_PHASE_STATE.get(phase_id)
+    if not phase_name:
+        return
+    if "Starting phase" in line:
+        _srv_state["phase"] = phase_name
+    if re.search(r"\]\s+Completed in", line):
+        completed = list(_srv_state.get("completed_phases") or [])
+        if phase_name not in completed:
+            completed.append(phase_name)
+        _srv_state["completed_phases"] = completed
+        if phase_name == "filesystem":
+            _srv_state["initial_library_ready"] = True
+
+
 def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
@@ -4836,7 +4868,11 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
                           started_at=datetime.now(timezone.utc).isoformat(),
-                          ended_at=None, log=[f"[server] Starting: {' '.join(cmd)}"])
+                          ended_at=None,
+                          phase=None,
+                          completed_phases=[],
+                          initial_library_ready=False,
+                          log=[f"[server] Starting: {' '.join(cmd)}"])
         if phases:
             _srv_state["phases"] = _normalize_phases(phases)
         else:
@@ -4853,6 +4889,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
             line = line.rstrip()
             with _srv_lock:
                 _srv_state["log"].append(line)
+                _update_scan_phase_state_from_log(line)
                 if len(_srv_state["log"]) > 500:
                     _srv_state["log"] = _srv_state["log"][-500:]
 
@@ -4863,6 +4900,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
         with _srv_lock:
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
             _srv_state["status"]   = "done" if rc == 0 else "error"
+            _srv_state["phase"] = None
             _srv_state["log"].append(f"[server] Done (code {rc})")
     except Exception as e:
         if origin == "cron":
@@ -4870,6 +4908,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
         with _srv_lock:
             _srv_state["status"]   = "error"
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
+            _srv_state["phase"] = None
             _srv_state["log"].append(f"[server] Exception : {e}")
     finally:
         with _srv_lock:

@@ -363,7 +363,13 @@
     if (e.target.id === 'onbJsrEnabled') { _onbJsrToggle(); return; }
 
     // Onboarding step 3 — feature toggles
-    if (e.target.id === 'onbScoreEnabled' || e.target.id === 'onbInventoryEnabled') {
+    if (
+      e.target.id === 'onbSynopsisEnabled'
+      || e.target.id === 'onbInventoryEnabled'
+      || e.target.id === 'onbMediaProbeEnabled'
+      || e.target.id === 'onbScoreEnabled'
+      || e.target.id === 'onbRecommendationsEnabled'
+    ) {
       _onbFeaturesToggle();
       return;
     }
