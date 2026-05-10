@@ -84,6 +84,13 @@ runtime_fallback_phrases="$(
 )"
 report_failure "Forbidden runtime JSON fallback wording/path" "$runtime_fallback_phrases"
 
+# generate_library_probe reads/writes JSON files and is test infrastructure only.
+# It must never be called from runtime backend code outside media_probe.py itself.
+probe_json_refs="$(
+  run_rg_runtime "generate_library_probe\\b" backend/ --glob '!backend/media_probe.py' 2>/dev/null
+)"
+report_failure "Forbidden reference to file-based generate_library_probe in runtime backend" "$probe_json_refs"
+
 if [[ "$failures" -ne 0 ]]; then
   printf '\n[audit-no-runtime-json] FAILED\n' >&2
   exit 1

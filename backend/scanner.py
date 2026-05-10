@@ -2231,6 +2231,7 @@ def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
             return document
         if items is not None:
             raise ValueError("inventory.items must be an array")
+        return None  # items is None — treat as empty
     log.error("%s SQLite inventory repository unavailable", _phase_prefix("4"))
     return None
 
@@ -2320,11 +2321,6 @@ def library_document_exists(path: str | None = None) -> bool:
     target_path = path or OUTPUT_PATH
     document = load_library_document_non_blocking(target_path)
     return isinstance(document, dict) and isinstance(document.get("items"), list)
-
-
-def persist_library_json_to_sqlite(path: str | None = None) -> None:
-    """Deprecated no-op: runtime library persistence is already SQLite-only."""
-    del path
 
 
 # ---------------------------------------------------------------------------
@@ -4060,12 +4056,26 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def run_reset() -> None:
+    """Clear all library data from SQLite and remove any legacy JSON artifact."""
+    if sqlite_db is not None:
+        try:
+            conn = sqlite_db.initialize_database()
+            with conn:
+                count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+                conn.execute("DELETE FROM media")
+                conn.execute("DELETE FROM recommendations")
+                conn.execute("DELETE FROM inventory_items")
+                conn.execute("DELETE FROM scan_runs")
+            conn.close()
+            log.info("[reset] Cleared %d items from SQLite (media, recommendations, inventory, scan_runs)", count)
+        except Exception as exc:
+            log.error("[reset] Failed to clear SQLite data: %s", exc)
+    else:
+        log.warning("[reset] SQLite unavailable — library data not cleared")
     output = Path(OUTPUT_PATH)
     if output.exists():
         output.unlink()
-        log.info(f"Deleted {OUTPUT_PATH}")
-    else:
-        log.info(f"Nothing to reset ({OUTPUT_PATH} does not exist)")
+        log.info("[reset] Removed legacy %s", OUTPUT_PATH)
 
 
 # ---------------------------------------------------------------------------
