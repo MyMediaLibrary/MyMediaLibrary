@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 CREATE_TABLES_SQL = (
@@ -116,7 +116,12 @@ CREATE_TABLES_SQL = (
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TEXT,
-        missing_since TEXT
+        missing_since TEXT,
+        is_available INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0, 1)),
+        first_seen_at TEXT,
+        last_scanned_at TEXT,
+        filename TEXT,
+        filename_history TEXT
     )
     """,
     """
@@ -314,6 +319,20 @@ CREATE_TABLES_SQL = (
         expires_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS media_probe_cache (
+        id INTEGER PRIMARY KEY,
+        media_id TEXT NOT NULL,
+        filename TEXT,
+        file_path TEXT,
+        file_size INTEGER,
+        modified_at REAL,
+        probed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        probe_data TEXT,
+        FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
+        UNIQUE (media_id, filename)
+    )
+    """,
 )
 
 
@@ -356,6 +375,10 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_active_sessions_expires_at ON active_sessions(expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_media_is_available ON media(is_available)",
+    "CREATE INDEX IF NOT EXISTS idx_media_first_seen_at ON media(first_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_media_id ON media_probe_cache(media_id)",
+    "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_lookup ON media_probe_cache(media_id, filename)",
 )
 
 
@@ -381,6 +404,7 @@ EXPECTED_TABLES = frozenset(
         "scan_runs",
         "ffprobe_cache",
         "active_sessions",
+        "media_probe_cache",
     }
 )
 

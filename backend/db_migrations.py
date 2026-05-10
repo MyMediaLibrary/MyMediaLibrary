@@ -53,6 +53,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 5:
             _apply_v5_active_sessions(conn)
             current_version = 5
+        if current_version < 6:
+            _apply_v6_media_availability(conn)
+            current_version = 6
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -100,6 +103,50 @@ def _apply_v4_recommendations_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (4,),
+    )
+
+
+def _apply_v6_media_availability(conn: sqlite3.Connection) -> None:
+    """Add disk-state tracking columns to media and create media_probe_cache."""
+    # ALTER TABLE is idempotent: ignore "duplicate column name" on fresh DBs
+    # where the initial schema already includes these columns.
+    for sql in (
+        "ALTER TABLE media ADD COLUMN is_available INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0, 1))",
+        "ALTER TABLE media ADD COLUMN first_seen_at TEXT",
+        "ALTER TABLE media ADD COLUMN last_scanned_at TEXT",
+        "ALTER TABLE media ADD COLUMN filename TEXT",
+        "ALTER TABLE media ADD COLUMN filename_history TEXT",
+    ):
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists (fresh DB created from current schema)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS media_probe_cache (
+            id INTEGER PRIMARY KEY,
+            media_id TEXT NOT NULL,
+            filename TEXT,
+            file_path TEXT,
+            file_size INTEGER,
+            modified_at REAL,
+            probed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            probe_data TEXT,
+            FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
+            UNIQUE (media_id, filename)
+        )
+        """
+    )
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_media_is_available ON media(is_available)",
+        "CREATE INDEX IF NOT EXISTS idx_media_first_seen_at ON media(first_seen_at)",
+        "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_media_id ON media_probe_cache(media_id)",
+        "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_lookup ON media_probe_cache(media_id, filename)",
+    ):
+        conn.execute(sql)
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (6,),
     )
 
 

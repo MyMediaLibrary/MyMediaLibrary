@@ -79,7 +79,7 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertRegex(self.nginx, r"location ~ \^/\(data\|conf\)")
 
     def test_no_runtime_json_audit_script_passes(self):
-        script = ROOT / "scripts" / "audit-no-runtime-json.sh"
+        script = ROOT / "tests" / "scripts" / "audit-no-runtime-json.sh"
         self.assertTrue(script.exists())
         result = subprocess.run(
             [str(script)],
