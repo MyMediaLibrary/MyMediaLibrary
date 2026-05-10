@@ -7,6 +7,7 @@ const items = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../fixtures
 function configuredPayload() {
   return {
     needs_onboarding: false,
+    library_path: '/legacy-ignored',
     ui: { language: 'fr' },
     score: { enabled: true },
     seerr: { enabled: true },
@@ -78,7 +79,7 @@ async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     if (onboarding || missingLibrary) {
       await route.fulfill({ status: 404, body: 'not-found' });
       return;
@@ -98,7 +99,7 @@ async function mockCoreRoutes(page, { onboarding = false, missingLibrary = false
       },
     });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({
       json: {
         'Netflix': 'netflix.webp',
@@ -125,7 +126,7 @@ test('onboarding first run displays and export JSON disabled', async ({ page }) 
   await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
 });
 
-test('configured app with missing library.json shows empty-library state without onboarding', async ({ page }) => {
+test('configured app with missing library API shows empty-library state without onboarding', async ({ page }) => {
   await mockCoreRoutes(page, { onboarding: false, missingLibrary: true });
   await page.goto('/index.html');
 
@@ -229,6 +230,39 @@ test('configured app stays on main screen across reloads', async ({ page }) => {
   await expect(page.locator('#onboardingOverlay')).toBeHidden();
 });
 
+test('settings do not expose or persist library root path', async ({ page }) => {
+  let capturedPayload = null;
+
+  await page.route('**/api/config', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: configuredPayload() });
+      return;
+    }
+    capturedPayload = JSON.parse(route.request().postData() || '{}');
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route('**/api/library**', async (route) => {
+    await route.fulfill({ json: libraryPayload() });
+  });
+  await page.route('**/version.json**', async (route) => {
+    await route.fulfill({ json: { version: '1.0.0-test', commit: 'abc123', build_date: '2026-04-01T00:00:00Z' } });
+  });
+
+  await page.goto('/index.html');
+  await expect(page.locator('#library')).toContainText('Film VF');
+  await page.evaluate(() => openSettings());
+
+  await expect(page.locator('#cfgLibraryPath')).toHaveCount(0);
+  await expect(page.locator('#stab-library')).not.toContainText('Library path');
+  await expect(page.locator('#stab-library')).not.toContainText('Chemin bibliothèque');
+  await expect(page.locator('#cfgFoldersContainer')).toContainText('Cinema');
+
+  await page.click('#settingsSaveBtn');
+
+  await expect.poll(() => capturedPayload).not.toBeNull();
+  expect(capturedPayload.library_path).toBeUndefined();
+});
+
 test('inventory toggle is in settings and persists via /api/config', async ({ page }) => {
   let capturedPayload = null;
 
@@ -240,7 +274,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
     capturedPayload = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -248,11 +282,8 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-system"]');
-    if (btn) switchStab(btn, 'stab-system');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-system"]').click();
   await expect(page.locator('#stab-system')).toBeVisible();
 
   const inventoryToggle = page.locator('#cfgInventoryEnabled');
@@ -269,6 +300,7 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.system.inventory_enabled).toBe(true);
+  expect(capturedPayload.library_path).toBeUndefined();
 });
 
 test('folder active toggle persists using enabled without visible persistence', async ({ page }) => {
@@ -282,7 +314,7 @@ test('folder active toggle persists using enabled without visible persistence', 
     capturedPayload = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -306,6 +338,7 @@ test('folder active toggle persists using enabled without visible persistence', 
   await expect.poll(() => capturedPayload).not.toBeNull();
   expect(capturedPayload.folders[0].enabled).toBe(false);
   expect(capturedPayload.folders[0].visible).toBeUndefined();
+  expect(capturedPayload.library_path).toBeUndefined();
 });
 
 test('resetting persisted config makes onboarding visible again', async ({ page }) => {
@@ -317,7 +350,7 @@ test('resetting persisted config makes onboarding visible again', async ({ page 
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -355,7 +388,7 @@ test('score settings tab renders dynamic keys and blocks save when weights total
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -364,16 +397,13 @@ test('score settings tab renders dynamic keys and blocks save when weights total
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#stab-score')).toBeVisible();
   const scoreSections = page.locator('#scoreSettingsContainer .settings-collapsible');
@@ -420,7 +450,7 @@ test('score tab remains visible and shows disabled state when score feature is o
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -429,16 +459,13 @@ test('score tab remains visible and shows disabled state when score feature is o
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#stab-score')).toBeVisible();
   await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
@@ -462,7 +489,7 @@ test('score tab updates immediately when score quality toggle changes in configu
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -471,49 +498,38 @@ test('score tab updates immediately when score quality toggle changes in configu
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
   await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
 
+  await page.locator('.stab[data-stab="stab-configuration"]').click();
   await page.evaluate(() => {
-    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
-    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
     const toggle = document.getElementById('cfgEnableScore');
     if (toggle) {
       toggle.checked = false;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
-  await page.evaluate(() => {
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toContainText('Le score qualité est actuellement désactivé');
   await expect(page.locator('#scoreSettingsContainer')).toBeEmpty();
   await expect(page.locator('#scoreResetRow')).toBeHidden();
 
+  await page.locator('.stab[data-stab="stab-configuration"]').click();
   await page.evaluate(() => {
-    const cfgBtn = document.querySelector('button.stab[onclick*="stab-configuration"]');
-    if (cfgBtn) switchStab(cfgBtn, 'stab-configuration');
     const toggle = document.getElementById('cfgEnableScore');
     if (toggle) {
       toggle.checked = true;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
-  await page.evaluate(() => {
-    const scoreBtn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (scoreBtn) switchStab(scoreBtn, 'stab-score');
-  });
+  await page.locator('.stab[data-stab="stab-score"]').click();
   await expect(page.locator('#scoreSettingsDisabled')).toBeHidden();
   await expect(page.locator('#scoreSettingsContainer')).not.toBeEmpty();
   await expect(page.locator('#scoreResetRow')).toBeVisible();
@@ -533,7 +549,7 @@ test('score settings displays friendly error when API load fails', async ({ page
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route('**/library.json**', async (route) => {
+  await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
   });
   await page.route('**/version.json**', async (route) => {
@@ -542,17 +558,45 @@ test('score settings displays friendly error when API load fails', async ({ page
   await page.route('**/api/providers-map**', async (route) => {
     await route.fulfill({ json: {} });
   });
-  await page.route('**/providers_logo.json**', async (route) => {
+  await page.route('**/api/providers-logo**', async (route) => {
     await route.fulfill({ json: { Autres: 'other_play.webp' } });
   });
 
   await page.goto('/index.html');
-  await page.evaluate(() => {
-    openSettings();
-    const btn = document.querySelector('button.stab[onclick*="stab-score"]');
-    if (btn) switchStab(btn, 'stab-score');
-  });
+  await page.evaluate(() => openSettings());
+  await page.locator('.stab[data-stab="stab-score"]').click();
 
   await expect(page.locator('#scoreSettingsStatus')).toBeVisible();
   await expect(page.locator('#scoreSettingsStatus')).toContainText('Impossible de charger la configuration du score');
+});
+
+test('filter inline-clear resets only that filter without affecting other active filters', async ({ page }) => {
+  await openConfiguredLibrary(page);
+
+  // Activate two independent filters
+  await page.evaluate(() => {
+    toggleProviderFilter('Netflix');
+    toggleGenreFilter('Action');
+  });
+
+  // Both filters active: library should show only Netflix+Action items
+  await expect(page.locator('#globalFilterResetBtn')).toBeEnabled();
+
+  // Open the provider filter dropdown so the clear button is rendered
+  await page.evaluate(() => toggleDropdown('providerSection'));
+
+  // The inline ✕ is inside .filter-dropdown-trigger — this is exactly the
+  // element whose click was previously intercepted by the trigger handler.
+  const clearSpan = page.locator('#providerSection .filter-dropdown-inline-clear');
+  await expect(clearSpan).toBeVisible();
+  await clearSpan.click();
+
+  // Provider filter cleared; genre filter still active
+  const providerActive = await page.evaluate(() => activeProviders.size);
+  expect(providerActive).toBe(0);
+  const genreActive = await page.evaluate(() => activeGenres.size);
+  expect(genreActive).toBeGreaterThan(0);
+
+  // Reset button still enabled because genre filter remains
+  await expect(page.locator('#globalFilterResetBtn')).toBeEnabled();
 });

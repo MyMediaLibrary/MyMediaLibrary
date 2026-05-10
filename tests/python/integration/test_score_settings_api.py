@@ -1,6 +1,7 @@
 import http.server
 import copy
 import json
+import os
 import pathlib
 import tempfile
 import threading
@@ -9,7 +10,7 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from backend import scanner
+from backend import db, db_import, scanner
 
 
 class TestScoreSettingsApi(unittest.TestCase):
@@ -20,12 +21,44 @@ class TestScoreSettingsApi(unittest.TestCase):
 
         cls.config_path = cls._tmp_path / "config.json"
         cls.output_path = cls._tmp_path / "library.json"
-        cls.score_defaults_path = pathlib.Path(__file__).resolve().parents[3] / "backend" / "score_defaults.json"
         cls.scan_lock_path = cls._tmp_path / ".scan.lock"
 
-        cls.config_path.write_text(json.dumps({
+        # Isolate SQLite DB so tests never touch /data
+        cls._db_path = cls._tmp_path / "data" / "mymedialibrary.db"
+        cls._db_path.parent.mkdir(parents=True, exist_ok=True)
+        cls._old_db_path_env = os.environ.get(db.DB_PATH_ENV)
+        os.environ[db.DB_PATH_ENV] = str(cls._db_path)
+        conn = db.initialize_database(cls._db_path)
+        conn.close()
+
+        cls._patches = [
+            patch.object(scanner, "CONFIG_PATH", str(cls.config_path)),
+            patch.object(scanner, "OUTPUT_PATH", str(cls.output_path)),
+            patch.object(scanner, "SCAN_LOCK_PATH", str(cls.scan_lock_path)),
+        ]
+        for p in cls._patches:
+            p.start()
+
+        cls._write_baseline_files()
+
+        cls._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), scanner._ScanHandler)
+        cls._port = cls._server.server_address[1]
+        cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
+        cls._thread.start()
+
+    @classmethod
+    def _write_baseline_files(cls):
+        scanner.save_config({
             "system": {"scan_cron": "0 3 * * *", "log_level": "INFO", "inventory_enabled": False},
             "score": {"enabled": True},
+            "score_configuration": {
+                "weights": {"video": 50, "audio": 20, "languages": 15, "size": 15},
+                "video": {},
+                "audio": {},
+                "languages": {},
+                "size": {},
+            },
+            "recommendations": {"enabled": True},
             "folders": [],
             "enable_movies": True,
             "enable_series": True,
@@ -33,7 +66,7 @@ class TestScoreSettingsApi(unittest.TestCase):
             "providers_visible": [],
             "ui": {"synopsis_on_hover": False},
             "custom_flag": "keep-me",
-        }), encoding="utf-8")
+        })
 
         cls.output_path.write_text(json.dumps({
             "items": [
@@ -49,19 +82,18 @@ class TestScoreSettingsApi(unittest.TestCase):
             ]
         }), encoding="utf-8")
 
-        cls._patches = [
-            patch.object(scanner, "CONFIG_PATH", str(cls.config_path)),
-            patch.object(scanner, "OUTPUT_PATH", str(cls.output_path)),
-            patch.object(scanner, "SCORE_DEFAULTS_PATH", str(cls.score_defaults_path)),
-            patch.object(scanner, "SCAN_LOCK_PATH", str(cls.scan_lock_path)),
-        ]
-        for p in cls._patches:
-            p.start()
+    def setUp(self):
+        self._write_baseline_files()
+        with scanner._srv_lock:
+            scanner._srv_state.update(status="idle", mode=None, started_at=None, ended_at=None, log=[])
 
-        cls._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), scanner._ScanHandler)
-        cls._port = cls._server.server_address[1]
-        cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
-        cls._thread.start()
+    @classmethod
+    def _read_config(cls) -> dict:
+        return scanner.load_config()
+
+    @classmethod
+    def _save_config(cls, cfg: dict) -> None:
+        scanner.save_config(cfg)
 
     @classmethod
     def tearDownClass(cls):
@@ -70,6 +102,10 @@ class TestScoreSettingsApi(unittest.TestCase):
         cls._thread.join(timeout=2)
         for p in reversed(cls._patches):
             p.stop()
+        if cls._old_db_path_env is None:
+            os.environ.pop(db.DB_PATH_ENV, None)
+        else:
+            os.environ[db.DB_PATH_ENV] = cls._old_db_path_env
         cls._tmp.cleanup()
 
     @classmethod
@@ -115,7 +151,7 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertNotIn("penalties", payload["effective"])
         self.assertEqual(payload["status"]["weights_total"], 100)
         self.assertTrue(payload["status"]["weights_valid"])
-        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg = self._read_config()
         self.assertIn("score", cfg)
         self.assertIn("score_configuration", cfg)
         self.assertNotIn("enabled", cfg.get("score_configuration", {}))
@@ -174,25 +210,25 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertTrue(put_payload["ok"])
         self.assertNotIn("penalties", put_payload["effective"])
 
-        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg = self._read_config()
         self.assertNotIn("penalties", cfg.get("score_configuration", {}))
 
     def test_reset_score_settings_only_touches_score_block(self):
-        before_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        before_cfg = self._read_config()
         enabled_before = before_cfg.get("score", {}).get("enabled")
         status, _ = self._request("/api/settings/score/reset", method="POST", payload={})
         self.assertEqual(status, 200)
 
-        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg = self._read_config()
         self.assertIn("score", cfg)
         self.assertIn("score_configuration", cfg)
         self.assertEqual(cfg["score"]["enabled"], enabled_before)
         self.assertEqual(cfg.get("custom_flag"), "keep-me")
 
     def test_put_when_score_disabled_does_not_recompute(self):
-        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg = self._read_config()
         cfg["score"]["enabled"] = False
-        self.config_path.write_text(json.dumps(cfg), encoding="utf-8")
+        self._save_config(cfg)
         status, get_payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
 
@@ -205,8 +241,87 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertEqual(put_payload["status"]["mode"], "config_only")
         self.assertEqual(put_payload["status"]["recalculated_items"], 0)
 
+    def test_put_score_settings_during_active_scan_saves_and_skips_recompute(self):
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        updated = copy.deepcopy(get_payload["effective"])
+        updated["weights"]["video"] = 40
+        updated["weights"]["audio"] = 30
+        updated["weights"]["languages"] = 15
+        updated["weights"]["size"] = 15
+
+        with patch.object(scanner, "_is_scan_locked", return_value=True), \
+             patch.object(scanner, "run_score_only") as run_score_only, \
+             self.assertLogs("scanner", level="INFO") as logs:
+            put_status, put_payload = self._request(
+                "/api/settings/score",
+                method="PUT",
+                payload={"score": updated},
+            )
+
+        self.assertEqual(put_status, 200)
+        self.assertTrue(put_payload["ok"])
+        self.assertEqual(put_payload["scan_skipped"], "running")
+        self.assertEqual(put_payload["status"]["mode"], "scan_skipped")
+        run_score_only.assert_not_called()
+        cfg = self._read_config()
+        self.assertEqual(cfg["score_configuration"]["weights"]["video"], 40)
+        self.assertIn(
+            "[SETTINGS] Settings saved; post-save scan skipped because a scan is already running",
+            "\n".join(logs.output),
+        )
+
+    def test_config_save_during_active_scan_saves_and_skips_post_save_scan(self):
+        payload = {
+            "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
+        }
+        with patch.object(scanner, "_is_scan_locked", return_value=True), \
+             patch.object(scanner, "_run_scan_bg") as run_scan_bg, \
+             self.assertLogs("scanner", level="INFO") as logs:
+            status, response = self._request("/api/config", method="POST", payload=payload)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["scan_skipped"], "running")
+        run_scan_bg.assert_not_called()
+        cfg = self._read_config()
+        self.assertEqual(cfg["folders"][0]["name"], "Movies")
+        self.assertIn(
+            "[SETTINGS] Settings saved; post-save scan skipped because a scan is already running",
+            "\n".join(logs.output),
+        )
+
+    def test_manual_scan_during_active_scan_returns_409(self):
+        with scanner._srv_lock:
+            scanner._srv_state["status"] = "running"
+            scanner._srv_state["phases"] = [scanner.PHASE_SCAN]
+        try:
+            status, payload = self._request("/api/scan/start", method="POST", payload={"mode": "default"})
+        finally:
+            with scanner._srv_lock:
+                scanner._srv_state.update(status="idle", mode=None, started_at=None, ended_at=None, log=[])
+                scanner._srv_state.pop("phases", None)
+
+        self.assertEqual(status, 409)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "SCAN_RUNNING")
+
+    def test_true_score_settings_save_error_remains_error(self):
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        with patch.object(scanner, "save_config", side_effect=OSError("disk full")):
+            put_status, put_payload = self._request(
+                "/api/settings/score",
+                method="PUT",
+                payload={"score": get_payload["effective"]},
+            )
+
+        self.assertEqual(put_status, 500)
+        self.assertFalse(put_payload["ok"])
+        self.assertEqual(put_payload["error"]["code"], "SCORE_SETTINGS_SAVE_FAILED")
+
     def test_legacy_score_block_migrates_to_score_configuration(self):
-        legacy_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        legacy_cfg = self._read_config()
         legacy_cfg["score"] = {
             "enabled": True,
             "weights": {"video": 48, "audio": 22, "languages": 15, "size": 15},
@@ -214,10 +329,16 @@ class TestScoreSettingsApi(unittest.TestCase):
         }
         legacy_cfg.pop("score_configuration", None)
         self.config_path.write_text(json.dumps(legacy_cfg), encoding="utf-8")
+        conn = db.initialize_database(self._tmp_path / "data" / "mymedialibrary.db")
+        try:
+            db_import.import_config(conn, self.config_path, overwrite=True)
+        finally:
+            conn.close()
+        self.config_path.unlink()
 
         status, payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
-        cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        cfg = self._read_config()
         self.assertEqual(cfg["score"], {"enabled": True})
         self.assertIn("score_configuration", cfg)
         self.assertEqual(cfg["score_configuration"]["weights"]["video"], 48)

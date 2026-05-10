@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """
 Media Library Scanner
-Scans LIBRARY_PATH and generates a library.json file.
+Scans LIBRARY_PATH and persists runtime state to SQLite.
 
-Modes:
-  --quick    Phase 1 only: filesystem + NFO scan. No scoring, no inventory.
-  --full     All 4 phases: filesystem scan, Seerr (force re-fetch), scoring, inventory.
-  --score-only Recompute quality scores from existing library.json only.
-  --reset    Delete library.json and exit.
-  (default)  Same as --full.
+Runtime:
+  The default scan is a dynamic pipeline. Phase 1 always runs; optional
+  phases run only when their feature is enabled in SQLite config.
+  --score-only Recompute quality scores from the SQLite media library.
+  --reset    Reset legacy runtime output if present.
 
 Phases:
-  1. Filesystem + NFO scan — builds library.json, writes after each folder.
+  1. Filesystem + NFO scan — builds the media library, writes after each folder.
   2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
-  4. Inventory            — updates library_inventory.json, writes after each folder + final pass.
+  4. Inventory            — updates SQLite inventory after each folder + final pass.
+  5. Recommendations      — replaces generated recommendations in SQLite.
 
 Filters (combinable with any mode):
   --category <n>   Restrict scan to a single category name.
 """
 
 import argparse
+import base64
 import contextlib
 import copy
 import fcntl
+import hashlib
 import hmac
 import http.server
 import json
@@ -34,7 +36,6 @@ import math
 import os
 import re
 import secrets
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,31 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+try:
+    from backend import runtime_paths
+except Exception:
+    import runtime_paths  # type: ignore
+
+try:
+    from backend import db as sqlite_db
+except Exception:
+    try:
+        import db as sqlite_db  # type: ignore
+    except Exception:
+        sqlite_db = None  # type: ignore
+
+try:
+    from backend.repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository
+except Exception:
+    try:
+        from repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
+    except Exception:
+        config_repository = None  # type: ignore
+        inventory_repository = None  # type: ignore
+        media_repository = None  # type: ignore
+        providers_repository = None  # type: ignore
+        recommendations_repository = None  # type: ignore
 
 try:
     from backend.inventory_helpers import (
@@ -122,23 +148,64 @@ except Exception:
         def write_recommendations(items, output_path, now=None):
             return {"generated_at": None, "version": 1, "items": items}
 
+try:
+    from backend.media_probe import run_media_probe_document_if_enabled
+except Exception:
+    try:
+        from media_probe import run_media_probe_document_if_enabled
+    except Exception as e:
+        logging.getLogger("scanner").warning(
+            "[SCAN] [PHASE 1B] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
+            e,
+        )
+
+        def run_media_probe_document_if_enabled(*args, **kwargs):
+            return None
+
+def run_media_probe_pipeline_if_enabled(
+    cfg: dict | None,
+    *,
+    library_document: dict | None = None,
+    library_json_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+    library_root: str | Path = runtime_paths.LIBRARY_DIR,
+    timeout: float = 5.0,
+    only_category: str | None = None,
+    cache_path: str | Path = runtime_paths.MEDIA_PROBE_CACHE_JSON,
+):
+    del output_path
+    document = library_document
+    if document is None and library_json_path is not None:
+        document = load_library_document_non_blocking(str(library_json_path))
+    if not isinstance(document, dict):
+        return None
+    return run_media_probe_document_if_enabled(
+        cfg,
+        library_document=document,
+        library_root=library_root,
+        timeout=timeout,
+        only_category=only_category,
+        cache_path=cache_path,
+    )
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-LIBRARY_PATH  = os.environ.get("LIBRARY_PATH",  "/mnt/media/library")
-OUTPUT_PATH   = os.environ.get("OUTPUT_PATH",   "/data/library.json")
-INVENTORY_OUTPUT_PATH = os.environ.get("INVENTORY_OUTPUT_PATH", "/data/library_inventory.json")
-RECOMMENDATIONS_OUTPUT_PATH = os.environ.get("RECOMMENDATIONS_OUTPUT_PATH", "/data/recommendations.json")
-RECOMMENDATIONS_DEFAULT_RULES_PATH = os.environ.get("RECOMMENDATIONS_DEFAULT_RULES_PATH", "/app/recommendations_rules.json")
-RECOMMENDATIONS_RULES_PATH = os.environ.get("RECOMMENDATIONS_RULES_PATH", "/data/recommendations_rules.json")
-CONFIG_PATH   = os.environ.get("CONFIG_PATH",   "/data/config.json")
-SCORE_DEFAULTS_PATH = os.environ.get("SCORE_DEFAULTS_PATH", "/app/score_defaults.json")
-SECRETS_PATH  = os.environ.get("SECRETS_PATH",  "/app/.secrets")
-SCAN_LOCK_PATH = os.environ.get("SCAN_LOCK_PATH", "/data/.scan.lock")
-PROVIDERS_MAPPING_SOURCE_PATH = os.environ.get("PROVIDERS_MAPPING_SOURCE_PATH", "/usr/share/nginx/html/providers_mapping.json")
-PROVIDERS_MAPPING_RUNTIME_PATH = os.environ.get("PROVIDERS_MAPPING_RUNTIME_PATH", "/data/providers_mapping.json")
-PROVIDERS_LOGO_PATH = os.environ.get("PROVIDERS_LOGO_PATH", "/usr/share/nginx/html/providers_logo.json")
+LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
+OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
+INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
+RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
+DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
+RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
+RECOMMENDATIONS_RULES_PATH = str(runtime_paths.RECOMMENDATIONS_RULES_JSON)
+CONFIG_PATH = str(runtime_paths.CONFIG_JSON)
+SECRETS_PATH = str(runtime_paths.SECRETS_FILE)
+SCAN_LOCK_PATH = str(runtime_paths.SCAN_LOCK)
+PROVIDERS_MAPPING_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON)
+PROVIDERS_MAPPING_RUNTIME_PATH = str(runtime_paths.PROVIDERS_MAPPING_JSON)
+PROVIDERS_LOGO_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON)
+PROVIDERS_LOGO_PATH = str(runtime_paths.PROVIDERS_LOGO_JSON)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -155,13 +222,18 @@ def _set_global_log_level(raw_level: str | None) -> None:
     root_logger.setLevel(level)
     for handler in root_logger.handlers:
         handler.setLevel(level)
-# Apply log_level from config.json if available (may be adjusted later via API too)
-try:
-    with open(os.environ.get("CONFIG_PATH", "/data/config.json"), encoding="utf-8") as _cfg_f:
-        _cfg_loglevel = json.load(_cfg_f).get("system", {}).get("log_level", "INFO")
-    _set_global_log_level(_cfg_loglevel)
-except Exception:
-    pass
+
+
+def _apply_configured_log_level() -> None:
+    """Apply log_level from SQLite config after DB bootstrap."""
+    try:
+        cfg = load_config()
+        _cfg_loglevel = cfg.get("system", {}).get("log_level", "INFO") if isinstance(cfg, dict) else "INFO"
+        _set_global_log_level(_cfg_loglevel)
+    except Exception as exc:
+        logging.getLogger("scanner").debug("[config] Could not apply SQLite log level: %s", exc)
+
+
 log = logging.getLogger("scanner")
 
 try:
@@ -262,7 +334,7 @@ except ImportError:
     )
 
 # Rotating file log: 5MB max, keep 3 backups — in /data/ so it's accessible from host
-_log_file = os.environ.get("LOG_PATH", "/data/scanner.log")
+_log_file = str(runtime_paths.SCANNER_LOG)
 try:
     _fh = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=3)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -281,25 +353,221 @@ _JSR_NOT_FOUND      = object()  # sentinel: HTTP 500 "Unable to retrieve" — it
 
 
 def _load_secrets() -> dict:
-    """Load /app/.secrets (JSON). Returns {} if missing or unreadable."""
+    """Load the Seerr secrets JSON file. Returns {} if missing or unreadable."""
     try:
         with open(SECRETS_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
 
 
-def _save_secrets(data: dict) -> None:
+def _write_secrets(data: dict) -> None:
     """Write secrets dict to SECRETS_PATH with mode 600."""
+    output = Path(SECRETS_PATH)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(data, f)
     try:
-        with open(SECRETS_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        try:
-            os.chmod(SECRETS_PATH, 0o600)
-        except OSError as e:
-            log.error(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
+        os.chmod(output, 0o600)
+    except OSError as e:
+        log.warning(f"[secrets] Failed to set permissions on {SECRETS_PATH}: {e}")
+
+
+def _save_secrets(data: dict) -> None:
+    try:
+        _write_secrets(data)
     except Exception as e:
         log.warning(f"[secrets] Could not write {SECRETS_PATH}: {e}")
+
+
+_AUTH_PASSWORD_HASH_KEY = "auth_password_hash"
+_AUTH_LEGACY_PASSWORD_KEYS = ("auth_password", "app_password", "password")
+_AUTH_HASH_SCHEME = "pbkdf2_sha256"
+_AUTH_HASH_ITERATIONS = 260_000
+_AUTH_MIN_PASSWORD_LENGTH = 25
+_AUTH_MIN_LOWERCASE = 2
+_AUTH_MIN_UPPERCASE = 2
+_AUTH_MIN_DIGITS = 2
+_AUTH_MIN_SPECIAL = 2
+_SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days
+
+
+def _auth_legacy_secret_paths() -> list[Path]:
+    current_path = Path(SECRETS_PATH)
+    return [
+        current_path,
+        current_path.with_name(".secret"),
+        Path(runtime_paths.DATA_DIR) / ".secret",
+        Path(getattr(runtime_paths, "LEGACY_SECRETS_FILE", Path("/conf/.secrets"))),
+        Path(getattr(runtime_paths, "LEGACY_CONF_DIR", Path("/conf"))) / ".secret",
+        Path(runtime_paths.APP_DIR) / ".secret",
+    ]
+
+
+def _auth_hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        _AUTH_HASH_ITERATIONS,
+    )
+    return "$".join((
+        _AUTH_HASH_SCHEME,
+        str(_AUTH_HASH_ITERATIONS),
+        base64.urlsafe_b64encode(salt).decode("ascii"),
+        base64.urlsafe_b64encode(digest).decode("ascii"),
+    ))
+
+
+def _auth_is_hash(value) -> bool:
+    return isinstance(value, str) and value.startswith(f"{_AUTH_HASH_SCHEME}$")
+
+
+def _auth_check_password_hash(stored_hash: str, password: str) -> bool:
+    try:
+        scheme, iterations_raw, salt_raw, digest_raw = stored_hash.split("$", 3)
+        if scheme != _AUTH_HASH_SCHEME:
+            return False
+        iterations = int(iterations_raw)
+        salt = base64.urlsafe_b64decode(salt_raw.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_raw.encode("ascii"))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def _auth_password_rule_status(password: str) -> dict[str, bool]:
+    value = password if isinstance(password, str) else ""
+    return {
+        "length": len(value) >= _AUTH_MIN_PASSWORD_LENGTH,
+        "lowercase": sum(1 for ch in value if ch.islower()) >= _AUTH_MIN_LOWERCASE,
+        "uppercase": sum(1 for ch in value if ch.isupper()) >= _AUTH_MIN_UPPERCASE,
+        "digits": sum(1 for ch in value if ch.isdigit()) >= _AUTH_MIN_DIGITS,
+        "special": sum(1 for ch in value if not ch.isalnum() and not ch.isspace()) >= _AUTH_MIN_SPECIAL,
+    }
+
+
+def validate_auth_password(password: str, confirmation: str | None = None) -> tuple[bool, dict]:
+    """Validate auth password creation/change rules without exposing secrets."""
+    rules = _auth_password_rule_status(password)
+    confirmation_matches = confirmation is None or password == confirmation
+    ok = all(rules.values()) and confirmation_matches
+    return ok, {
+        "ok": ok,
+        "rules": rules,
+        "confirmation_matches": confirmation_matches,
+        "min_length": _AUTH_MIN_PASSWORD_LENGTH,
+    }
+
+
+def _auth_legacy_plaintext_from_current_file() -> str | None:
+    path = Path(SECRETS_PATH)
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    if not raw or raw.startswith("{"):
+        return None
+    return raw
+
+
+def _auth_plaintext_candidates(secrets_data: dict | None = None) -> list[tuple[str, Path | None, str | None]]:
+    candidates: list[tuple[str, Path | None, str | None]] = []
+    data = secrets_data if isinstance(secrets_data, dict) else _load_secrets()
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            candidates.append((value, None, key))
+    current_plaintext = _auth_legacy_plaintext_from_current_file()
+    if current_plaintext:
+        candidates.append((current_plaintext, Path(SECRETS_PATH), None))
+    for path in _auth_legacy_secret_paths()[1:]:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if value:
+            candidates.append((value, path, None))
+    return candidates
+
+
+def _auth_is_configured() -> bool:
+    secrets_data = _load_secrets()
+    if _auth_is_hash(secrets_data.get(_AUTH_PASSWORD_HASH_KEY)):
+        return True
+    return bool(_auth_plaintext_candidates(secrets_data))
+
+
+def _auth_migrate_plaintext_password(password: str, *, legacy_path: Path | None = None, legacy_key: str | None = None) -> None:
+    data = _load_secrets()
+    data[_AUTH_PASSWORD_HASH_KEY] = _auth_hash_password(password)
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        data.pop(key, None)
+    _write_secrets(data)
+    _sync_auth_settings_to_db(data)
+    if legacy_path and legacy_path != Path(SECRETS_PATH):
+        with contextlib.suppress(Exception):
+            legacy_path.unlink(missing_ok=True)
+    log.info("[auth] Legacy plaintext password migrated to hash")
+
+
+def _auth_verify_password(password: str) -> bool:
+    if not isinstance(password, str) or not password:
+        return False
+    secrets_data = _load_secrets()
+    stored_hash = secrets_data.get(_AUTH_PASSWORD_HASH_KEY)
+    if _auth_is_hash(stored_hash):
+        return _auth_check_password_hash(stored_hash, password)
+    for legacy_password, legacy_path, legacy_key in _auth_plaintext_candidates(secrets_data):
+        if hmac.compare_digest(legacy_password, password):
+            _auth_migrate_plaintext_password(password, legacy_path=legacy_path, legacy_key=legacy_key)
+            return True
+    return False
+
+
+def _apply_auth_secret_update(payload: dict, secrets_data: dict) -> str:
+    auth_payload = payload.pop("auth", None)
+    if not isinstance(auth_payload, dict):
+        return "not modified"
+    enabled = auth_payload.get("enabled") is True
+    clear_requested = auth_payload.get("clear_password") is True
+    if clear_requested or not enabled:
+        secrets_data.pop(_AUTH_PASSWORD_HASH_KEY, None)
+        for key in _AUTH_LEGACY_PASSWORD_KEYS:
+            secrets_data.pop(key, None)
+        return "disabled"
+    password = auth_payload.get("password")
+    confirm = auth_payload.get("password_confirm", auth_payload.get("confirm_password"))
+    if not isinstance(password, str):
+        raise ValueError("Password is required")
+    valid, validation = validate_auth_password(password, confirm if isinstance(confirm, str) else None)
+    if not validation["confirmation_matches"]:
+        raise ValueError("Password confirmation does not match")
+    if not valid:
+        raise ValueError("Password does not meet security requirements")
+    secrets_data[_AUTH_PASSWORD_HASH_KEY] = _auth_hash_password(password)
+    for key in _AUTH_LEGACY_PASSWORD_KEYS:
+        secrets_data.pop(key, None)
+    return "updated"
+
+
+def _sync_auth_settings_to_db(secrets_data: dict | None = None) -> None:
+    if config_repository is None:
+        return
+    data = secrets_data if isinstance(secrets_data, dict) else _load_secrets()
+    password_hash = data.get(_AUTH_PASSWORD_HASH_KEY)
+    try:
+        config_repository.save_auth_settings(
+            auth_enabled=_auth_is_hash(password_hash),
+            password_hash=password_hash if _auth_is_hash(password_hash) else None,
+        )
+    except Exception as e:
+        log.debug("[auth] Could not sync auth settings to SQLite: %s", e)
 
 
 def _redact_config_payload(payload: dict) -> dict:
@@ -309,6 +577,11 @@ def _redact_config_payload(payload: dict) -> dict:
         jsr = safe_payload.get(key)
         if isinstance(jsr, dict) and "apikey" in jsr:
             jsr["apikey"] = "***"
+    auth = safe_payload.get("auth")
+    if isinstance(auth, dict):
+        for key in ("password", "password_confirm", "confirm_password"):
+            if key in auth:
+                auth[key] = "***"
     return safe_payload
 
 
@@ -387,20 +660,28 @@ def _apply_jellyseerr_secret_update(payload: dict, secrets: dict) -> str:
 
 
 def _jsr_cfg() -> dict:
-    """Read Seerr settings. API key comes from /app/.secrets, rest from config.json."""
+    """Read Seerr settings. API key comes from the secrets file, rest from SQLite config."""
     cfg = load_config()
     jsr = cfg.get("seerr", {}) or cfg.get("jellyseerr", {})
     secrets = _load_secrets()
     secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
     if secrets_changed:
         _save_secrets(secrets)
-    # Prefer secrets file for apikey; fall back to config.json (legacy / migration)
-    apikey = secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey") or jsr.get("apikey", "")
+    apikey = secrets.get("seerr_apikey") or secrets.get("jellyseerr_apikey") or ""
     return {
         "enabled": jsr.get("enabled", False),
         "url":     jsr.get("url", "").rstrip("/"),
         "apikey":  apikey,
     }
+
+
+def _validate_seerr_url(url: str) -> None:
+    """Raise ValueError if url uses a disallowed scheme or has no hostname."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Seerr URL must use http or https, got: {parsed.scheme!r}")
+    if not parsed.netloc:
+        raise ValueError("Seerr URL must include a hostname")
 
 
 def _jsr_get(path: str, jsr: dict | None = None):
@@ -414,6 +695,11 @@ def _jsr_get(path: str, jsr: dict | None = None):
         jsr = _jsr_cfg()
     if not jsr["enabled"] or not jsr["url"] or not jsr["apikey"]:
         return _JSR_NOT_CONFIGURED
+    try:
+        _validate_seerr_url(jsr["url"])
+    except ValueError as exc:
+        log.warning("[seerr] URL rejected — %s", exc)
+        return _JSR_ERROR
     url = f"{jsr['url']}/api/v1{path}"
     log.debug(f"Seerr GET: {url}")
     req = urllib.request.Request(url, headers={
@@ -437,41 +723,46 @@ def _jsr_get(path: str, jsr: dict | None = None):
 
 
 def _ensure_runtime_provider_mapping() -> None:
-    """Bootstrap /data providers mapping once: copy bundled file only if runtime file is absent."""
-    runtime_path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
-    if runtime_path.exists():
-        return
-    try:
-        runtime_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path = Path(PROVIDERS_MAPPING_SOURCE_PATH)
-        if source_path.exists():
-            shutil.copyfile(source_path, runtime_path)
-        else:
-            runtime_path.write_text("{}", encoding="utf-8")
-    except Exception as e:
-        log.warning(f"[providers] Could not bootstrap runtime mapping file: {e}")
+    """Warm provider mappings from SQLite without materializing bundled default JSON files."""
+    if providers_repository is not None:
+        try:
+            providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
+        except Exception as e:
+            log.debug("[providers] Could not warm SQLite provider mappings: %s", e)
+
+
+def _ensure_runtime_providers_logo() -> None:
+    """Warm provider logos from SQLite without materializing bundled default JSON files."""
+    if providers_repository is not None:
+        try:
+            providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)
+        except Exception as e:
+            log.debug("[providers] Could not warm SQLite provider logos: %s", e)
 
 
 def _load_runtime_provider_mapping() -> dict:
-    _ensure_runtime_provider_mapping()
-    try:
-        with open(PROVIDERS_MAPPING_RUNTIME_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
+    if providers_repository is not None:
+        payload = providers_repository.load_provider_mappings(PROVIDERS_MAPPING_RUNTIME_PATH)
         if isinstance(payload, dict):
             return payload
-    except Exception as e:
-        log.warning(f"[providers] Could not read runtime mapping file: {e}")
+    log.error("[providers] SQLite provider mappings repository unavailable")
+    return {}
+
+
+def _load_runtime_provider_logos() -> dict:
+    if providers_repository is not None:
+        payload = providers_repository.load_provider_logos(PROVIDERS_LOGO_PATH)
+        if isinstance(payload, dict):
+            return payload
+    log.error("[providers] SQLite provider logos repository unavailable")
     return {}
 
 
 def _save_runtime_provider_mapping(mapping: dict) -> None:
-    try:
-        path = Path(PROVIDERS_MAPPING_RUNTIME_PATH)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log.warning(f"[providers] Could not write runtime mapping file: {e}")
+    if providers_repository is not None:
+        providers_repository.save_provider_mappings(mapping, PROVIDERS_MAPPING_RUNTIME_PATH)
+        return
+    raise RuntimeError("SQLite provider mappings repository unavailable")
 
 
 def _extract_raw_providers_from_item(item: dict) -> list[str]:
@@ -503,6 +794,15 @@ def _upsert_runtime_provider_mapping(items: list[dict]) -> int:
     if added:
         _save_runtime_provider_mapping(mapping)
     return added
+
+
+def _load_runtime_recommendation_rules() -> list[dict]:
+    if recommendations_repository is not None:
+        rules = recommendations_repository.load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+        if isinstance(rules, list):
+            return rules
+    log.error("[recommendations] SQLite recommendation rules repository unavailable")
+    return []
 
 
 _fetch_providers_sampled = False  # log raw response once per run
@@ -811,11 +1111,12 @@ def sync_folders(root: Path, cfg: dict) -> bool:
 def migrate_env_to_config() -> None:
     """
     One-time migration: read legacy env vars (MOVIES_FOLDERS, SERIES_FOLDERS,
-    SEERR_URL, etc.) and populate config.json if the corresponding fields
+    SEERR_URL, etc.) and populate SQLite config if the corresponding fields
     are still at their defaults/empty. Idempotent — safe to call every startup.
     """
     cfg = load_config()
     changed = False
+    env_migrated = False  # True only when actual env var values are consumed
 
     # Seerr bootstrap (supports both SEERR_* and legacy JELLYSEERR_* spellings)
     cfg, seerr_cfg_changed = normalize_seerr_config(cfg)
@@ -845,6 +1146,7 @@ def migrate_env_to_config() -> None:
         jsr["url"]     = env_url
         jsr["enabled"] = env_jsr_on.lower() == "true" if env_jsr_on else True
         changed = True
+        env_migrated = True
     secrets = _load_secrets()
     secrets, secrets_changed = _normalize_seerr_secret_keys(secrets)
     if secrets_changed:
@@ -852,8 +1154,9 @@ def migrate_env_to_config() -> None:
     if env_apikey and not secrets.get("seerr_apikey") and not jsr.get("apikey"):
         secrets["seerr_apikey"] = env_apikey
         _save_secrets(secrets)
-        log.info("[migrate] Seerr API key migrated to /app/.secrets")
-    # Remove apikey from config.json if still present (migration cleanup)
+        log.info("[migrate] Seerr API key migrated to %s", SECRETS_PATH)
+        env_migrated = True
+    # Remove apikey from SQLite config if still present (migration cleanup)
     if jsr.pop("apikey", None):
         changed = True
 
@@ -863,11 +1166,13 @@ def migrate_env_to_config() -> None:
         if env_em:
             cfg["enable_movies"] = env_em.lower() == "true"
             changed = True
+            env_migrated = True
     if "enable_series" not in cfg:
         env_es = os.environ.get("ENABLE_SERIES", "")
         if env_es:
             cfg["enable_series"] = env_es.lower() == "true"
             changed = True
+            env_migrated = True
 
     # Folders from MOVIES_FOLDERS / SERIES_FOLDERS
     env_movies = [f.strip() for f in os.environ.get("MOVIES_FOLDERS", "").split(",") if f.strip()]
@@ -879,6 +1184,7 @@ def migrate_env_to_config() -> None:
         for fname in env_series:
             cfg["folders"].append({"name": fname, "type": "tv",    "enabled": True})
         changed = True
+        env_migrated = True
 
     # system block defaults
     sys_cfg = cfg.setdefault("system", {})
@@ -909,14 +1215,13 @@ def migrate_env_to_config() -> None:
 
     if changed:
         save_config(cfg)
-        log.info("[MIGRATION] Env vars migrated to config.json")
-    # Bootstrap runtime providers mapping once (non-destructive).
+        if env_migrated:
+            log.info("[MIGRATION] Env vars migrated to SQLite config")
+        else:
+            log.debug("[MIGRATION] Config defaults applied to SQLite config")
+    # Warm DB-backed provider metadata; bundled defaults are seeded during DB bootstrap.
     _ensure_runtime_provider_mapping()
-    # Bootstrap editable recommendations rules once (non-destructive).
-    try:
-        ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
-    except Exception as e:
-        log.warning("[recommendations] Could not bootstrap rules file: %s", e)
+    _ensure_runtime_providers_logo()
 
 
 # ---------------------------------------------------------------------------
@@ -1035,9 +1340,28 @@ def _extract_season_episode_from_name(path_like: str) -> tuple[int | None, int |
     return None, None
 
 
+def build_season_id(item_id: str, season) -> str | None:
+    season_num = _safe_int(season, None)
+    if not item_id or season_num is None or season_num < 0:
+        return None
+    return f"{item_id}:s{season_num:02d}"
+
+
+def build_episode_id(item_id: str, season=None, episode=None) -> str | None:
+    episode_num = _safe_int(episode, None)
+    if not item_id or episode_num is None or episode_num <= 0:
+        return None
+    season_num = _safe_int(season, None)
+    if season_num is not None and season_num >= 0:
+        return f"{item_id}:s{season_num:02d}e{episode_num:02d}"
+    return f"{item_id}:e{episode_num:03d}"
+
+
 def _build_episode_dedupe_key(season_num: int | None, episode_num: int | None, fallback: str) -> str:
     if season_num is not None and episode_num is not None:
-        return f"s{season_num:02d}e{episode_num:03d}"
+        return f"s{season_num:02d}e{episode_num:02d}"
+    if season_num is None and episode_num is not None:
+        return f"e{episode_num:03d}"
     return fallback.casefold()
 
 
@@ -1087,7 +1411,7 @@ def _prefer_episode_metadata(current: dict | None, candidate: dict) -> dict:
     return current
 
 
-def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) -> dict | None:
+def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None, item_id: str | None = None) -> dict | None:
     try:
         root = ET.parse(nfo_path).getroot()
     except Exception:
@@ -1102,9 +1426,6 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
             season_num = inferred_season
         if episode_num is None:
             episode_num = inferred_episode
-    if season_num is None:
-        season_num = 1
-
     video = root.find(".//fileinfo/streamdetails/video")
     audio = root.find(".//fileinfo/streamdetails/audio")
 
@@ -1155,7 +1476,8 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
         episode_num,
         fallback=_episode_fallback_key(nfo_path, series_dir),
     )
-    return {
+    episode_id = build_episode_id(item_id, season=season_num, episode=episode_num)
+    out = {
         "season": season_num,
         "episode": episode_num,
         "dedupe_key": dedupe_key,
@@ -1175,9 +1497,12 @@ def _parse_episode_nfo_metadata(nfo_path: Path, series_dir: Path | None = None) 
         "hdr_type": hdr_type,
         "runtime_min": runtime_min,
     }
+    if episode_id:
+        out["episode_id"] = episode_id
+    return out
 
 
-def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) -> list[dict]:
+def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str], item_id: str | None = None) -> list[dict]:
     parsed: list[dict] = []
     try:
         files = sorted(
@@ -1191,8 +1516,6 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
         if video.with_suffix(".nfo").exists():
             continue
         season_num, episode_num = _extract_season_episode_from_name(str(video))
-        if season_num is None:
-            season_num = 1
         key = _build_episode_dedupe_key(
             season_num,
             episode_num,
@@ -1204,7 +1527,8 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
             size_b = int(video.stat().st_size)
         except Exception:
             size_b = 0
-        parsed.append({
+        episode_id = build_episode_id(item_id, season=season_num, episode=episode_num)
+        ep = {
             "season": season_num,
             "episode": episode_num,
             "dedupe_key": key,
@@ -1223,11 +1547,14 @@ def _parse_episode_files_without_nfo(series_dir: Path, existing_keys: set[str]) 
             "hdr": False,
             "hdr_type": None,
             "runtime_min": None,
-        })
+        }
+        if episode_id:
+            ep["episode_id"] = episode_id
+        parsed.append(ep)
     return parsed
 
 
-def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
+def collect_series_episode_metadata(series_dir: Path, item_id: str | None = None) -> list[dict]:
     deduped: dict[str, dict] = {}
     try:
         nfo_candidates = sorted(
@@ -1238,13 +1565,13 @@ def collect_series_episode_metadata(series_dir: Path) -> list[dict]:
         nfo_candidates = []
 
     for nfo_path in nfo_candidates:
-        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir)
+        ep = _parse_episode_nfo_metadata(nfo_path, series_dir=series_dir, item_id=item_id)
         if not isinstance(ep, dict):
             continue
         key = ep["dedupe_key"]
         deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
 
-    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys())):
+    for ep in _parse_episode_files_without_nfo(series_dir, set(deduped.keys()), item_id=item_id):
         key = ep["dedupe_key"]
         deduped[key] = _prefer_episode_metadata(deduped.get(key), ep)
 
@@ -1346,6 +1673,13 @@ def _dominant_value_from_seasons(seasons: list[dict], field: str):
     return sorted(weighted.items(), key=lambda x: (-x[1], str(x[0])))[0][0]
 
 
+def _dominant_series_value(seasons: list[dict], episodes: list[dict], field: str):
+    value = _dominant_value_from_seasons(seasons, field)
+    if value not in (None, "", []):
+        return value
+    return _dominant_value([e.get(field) for e in episodes])
+
+
 def _aggregate_audio_languages_from_seasons(seasons: list[dict]) -> list[str]:
     total_weight = sum(_season_weight(s) for s in seasons if isinstance(s, dict))
     if total_weight <= 0:
@@ -1428,6 +1762,7 @@ def aggregate_season_metadata(
     season_number: int,
     season_episodes: list[dict],
     *,
+    item_id: str | None = None,
     episodes_expected: int | None = None,
     score_config: dict | None = None,
     include_quality: bool = True,
@@ -1479,6 +1814,9 @@ def aggregate_season_metadata(
         "size_b": size_b,
         "size": format_size(size_b),
     }
+    season_id = build_season_id(item_id or "", season_number)
+    if season_id:
+        out["season_id"] = season_id
     if include_quality:
         season_item_for_score = {
             "type": "tv",
@@ -1501,16 +1839,19 @@ def aggregate_season_metadata(
 def aggregate_series_metadata(
     series_episodes: list[dict],
     *,
+    item_id: str | None = None,
     score_config: dict | None = None,
     season_expected_counts: dict[int, int] | None = None,
     include_quality: bool = True,
 ) -> dict:
     by_season: dict[int, list[dict]] = defaultdict(list)
+    seasonless_episodes: list[dict] = []
     for ep in series_episodes:
-        season_num = _safe_int(ep.get("season"), 1)
+        season_num = _safe_int(ep.get("season"), None)
         if season_num is None:
-            season_num = 1
-        by_season[int(season_num)].append(ep)
+            seasonless_episodes.append(ep)
+        else:
+            by_season[int(season_num)].append(ep)
 
     seasons: list[dict] = []
     expected = season_expected_counts or {}
@@ -1521,36 +1862,43 @@ def aggregate_series_metadata(
             aggregate_season_metadata(
                 season_num,
                 season_eps,
+                item_id=item_id,
                 episodes_expected=expected.get(season_num),
                 score_config=score_config,
                 include_quality=include_quality,
             )
         )
 
-    resolution = _dominant_value_from_seasons(seasons, "resolution")
-    width = _dominant_value_from_seasons(seasons, "width")
-    height = _dominant_value_from_seasons(seasons, "height")
-    codec = _dominant_value_from_seasons(seasons, "codec")
-    audio_codec_raw = _dominant_value_from_seasons(seasons, "audio_codec_raw")
-    audio_codec = _dominant_value_from_seasons(seasons, "audio_codec")
-    audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in series_episodes])
-    hdr_type = _dominant_value_from_seasons(seasons, "hdr_type")
-    hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict))
+    all_episodes = [*series_episodes]
+    resolution = _dominant_series_value(seasons, all_episodes, "resolution")
+    width = _dominant_series_value(seasons, all_episodes, "width")
+    height = _dominant_series_value(seasons, all_episodes, "height")
+    codec = _dominant_series_value(seasons, all_episodes, "codec")
+    audio_codec_raw = _dominant_series_value(seasons, all_episodes, "audio_codec_raw")
+    audio_codec = _dominant_series_value(seasons, all_episodes, "audio_codec")
+    audio_channels = _dominant_audio_channels([e.get("audio_channels") for e in all_episodes])
+    hdr_type = _dominant_series_value(seasons, all_episodes, "hdr_type")
+    hdr = bool(hdr_type) or any(bool((s or {}).get("hdr")) for s in seasons if isinstance(s, dict)) or any(bool(e.get("hdr")) for e in all_episodes)
 
     season_runtime_totals = [
         _safe_int((s or {}).get("runtime_min_total"), 0) or 0
         for s in seasons
         if isinstance(s, dict)
     ]
-    runtime_min = int(sum(season_runtime_totals)) if season_runtime_totals else 0
-    episode_count = int(sum((_safe_int((s or {}).get("episodes_found"), 0) or 0) for s in seasons if isinstance(s, dict)))
+    seasonless_runtimes = [
+        _safe_int(e.get("runtime_min"), 0) or 0
+        for e in seasonless_episodes
+        if isinstance(e, dict)
+    ]
+    runtime_min = int(sum(season_runtime_totals) + sum(seasonless_runtimes)) if season_runtime_totals or seasonless_runtimes else 0
+    episode_count = int(sum((_safe_int((s or {}).get("episodes_found"), 0) or 0) for s in seasons if isinstance(s, dict))) + len(seasonless_episodes)
     runtime_min_avg = int(round(runtime_min / episode_count)) if runtime_min > 0 and episode_count > 0 else None
     season_count = len(seasons)
-    size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)))
+    size_b = int(sum((_safe_int((s or {}).get("size_b"), 0) or 0) for s in seasons if isinstance(s, dict)) + sum((_safe_int((e or {}).get("size_b"), 0) or 0) for e in seasonless_episodes if isinstance(e, dict)))
 
-    audio_languages = _aggregate_audio_languages_from_seasons(seasons)
-    subtitle_languages = _aggregate_subtitle_languages_from_episodes(series_episodes) or None
-    video_bitrate = _average_video_bitrate_from_episodes(series_episodes)
+    audio_languages = sorted(set(_aggregate_audio_languages_from_seasons(seasons)) | set(_aggregate_audio_languages_from_episodes(seasonless_episodes)))
+    subtitle_languages = _aggregate_subtitle_languages_from_episodes(all_episodes) or None
+    video_bitrate = _average_video_bitrate_from_episodes(all_episodes)
     audio_languages_simple = simplify_audio_languages(audio_languages)
     if _is_unknown_sentinel(audio_languages_simple):
         audio_languages_simple = None
@@ -1728,6 +2076,7 @@ def merge_series_expected_counts_from_seerr(series_item: dict, expected_counts: 
             placeholder = aggregate_season_metadata(
                 int(season_num),
                 [],
+                item_id=series_item.get("id"),
                 episodes_expected=expected_ep,
                 score_config=None,
             )
@@ -1830,7 +2179,7 @@ def write_inventory_json_non_blocking(
     forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
     forced_missing_categories: set[str] | list[str] | None = None,
 ) -> None:
-    log.debug("[SCAN] Inventory write started")
+    log.debug("%s Inventory write started", _phase_prefix("4"))
     try:
         current_inventory = build_library_inventory(scanned_entries, scan_mode)
         existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
@@ -1840,7 +2189,7 @@ def write_inventory_json_non_blocking(
                 inventory_to_write = merge_inventory_documents(existing_inventory, current_inventory)
             except Exception as e:
                 log.warning(
-                    f"[SCAN] Inventory merge failed: {e}. Falling back to current scan inventory."
+                    f"{_phase_prefix('4')} Inventory merge failed: {e}. Falling back to current scan inventory."
                 )
         should_reconcile_missing = (scan_mode == "full") if reconcile_missing is None else bool(reconcile_missing)
         if should_reconcile_missing:
@@ -1850,7 +2199,7 @@ def write_inventory_json_non_blocking(
             except Exception as e:
                 inventory_to_write["missing_reconciliation"] = False
                 log.warning(
-                    f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing with merged inventory."
+                    f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing with merged inventory."
                 )
         else:
             inventory_to_write["missing_reconciliation"] = False
@@ -1865,28 +2214,33 @@ def write_inventory_json_non_blocking(
                 forced_missing_categories,
             )
         inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
-        write_json(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.debug(f"[SCAN] Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
+        save_inventory_document_non_blocking(inventory_to_write, INVENTORY_OUTPUT_PATH)
+        log.debug(f"{_phase_prefix('4')} Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
     except Exception as e:
-        log.warning(f"[SCAN] Inventory write failed: {e}")
+        log.warning(f"{_phase_prefix('4')} Inventory write failed: {e}")
 
 
 def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
-    """Load inventory JSON for merge; return None on missing/invalid/non-dict."""
-    inventory_path = Path(path)
-    if not inventory_path.exists():
-        return None
-    try:
-        with open(inventory_path, encoding="utf-8") as f:
-            document = json.load(f)
+    """Load inventory for merge from SQLite."""
+    if inventory_repository is not None:
+        document = inventory_repository.load_inventory(path)
         if not isinstance(document, dict):
-            raise ValueError("inventory root must be a JSON object")
-        if not isinstance(document.get("items", []), list):
+            return None
+        items = document.get("items", [])
+        if isinstance(items, list):
+            return document
+        if items is not None:
             raise ValueError("inventory.items must be an array")
-        return document
-    except Exception as e:
-        log.warning(f"[SCAN] Failed to load existing inventory {path}: {e}. Falling back to current scan inventory.")
-        return None
+        return None  # items is None — treat as empty
+    log.error("%s SQLite inventory repository unavailable", _phase_prefix("4"))
+    return None
+
+
+def save_inventory_document_non_blocking(document: dict, path: str) -> None:
+    """Persist inventory through SQLite."""
+    if inventory_repository is None:
+        raise RuntimeError("SQLite inventory repository unavailable")
+    inventory_repository.save_inventory(document, path)
 
 
 # ---------------------------------------------------------------------------
@@ -1894,45 +2248,83 @@ def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def load_existing(output_path: str) -> dict:
+    data = load_library_document_non_blocking(output_path)
+    if not isinstance(data, dict):
+        return {}
     try:
-        with open(output_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return {item["path"]: item for item in data.get("items", [])}
+        return {item["path"]: item for item in data.get("items", []) if isinstance(item, dict) and item.get("path")}
     except Exception:
         return {}
 
 
 def write_json(data: dict, output_path: str) -> None:
+    if _is_library_output_path(output_path) and media_repository is not None:
+        media_repository.save_library(data, output_path)
+        log.debug("[library] Written to SQLite")
+        return
+    if not _is_canonical_runtime_json_path(output_path):
+        _write_json_file_atomic(data, output_path)
+        return
+    raise RuntimeError(f"Runtime JSON writes are disabled: {output_path}")
+
+
+def _is_library_output_path(output_path: str | Path) -> bool:
+    return str(Path(output_path)) == str(Path(OUTPUT_PATH))
+
+
+def _is_canonical_runtime_json_path(output_path: str | Path) -> bool:
+    path = Path(output_path)
+    return path in {
+        runtime_paths.CONFIG_JSON,
+        runtime_paths.PROVIDERS_MAPPING_JSON,
+        runtime_paths.PROVIDERS_LOGO_JSON,
+        runtime_paths.RECOMMENDATIONS_RULES_JSON,
+        runtime_paths.LIBRARY_JSON,
+        runtime_paths.INVENTORY_JSON,
+        runtime_paths.RECOMMENDATIONS_JSON,
+        runtime_paths.MEDIA_PROBE_CACHE_JSON,
+        runtime_paths.LIBRARY_PROBE_JSON,
+    }
+
+
+def _write_json_file_atomic(data: dict, output_path: str | Path) -> None:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = None
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent))
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(output.parent),
-            prefix=f".{output.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as f:
-            tmp_path = Path(f.name)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, output)
-        # nginx serves /data/library.json as a static file; keep it world-readable.
-        with contextlib.suppress(Exception):
-            output.chmod(0o644)
+            f.write("\n")
+        os.chmod(tmp_name, 0o644)
+        os.replace(tmp_name, output)
     except Exception:
-        if tmp_path is not None:
-            with contextlib.suppress(Exception):
-                tmp_path.unlink(missing_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp_name)
         raise
-    log.debug(f"Written: {output_path}")
+
+
+def load_library_document_non_blocking(path: str) -> dict | None:
+    """Load library document from SQLite."""
+    if media_repository is not None:
+        document = media_repository.load_library(path)
+        if isinstance(document, dict):
+            items = document.get("items", [])
+            if isinstance(items, list):
+                return document
+            raise ValueError("library.items must be an array")
+        return None  # Empty or new library — not an error
+    log.error("[library] SQLite media repository unavailable")
+    return None
+
+
+def library_document_exists(path: str | None = None) -> bool:
+    target_path = path or OUTPUT_PATH
+    document = load_library_document_non_blocking(target_path)
+    return isinstance(document, dict) and isinstance(document.get("items"), list)
 
 
 # ---------------------------------------------------------------------------
-# Config helpers (config.json)
+# Config helpers (SQLite)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_CONFIG: dict = {
@@ -1963,22 +2355,46 @@ _DEFAULT_CONFIG: dict = {
     "recommendations": {
         "enabled": False,
     },
+    "media_probe": {
+        "enabled": False,
+        "mode": "compare",
+        "workers": 4,
+        "cache_enabled": True,
+    },
     "score_configuration": get_builtin_score_defaults(),
 }
 
 
-def load_config() -> dict:
+def _load_default_config() -> dict:
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg = json.load(f)
+        with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return copy.deepcopy(payload)
     except Exception:
-        cfg = copy.deepcopy(_DEFAULT_CONFIG)
-    if isinstance(cfg, dict):
-        cfg, seerr_changed = normalize_seerr_config(cfg)
-        cfg, changed, _ = normalize_score_configuration_sections(cfg)
-        cfg, rec_changed = normalize_recommendations_configuration(cfg)
-        if seerr_changed or changed or rec_changed:
+        pass
+    return copy.deepcopy(_DEFAULT_CONFIG)
+
+
+def load_config() -> dict:
+    if config_repository is None:
+        raise RuntimeError("SQLite config repository unavailable")
+    try:
+        cfg = config_repository.load_config(CONFIG_PATH)
+    except Exception as e:
+        log.error("[config] SQLite config unavailable: %s", e)
+        raise
+    if not isinstance(cfg, dict):
+        raise RuntimeError("SQLite config is empty; run database bootstrap/seed before loading config")
+    cfg, seerr_changed = normalize_seerr_config(cfg)
+    cfg, changed, _ = normalize_score_configuration_sections(cfg)
+    cfg, rec_changed = normalize_recommendations_configuration(cfg)
+    cfg, probe_changed = normalize_media_probe_configuration(cfg)
+    if seerr_changed or changed or rec_changed or probe_changed:
+        try:
             save_config(cfg)
+        except Exception as e:
+            log.warning("[config] Could not normalize SQLite config: %s", e)
     return cfg
 
 
@@ -2053,6 +2469,25 @@ def _is_recommendations_enabled(cfg: dict | None) -> bool:
     return isinstance(rec, dict) and rec.get("enabled") is True
 
 
+def normalize_media_probe_configuration(cfg: dict) -> tuple[dict, bool]:
+    changed = False
+    probe = cfg.get("media_probe")
+    enabled = isinstance(probe, dict) and probe.get("enabled") is True
+    mode = (probe or {}).get("mode") if isinstance(probe, dict) else None
+    workers = _clamp_int(_as_int(probe.get("workers") if isinstance(probe, dict) else None, 4), 1, 8)
+    cache_enabled = True if not isinstance(probe, dict) else probe.get("cache_enabled") is not False
+    normalized = {
+        "enabled": bool(enabled),
+        "mode": "compare" if mode in (None, "", "compare") else str(mode),
+        "workers": workers,
+        "cache_enabled": bool(cache_enabled),
+    }
+    if probe != normalized:
+        cfg["media_probe"] = normalized
+        changed = True
+    return cfg, changed
+
+
 def normalize_recommendations_configuration(cfg: dict) -> tuple[dict, bool]:
     changed = False
     rec = cfg.get("recommendations")
@@ -2088,10 +2523,10 @@ def normalize_folder_enabled_flags(cfg: dict, drop_visible: bool = False) -> boo
 
 
 def save_config(data: dict) -> None:
-    output = Path(CONFIG_PATH)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    if config_repository is not None:
+        config_repository.save_config(data, CONFIG_PATH)
+        return
+    raise RuntimeError("SQLite config repository unavailable")
 
 
 def deep_merge(base: dict, update: dict) -> dict:
@@ -2265,13 +2700,6 @@ def _compute_derived_max_score(score_config: dict) -> dict:
 
 
 def load_score_defaults() -> dict:
-    try:
-        with open(SCORE_DEFAULTS_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return payload
-    except Exception as e:
-        log.warning(f"[score] Could not load score defaults from {SCORE_DEFAULTS_PATH}: {e}")
     return get_builtin_score_defaults()
 
 
@@ -2425,7 +2853,7 @@ def get_effective_score_config(cfg: dict | None = None) -> tuple[dict, dict, dic
 # ---------------------------------------------------------------------------
 
 def _write_library_snapshot(items: list[dict], prev_data: dict, score_enabled: bool, output_path: str) -> None:
-    """Write current library state to JSON (used for incremental per-folder writes)."""
+    """Persist current library state (used for incremental per-folder writes)."""
     clean_items = [_sanitize_item_for_library_json(item) for item in items]
     all_categories = sorted({i["category"] for i in clean_items})
     data = {
@@ -2677,9 +3105,9 @@ def scan_media_item(
 ) -> dict:
     """
     Build one item dict from filesystem + NFO.
-    `prev` is the existing item from library.json (may be empty dict).
-    `id` is computed using the same helper as library_inventory.json so both
-    files share identical stable IDs.
+    `prev` is the existing SQLite library item (may be empty dict).
+    `id` is computed using the same helper as inventory so records share
+    identical stable IDs.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
@@ -2696,9 +3124,10 @@ def scan_media_item(
         tvshow_nfo = media_dir / "tvshow.nfo"
         if tvshow_nfo.exists():
             nfo_meta = parse_tvshow_nfo(tvshow_nfo)
-        series_episodes = collect_series_episode_metadata(media_dir)
+        series_episodes = collect_series_episode_metadata(media_dir, item_id=lib_id)
         series_agg = aggregate_series_metadata(
             series_episodes,
+            item_id=lib_id,
             score_config=score_config if isinstance(score_config, dict) else None,
             include_quality=bool(enable_score),
         )
@@ -2715,6 +3144,7 @@ def scan_media_item(
                 if isinstance(season_expected, dict):
                     series_agg = aggregate_series_metadata(
                         series_episodes,
+                        item_id=lib_id,
                         score_config=score_config if isinstance(score_config, dict) else None,
                         season_expected_counts=season_expected,
                         include_quality=bool(enable_score),
@@ -2759,7 +3189,7 @@ def scan_media_item(
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
-        # id must be first — identical to library_inventory.json for cross-file matching
+        # id must be first — identical to inventory ids for cross-table matching
         "id":                lib_id,
         "path":              item_path,
         "title":             title,
@@ -2794,7 +3224,7 @@ def scan_media_item(
         "video_bitrate":     (series_agg.get("video_bitrate") if is_tv else nfo_meta.get("video_bitrate")) or prev.get("video_bitrate"),
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
-        # Enriched fields preserved from previous library.json — overwritten by full scan phases
+        # Enriched fields preserved from previous SQLite library snapshot — overwritten by later enabled phases.
         "providers":         _normalize_providers(prev.get("providers")),
         "providers_fetched": prev.get("providers_fetched", False),
     }
@@ -2817,7 +3247,7 @@ def scan_media_item(
             if isinstance(preserved_quality, dict):
                 q = dict(preserved_quality)
                 q.pop("level", None)
-                item["quality"] = q  # preserved during quick scan; overwritten by phase 3
+                item["quality"] = q  # preserved during phase 1; overwritten by phase 3 when enabled
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
@@ -2831,14 +3261,14 @@ def run_quick(only_category: str | None = None) -> None:
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] ── Phase 1 : filesystem + NFO{scope} ──────────────")
+    _log_phase_start("1", suffix=scope)
 
     root = Path(LIBRARY_PATH)
     if not root.exists():
-        log.error(f"[SCAN] Library path not found: {LIBRARY_PATH}")
+        log.error(f"{_phase_prefix('1')} Library path not found: {LIBRARY_PATH}")
         return
 
-    # One-time migration of legacy env vars → config.json
+    # One-time migration of legacy env vars → SQLite config
     migrate_env_to_config()
 
     # Sync folders with filesystem (adds new, marks missing)
@@ -2854,7 +3284,7 @@ def run_quick(only_category: str | None = None) -> None:
     # Phase 1 builds metadata/aggregations but does not persist final quality.
     score_enabled = False
     if score_feature_enabled:
-        log.debug("[SCAN] Phase 1 keeps score disabled (final quality is computed in phase 3)")
+        log.debug("%s Score disabled for phase 1; final quality is computed in phase 3", _phase_prefix("1"))
     _, effective_score_config, _ = get_effective_score_config(cfg)
     jsr_for_counts = _jsr_cfg()
     seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
@@ -2868,31 +3298,26 @@ def run_quick(only_category: str | None = None) -> None:
             continue
         ftype = folder.get("type")
         if not ftype or ftype == "ignore":
-            log.debug(f"[SCAN] Skipping folder [{fname}] — no type configured")
+            log.debug(f"{_phase_prefix('1')} Folder [{fname}] skipped — no type configured")
 
     if not categories:
         all_typed_folders = [f for f in cfg.get("folders", []) if f.get("type") in {"movie", "tv"}]
         if not all_typed_folders:
             # No folders with a recognised type configured at all
-            if not Path(OUTPUT_PATH).exists():
-                log.info("[SCAN] No folder configured yet — skipping scan (configure folders via the web UI)")
+            if not library_document_exists(OUTPUT_PATH):
+                log.info("%s No folder configured yet — skipping phase", _phase_prefix("1"))
             else:
-                log.warning("[SCAN] No folder configured with type 'movie' or 'tv' in config.json")
+                log.warning("%s No folder configured with type 'movie' or 'tv'", _phase_prefix("1"))
         else:
             # Folders exist but all are disabled — update inventory to mark them missing
-            log.warning("[SCAN] All configured folders are disabled — skipping filesystem scan")
+            log.warning("%s All configured folders are disabled — skipping phase", _phase_prefix("1"))
         return
 
-    log.info(f"[SCAN] {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
+    log.info(f"{_phase_prefix('1')} {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
 
     # Preserve previous file content for backward-compatible partial scans
-    prev_data: dict = {}
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as _f:
-            prev_data = json.load(_f)
-    except Exception:
-        pass
+    prev_data: dict = load_library_document_non_blocking(OUTPUT_PATH) or {}
 
     items = []
     scanned_paths = set()
@@ -2904,10 +3329,11 @@ def run_quick(only_category: str | None = None) -> None:
     n_cats = len(active_cats)
 
     for cat_idx, cat in enumerate(active_cats, 1):
-        log.info(f"[SCAN] Processing folder [{cat['folder']}] ({cat_idx}/{n_cats}) — type={cat['type']}")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('1')} Folder [{cat['folder']}] ({cat_idx}/{n_cats}) started — type={cat['type']}")
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Folder not found on filesystem: {cat_dir}")
+            log.warning(f"{_phase_prefix('1')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
             continue
 
         cat_items_before = len(items)
@@ -2919,7 +3345,7 @@ def run_quick(only_category: str | None = None) -> None:
             # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
-            # scan_media_item computes id = _inventory_item_id(...) — same as library_inventory.json
+            # scan_media_item computes id = _inventory_item_id(...) for inventory joins
             item = scan_media_item(
                 media_dir,
                 root,
@@ -2938,12 +3364,12 @@ def run_quick(only_category: str | None = None) -> None:
         count = len(items) - cat_items_before
         # Incremental write after each folder
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
-        log.info(f'[SCAN] Folder [{cat["folder"]}] done — {count} item(s) found')
+        log.info(f'{_phase_prefix("1")} Folder [{cat["folder"]}] completed in {time.monotonic() - cat_started_at:.1f}s — {count} item(s)')
 
     # When filtering by category, preserve items from other categories
     if only_category:
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
-        log.info(f"  Preserving {len(preserved)} items from other categories")
+        log.info(f"{_phase_prefix('1')} Preserving {len(preserved)} item(s) from other categories")
         for i in preserved:
             if not score_enabled:
                 _strip_score_fields(i)
@@ -2958,27 +3384,24 @@ def run_quick(only_category: str | None = None) -> None:
             _strip_score_fields(item)
 
     # Only_category: final write is required to include preserved items from other categories.
-    # Normal full scan: the last per-folder incremental write already captured all items — skip.
+    # Whole-library pipeline: the last per-folder incremental write already captured all items — skip.
     if only_category:
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
-    try:
-        size_mb = Path(OUTPUT_PATH).stat().st_size / (1024*1024)
-        size_str = f"{size_mb:.1f} MB"
-    except Exception:
-        size_str = "?"
+    size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
+    size_str = f"{size_mb:.1f} MB"
     try:
         mapping_added = _upsert_runtime_provider_mapping(items)
         if mapping_added:
-            log.info(f"[SCAN] providers_mapping updated (+{mapping_added} raw provider(s))")
+            log.info(f"{_phase_prefix('1')} providers_mapping updated (+{mapping_added} raw provider(s))")
     except Exception as e:
-        log.warning(f"[SCAN] providers_mapping update failed: {e}")
+        log.warning(f"{_phase_prefix('1')} providers_mapping update failed: {e}")
 
     elapsed = time.monotonic() - _t0
     if _nfo_stats["failed"] > 0:
-        log.info(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed (see DEBUG logs for details)")
+        log.info(f"{_phase_prefix('1')} NFO parsing: {_nfo_stats['ok']} OK / {_nfo_stats['failed']} failed")
     else:
-        log.debug(f"[SCAN] NFO parsing: {_nfo_stats['ok']} OK")
+        log.debug(f"{_phase_prefix('1')} NFO parsing: {_nfo_stats['ok']} OK")
 
     # Audio codec stats
     audio_dist: dict = {}
@@ -2986,8 +3409,8 @@ def run_quick(only_category: str | None = None) -> None:
         ac = item.get("audio_codec") or "UNKNOWN"
         audio_dist[ac] = audio_dist.get(ac, 0) + 1
     audio_parts = [f"{k}×{v}" for k, v in sorted(audio_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio codecs detected: {len(audio_dist)}")
-    log.debug(f"[SCAN] Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
+    log.debug(f"{_phase_prefix('1')} Audio codecs detected: {len(audio_dist)}")
+    log.debug(f"{_phase_prefix('1')} Audio codecs detail: {' / '.join(audio_parts) if audio_parts else 'none'}")
 
     # Audio language stats
     lang_dist: dict = {}
@@ -2995,9 +3418,9 @@ def run_quick(only_category: str | None = None) -> None:
         for lang in (item.get("audio_languages") or []):
             lang_dist[lang] = lang_dist.get(lang, 0) + 1
     lang_parts = [f"{k}×{v}" for k, v in sorted(lang_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Audio languages detected: {len(lang_dist)}")
+    log.debug(f"{_phase_prefix('1')} Audio languages detected: {len(lang_dist)}")
     if lang_parts:
-        log.debug(f"[SCAN] Audio languages detail: {' / '.join(lang_parts)}")
+        log.debug(f"{_phase_prefix('1')} Audio languages detail: {' / '.join(lang_parts)}")
 
     # Video codec stats
     video_dist: dict = {}
@@ -3005,8 +3428,8 @@ def run_quick(only_category: str | None = None) -> None:
         vc = item.get("codec") or "unknown"
         video_dist[vc] = video_dist.get(vc, 0) + 1
     video_parts = [f"{k}×{v}" for k, v in sorted(video_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Video codecs detected: {len(video_dist)}")
-    log.debug(f"[SCAN] Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
+    log.debug(f"{_phase_prefix('1')} Video codecs detected: {len(video_dist)}")
+    log.debug(f"{_phase_prefix('1')} Video codecs detail: {' / '.join(video_parts) if video_parts else 'none'}")
 
     # Resolution stats
     res_dist: dict = {}
@@ -3014,17 +3437,25 @@ def run_quick(only_category: str | None = None) -> None:
         r = item.get("resolution") or "unknown"
         res_dist[r] = res_dist.get(r, 0) + 1
     res_parts = [f"{k}×{v}" for k, v in sorted(res_dist.items(), key=lambda x: -x[1])]
-    log.info(f"[SCAN] Resolutions detected: {len(res_dist)}")
-    log.debug(f"[SCAN] Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    log.debug(f"{_phase_prefix('1')} Resolutions detected: {len(res_dist)}")
+    log.debug(f"{_phase_prefix('1')} Resolutions detail: {' / '.join(res_parts) if res_parts else 'none'}")
+    movie_count = len([item for item in items if item.get("type") != "tv"])
+    series_items = [item for item in items if item.get("type") == "tv"]
+    series_count = len(series_items)
+    series_episode_count = sum(int(item.get("episode_count") or 0) for item in series_items)
+    if series_episode_count <= 0 and tv_episodes_scanned > 0:
+        series_episode_count = tv_episodes_scanned
+    log.info(f"{_phase_prefix('1')} Movies summary: {_count_label(movie_count, 'movie')} analyzed")
     log.info(
-        f"[SCAN] TV scan summary: {tv_series_scanned} series analyzed / {tv_episodes_scanned} episodes scanned"
+        f"{_phase_prefix('1')} Series summary: {_count_label(series_count, 'series', 'series')} analyzed / "
+        f"{_count_label(series_episode_count, 'episode')} scanned"
     )
     if seerr_counts_active:
-        log.info(
-            f"[SCAN] TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
+        log.debug(
+            f"{_phase_prefix('1')} TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
         )
 
-    log.info(f"[SCAN] Phase 1 completed in {elapsed:.1f}s — {len(items)} item(s) total ({size_str})")
+    _log_phase_complete("1", elapsed, f"{_count_label(len(items), 'item')} total ({size_str})")
 
     # Inventory update is handled explicitly by phase 4.
 
@@ -3037,21 +3468,19 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
-    log.info(f"[SCAN] ── Phase 2 : Seerr enrichment ({label}){scope} ──")
+    _log_phase_start("2", suffix=f" ({label}){scope}")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("[SCAN] Seerr disabled in config.json — skipping enrichment")
+        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("2"))
         return
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("[SCAN] Seerr URL or apikey missing in config.json — skipping enrichment")
+        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
         return
 
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"Cannot read {OUTPUT_PATH}: {e}")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3069,10 +3498,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     to_enrich = [i for i in items if needs_enrich(i)]
     skipped   = len(items) - len(to_enrich)
-    log.info(f"[SCAN] Seerr enrichment: {len(to_enrich)} items to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
+    log.info(f"{_phase_prefix('2')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        log.info("[SCAN] Nothing to enrich.")
+        _log_phase_complete("2", time.monotonic() - _t0, "0 item(s)")
         return
 
     by_cat = defaultdict(list)
@@ -3111,8 +3540,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                         if resolved_tmdb not in (None, ""):
                             item["tmdb_id"] = str(resolved_tmdb)
                         if resolved_tvdb not in (None, ""):
-                            log.info(
-                                f"[enrich-tv] Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                            log.debug(
+                                f"{_phase_prefix('2')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
                             providers = fetch_providers(item["tvdb_id"], True, jsr)
@@ -3128,14 +3557,14 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                     elif isinstance(resolved_ids, dict):
                         resolved_tmdb = resolved_ids.get("tmdb_id")
                         if resolved_tmdb not in (None, ""):
-                            log.info(
-                                f"[enrich-movie] Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                            log.debug(
+                                f"{_phase_prefix('2')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
                             )
                             item["tmdb_id"] = str(resolved_tmdb)
                             providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
             log.warning(
-                f"[enrich] Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{_phase_prefix('2')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
                 f"{item.get('title')!r}: {e}"
             )
             providers = _FETCH_ERROR
@@ -3150,7 +3579,8 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     n_enrich_cats = len(sorted_by_cat)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
         cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
-        log.info(f"[SCAN] Enriching folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) — {len(cat_items)} item(s)")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -3172,25 +3602,25 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 item["providers_fetched"] = True
                 enriched += 1
                 total_providers = len(providers or [])
-                log.debug(f"  {item['title']} — {total_providers} provider(s)")
+                log.debug(f"{_phase_prefix('2')} {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_folder}] done — {len(cat_items)} item(s) enriched")
+        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"[SCAN] {not_found_count} item(s) not found in Seerr — ids: {ids_str}{suffix}")
+        log.info(f"{_phase_prefix('2')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"[SCAN] {failed_count} item(s) not enriched (Seerr error) — ids: {ids_str}{suffix}")
+        log.warning(f"{_phase_prefix('2')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
-    if not_found_count: parts.append(f"{not_found_count} not found in Seerr")
-    if failed_count:    parts.append(f"{failed_count} errors")
-    log.info(f"[SCAN] Phase 2 completed in {elapsed:.1f}s — {' / '.join(parts)}")
+    if not_found_count: parts.append(f"{not_found_count} not found")
+    if failed_count:    parts.append(_count_label(failed_count, "error"))
+    _log_phase_complete("2", elapsed, " / ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -3255,20 +3685,19 @@ def recompute_scores_for_items(items: list[dict], score_config: dict) -> int:
 
 
 def recompute_scores_only(score_config: dict | None = None) -> int:
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"[score] Cannot read {OUTPUT_PATH}: {e}")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"[score] Cannot read {OUTPUT_PATH}")
         return 0
 
     items = data.get("items")
     if not isinstance(items, list) or not items:
         return 0
 
-    _, effective_score_config, _ = get_effective_score_config()
     if isinstance(score_config, dict):
         effective_score_config, _ = validate_score_config(score_config, defaults=load_score_defaults())
+    else:
+        _, effective_score_config, _ = get_effective_score_config()
 
     recalculated = recompute_scores_for_items(items, effective_score_config)
     write_json(data, OUTPUT_PATH)
@@ -3279,15 +3708,13 @@ def run_scoring(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("[SCAN] Scoring disabled (score.enabled=false) — skipping phase 3")
+        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("3"))
         return
 
-    log.info("[SCAN] ── Phase 3 : scoring ──────────────────────────────")
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+    _log_phase_start("3")
+    data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(data, dict):
+        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3301,7 +3728,7 @@ def run_scoring(only_category: str | None = None) -> None:
         by_cat[cat_name].append(item)
 
     if not by_cat:
-        log.info("[SCAN] No items to score.")
+        _log_phase_complete("3", time.monotonic() - _t0, _count_label(0, "item"))
         return
 
     # Build category display-name → raw folder name lookup for consistent log labels
@@ -3314,25 +3741,28 @@ def run_scoring(only_category: str | None = None) -> None:
     n_score_cats = len(sorted_score_cats)
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
         cat_folder = cat_folder_by_name.get(cat_name, cat_name)
-        log.info(f"[SCAN] Scoring folder [{cat_folder}] ({cat_idx}/{n_score_cats}) — {len(cat_items)} item(s)")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
         scored_total += recompute_scores_for_items(cat_items, effective_score_config)
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"[SCAN] Folder [{cat_folder}] scored")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
-    log.info(f"[SCAN] Phase 3 completed — {scored_total} item(s) scored in {elapsed:.1f}s")
+    _log_phase_complete("3", elapsed, f"{_count_label(scored_total, 'item')} scored")
 
 
 def run_score_only() -> int:
     with _scan_lock("score_only"):
         _t0 = time.monotonic()
-        log.info("[SCAN] ── Score-only recompute ───────────────────────────")
+        log.info("[SCAN] %s", _SCAN_SEPARATOR)
+        log.info("[SCAN] [SCORE-ONLY] Starting recompute")
+        log.info("[SCAN] %s", _SCAN_SEPARATOR)
         defaults, effective_score_config, _ = get_effective_score_config()
         del defaults  # only used for lazy bootstrap and validation side-effects
         recalculated = recompute_scores_only(effective_score_config)
         elapsed = time.monotonic() - _t0
-        log.info(f"[SCAN] Score-only completed — {recalculated} item(s) scored in {elapsed:.1f}s")
+        log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {_count_label(recalculated, 'item')} scored")
         return recalculated
 
 
@@ -3356,15 +3786,13 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_inventory_enabled(cfg):
-        log.info("[SCAN] Inventory disabled (system.inventory_enabled=false) — skipping phase 4")
+        log.info("%s Disabled (system.inventory_enabled=false) — skipping phase", _phase_prefix("4"))
         return
 
-    log.info("[SCAN] ── Phase 4 : inventory ─────────────────────────────")
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            lib_data = json.load(f)
-    except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
+    _log_phase_start("4")
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(lib_data, dict):
+        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
         return
 
     root = Path(LIBRARY_PATH)
@@ -3396,10 +3824,11 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
     for cat_idx, cat in enumerate(active_inv_cats, 1):
         cat_dir = root / cat["folder"]
         if not cat_dir.exists():
-            log.warning(f"[SCAN] Inventory: folder not found: {cat_dir}")
+            log.warning(f"{_phase_prefix('4')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
             continue
 
-        log.info(f"[SCAN] Inventory: processing folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) — type={cat['type']}")
+        cat_started_at = time.monotonic()
+        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) started — type={cat['type']}")
         cat_inv_items: list[dict] = []
         for media_dir in sorted(cat_dir.iterdir()):
             if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
@@ -3426,8 +3855,8 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
         else:
             merged = partial_doc
         merged = cleanup_inventory_transient_fields(merged)
-        write_json(merged, INVENTORY_OUTPUT_PATH)
-        log.info(f"[SCAN] Inventory: folder [{cat['folder']}] done — {len(cat_inv_items)} item(s)")
+        save_inventory_document_non_blocking(merged, INVENTORY_OUTPUT_PATH)
+        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_inv_items)} item(s)")
 
     # Final pass: full merge + optional missing reconciliation
     final_doc = {
@@ -3452,30 +3881,27 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
             final_merged["missing_reconciliation"] = True
         except Exception as e:
             final_merged["missing_reconciliation"] = False
-            log.warning(f"[SCAN] Inventory missing reconciliation failed: {e}. Continuing.")
+            log.warning(f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing.")
     else:
         final_merged["missing_reconciliation"] = False
 
     # Stamp last_checked_at = now for all items regardless of status
     _stamp_last_checked_at(final_merged, now_utc)
     final_merged = cleanup_inventory_transient_fields(final_merged)
-    write_json(final_merged, INVENTORY_OUTPUT_PATH)
+    save_inventory_document_non_blocking(final_merged, INVENTORY_OUTPUT_PATH)
 
     # Missing summary
     missing_items = [i for i in final_merged.get("items", []) if i.get("status") == "missing"]
     if missing_items:
         names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
         suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
-        log.info(f"[SCAN] Inventory: {len(missing_items)} missing item(s)")
-        log.debug(f"[SCAN] Inventory missing: {', '.join(names)}{suffix}")
+        log.info(f"{_phase_prefix('4')} {len(missing_items)} missing item(s)")
+        log.debug(f"{_phase_prefix('4')} Missing items: {', '.join(names)}{suffix}")
     else:
-        log.info("[SCAN] Inventory: no missing items")
+        log.info(f"{_phase_prefix('4')} No missing items")
 
     elapsed = time.monotonic() - _t0
-    log.info(
-        f"[SCAN] Phase 4 completed in {elapsed:.1f}s — "
-        f"{len(all_new_items)} present, {len(missing_items)} missing"
-    )
+    _log_phase_complete("4", elapsed, f"{len(all_new_items)} present / {len(missing_items)} missing")
 
 
 # ---------------------------------------------------------------------------
@@ -3483,29 +3909,49 @@ def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> 
 # ---------------------------------------------------------------------------
 
 def run_recommendations() -> int:
+    _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("[SCAN] Recommendations disabled — score required")
+        log.info("%s Disabled — score required", _phase_prefix("5"))
         return 0
     if not _is_recommendations_enabled(cfg):
-        log.info("[SCAN] Recommendations disabled — skipping phase")
+        log.info("%s Disabled — skipping phase", _phase_prefix("5"))
         return 0
 
-    log.info("[SCAN] Phase 5: recommendations")
-    ensure_user_rules(RECOMMENDATIONS_DEFAULT_RULES_PATH, RECOMMENDATIONS_RULES_PATH)
-    try:
-        with open(OUTPUT_PATH, encoding="utf-8") as f:
-            lib_data = json.load(f)
-    except Exception as e:
-        log.error(f"[SCAN] Cannot read {OUTPUT_PATH}: {e}")
-        write_recommendations([], RECOMMENDATIONS_OUTPUT_PATH)
+    _log_phase_start("5")
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    if not isinstance(lib_data, dict):
+        log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}")
+        save_recommendations_document_non_blocking([], RECOMMENDATIONS_OUTPUT_PATH)
         return 0
 
-    rules = load_recommendation_rules(RECOMMENDATIONS_RULES_PATH)
+    rules = _load_runtime_recommendation_rules()
     recs = generate_recommendations(lib_data, rules)
-    write_recommendations(recs, RECOMMENDATIONS_OUTPUT_PATH)
-    log.info("[SCAN] Recommendations generated: %s recommendation(s)", len(recs))
+    save_recommendations_document_non_blocking(recs, RECOMMENDATIONS_OUTPUT_PATH)
+    _log_phase_complete("5", time.monotonic() - _t0, _count_label(len(recs), "recommendation"))
     return len(recs)
+
+
+def load_recommendations_document_non_blocking(path: str) -> dict | None:
+    """Load recommendations from SQLite."""
+    if recommendations_repository is not None:
+        payload = recommendations_repository.load_recommendations(path)
+        if not isinstance(payload, dict):
+            return None
+        items = payload.get("items", [])
+        if isinstance(items, list):
+            return payload
+        if items is not None:
+            raise ValueError("recommendations.items must be an array")
+    log.error("[recommendations] SQLite recommendations repository unavailable")
+    return None
+
+
+def save_recommendations_document_non_blocking(items: list[dict], path: str) -> dict:
+    """Persist generated recommendations through SQLite."""
+    if recommendations_repository is not None:
+        return recommendations_repository.save_recommendations(items, path)
+    raise RuntimeError("SQLite recommendations repository unavailable")
 
 
 def _prepare_startup_configuration() -> dict:
@@ -3528,7 +3974,7 @@ def _prepare_startup_configuration() -> dict:
 
 
 def _resolve_startup_phases(cfg: dict) -> list[int]:
-    library_exists = Path(OUTPUT_PATH).exists()
+    library_exists = library_document_exists(OUTPUT_PATH)
     if library_exists:
         return []
     if not _has_configured_media_folders(cfg):
@@ -3537,24 +3983,72 @@ def _resolve_startup_phases(cfg: dict) -> list[int]:
     return [PHASE_SCAN]
 
 
-def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
+def run_phases(phases: list[int], *, only_category: str | None = None) -> list[tuple[str, float]]:
     ordered = _normalize_phases(phases)
     if not ordered:
         log.info("[SCAN] No phase selected — nothing to run")
-        return
-    log.info("[SCAN] Planned phases: %s", " -> ".join(str(p) for p in ordered))
+        return []
+    planned_phase_ids = _log_planned_phases(ordered)
+    durations: list[tuple[str, float]] = []
     for phase in ordered:
         if phase == PHASE_SCAN:
+            phase_started_at = time.monotonic()
             run_quick(only_category=only_category)
+            durations.append(("1", time.monotonic() - phase_started_at))
+            if "1B" in planned_phase_ids:
+                phase_started_at = time.monotonic()
+                _run_media_probe_phase1b(only_category=only_category)
+                durations.append(("1B", time.monotonic() - phase_started_at))
         elif phase == PHASE_ENRICH:
+            phase_started_at = time.monotonic()
             run_enrich(force=True, only_category=only_category)
+            durations.append(("2", time.monotonic() - phase_started_at))
         elif phase == PHASE_SCORE:
+            phase_started_at = time.monotonic()
             run_scoring(only_category=only_category)
+            durations.append(("3", time.monotonic() - phase_started_at))
         elif phase == PHASE_INVENTORY:
+            phase_started_at = time.monotonic()
             scan_mode = "full" if PHASE_SCAN in ordered else "partial"
             run_inventory(scan_mode=scan_mode, only_category=only_category)
+            durations.append(("4", time.monotonic() - phase_started_at))
         elif phase == PHASE_RECOMMENDATIONS:
+            phase_started_at = time.monotonic()
             run_recommendations()
+            durations.append(("5", time.monotonic() - phase_started_at))
+    return durations
+
+
+def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
+    cfg = load_config()
+    if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
+        return
+    if cfg["media_probe"].get("mode", "compare") != "compare":
+        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
+        return
+    if not library_document_exists(OUTPUT_PATH):
+        log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
+        return
+    try:
+        document = load_library_document_non_blocking(OUTPUT_PATH)
+        if not isinstance(document, dict):
+            log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
+            return
+        result = run_media_probe_pipeline_if_enabled(
+            cfg,
+            library_document=document,
+            library_json_path=OUTPUT_PATH,
+            output_path=OUTPUT_PATH,
+            library_root=LIBRARY_PATH,
+            only_category=only_category,
+        )
+        if isinstance(result, tuple) and len(result) == 2:
+            updated_document, _stats = result
+            write_json(updated_document, OUTPUT_PATH)
+        elif result is not None:
+            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("1B"))
+    except Exception as e:
+        log.exception("%s Failed: %s", _phase_prefix("1B"), e)
 
 
 # ---------------------------------------------------------------------------
@@ -3562,12 +4056,28 @@ def run_phases(phases: list[int], *, only_category: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def run_reset() -> None:
+    """Clear all library data from SQLite and remove any legacy JSON artifact."""
+    if sqlite_db is not None:
+        try:
+            conn = sqlite_db.initialize_database()
+            with conn:
+                count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+                conn.execute("DELETE FROM media")
+                conn.execute("DELETE FROM recommendations")
+                conn.execute("DELETE FROM inventory_items")
+                conn.execute("DELETE FROM scan_runs")
+                if media_repository is not None:
+                    media_repository.clear_library_snapshot(conn)
+            conn.close()
+            log.info("[reset] Cleared %d items from SQLite (media, recommendations, inventory, scan_runs, snapshot)", count)
+        except Exception as exc:
+            log.error("[reset] Failed to clear SQLite data: %s", exc)
+    else:
+        log.warning("[reset] SQLite unavailable — library data not cleared")
     output = Path(OUTPUT_PATH)
     if output.exists():
         output.unlink()
-        log.info(f"Deleted {OUTPUT_PATH}")
-    else:
-        log.info(f"Nothing to reset ({OUTPUT_PATH} does not exist)")
+        log.info("[reset] Removed legacy %s", OUTPUT_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -3661,8 +4171,7 @@ def _is_scan_locked() -> bool:
 # HTTP server (--serve mode)
 # ---------------------------------------------------------------------------
 
-_srv_lock      = threading.Lock()
-_valid_sessions: set = set()  # in-memory session tokens (cleared on restart)
+_srv_lock = threading.Lock()
 
 # Routes that don't require authentication
 _PUBLIC_GET  = {"/api/auth", "/health"}
@@ -3673,11 +4182,74 @@ _auth_attempts: dict = {}   # ip → [timestamps]
 _AUTH_MAX_ATTEMPTS = 10
 _AUTH_WINDOW       = 60     # seconds
 
+
+# ---------------------------------------------------------------------------
+# Session management (SQLite-backed, survives restart)
+# ---------------------------------------------------------------------------
+
+def _session_add(token: str) -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO active_sessions(token, expires_at) "
+                    "VALUES (?, datetime('now', '+7 days'))",
+                    (token,),
+                )
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.error("[session] Failed to persist session: %s", exc)
+
+
+def _session_valid(token: str) -> bool:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM active_sessions WHERE token = ? AND expires_at > datetime('now')",
+                (token,),
+            ).fetchone()
+            return bool(row)
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.error("[session] Failed to validate session: %s", exc)
+        return False
+
+
+def _session_remove(token: str) -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute("DELETE FROM active_sessions WHERE token = ?", (token,))
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("[session] Failed to remove session: %s", exc)
+
+
+def _sessions_purge_expired() -> None:
+    try:
+        conn = sqlite_db.open_connection()
+        try:
+            with conn:
+                conn.execute("DELETE FROM active_sessions WHERE expires_at <= datetime('now')")
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("[session] Failed to purge expired sessions: %s", exc)
+
 _srv_state = {
     "status":     "idle",
     "mode":       None,
     "started_at": None,
     "ended_at":   None,
+    "phase":      None,
+    "completed_phases": [],
+    "initial_library_ready": False,
     "log":        [],
 }
 _srv_proc = None
@@ -3697,6 +4269,87 @@ PHASE_INVENTORY = 4
 PHASE_RECOMMENDATIONS = 5
 _PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
+_SCAN_SEPARATOR = "─" * 47
+_SCAN_FINAL_SEPARATOR = "═" * 47
+_PHASE_LABELS = {
+    "1": ("FILESYSTEM+NFO", "Filesystem + NFO"),
+    "1B": ("FFPROBE", "FFprobe technical scan"),
+    "2": ("SEERR", "Seerr enrichment"),
+    "3": ("SCORING", "Scoring"),
+    "4": ("INVENTORY", "Inventory"),
+    "5": ("RECOMMENDATIONS", "Recommendations"),
+}
+_PHASE_ID_BY_NUMBER = {
+    PHASE_SCAN: "1",
+    PHASE_ENRICH: "2",
+    PHASE_SCORE: "3",
+    PHASE_INVENTORY: "4",
+    PHASE_RECOMMENDATIONS: "5",
+}
+
+
+def _phase_prefix(phase_id: str) -> str:
+    name = _PHASE_LABELS.get(str(phase_id).upper(), (str(phase_id).upper(), ""))[0]
+    return f"[SCAN] [PHASE {str(phase_id).upper()}] [{name}]"
+
+
+def _phase_display_name(phase_id: str) -> str:
+    return _PHASE_LABELS.get(str(phase_id).upper(), (str(phase_id).upper(), str(phase_id)))[1]
+
+
+def _log_phase_start(phase_id: str, *, suffix: str = "") -> None:
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
+    log.info("%s Starting phase%s", _phase_prefix(phase_id), suffix)
+    log.info("[SCAN] %s", _SCAN_SEPARATOR)
+
+
+def _log_phase_complete(phase_id: str, duration: float, summary: str | None = None) -> None:
+    if summary:
+        log.info("%s Summary: %s", _phase_prefix(phase_id), summary)
+    log.info("%s Completed in %.1fs", _phase_prefix(phase_id), duration)
+
+
+def _count_label(count: int, singular: str, plural: str | None = None) -> str:
+    plural = plural or f"{singular}s"
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _log_planned_phases(ordered: list[int]) -> list[str]:
+    expanded = []
+    for phase in ordered:
+        phase_id = _PHASE_ID_BY_NUMBER.get(phase)
+        if not phase_id:
+            continue
+        expanded.append(phase_id)
+        if phase == PHASE_SCAN and _is_media_probe_phase_enabled():
+            expanded.append("1B")
+    log.info("[SCAN] Planned phases:")
+    for phase_id in expanded:
+        label = phase_id.lower() if phase_id == "1B" else phase_id
+        log.info("[SCAN]   %-2s -> %s", label, _phase_display_name(phase_id))
+    return expanded
+
+
+def _is_media_probe_phase_enabled() -> bool:
+    try:
+        cfg = load_config()
+    except Exception:
+        return False
+    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
+    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
+
+
+def _phases_display_csv(phases: list[int]) -> str:
+    expanded = []
+    include_probe = _is_media_probe_phase_enabled()
+    for phase in _normalize_phases(phases):
+        phase_id = _PHASE_ID_BY_NUMBER.get(phase)
+        if not phase_id:
+            continue
+        expanded.append(phase_id.lower() if phase_id == "1B" else phase_id)
+        if phase == PHASE_SCAN and include_probe:
+            expanded.append("1b")
+    return ",".join(expanded)
 
 
 def _normalize_phases(phases: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
@@ -4074,6 +4727,53 @@ def _score_settings_payload(cfg: dict | None = None) -> dict:
     }
 
 
+def _is_scan_running() -> bool:
+    with _srv_lock:
+        running = _srv_state["status"] == "running"
+    return running or _is_scan_locked()
+
+
+def _log_post_save_scan_skipped() -> None:
+    log.info("[SETTINGS] Settings saved; post-save scan skipped because a scan is already running")
+
+
+def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
+    if _is_scan_running():
+        _log_post_save_scan_skipped()
+        return False
+    threading.Thread(target=_run_scan_bg, args=(mode, phases, None, "manual"), daemon=True).start()
+    return True
+
+
+_SCAN_PHASE_STATE = {
+    "1": "filesystem",
+    "1B": "ffprobe",
+    "2": "seerr",
+    "3": "scoring",
+    "4": "inventory",
+    "5": "recommendations",
+}
+
+
+def _update_scan_phase_state_from_log(line: str) -> None:
+    match = re.search(r"\[PHASE\s+([0-9A-Z]+)\]", line or "")
+    if not match:
+        return
+    phase_id = match.group(1).upper()
+    phase_name = _SCAN_PHASE_STATE.get(phase_id)
+    if not phase_name:
+        return
+    if "Starting phase" in line:
+        _srv_state["phase"] = phase_name
+    if re.search(r"\]\s+Completed in", line):
+        completed = list(_srv_state.get("completed_phases") or [])
+        if phase_name not in completed:
+            completed.append(phase_name)
+        _srv_state["completed_phases"] = completed
+        if phase_name == "filesystem":
+            _srv_state["initial_library_ready"] = True
+
+
 def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
@@ -4084,35 +4784,97 @@ def _recommendations_api_payload(cfg: dict | None = None) -> dict:
     if not enabled:
         return _empty_recommendations_payload(False)
 
-    rec_path = Path(RECOMMENDATIONS_OUTPUT_PATH)
-    if not rec_path.exists():
+    payload = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
+    if not isinstance(payload, dict):
         return _empty_recommendations_payload(True)
+    payload["enabled"] = True
+    payload.setdefault("generated_at", None)
+    payload.setdefault("version", 1)
+    if not isinstance(payload.get("items"), list):
+        payload["items"] = []
+    return payload
 
-    try:
-        with open(rec_path, encoding="utf-8") as f:
-            payload = json.load(f)
-        if not isinstance(payload, dict):
-            return _empty_recommendations_payload(True)
-        payload["enabled"] = True
-        payload.setdefault("generated_at", None)
-        payload.setdefault("version", 1)
-        if not isinstance(payload.get("items"), list):
-            payload["items"] = []
+
+_library_api_cache: dict[str, object] = {
+    "signature": None,
+    "payload": None,
+}
+
+
+def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
+    if Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON:
+        db_path = sqlite_db.default_db_path() if sqlite_db is not None else runtime_paths.SQLITE_DB
+    else:
+        db_path = Path(OUTPUT_PATH).parent / "mymedialibrary.db"
+    paths = [Path(db_path), Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")]
+    signature: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+            signature.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns))
+        except FileNotFoundError:
+            signature.append((str(path), -1, -1))
+        except Exception:
+            signature.append((str(path), -2, -2))
+    return tuple(signature)
+
+
+def _library_api_payload() -> dict:
+    started = time.perf_counter()
+    cache_enabled = Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
+    signature = _runtime_db_signature()
+    if cache_enabled and _library_api_cache.get("signature") == signature and isinstance(_library_api_cache.get("payload"), dict):
+        payload = _library_api_cache["payload"]
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        log.debug("[perf] /api/library cache=hit items=%s duration_ms=%.1f", len(items), (time.perf_counter() - started) * 1000)
         return payload
-    except Exception as e:
-        log.warning("[recommendations] Could not read %s: %s", RECOMMENDATIONS_OUTPUT_PATH, e)
-        return _empty_recommendations_payload(True)
+
+    load_started = time.perf_counter()
+    payload = load_library_document_non_blocking(OUTPUT_PATH)
+    load_ms = (time.perf_counter() - load_started) * 1000
+    if not isinstance(payload, dict):
+        payload = {"items": [], "categories": [], "total_items": 0}
+        if cache_enabled:
+            _library_api_cache.update({"signature": signature, "payload": payload})
+        log.debug("[perf] /api/library cache=miss sql_ms=%.1f items=0 duration_ms=%.1f", load_ms, (time.perf_counter() - started) * 1000)
+        return payload
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    categories = payload.get("categories")
+    if not isinstance(categories, list):
+        categories = sorted({
+            item.get("category")
+            for item in items
+            if isinstance(item, dict) and item.get("category")
+        })
+    payload["items"] = items
+    payload["categories"] = categories
+    payload["total_items"] = len(items)
+    if cache_enabled:
+        _library_api_cache.update({"signature": signature, "payload": payload})
+    log.debug(
+        "[perf] /api/library cache=miss sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        load_ms,
+        len(items),
+        len(categories),
+        (time.perf_counter() - started) * 1000,
+    )
+    return payload
 
 
 def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | None = None, origin: str = "manual"):
     global _srv_proc
     cmd = _scanner_cmd(mode, phases=phases, category=category, origin=origin)
     env = os.environ.copy()
+    env["MML_SKIP_DB_STARTUP_TASKS"] = "1"
 
     with _srv_lock:
         _srv_state.update(status="running", mode=mode,
                           started_at=datetime.now(timezone.utc).isoformat(),
-                          ended_at=None, log=[f"[server] Starting: {' '.join(cmd)}"])
+                          ended_at=None,
+                          phase=None,
+                          completed_phases=[],
+                          initial_library_ready=False,
+                          log=[f"[server] Starting: {' '.join(cmd)}"])
         if phases:
             _srv_state["phases"] = _normalize_phases(phases)
         else:
@@ -4129,6 +4891,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
             line = line.rstrip()
             with _srv_lock:
                 _srv_state["log"].append(line)
+                _update_scan_phase_state_from_log(line)
                 if len(_srv_state["log"]) > 500:
                     _srv_state["log"] = _srv_state["log"][-500:]
 
@@ -4139,6 +4902,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
         with _srv_lock:
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
             _srv_state["status"]   = "done" if rc == 0 else "error"
+            _srv_state["phase"] = None
             _srv_state["log"].append(f"[server] Done (code {rc})")
     except Exception as e:
         if origin == "cron":
@@ -4146,6 +4910,7 @@ def _run_scan_bg(mode: str, phases: list[int] | None = None, category: str | Non
         with _srv_lock:
             _srv_state["status"]   = "error"
             _srv_state["ended_at"] = datetime.now(timezone.utc).isoformat()
+            _srv_state["phase"] = None
             _srv_state["log"].append(f"[server] Exception : {e}")
     finally:
         with _srv_lock:
@@ -4158,7 +4923,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         pass
 
     def _json(self, code, data, *, set_cookie=None):
+        encode_started = time.perf_counter()
         body = json.dumps(data).encode()
+        encode_ms = (time.perf_counter() - encode_started) * 1000
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -4166,14 +4933,24 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
+        if getattr(self, "_request_path", "").startswith("/api/"):
+            request_started = getattr(self, "_request_started", None)
+            duration_ms = ((time.perf_counter() - request_started) * 1000) if request_started else 0.0
+            log.debug(
+                "[perf] endpoint=%s status=%s bytes=%s json_ms=%.1f duration_ms=%.1f",
+                self._request_path,
+                code,
+                len(body),
+                encode_ms,
+                duration_ms,
+            )
 
     def _check_auth(self) -> bool:
         """Return True if request carries a valid mml_session cookie."""
-        pw = os.environ.get("APP_PASSWORD", "")
-        if not pw:
+        if not _auth_is_configured():
             return True
         token = self._session_token()
-        if token and token in _valid_sessions:
+        if token and _session_valid(token):
             return True
         return False
 
@@ -4185,9 +4962,22 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 return val
         return None
 
+    def _make_session_cookie(self, token: str | None, *, expire: bool = False) -> str:
+        """Build a Set-Cookie value; adds Secure flag when behind an HTTPS proxy."""
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+        if expire:
+            return (
+                f"mml_session=; HttpOnly; Path=/; SameSite=Lax{secure}; "
+                "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            )
+        return f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax{secure}; Max-Age={_SESSION_MAX_AGE}"
+
     def _is_rate_limited(self) -> bool:
         """Return True if the client IP has exceeded the auth attempt rate limit."""
-        ip  = self.client_address[0]
+        # Use X-Forwarded-For set by nginx (real client IP) to avoid all users
+        # sharing one rate-limit bucket when the proxy sits on 127.0.0.1.
+        forwarded = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        ip = forwarded if forwarded else self.client_address[0]
         now = time.time()
         ts  = _auth_attempts.get(ip, [])
         ts  = [t for t in ts if now - t < _AUTH_WINDOW]
@@ -4202,7 +4992,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         if path not in _PUBLIC_GET and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
             return
@@ -4228,9 +5020,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # reaching here means the request is authenticated.
             self._json(200, {})
         elif path == "/api/auth":
-            pw = os.environ.get("APP_PASSWORD", "")
             lang = load_config().get("system", {}).get("language") or "en"
-            required = bool(pw)
+            required = _auth_is_configured()
             self._json(200, {
                 "required": required,
                 "language": lang,
@@ -4251,13 +5042,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 version = resp.get("applicationVersion") or resp.get("version") or "?"
                 self._json(200, {"ok": True, "version": version, "url": jsr["url"]})
         elif path == "/health":
-            output = os.environ.get("OUTPUT_PATH", "/data/library.json")
-            ok = os.path.exists(output)
-            self._json(200 if ok else 503, {
-                "status": "ok" if ok else "degraded",
-                "library_json": ok,
-                "scanner": "idle" if _srv_state["status"] != "running" else "running",
-            })
+            ok = library_document_exists(OUTPUT_PATH)
+            self._json(200 if ok else 503, {"status": "ok" if ok else "degraded"})
+        elif path == "/api/library":
+            self._json(200, _library_api_payload())
         elif path == "/api/config":
             cfg = load_config()
             cfg, changed = _ensure_needs_onboarding(cfg)
@@ -4274,7 +5062,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if (
                 cfg.get("system", {}).get("needs_onboarding") is True
                 and _has_usable_config(cfg)
-                and Path(OUTPUT_PATH).exists()
+                and library_document_exists(OUTPUT_PATH)
             ):
                 cfg["system"]["needs_onboarding"] = False
                 changed = True
@@ -4285,6 +5073,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
             out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
+            out["auth"] = {"enabled": _auth_is_configured()}
             out, seerr_changed = normalize_seerr_config(out)
             if seerr_changed:
                 changed = True
@@ -4316,6 +5105,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 })
         elif path == "/api/providers-map":
             self._json(200, _load_runtime_provider_mapping())
+        elif path == "/api/providers-logo":
+            self._json(200, _load_runtime_provider_logos())
         elif path == "/api/recommendations":
             self._json(200, _recommendations_api_payload())
         else:
@@ -4333,10 +5124,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_update(self, payload: dict) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             valid, err = validate_score_payload(payload, defaults, strict=True)
             if not valid:
@@ -4354,25 +5141,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] PUT /api/settings/score failed: %s", e)
             self._json(500, {
@@ -4386,10 +5183,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_score_settings_reset(self) -> None:
         try:
-            if _is_scan_locked():
-                self._json(409, self._scan_running_error_payload())
-                return
-
             defaults = load_score_defaults()
             cfg = load_config()
             cfg["score_configuration"] = copy.deepcopy(defaults)
@@ -4400,25 +5193,35 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             recalculated = 0
             mode = "config_only"
+            scan_skipped = None
             if _is_score_enabled(cfg):
-                try:
-                    recalculated = run_score_only()
-                    mode = "score_only"
-                except BlockingIOError:
-                    self._json(409, self._scan_running_error_payload())
-                    return
+                if _is_scan_running():
+                    _log_post_save_scan_skipped()
+                    mode = "scan_skipped"
+                    scan_skipped = "running"
+                else:
+                    try:
+                        recalculated = run_score_only()
+                        mode = "score_only"
+                    except BlockingIOError:
+                        _log_post_save_scan_skipped()
+                        mode = "scan_skipped"
+                        scan_skipped = "running"
             _, effective_after, status_after = get_effective_score_config(cfg)
             status_after = dict(status_after)
             status_after.update({
                 "recalculated_items": recalculated,
                 "mode": mode,
             })
-            self._json(200, {
+            response = {
                 "ok": True,
                 "enabled": _is_score_enabled(cfg),
                 "effective": effective_after,
                 "status": status_after,
-            })
+            }
+            if scan_skipped:
+                response["scan_skipped"] = scan_skipped
+            self._json(200, response)
         except Exception as e:
             log.exception("[score] POST /api/settings/score/reset failed: %s", e)
             self._json(500, {
@@ -4431,7 +5234,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             })
 
     def do_PUT(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
             return
@@ -4450,7 +5255,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        self._request_started = time.perf_counter()
         path = self.path.split("?")[0]
+        self._request_path = path
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b"{}"
         if path == "/api/auth":
@@ -4461,27 +5268,20 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 payload = json.loads(body)
             except Exception:
                 payload = {}
-            pw      = os.environ.get("APP_PASSWORD", "")
             entered = payload.get("password", "")
-            ok = (
-                bool(pw)
-                and isinstance(entered, str)
-                and hmac.compare_digest(pw, entered)
-            )
+            ok = _auth_verify_password(entered)
             if ok:
                 token = secrets.token_hex(32)
-                _valid_sessions.add(token)
-                cookie = f"mml_session={token}; HttpOnly; Path=/; SameSite=Lax"
-                self._json(200, {"ok": True}, set_cookie=cookie)
+                _session_add(token)
+                self._json(200, {"ok": True}, set_cookie=self._make_session_cookie(token))
             else:
                 self._json(200, {"ok": False})
             return
         if path == "/api/logout":
             token = self._session_token()
             if token:
-                _valid_sessions.discard(token)
-            expired = "mml_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-            self._json(200, {"ok": True}, set_cookie=expired)
+                _session_remove(token)
+            self._json(200, {"ok": True}, set_cookie=self._make_session_cookie(None, expire=True))
             return
         if path not in _PUBLIC_POST and not self._check_auth():
             self._json(401, {"error": "unauthorized"})
@@ -4508,10 +5308,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"error": f"invalid mode: {mode}"}); return
             with _srv_lock:
                 if _srv_state["status"] == "running":
-                    self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running", "phases": _srv_state.get("phases", [])}); return
+                    log.info("[SCAN] Scan already running — refusing new scan request")
+                    self._json(409, self._scan_running_error_payload()); return
             if _is_scan_locked():
                 log.info("[SCAN] Scan already running — refusing new scan request")
-                self._json(200, {"ok": True, "mode": mode, "running": True, "skipped": "already_running"}); return
+                self._json(409, self._scan_running_error_payload()); return
             cfg = load_config()
             cfg, _ = _ensure_needs_onboarding(cfg)
             if cfg.get("system", {}).get("needs_onboarding") is True:
@@ -4555,6 +5356,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
+            try:
+                auth_action = _apply_auth_secret_update(payload, secrets_after)
+            except ValueError as e:
+                self._json(400, {"ok": False, "error": {"code": "INVALID_AUTH_CONFIG", "message": str(e)}})
+                return
             jsr_key_action = _apply_seerr_secret_update(payload, secrets_after)
 
             merged = deep_merge(cfg, payload)
@@ -4564,14 +5370,19 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             merged, _, _ = normalize_score_configuration_sections(merged)
             merged, _ = normalize_recommendations_configuration(merged)
             _finalize_needs_onboarding_after_config_update(merged)
-            # Ensure apikey never persists in config.json
+            # Ensure apikey never persists in SQLite config
             if "seerr" in merged:
                 merged["seerr"].pop("apikey", None)
                 merged["seerr"].pop("clear_apikey", None)
             merged.pop("jellyseerr", None)
             save_config(merged)
             if secrets_after != secrets_before:
-                _save_secrets(secrets_after)
+                try:
+                    _write_secrets(secrets_after)
+                    _sync_auth_settings_to_db(secrets_after)
+                except Exception as e:
+                    self._json(500, {"ok": False, "error": {"code": "SECRETS_WRITE_FAILED", "message": str(e)}})
+                    return
 
             if jsr_key_action == "updated":
                 log.info("[config] Seerr API key updated")
@@ -4581,6 +5392,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 log.info("[config] Seerr API key cleared (explicit request)")
             else:
                 log.info("[config] Seerr API key not modified")
+            if auth_action == "updated":
+                log.info("[config] Authentication password updated")
+            elif auth_action == "disabled":
+                log.info("[config] Authentication disabled")
 
             log.info("[config] Saved")
             # Apply log_level change immediately without restart
@@ -4599,13 +5414,18 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             )
             response = {"ok": True, "phases": phases}
             if phases:
-                if _is_scan_locked():
-                    log.info("[config] Phase plan %s skipped — scan already running", phases)
+                if not _start_post_save_scan_if_idle("phased", phases):
                     response["scan_skipped"] = "running"
                 else:
                     log.info("[config] Triggering phased scan from config save: %s", phases)
-                    threading.Thread(target=_run_scan_bg, args=("phased", phases, None, "manual"), daemon=True).start()
-            self._json(200, response)
+            set_cookie = None
+            if auth_action == "updated":
+                token = secrets.token_hex(32)
+                _session_add(token)
+                set_cookie = self._make_session_cookie(token)
+            elif auth_action == "disabled":
+                set_cookie = self._make_session_cookie(None, expire=True)
+            self._json(200, response, set_cookie=set_cookie)
 
         elif path == "/api/settings/score":
             self._handle_score_settings_update(payload)
@@ -4631,10 +5451,21 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
 
 
 def serve():
+    _bootstrap_sqlite_runtime()
+    _sessions_purge_expired()
     start_user_scan_scheduler()
     server = http.server.HTTPServer(("127.0.0.1", 8095), _ScanHandler)
     log.info("[server] Listening on 127.0.0.1:8095")
     server.serve_forever()
+
+
+def _bootstrap_sqlite_runtime() -> bool:
+    """Create and migrate the runtime SQLite DB early so production startup is observable."""
+    if sqlite_db is None:
+        raise RuntimeError("SQLite module import failed")
+    bootstrapped = bool(sqlite_db.bootstrap_runtime_database(logger=log))
+    _apply_configured_log_level()
+    return bootstrapped
 
 
 # ---------------------------------------------------------------------------
@@ -4649,17 +5480,17 @@ def main():
     )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--quick", action="store_true",
-        help="Phase 1 only: filesystem + NFO scan, no enrichment/scoring/inventory")
+        help="Compatibility alias: run phase 1 only")
     mode_group.add_argument("--full",  action="store_true",
-        help="Automatic phased scan based on current config (default)")
+        help="Compatibility alias: run the dynamic phase pipeline")
     mode_group.add_argument("--phases", default=None, metavar="LIST",
         help="Explicit phases list, comma-separated (e.g. 1,2,3,4)")
     mode_group.add_argument("--score-only", action="store_true",
-        help="Recompute score fields from existing library.json only")
+        help="Recompute score fields from the SQLite media library")
     mode_group.add_argument("--serve", action="store_true",
         help="Start HTTP API server on 127.0.0.1:8095")
     mode_group.add_argument("--reset", action="store_true",
-        help="Delete library.json and exit")
+        help="Remove legacy runtime output if present and exit")
     parser.add_argument("--category", default=None, metavar="NAME",
         help="Restrict scan to a single category name")
     parser.add_argument("--origin", default="manual",
@@ -4670,6 +5501,8 @@ def main():
     if args.serve:
         serve()
         return
+
+    _bootstrap_sqlite_runtime()
 
     if args.reset:
         run_reset()
@@ -4683,7 +5516,7 @@ def main():
         mode_label = "--score-only"
     elif args.phases:
         lock_mode = "phased"
-        mode_label = f"--phases {args.phases}"
+        mode_label = f"--phases {_phases_display_csv(_parse_phases_csv(args.phases))}"
     else:
         lock_mode = "default"
         mode_label = "dynamic pipeline"
@@ -4691,18 +5524,19 @@ def main():
     try:
         with _scan_lock(lock_mode):
             _t_main = time.monotonic()
+            phase_durations: list[tuple[str, float]] = []
             if args.origin == "cron":
                 log.info("[SCAN] Starting scheduled scan (dynamic pipeline)")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
             log.info(f"[SCAN] Starting scan {mode_label}")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
             if args.quick:
-                run_phases([PHASE_SCAN], only_category=args.category)
+                phase_durations = run_phases([PHASE_SCAN], only_category=args.category)
             elif args.score_only:
                 run_score_only()
             elif args.phases:
-                run_phases(_parse_phases_csv(args.phases), only_category=args.category)
+                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category)
             else:
                 cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
                 if args.origin == "startup":
@@ -4711,12 +5545,21 @@ def main():
                         log.info("[SCAN] Startup: no media scan phase required")
                 else:
                     phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
-                run_phases(phases, only_category=args.category)
+                phase_durations = run_phases(phases, only_category=args.category)
 
             elapsed = time.monotonic() - _t_main
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
             log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
-            log.info(f"[SCAN] ═══════════════════════════════════")
+            if phase_durations:
+                log.info("[SCAN] Phase durations:")
+                for phase_id, duration in phase_durations:
+                    log.info(
+                        "[SCAN]   Phase %-2s (%s): %.1fs",
+                        phase_id.lower() if phase_id == "1B" else phase_id,
+                        _phase_display_name(phase_id).replace(" + ", "+"),
+                        duration,
+                    )
+            log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
     except BlockingIOError:
         if args.origin == "startup":

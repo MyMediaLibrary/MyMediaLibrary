@@ -11,12 +11,24 @@ import scanner  # noqa: E402
 
 
 class TvAggregationV033Test(unittest.TestCase):
+    def test_build_season_and_episode_ids(self):
+        item_id = "tv:Show:Dark"
+        self.assertEqual(scanner.build_season_id(item_id, 1), "tv:Show:Dark:s01")
+        self.assertEqual(scanner.build_episode_id(item_id, 1, 3), "tv:Show:Dark:s01e03")
+        self.assertEqual(scanner.build_episode_id(item_id, 2, 10), "tv:Show:Dark:s02e10")
+        self.assertEqual(scanner.build_episode_id("tv:Anime:One.Piece", None, 3), "tv:Anime:One.Piece:e003")
+        self.assertEqual(scanner.build_episode_id("tv:Anime:Naruto", None, 45), "tv:Anime:Naruto:e045")
+        self.assertEqual(scanner.build_episode_id("tv:Anime:One.Piece", None, 123), "tv:Anime:One.Piece:e123")
+        self.assertEqual(scanner.build_episode_id("tv:Anime:One.Piece", None, 1001), "tv:Anime:One.Piece:e1001")
+
     def test_extract_episode_from_anime_like_names(self):
         self.assertEqual(scanner._extract_season_episode_from_name("Boruto.E01.mkv"), (None, 1))
         self.assertEqual(scanner._extract_season_episode_from_name("Boruto - E002.mkv"), (None, 2))
+        self.assertEqual(scanner._extract_season_episode_from_name("Boruto episode 123.mkv"), (None, 123))
         self.assertEqual(scanner._extract_season_episode_from_name("OnePiece.001.mkv"), (None, 1))
         self.assertEqual(scanner._extract_season_episode_from_name("Show.1x03.mkv"), (1, 3))
         self.assertEqual(scanner._extract_season_episode_from_name("Show.1080p.mkv"), (None, None))
+        self.assertEqual(scanner._extract_season_episode_from_name("Show.2024.mkv"), (None, None))
 
     def test_collect_series_episode_metadata_dedupes_nfo_and_video_for_episode_token_names(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -31,15 +43,15 @@ class TvAggregationV033Test(unittest.TestCase):
 
             episodes = scanner.collect_series_episode_metadata(series_dir)
             self.assertEqual(len(episodes), 1)
-            self.assertEqual(episodes[0]["season"], 1)
+            self.assertIsNone(episodes[0]["season"])
             self.assertEqual(episodes[0]["episode"], 1)
             self.assertEqual(episodes[0]["size_b"], 10)
 
             agg = scanner.aggregate_series_metadata(episodes)
             self.assertEqual(agg["episode_count"], 1)
-            self.assertEqual(agg["season_count"], 1)
+            self.assertEqual(agg["season_count"], 0)
             self.assertEqual(agg["size_b"], 10)
-            self.assertEqual(agg["seasons"][0]["size_b"], 10)
+            self.assertEqual(agg["seasons"], [])
 
     def test_collect_series_episode_metadata_without_nfo_parses_anime_numeric_suffix(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -49,12 +61,30 @@ class TvAggregationV033Test(unittest.TestCase):
             (series_dir / "Anime.002.mkv").write_bytes(b"b" * 5)
 
             episodes = sorted(
-                scanner.collect_series_episode_metadata(series_dir),
+                scanner.collect_series_episode_metadata(series_dir, item_id="tv:Anime:One.Piece"),
                 key=lambda e: int(e.get("episode") or 0),
             )
             self.assertEqual(len(episodes), 2)
             self.assertEqual([e.get("episode") for e in episodes], [1, 2])
+            self.assertEqual([e.get("season") for e in episodes], [None, None])
+            self.assertEqual([e.get("episode_id") for e in episodes], ["tv:Anime:One.Piece:e001", "tv:Anime:One.Piece:e002"])
             self.assertEqual(sum(int(e.get("size_b") or 0) for e in episodes), 8)
+
+    def test_collect_series_episode_metadata_adds_classic_episode_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            series_dir = pathlib.Path(tmpdir) / "Dark"
+            series_dir.mkdir(parents=True)
+            (series_dir / "Dark.S02E10.mkv").write_bytes(b"a" * 3)
+
+            episodes = scanner.collect_series_episode_metadata(series_dir, item_id="tv:Show:Dark")
+
+            self.assertEqual(len(episodes), 1)
+            self.assertEqual(episodes[0]["season"], 2)
+            self.assertEqual(episodes[0]["episode"], 10)
+            self.assertEqual(episodes[0]["episode_id"], "tv:Show:Dark:s02e10")
+
+            agg = scanner.aggregate_series_metadata(episodes, item_id="tv:Show:Dark")
+            self.assertEqual(agg["seasons"][0]["season_id"], "tv:Show:Dark:s02")
 
     def test_parse_episode_nfo_metadata_extracts_new_streamdetails_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:

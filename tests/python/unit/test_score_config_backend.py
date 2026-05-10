@@ -74,7 +74,10 @@ class ScoreConfigBackendTest(unittest.TestCase):
 
     def test_recompute_scores_only_updates_library_quality_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
-            output_path = pathlib.Path(tmp) / "library.json"
+            root = pathlib.Path(tmp)
+            output_path = root / "library.json"
+            config_path = root / "conf" / "config.json"
+            config_path.parent.mkdir()
             output_path.write_text(json.dumps({
                 "items": [{
                     "title": "Movie",
@@ -89,7 +92,12 @@ class ScoreConfigBackendTest(unittest.TestCase):
                 }]
             }), encoding="utf-8")
 
-            with patch.object(scanner, "OUTPUT_PATH", str(output_path)):
+            with patch.object(scanner, "OUTPUT_PATH", str(output_path)), \
+                 patch.object(scanner, "CONFIG_PATH", str(config_path)):
+                scanner.save_config({
+                    "score": {"enabled": True},
+                    "score_configuration": scanner.load_score_defaults(),
+                })
                 count = scanner.recompute_scores_only()
 
             self.assertEqual(count, 1)

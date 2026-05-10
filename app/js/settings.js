@@ -5,7 +5,7 @@
  * Seerr, cron hints, mobile layout) and the first-run onboarding flow.
  *
  * Depends on globals populated by app.js at runtime:
- *   appConfig, libraryPathLabel, allItems, enablePlot, enableScore,
+ *   appConfig, allItems, enablePlot, enableScore,
  *   CURRENT_LANG, PROVIDER_OTHERS_KEY,
  *   t(), escH(), isMobile(), isScoreEnabled(),
  *   saveConfig(), loadVersion(), loadTranslations(), applyTranslations(),
@@ -33,12 +33,29 @@
 
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
+  let _onbSkippedStepIds = new Set();
   let _onbJsr = { enabled: false, url: '', key: '' };
-  let _onbFeatures = { scoreEnabled: false, inventoryEnabled: false };
+  let _onbFeatures = {
+    synopsisEnabled: false,
+    inventoryEnabled: false,
+    mediaProbeEnabled: false,
+    scoreEnabled: false,
+    recommendationsEnabled: false,
+  };
+  let _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
   let _onbLogSeen = 0;
   let _langTimer = null;
   let _onbLang = 'fr';
   let _onbTheme = 'dark';
+
+  const _ONBOARDING_STEPS = [
+    { id: 'welcome', step: 0, progress: false, skippable: false, render: () => _onbStep0HTML() },
+    { id: 'folders', step: 1, progress: true, skippable: false, render: () => _onbStep1HTML() },
+    { id: 'seerr', step: 2, progress: true, skippable: true, render: () => _onbStep2HTML() },
+    { id: 'features', step: 3, progress: true, skippable: false, render: () => _onbStep3HTML() },
+    { id: 'auth', step: 4, progress: true, skippable: true, render: () => _onbStep4HTML() },
+    { id: 'scan', step: 5, progress: true, skippable: false, render: () => _onbStep5HTML() },
+  ];
 
   const _ONB_TEXTS = {
     fr: {
@@ -490,7 +507,7 @@
             const nestedBodyId = _scoreSectionBodyId(videoPath, `${idx}-${nestedIdx}`);
             nestedIdx += 1;
             videoHtml += '<div class="score-nested-section">'
-              + `<button type="button" class="settings-collapsible score-nested-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
+              + `<button type="button" class="settings-collapsible score-nested-collapsible" data-target="${escH(nestedBodyId)}" aria-expanded="false">`
               + `<span class="settings-collapsible-title">${escH(_scoreLabel(videoPath, videoKey))}</span>`
               + '<span class="settings-collapsible-icon">▾</span>'
               + '</button>'
@@ -534,7 +551,7 @@
       bodyHtml = _renderScoreInput(sectionKey, sectionKey, sectionValue);
     }
     return '<div class="settings-group settings-subgroup score-settings-section">'
-      + `<button type="button" class="settings-collapsible" onclick="toggleSettingsCollapse(this)" data-target="${escH(bodyId)}" aria-expanded="false">`
+      + `<button type="button" class="settings-collapsible" data-target="${escH(bodyId)}" aria-expanded="false">`
       + `<span class="settings-collapsible-title">${escH(_scoreLabel(sectionKey, sectionKey))}</span>`
       + '<span class="settings-collapsible-icon">▾</span>'
       + '</button>'
@@ -770,6 +787,75 @@
     return {};
   }
 
+  function _isAuthEnabled() {
+    return appConfig?.auth?.enabled === true;
+  }
+
+  function _authPasswordRules(password) {
+    const value = String(password || '');
+    return {
+      length: value.length >= 25,
+      lowercase: (value.match(/[a-z]/g) || []).length >= 2,
+      uppercase: (value.match(/[A-Z]/g) || []).length >= 2,
+      digits: (value.match(/[0-9]/g) || []).length >= 2,
+      special: (value.match(/[^A-Za-z0-9\s]/g) || []).length >= 2,
+    };
+  }
+
+  function _authPasswordValidation(password, confirm) {
+    const rules = _authPasswordRules(password);
+    const confirmationMatches = String(password || '') === String(confirm || '');
+    return {
+      rules,
+      confirmationMatches,
+      valid: Object.values(rules).every(Boolean) && confirmationMatches,
+    };
+  }
+
+  function _renderAuthRuleList(validation) {
+    const ruleRows = [
+      ['length', t('settings.auth.rule_length')],
+      ['lowercase', t('settings.auth.rule_lowercase')],
+      ['uppercase', t('settings.auth.rule_uppercase')],
+      ['digits', t('settings.auth.rule_digits')],
+      ['special', t('settings.auth.rule_special')],
+    ];
+    return '<div class="settings-note" style="display:flex;flex-direction:column;gap:4px;margin-top:2px">'
+      + ruleRows.map(([key, label]) => {
+        const ok = validation.rules[key] === true;
+        return '<div data-auth-rule="'+key+'" style="color:'+(ok ? '#34d399' : 'var(--muted)')+'">'+(ok ? '✓ ' : '• ')+escH(label)+'</div>';
+      }).join('')
+      + '<div data-auth-rule="confirmation" style="color:'+(validation.confirmationMatches ? '#34d399' : '#ef4444')+'">'
+      + (validation.confirmationMatches ? '✓ ' : '• ')+escH(t('settings.auth.rule_confirmation'))+'</div>'
+      + '</div>';
+  }
+
+  function _setSettingsAuthStatus(message, isError = false) {
+    const status = document.getElementById('cfgAuthStatus');
+    if (!status) return;
+    if (!message) {
+      status.style.display = 'none';
+      status.textContent = '';
+      status.style.color = 'var(--muted)';
+      return;
+    }
+    status.style.display = '';
+    status.textContent = message;
+    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+  }
+
+  function syncSettingsAuthPasswordState() {
+    const enabled = document.getElementById('cfgAuthEnabled')?.checked === true;
+    const fields = document.getElementById('cfgAuthFields');
+    if (fields) fields.style.display = enabled ? '' : 'none';
+    const password = document.getElementById('cfgAuthPassword')?.value || '';
+    const confirm = document.getElementById('cfgAuthConfirm')?.value || '';
+    const validation = _authPasswordValidation(password, confirm);
+    const rules = document.getElementById('cfgAuthRules');
+    if (rules) rules.innerHTML = enabled ? _renderAuthRuleList(validation) : '';
+    _setSettingsAuthStatus('');
+  }
+
   function syncRecommendationsToggle() {
     const scoreEl = _field('cfgEnableScore');
     const recEl = _field('cfgEnableRecommendations');
@@ -781,9 +867,7 @@
 
   // ── Settings: load / save ─────────────────────────────────────────────────
   function loadSettings() {
-    if (!_field('cfgLibraryPath')) return;
-
-    // Accent color — from appConfig (persisted in config.json)
+    // Accent color — from appConfig (persisted in SQLite config)
     const accentEl = _field('cfgAccentColor');
     if (accentEl) {
       accentEl.value = appConfig.ui?.accent_color || _DEFAULT_ACCENT;
@@ -793,19 +877,21 @@
     const epEl = _field('cfgEnablePlot');
     if (epEl) { epEl.checked = enablePlot; epEl.disabled = false; }
 
-    // Library path — readonly, from library.json root field.
-    _ro('cfgLibraryPath', libraryPathLabel || '');
-
     // Enable flags — editable, from appConfig
     _rw('cfgEnableMovies',  appConfig.enable_movies  ?? true);
     _rw('cfgEnableSeries',  appConfig.enable_series  ?? true);
 
-    // Scan cron / log level / language — from appConfig.system (editable, stored in config.json)
+    // Scan cron / log level / language — from appConfig.system (editable, stored in SQLite config)
     const sys = appConfig.system || {};
     _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
     _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
+    _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
+    _rw('cfgAuthEnabled', _isAuthEnabled());
+    _rw('cfgAuthPassword', '');
+    _rw('cfgAuthConfirm', '');
+    syncSettingsAuthPasswordState();
     _rw('cfgEnableScore', isScoreEnabled());
     _rw('cfgEnableRecommendations', !!(isScoreEnabled() && appConfig.recommendations?.enabled === true));
     syncRecommendationsToggle();
@@ -889,6 +975,10 @@
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
     const inventoryEnabled = get('cfgInventoryEnabled');
+    const mediaProbeEnabled = get('cfgMediaProbeEnabled');
+    const authEnabled = get('cfgAuthEnabled');
+    const authPasswordRaw = get('cfgAuthPassword');
+    const authConfirmRaw = get('cfgAuthConfirm');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
     if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
@@ -907,7 +997,34 @@
       partial.recommendations = partial.recommendations || {};
       partial.recommendations.enabled = enableScoreCfg === false ? false : recommendationsEnabled === true;
     }
-
+    if (mediaProbeEnabled !== null) {
+      const currentMediaProbe = appConfig.media_probe || {};
+      partial.media_probe = {
+        enabled: mediaProbeEnabled === true,
+        mode: 'compare',
+        workers: currentMediaProbe.workers || 4,
+        cache_enabled: currentMediaProbe.cache_enabled !== false,
+      };
+    }
+    if (authEnabled !== null) {
+      const authPassword = typeof authPasswordRaw === 'string' ? authPasswordRaw : '';
+      const authConfirm = typeof authConfirmRaw === 'string' ? authConfirmRaw : '';
+      const wasEnabled = _isAuthEnabled();
+      if (authEnabled === false && wasEnabled) {
+        partial.auth = { enabled: false };
+      } else if (authEnabled === true && (authPassword || authConfirm || !wasEnabled)) {
+        const validation = _authPasswordValidation(authPassword, authConfirm);
+        if (!validation.confirmationMatches) {
+          _setSettingsAuthStatus(t('settings.auth.password_mismatch'), true);
+          return;
+        }
+        if (!validation.valid) {
+          _setSettingsAuthStatus(t('settings.auth.password_rules_error'), true);
+          return;
+        }
+        partial.auth = { enabled: true, password: authPassword, password_confirm: authConfirm };
+      }
+    }
     try {
       await saveConfig(partial);
       const shouldPersistScoreSettings = _isScoreTabActive() && _isScoreSettingsEnabled() && !!_scoreSettingsDraft;
@@ -973,7 +1090,7 @@
         + '<td style="padding:6px 8px">'
           + (isMissing
             ? '<span style="color:var(--muted);font-size:12px">'+(f.type==='movie'?t('settings.library.folder_types.movie'):f.type==='tv'?t('settings.library.folder_types.tv'):'—')+'</span>'
-            : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type" onchange="onFolderTypeChange(this)">'
+            : '<select class="settings-input" style="padding:3px 6px;font-size:12px" data-folder-idx="'+idx+'" data-folder-key="type">'
               + typeOpts + '</select>')
           + '</td>'
         + '<td style="padding:6px 8px">'
@@ -1312,8 +1429,7 @@
         targetPanel = modeChanged ? (currentlyExpandedMobilePanel || 'stab-library') : currentlyVisibleDesktopPanel;
       }
       stabButtons.forEach(btn => {
-        const onclick = btn.getAttribute('onclick') || '';
-        btn.classList.toggle('active', onclick.includes(`'${targetPanel}'`));
+        btn.classList.toggle('active', btn.dataset.stab === targetPanel);
       });
     }
   }
@@ -1354,7 +1470,7 @@
     document.getElementById('settingsOverlay').style.display = 'flex';
     const btn = document.getElementById('settingsSaveBtn');
     if (btn) {
-      btn.style.display = 'block'; // always show — config.json is always writable
+      btn.style.display = 'block'; // always show — SQLite config is always writable
       btn.disabled = false;
     }
     applySettingsMobileLayout({ resetMobile: true, resetDesktop: true });
@@ -1481,8 +1597,47 @@
     document.documentElement.setAttribute('data-theme', _onbTheme);
   }
 
+  function _onbFlow() {
+    return _ONBOARDING_STEPS.filter(step => !step.skippable || !_onbSkippedStepIds.has(step.id));
+  }
+
+  function _onbCurrentStep() {
+    return _ONBOARDING_STEPS.find(step => step.step === _onbStep) || _ONBOARDING_STEPS[0];
+  }
+
+  function _onbSetStep(stepId) {
+    const step = _ONBOARDING_STEPS.find(item => item.id === stepId);
+    if (!step) return false;
+    _onbStep = step.step;
+    return true;
+  }
+
+  function _onbMove(delta) {
+    const flow = _onbFlow();
+    const current = _onbCurrentStep();
+    const idx = flow.findIndex(step => step.id === current.id);
+    const next = flow[idx + delta];
+    if (!next) return false;
+    _onbStep = next.step;
+    _onbRender();
+    return true;
+  }
+
+  function _onbSkipCurrentStep() {
+    const flow = _onbFlow();
+    const current = _onbCurrentStep();
+    const idx = flow.findIndex(step => step.id === current.id);
+    const next = flow[idx + 1];
+    if (!current.skippable || !next) return false;
+    _onbSkippedStepIds.add(current.id);
+    _onbSetStep(next.id);
+    _onbRender();
+    return true;
+  }
+
   function showOnboarding() {
     _onbStep = 0;
+    _onbSkippedStepIds = new Set();
     _onbLang = null;
     _onbTheme = appConfig.ui?.theme || 'dark';
     const seerrCfg = _getSeerrConfig();
@@ -1492,9 +1647,13 @@
       key:     '',
     };
     _onbFeatures = {
-      scoreEnabled: !!(appConfig?.score?.enabled),
+      synopsisEnabled: appConfig?.ui?.synopsis_on_hover === true,
       inventoryEnabled: appConfig?.system?.inventory_enabled === true,
+      mediaProbeEnabled: appConfig?.media_probe?.enabled === true,
+      scoreEnabled: !!(appConfig?.score?.enabled),
+      recommendationsEnabled: !!(appConfig?.score?.enabled && appConfig?.recommendations?.enabled === true),
     };
+    _onbAuth = { enabled: _isAuthEnabled(), password: '', confirm: '', saved: false };
     _onbLogSeen = 0;
     // Prefetch both i18n files so lang switching is instant (browser caches them)
     ['fr', 'en'].forEach(l => fetch(`/i18n/${l}.json?_=`+Date.now()).catch(()=>{}));
@@ -1503,52 +1662,58 @@
   }
 
   function _onbRender() {
-    // Step indicator: hidden on step 0, 3 bars for steps 1-3
+    const current = _onbCurrentStep();
+    const flow = _onbFlow();
+    // Step indicator: hidden on welcome, bars for configured flow
     const stepsEl = document.getElementById('onbSteps');
     if (stepsEl) {
-      if (_onbStep === 0) {
+      if (!current.progress) {
         stepsEl.innerHTML = '';
       } else {
-        stepsEl.innerHTML = [1,2,3,4].map(n =>
-          '<div style="width:40px;height:4px;border-radius:2px;background:'+(n===_onbStep?'var(--accent)':'var(--border)')+'"></div>'
+        stepsEl.innerHTML = flow.filter(step => step.progress).map(step =>
+          '<div style="width:40px;height:4px;border-radius:2px;background:'+(step.id===current.id?'var(--accent)':'var(--border)')+'"></div>'
         ).join('');
       }
     }
 
     const panel = document.getElementById('onbPanel');
     if (!panel) return;
-    if      (_onbStep === 0) { panel.innerHTML = _onbStep0HTML(); _startLangToggle(); }
-    else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
-    else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
-    else if (_onbStep === 3) panel.innerHTML = _onbStep3HTML();
-    else                     panel.innerHTML = _onbStep4HTML();
+    panel.innerHTML = current.render();
+    if (current.id === 'welcome') _startLangToggle();
 
     // Nav buttons
     const prev = document.getElementById('onbPrevBtn');
     const next = document.getElementById('onbNextBtn');
     const skip = document.getElementById('onbSkipBtn');
     // Step 0: hide all nav buttons (step has its own Commencer button)
-    if (_onbStep === 0) {
+    if (current.id === 'welcome') {
       if (prev) prev.style.display = 'none';
       if (next) next.style.display = 'none';
       if (skip) skip.style.display = 'none';
       return;
     }
-    if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
+    if (prev) prev.style.display = flow.findIndex(step => step.id === current.id) > 0 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (_onbStep === 4) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
+      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
-      if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
-      else if (_onbStep === 2) { next.disabled = true; }
+      if (current.id === 'folders') { next.disabled = true; _onbValidateStep1(); }
+      else if (current.id === 'seerr') { next.disabled = true; }
+      else if (current.id === 'auth') { next.disabled = true; _onbValidateAuth(); }
       else next.disabled = false;
     }
     if (skip) {
       skip.textContent = t('nav.skip');
-      skip.style.display = _onbStep === 2 ? '' : 'none';
-      if (_onbStep === 2) _updateOnbSkipStyle(skip);
+      skip.style.display = current.skippable ? '' : 'none';
+      if (current.id === 'seerr') _updateOnbSkipStyle(skip);
+      else if (current.id === 'auth') {
+        const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
+        skip.style.background = enabled ? 'transparent' : 'var(--accent)';
+        skip.style.borderColor = enabled ? 'var(--border)' : 'var(--accent)';
+        skip.style.color = enabled ? 'var(--muted)' : '#fff';
+      }
     }
   }
 
@@ -1559,8 +1724,8 @@
       + '<div style="font-size:48px;margin-bottom:16px">🎬</div>'
       // Language selector
       + '<div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">'
-        + '<button id="onbLangFr" onclick="selectOnbLang(\'fr\')" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
-        + '<button id="onbLangEn" onclick="selectOnbLang(\'en\')" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
+        + '<button id="onbLangFr" style="'+btnBase+';background:var(--accent);border-color:var(--accent);color:#fff">🇫🇷 Français</button>'
+        + '<button id="onbLangEn" style="'+btnBase+';background:var(--surface);color:var(--muted)">🇬🇧 English</button>'
       + '</div>'
       // Auto-toggling content
       + '<div id="onbWelcomeTitle" style="font-family:var(--font-display);font-weight:800;font-size:22px;margin-bottom:10px">Bienvenue dans MyMediaLibrary</div>'
@@ -1576,7 +1741,7 @@
           + '<span>📘 Documentation</span>'
         + '</a>'
       + '</div>'
-      + '<button id="onbCommencerBtn" onclick="onbNext()" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
+      + '<button id="onbCommencerBtn" disabled style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:not-allowed;font-size:14px;font-weight:600;opacity:.35;transition:opacity .2s">'
         + '<span id="onbWelcomeStart">Commencer →</span>'
       + '</button>'
       + '</div>';
@@ -1604,7 +1769,7 @@
         + '<span style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escH(f.name)+'">'+escH(f.name)+'</span>'
         + (isMissing
           ? '<span style="font-size:11px;color:#f97316">'+t('onboarding.folder_missing')+'</span>'
-          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" onchange="_onbFolderChange('+idx+',this.value);this.classList.toggle(\'has-value\',!!this.value)">'
+          : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" data-onb-folder-idx="'+idx+'">'
             + '<option value="">'+t('onboarding.folder_choose')+'</option>'
             + '<option value="movie"'+(cur==='movie'?' selected':'')+'>'+t('onboarding.folder_movie')+'</option>'
             + '<option value="tv"'+(cur==='tv'?' selected':'')+'>'+t('onboarding.folder_tv')+'</option>'
@@ -1679,36 +1844,72 @@
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_enable')+'</label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+' onchange="_onbJsrToggle()"/><span class="toggle-switch-slider"></span></label></div>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbJsrEnabled"'+(_onbJsr.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_url')+'</label>'
         + '<input type="url" id="onbJsrUrl" class="settings-input" placeholder="https://seerr.domain.com" value="'+escH(_onbJsr.url)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.jsr_apikey')+'</label>'
         + '<input type="password" id="onbJsrKey" class="settings-input" placeholder="API key" value="'+escH(_onbJsr.key)+'"'+dis+' style="'+disOp+'"/></div>'
       + '<div class="settings-row">'
-        + '<button class="scan-btn" id="onbJsrTestBtn" onclick="onbTestJsr()"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
+        + '<button class="scan-btn" id="onbJsrTestBtn"'+dis+' style="padding:5px 14px;font-size:12px'+disOp+'">'+t('onboarding.jsr_test')+'</button>'
         + '<span id="onbJsrTestResult" style="font-size:12px;margin-left:10px;color:var(--muted)"></span>'
       + '</div>'
       + '</div>';
   }
 
   function _onbStep3HTML() {
+    const recDisabled = !_onbFeatures.scoreEnabled;
+    const recDisabledAttrs = recDisabled ? ' disabled' : '';
+    const recDisabledStyle = recDisabled ? ';opacity:.45' : '';
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_features_title')+'</div>'
       + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_features_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row">'
-        + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+        + '<label class="settings-label">'+t('onboarding.features_synopsis_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_synopsis_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbSynopsisEnabled"'+(_onbFeatures.synopsisEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '<div class="settings-row">'
         + '<label class="settings-label">'+t('onboarding.features_inventory_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_inventory_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+' onchange="_onbFeaturesToggle()"/><span class="toggle-switch-slider"></span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_ffprobe_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_ffprobe_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbMediaProbeEnabled"'+(_onbFeatures.mediaProbeEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label">'+t('onboarding.features_score_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_score_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row">'
+        + '<label class="settings-label" id="onbRecommendationsLabel" style="'+recDisabledStyle+'">'+t('onboarding.features_recommendations_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_recommendations_desc')+'</span></label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbRecommendationsEnabled"'+(_onbFeatures.recommendationsEnabled ? ' checked' : '')+recDisabledAttrs+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '</div>';
   }
 
   function _onbStep4HTML() {
+    const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
+    const dis = _onbAuth.enabled ? '' : ' disabled';
+    const secondaryState = _onbAuth.enabled ? '' : ' is-disabled';
+    return '<div style="margin-bottom:16px">'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
+      + '<div id="onbAuthDescription" class="onboarding-secondary'+secondaryState+'" style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:14px">'
+      + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
+        + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
+      + '<div id="onbAuthFields" class="onboarding-secondary'+secondaryState+'">'
+      + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+'/></div>'
+      + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+'/></div>'
+      + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function _onbStep5HTML() {
     const folders = appConfig.folders || [];
     const nMovies  = folders.filter(f => !f.missing && (f._onbType||f.type)==='movie').length;
     const nTv      = folders.filter(f => !f.missing && (f._onbType||f.type)==='tv').length;
@@ -1724,22 +1925,93 @@
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
       + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>👁️ Synopsis : '+(_onbFeatures.synopsisEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🎞️ FFprobe : '+(_onbFeatures.mediaProbeEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>💡 Recommandations : '+(_onbFeatures.recommendationsEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🗂️ Inventaire : '+(_onbFeatures.inventoryEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
       + '</div>';
   }
 
   function _captureOnbFeatures() {
-    const scoreEnabled = document.getElementById('onbScoreEnabled')?.checked;
-    const inventoryEnabled = document.getElementById('onbInventoryEnabled')?.checked;
+    const scoreEnabled = document.getElementById('onbScoreEnabled')?.checked === true;
+    const recommendationsInput = document.getElementById('onbRecommendationsEnabled');
+    const recommendationsEnabled = scoreEnabled && recommendationsInput?.checked === true;
     _onbFeatures = {
-      scoreEnabled: !!scoreEnabled,
-      inventoryEnabled: !!inventoryEnabled,
+      synopsisEnabled: document.getElementById('onbSynopsisEnabled')?.checked === true,
+      inventoryEnabled: document.getElementById('onbInventoryEnabled')?.checked === true,
+      mediaProbeEnabled: document.getElementById('onbMediaProbeEnabled')?.checked === true,
+      scoreEnabled,
+      recommendationsEnabled,
     };
   }
 
   function _onbFeaturesToggle() {
     _captureOnbFeatures();
+    const rec = document.getElementById('onbRecommendationsEnabled');
+    if (rec) {
+      rec.disabled = !_onbFeatures.scoreEnabled;
+      if (!_onbFeatures.scoreEnabled) {
+        rec.checked = false;
+        _onbFeatures.recommendationsEnabled = false;
+      }
+    }
+    const recLabel = document.getElementById('onbRecommendationsLabel');
+    if (recLabel) recLabel.style.opacity = _onbFeatures.scoreEnabled ? '' : '.45';
+  }
+
+  function _captureOnbAuth() {
+    const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
+    const password = document.getElementById('onbAuthPassword')?.value ?? _onbAuth.password;
+    const confirm = document.getElementById('onbAuthConfirm')?.value ?? _onbAuth.confirm;
+    _onbAuth = { ..._onbAuth, enabled, password, confirm };
+  }
+
+  function _onbAuthToggle() {
+    _captureOnbAuth();
+    ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !_onbAuth.enabled;
+    });
+    ['onbAuthDescription', 'onbAuthFields'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('is-disabled', !_onbAuth.enabled);
+    });
+    const skip = document.getElementById('onbSkipBtn');
+    if (skip) {
+      skip.style.background = _onbAuth.enabled ? 'transparent' : 'var(--accent)';
+      skip.style.borderColor = _onbAuth.enabled ? 'var(--border)' : 'var(--accent)';
+      skip.style.color = _onbAuth.enabled ? 'var(--muted)' : '#fff';
+    }
+    _onbValidateAuth();
+  }
+
+  function _onbAuthPasswordInput() {
+    const password = document.getElementById('onbAuthPassword')?.value || '';
+    const confirm = document.getElementById('onbAuthConfirm')?.value || '';
+    const toggle = document.getElementById('onbAuthEnabled');
+    if (toggle && (password || confirm)) {
+      toggle.checked = true;
+    } else if (toggle && !password && !confirm) {
+      toggle.checked = false;
+    }
+    _captureOnbAuth();
+    _onbAuthToggle();
+  }
+
+  function _onbValidateAuth() {
+    _captureOnbAuth();
+    const next = document.getElementById('onbNextBtn');
+    const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
+    const rules = document.getElementById('onbAuthRules');
+    if (rules) rules.innerHTML = _renderAuthRuleList(validation);
+    if (!_onbAuth.enabled) {
+      if (next) next.disabled = true;
+      return false;
+    }
+    if (next) next.disabled = !validation.valid;
+    return validation.valid;
   }
 
   async function onbTestJsr() {
@@ -1755,23 +2027,41 @@
     });
   }
 
-  function onbNext() {
-    if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
-    if (_onbStep === 2) _captureOnbJsr();
-    if (_onbStep === 3) _captureOnbFeatures();
-    if (_onbStep < 4) { _onbStep++; _onbRender(); }
+  async function onbNext() {
+    const current = _onbCurrentStep();
+    if (current.id === 'welcome') { clearInterval(_langTimer); _langTimer = null; }
+    if (current.id === 'seerr') _captureOnbJsr();
+    if (current.id === 'features') _captureOnbFeatures();
+    if (current.id === 'auth') {
+      if (!_onbValidateAuth()) return;
+      const next = document.getElementById('onbNextBtn');
+      if (next) { next.disabled = true; next.textContent = t('onboarding.saving'); }
+      try {
+        await saveConfig({ auth: { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm } });
+        _onbAuth = { enabled: true, password: '', confirm: '', saved: true };
+      } catch (e) {
+        alert(t('settings.save_error', {msg: e.message}));
+        if (next) { next.textContent = t('nav.next'); _onbValidateAuth(); }
+        return;
+      }
+    }
+    _onbMove(1);
   }
 
   function onbPrev() {
-    if (_onbStep >= 1) { _onbStep--; _onbRender(); }
+    _onbMove(-1);
   }
 
   function onbSkip() {
-    // Only shown on step 2 — Skip means disable Seerr
-    if (_onbStep === 2) {
+    const current = _onbCurrentStep();
+    if (current.id === 'seerr') {
       _captureOnbJsr();
       _onbJsr.enabled = false;
-      _onbStep = 3; _onbRender();
+      _onbSkipCurrentStep();
+    }
+    else if (current.id === 'auth') {
+      _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
+      _onbSkipCurrentStep();
     }
   }
 
@@ -1797,8 +2087,18 @@
         return { enabled: _onbJsr.enabled, url: _onbJsr.url, ...(onbKey ? {apikey: onbKey} : {}) };
       })(),
       score: { enabled: _onbFeatures.scoreEnabled },
-      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled },
-      ui: { theme: _onbTheme },
+      recommendations: { enabled: _onbFeatures.scoreEnabled && _onbFeatures.recommendationsEnabled },
+      media_probe: {
+        enabled: _onbFeatures.mediaProbeEnabled,
+        mode: 'compare',
+        workers: appConfig?.media_probe?.workers || 4,
+        cache_enabled: appConfig?.media_probe?.cache_enabled !== false,
+      },
+      ...(!_onbAuth.saved ? { auth: (_onbAuth.enabled
+        ? { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm }
+        : { enabled: false }) } : {}),
+      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled, media_probe_enabled: _onbFeatures.mediaProbeEnabled },
+      ui: { theme: _onbTheme, synopsis_on_hover: _onbFeatures.synopsisEnabled },
     };
 
     let savePayload = {};
@@ -1842,9 +2142,10 @@
         + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
         + '<span style="font-family:var(--font-display);font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
       + '</div>'
+      + '<div id="onbReadyText" style="display:none;margin-bottom:12px;color:#34d399;font-size:13px;font-weight:600">'+t('onboarding.initial_ready')+'</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
-        + '<button onclick="document.getElementById(\'onboardingOverlay\').style.display=\'none\';loadLibrary();" '
+        + '<button id="onbOpenLibraryBtn" '
           + 'style="padding:10px 28px;border-radius:10px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600">'+t('onboarding.open_library')+'</button>'
       + '</div>'
       + '</div>';
@@ -1875,16 +2176,22 @@
           logBox.scrollTop = logBox.scrollHeight;
         }
       }
+      const initialReady = d.initial_library_ready === true || d.status === 'done';
+      if (initialReady) {
+        const readyText = document.getElementById('onbReadyText');
+        if (readyText) readyText.style.display = '';
+        const doneBtn = document.getElementById('onbDoneBtn');
+        if (doneBtn) doneBtn.style.display = '';
+      }
       if (d.status === 'done') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
-        const doneBtn = document.getElementById('onbDoneBtn');
-        if (doneBtn) doneBtn.style.display = '';
         return;
       }
       if (d.status === 'error') {
         const spinnerRow = document.querySelector('#onbPanel .spinner')?.parentElement;
         if (spinnerRow) spinnerRow.style.display = 'none';
+        if (initialReady) return;
         if (logBox) {
           const div = document.createElement('div');
           div.style.color = '#f97316';
@@ -1973,6 +2280,7 @@
   window.switchStab                = switchStab;
   window.resetScoreSettings        = resetScoreSettings;
   window.toggleJsrFields           = toggleJsrFields;
+  window.syncSettingsAuthPasswordState = syncSettingsAuthPasswordState;
   window.testSeerr            = testSeerr;
   window.updateCronHint            = updateCronHint;
   window.onFolderTypeChange        = onFolderTypeChange;
@@ -1982,6 +2290,9 @@
   window._onbFolderChange          = _onbFolderChange;
   window._onbJsrToggle             = _onbJsrToggle;
   window._onbFeaturesToggle        = _onbFeaturesToggle;
+  window._onbAuthToggle            = _onbAuthToggle;
+  window._onbAuthPasswordInput     = _onbAuthPasswordInput;
+  window._onbValidateAuth          = _onbValidateAuth;
   window.onbTestJsr                = onbTestJsr;
   window.onbNext                   = onbNext;
   window.onbPrev                   = onbPrev;

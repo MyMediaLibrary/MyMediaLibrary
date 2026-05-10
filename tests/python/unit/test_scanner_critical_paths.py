@@ -233,10 +233,140 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             with scanner._srv_lock:
                 scanner._srv_state["status"] = previous_status
 
+    def test_scan_status_marks_initial_library_ready_after_phase_1(self):
+        with scanner._srv_lock:
+            previous = dict(scanner._srv_state)
+            scanner._srv_state.update(
+                status="running",
+                phase=None,
+                completed_phases=[],
+                initial_library_ready=False,
+                log=[],
+            )
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Starting phase")
+            self.assertEqual(scanner._srv_state["phase"], "filesystem")
+            self.assertFalse(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Folder [Movies] completed in 1.0s — 12 item(s)")
+            self.assertFalse(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1] [FILESYSTEM+NFO] Completed in 12.3s")
+            self.assertIn("filesystem", scanner._srv_state["completed_phases"])
+            self.assertTrue(scanner._srv_state["initial_library_ready"])
+
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1B] [FFPROBE] Starting phase")
+            self.assertEqual(scanner._srv_state["phase"], "ffprobe")
+            self.assertTrue(scanner._srv_state["initial_library_ready"])
+            scanner._srv_state.clear()
+            scanner._srv_state.update(previous)
+
 
 class ScoreFeatureFlagCriticalTest(unittest.TestCase):
     def test_default_config_score_flag_is_disabled(self):
         self.assertIs(scanner._DEFAULT_CONFIG["score"]["enabled"], False)
+
+    def test_default_config_media_probe_is_disabled_compare_mode(self):
+        self.assertEqual(scanner._DEFAULT_CONFIG["media_probe"], {
+            "enabled": False,
+            "mode": "compare",
+            "workers": 4,
+            "cache_enabled": True,
+        })
+
+    def test_media_probe_phase1b_disabled_does_not_run(self):
+        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
+             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
+            scanner._run_media_probe_phase1b()
+        run_probe.assert_not_called()
+
+    def test_media_probe_phase1b_enabled_runs_before_later_phases(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            library_json = root / "data" / "library.json"
+            library_json.parent.mkdir()
+            library_json.write_text('{"items":[]}', encoding="utf-8")
+            cfg = {"media_probe": {"enabled": True, "mode": "compare"}, "score": {"enabled": True}}
+            probed_doc = {"items": [], "scanned_at": "2025-01-01T00:00:00"}
+            with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
+                 patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
+                 patch.object(scanner, "load_config", return_value=cfg), \
+                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe:
+                scanner._run_media_probe_phase1b(only_category="Movies")
+
+            run_probe.assert_called_once()
+            kwargs = run_probe.call_args.kwargs
+            self.assertEqual(kwargs["library_json_path"], str(library_json))
+            self.assertEqual(kwargs["only_category"], "Movies")
+
+    def test_run_phases_places_media_probe_between_scan_and_enrich(self):
+        calls = []
+        with patch.object(scanner, "run_quick", side_effect=lambda **_: calls.append("scan")), \
+             patch.object(scanner, "_run_media_probe_phase1b", side_effect=lambda **_: calls.append("probe")), \
+             patch.object(scanner, "run_enrich", side_effect=lambda **_: calls.append("enrich")), \
+             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")), \
+             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
+            scanner.run_phases([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ])
+
+        self.assertEqual(calls, ["scan", "probe", "enrich", "score"])
+
+    def test_run_phases_logs_explicit_phase_1b_plan(self):
+        with patch.object(scanner, "run_quick"), \
+             patch.object(scanner, "_run_media_probe_phase1b"), \
+             patch.object(scanner, "run_enrich"), \
+             patch.object(scanner, "run_scoring"), \
+             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}), \
+             self.assertLogs("scanner", level="INFO") as logs:
+            scanner.run_phases([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ])
+
+        joined = "\n".join(logs.output)
+        self.assertIn("[SCAN] Planned phases:", joined)
+        self.assertIn("1  -> Filesystem + NFO", joined)
+        self.assertIn("1b -> FFprobe technical scan", joined)
+        self.assertIn("2  -> Seerr enrichment", joined)
+        self.assertIn("3  -> Scoring", joined)
+
+    def test_run_phases_hides_phase_1b_when_media_probe_disabled(self):
+        with patch.object(scanner, "run_quick"), \
+             patch.object(scanner, "_run_media_probe_phase1b") as run_probe, \
+             patch.object(scanner, "run_enrich"), \
+             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
+             self.assertLogs("scanner", level="INFO") as logs:
+            scanner.run_phases([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+            ])
+
+        joined = "\n".join(logs.output)
+        self.assertNotIn("1b -> FFprobe technical scan", joined)
+        run_probe.assert_not_called()
+
+    def test_phases_display_csv_includes_phase_1b_only_when_enabled(self):
+        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
+            self.assertEqual(
+                scanner._phases_display_csv([
+                    scanner.PHASE_SCAN,
+                    scanner.PHASE_ENRICH,
+                    scanner.PHASE_SCORE,
+                ]),
+                "1,1b,2,3",
+            )
+        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}):
+            self.assertEqual(
+                scanner._phases_display_csv([
+                    scanner.PHASE_SCAN,
+                    scanner.PHASE_ENRICH,
+                    scanner.PHASE_SCORE,
+                ]),
+                "1,2,3",
+            )
 
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))
@@ -441,27 +571,17 @@ class SeerrConfigMigrationTest(unittest.TestCase):
 
 
 class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
-    def test_bootstrap_runtime_mapping_copies_source_once(self):
+    def test_bootstrap_runtime_mapping_warms_sqlite_without_copying_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
             src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
             with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
+                 patch.object(scanner.providers_repository, "load_provider_mappings", return_value={"Netflix": "Netflix"}) as load:
                 scanner._ensure_runtime_provider_mapping()
-            self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
-                {"Netflix": "Netflix"},
-            )
-
-            dst.write_text('{"Netflix":"NFX-custom"}', encoding="utf-8")
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
-                scanner._ensure_runtime_provider_mapping()
-            self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
-                {"Netflix": "NFX-custom"},
-            )
+            load.assert_called_once_with(str(dst))
+            self.assertFalse(dst.exists())
 
     def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
         with tempfile.TemporaryDirectory() as tmp:

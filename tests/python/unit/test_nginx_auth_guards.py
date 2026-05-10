@@ -9,12 +9,14 @@ class TestNginxAuthGuards(unittest.TestCase):
         cls.conf_path = pathlib.Path(__file__).resolve().parents[3] / "docker" / "nginx.conf"
         cls.conf = cls.conf_path.read_text(encoding="utf-8")
 
-    def test_library_json_is_guarded_with_auth_request(self):
+    def test_legacy_library_json_is_gone_and_not_served_from_data(self):
         block = re.search(r"location = /library\.json \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
         self.assertIsNotNone(block)
         body = block.group("body")
         self.assertIn("auth_request /api/auth/validate;", body)
         self.assertIn("error_page 401 = @auth_error;", body)
+        self.assertIn("return 410", body)
+        self.assertNotIn("alias /data/library.json", body)
 
         auth_error = re.search(r"location @auth_error \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
         self.assertIsNotNone(auth_error)
@@ -36,3 +38,28 @@ class TestNginxAuthGuards(unittest.TestCase):
         self.assertIsNotNone(block)
         body = block.group("body")
         self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
+
+    def test_library_api_is_proxied_to_scanner(self):
+        block = re.search(r"location /api/library \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
+        self.assertIsNotNone(block)
+        body = block.group("body")
+        self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
+
+    def test_provider_logo_api_is_proxied_to_scanner(self):
+        block = re.search(r"location /api/providers-logo \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
+        self.assertIsNotNone(block)
+        body = block.group("body")
+        self.assertIn("proxy_pass         http://127.0.0.1:8095;", body)
+
+    def test_runtime_storage_and_dotfiles_are_blocked(self):
+        self.assertRegex(self.conf, r"location ~ /\\\.")
+        self.assertRegex(self.conf, r"location ~ \^/\(data\|conf\)")
+        self.assertIn("return 404;", self.conf)
+
+    def test_posters_use_fixed_library_root(self):
+        block = re.search(r"location /posters/ \{(?P<body>.*?)\n\s*\}", self.conf, flags=re.S)
+        self.assertIsNotNone(block)
+        body = block.group("body")
+        self.assertIn("root /library;", body)
+        self.assertNotIn("LIBRARY_PATH", self.conf)
+        self.assertNotIn("${", self.conf)

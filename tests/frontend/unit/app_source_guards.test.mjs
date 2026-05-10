@@ -10,15 +10,23 @@ const appSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/app.j
 const appCss = fs.readFileSync(path.resolve(__dirname, '../../../app/css/app.css'), 'utf8');
 const settingsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/settings.js'), 'utf8');
 const statsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/stats.js'), 'utf8');
+const eventsSource = fs.readFileSync(path.resolve(__dirname, '../../../app/js/events.js'), 'utf8');
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../../../app/index.html'), 'utf8');
 const frI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/fr.json'), 'utf8'));
 const enI18n = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../app/i18n/en.json'), 'utf8'));
+const scannerSource = fs.readFileSync(path.resolve(__dirname, '../../../backend/scanner.py'), 'utf8');
+const composeSource = fs.readFileSync(path.resolve(__dirname, '../../../compose.yaml'), 'utf8');
+const readmeSource = fs.readFileSync(path.resolve(__dirname, '../../../README.md'), 'utf8');
+const docsFrSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/fr.md'), 'utf8');
+const docsEnSource = fs.readFileSync(path.resolve(__dirname, '../../../docs/en.md'), 'utf8');
 
 function functionBlock(source, functionName, nextFunctionName) {
-  const start = source.indexOf(`function ${functionName}(`);
+  let start = source.indexOf(`function ${functionName}(`);
+  if (start === -1) start = source.indexOf(`async function ${functionName}(`);
   assert.notEqual(start, -1, `Function ${functionName} not found`);
   if (!nextFunctionName) return source.slice(start);
-  const end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  let end = source.indexOf(`\n  function ${nextFunctionName}(`, start);
+  if (end === -1) end = source.indexOf(`\n  async function ${nextFunctionName}(`, start);
   assert.notEqual(end, -1, `Following function ${nextFunctionName} not found`);
   return source.slice(start, end);
 }
@@ -177,19 +185,173 @@ test('loadLibrary restores active tab only after data is loaded', () => {
   assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
 });
 
-test('loadLibrary treats missing library.json as a first-run/empty-library state (no hard error)', () => {
+test('loadLibrary loads from SQLite API and treats empty library as a first-run state', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
-  assert.match(block, /const lib = await _fetchLibraryJsonWithRetry\(\);/, 'loadLibrary should fetch library data through retry helper');
-  assert.match(appSource, /if \(r\.status === 404\) return \{ missing: true \};/, 'library fetch helper should branch explicitly on library.json 404');
+  assert.match(block, /const lib = await _fetchLibraryWithRetry\(\);/, 'loadLibrary should fetch library data through API retry helper');
+  assert.match(appSource, /const libraryUrl = '\/api\/library\?_=' \+ Date\.now\(\);/, 'library fetch helper should load SQLite-backed API');
+  assert.doesNotMatch(appSource, /\/library\.json/, 'frontend should not request legacy runtime library.json');
   assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
-  assert.doesNotMatch(appSource, /if \(r\.status === 404[\s\S]*throw new Error\('HTTP '\+r\.status\)/, 'library fetch helper should not throw a generic HTTP error for expected missing library.json');
+});
+
+test('user-facing scan copy describes one dynamic phase pipeline', () => {
+  const publicCopy = [
+    readmeSource,
+    docsFrSource,
+    docsEnSource,
+    JSON.stringify(frI18n),
+    JSON.stringify(enI18n),
+  ].join('\n');
+  assert.match(readmeSource, /pipeline de scan dynamique/i, 'README FR should describe the dynamic scan pipeline');
+  assert.match(readmeSource, /dynamic scan pipeline/i, 'README EN should describe the dynamic scan pipeline');
+  assert.match(docsFrSource, /Pipeline de scan dynamique/, 'French docs should name the dynamic scan pipeline');
+  assert.match(docsEnSource, /Dynamic scan pipeline/, 'English docs should name the dynamic scan pipeline');
+  assert.doesNotMatch(publicCopy, /scan rapide|\bscan complet\b|quick scan|\bfull scan\b|modes de scan|scan modes/i, 'public copy should not describe quick/full scan modes');
+  assert.doesNotMatch(publicCopy, /mode_quick|mode_full|scan_quick_desc|scan_full_desc/, 'i18n should not keep obsolete scan-mode keys');
 });
 
 test('loadSettings score toggle reflects effective runtime score state', () => {
   const block = functionBlock(settingsSource, 'loadSettings', 'toggleJsrFields');
   assert.match(block, /_rw\('cfgEnableScore', isScoreEnabled\(\)\);/, 'settings score checkbox should mirror effective score state');
   assert.doesNotMatch(block, /_rw\('cfgEnableScore', sys\.enable_score === true\);/, 'settings score checkbox should not depend on strict config boolean only');
+});
+
+test('settings exposes media probe toggle without using probe output as UI data', () => {
+  assert.match(indexSource, /id="cfgMediaProbeEnabled"/, 'settings should expose the ffprobe analysis toggle');
+  assert.match(indexSource, /settings\.system\.media_probe_enabled/, 'settings should use i18n for the media probe label');
+  assert.equal(frI18n.settings.system.media_probe_enabled, 'Analyse technique ffprobe');
+  assert.equal(frI18n.settings.system.media_probe_enabled_hint, 'Enrichit la bibliothèque avec les données techniques extraites par ffprobe.');
+  assert.equal(enI18n.settings.system.media_probe_enabled, 'ffprobe technical analysis');
+  assert.equal(enI18n.settings.system.media_probe_enabled_hint, 'Enriches the library with technical data extracted by ffprobe.');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgMediaProbeEnabled', appConfig\.media_probe\?\.enabled === true\);/, 'loadSettings should default missing media_probe config to disabled');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /const mediaProbeEnabled = get\('cfgMediaProbeEnabled'\);/, 'settings save should read the media probe toggle');
+  assert.match(saveBlock, /partial\.media_probe = \{[\s\S]*enabled: mediaProbeEnabled === true,[\s\S]*mode: 'compare'[\s\S]*workers: currentMediaProbe\.workers \|\| 4,[\s\S]*cache_enabled: currentMediaProbe\.cache_enabled !== false[\s\S]*\};/, 'settings save should persist compare mode and preserve backend performance defaults');
+  assert.doesNotMatch(saveBlock, /library_probe\.json/, 'settings save should not reference probe output');
+  assert.doesNotMatch(appSource + settingsSource + statsSource, /fetch\([^)]*library_probe\.json|\/data\/library_probe\.json/, 'UI should not fetch or display library_probe.json');
+});
+
+test('auth password is configured through onboarding/settings and never via environment docs', () => {
+  assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose an auth section');
+  assert.match(indexSource, /id="cfgAuthBlock"[^>]*border-top:1px solid var\(--border\)/, 'settings auth section should be visually separated');
+  assert.doesNotMatch(indexSource, /data-target="settingsAuthBody"|id="settingsAuthBody"/, 'settings auth section should not be collapsible');
+  assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose an auth enable toggle');
+  assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
+  assert.match(indexSource, /id="cfgAuthConfirm"/, 'settings should expose password confirmation');
+  assert.doesNotMatch(indexSource, /cfgAuthChangeBtn|cfgAuthDisableBtn|changeAuthPasswordFromSettings|disableAuthFromSettings/, 'settings auth should use the global save button only');
+  assert.equal(frI18n.onboarding.step_auth_title, 'Authentification');
+  assert.equal(enI18n.onboarding.step_auth_title, 'Authentication');
+  assert.equal(frI18n.settings.auth.status_enabled, 'Authentification activée');
+  assert.equal(enI18n.settings.auth.status_enabled, 'Authentication enabled');
+
+  const loadBlock = functionBlock(settingsSource, 'loadSettings', 'saveSettings');
+  assert.match(loadBlock, /_rw\('cfgAuthEnabled', _isAuthEnabled\(\)\);/, 'settings should read auth enabled state without a hash');
+  assert.match(loadBlock, /_rw\('cfgAuthPassword', ''\);/, 'settings should never prefill auth password');
+  assert.match(loadBlock, /_rw\('cfgAuthConfirm', ''\);/, 'settings should never prefill auth confirmation');
+
+  const settingsSyncBlock = functionBlock(settingsSource, 'syncSettingsAuthPasswordState', 'syncRecommendationsToggle');
+  assert.match(settingsSyncBlock, /fields\.style\.display = enabled \? '' : 'none';/, 'settings auth fields/rules should hide when toggle is off');
+  assert.match(settingsSyncBlock, /rules\.innerHTML = enabled \? _renderAuthRuleList\(validation\) : '';/, 'settings auth rules should hide when toggle is off');
+
+  const saveBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: false \};/, 'global settings save should disable auth when toggle is off');
+  assert.match(saveBlock, /const validation = _authPasswordValidation\(authPassword, authConfirm\);/, 'global settings save should validate auth password');
+  assert.match(saveBlock, /partial\.auth = \{ enabled: true, password: authPassword, password_confirm: authConfirm \};/, 'global settings save should persist valid auth password');
+  assert.doesNotMatch(saveBlock, /auth_password_hash/, 'settings save must not know about auth hashes');
+
+  const authRulesBlock = functionBlock(settingsSource, '_authPasswordRules', '_authPasswordValidation');
+  assert.match(authRulesBlock, /length: value\.length >= 25/, 'frontend auth validation should require 25 characters');
+  assert.match(authRulesBlock, /lowercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 lowercase letters');
+  assert.match(authRulesBlock, /uppercase:[\s\S]*>= 2/, 'frontend auth validation should require 2 uppercase letters');
+  assert.match(authRulesBlock, /digits:[\s\S]*>= 2/, 'frontend auth validation should require 2 digits');
+  assert.match(authRulesBlock, /special:[\s\S]*>= 2/, 'frontend auth validation should require 2 special characters');
+
+  const authStepBlock = functionBlock(settingsSource, '_onbStep4HTML', '_onbStep5HTML');
+  assert.match(authStepBlock, /id="onbAuthEnabled"/, 'onboarding auth should be controlled by a toggle');
+  assert.doesNotMatch(authStepBlock, /onchange=/, 'onboarding auth toggle must not use an inline handler (CSP)');
+  assert.match(eventsSource, /onbAuthEnabled[\s\S]*_onbAuthToggle/, 'onboarding auth toggle must be bound in events.js');
+  assert.match(authStepBlock, /id="onbAuthFields"/, 'onboarding auth fields should always be rendered');
+  assert.doesNotMatch(authStepBlock, /display:none/, 'onboarding auth fields should remain visible when auth starts disabled');
+  assert.match(authStepBlock, /const dis = _onbAuth\.enabled \? '' : ' disabled';/, 'onboarding auth fields should start disabled when auth is off');
+  assert.match(authStepBlock, /const secondaryState = _onbAuth\.enabled \? '' : ' is-disabled';/, 'onboarding auth secondary content should start muted when auth is off');
+  assert.match(authStepBlock, /id="onbAuthDescription" class="onboarding-secondary'\+secondaryState\+'"/, 'onboarding auth description should use the secondary disabled state');
+  assert.match(authStepBlock, /id="onbAuthFields" class="onboarding-secondary'\+secondaryState\+'"/, 'onboarding auth fields and rules should use the secondary disabled state');
+  assert.match(authStepBlock, /id="onbAuthRules"/, 'onboarding auth should show per-rule validation feedback');
+  assert.match(appCss, /\.onboarding-secondary\.is-disabled\{opacity:\.45\}/, 'onboarding should centralize disabled secondary content opacity in CSS');
+
+  const authToggleBlock = functionBlock(settingsSource, '_onbAuthToggle', '_onbAuthPasswordInput');
+  assert.match(authToggleBlock, /el\.disabled = !_onbAuth\.enabled;/, 'onboarding auth toggle should enable password fields only when auth is on');
+  assert.match(authToggleBlock, /classList\.toggle\('is-disabled', !_onbAuth\.enabled\)/, 'onboarding auth toggle should visually update secondary content without a rerender');
+  assert.doesNotMatch(authToggleBlock, /style\.opacity/, 'onboarding auth dynamic disabled state should use CSS classes, not inline opacity');
+
+  const authInputBlock = functionBlock(settingsSource, '_onbAuthPasswordInput', '_onbValidateAuth');
+  assert.match(authInputBlock, /if \(toggle && \(password \|\| confirm\)\)[\s\S]*toggle\.checked = true;/, 'typing a password should auto-enable the auth toggle');
+
+  const validateBlock = functionBlock(settingsSource, '_onbValidateAuth', 'onbTestJsr');
+  assert.match(validateBlock, /if \(!_onbAuth\.enabled\)[\s\S]*next\.disabled = true/, 'auth disabled should keep Next disabled');
+  assert.match(validateBlock, /next\.disabled = !validation\.valid/, 'auth enabled should allow Next only when password validation passes');
+
+  const onbNextBlock = functionBlock(settingsSource, 'onbNext', 'onbPrev');
+  assert.match(onbNextBlock, /await saveConfig\(\{ auth: \{ enabled: true, password: _onbAuth\.password, password_confirm: _onbAuth\.confirm \} \}\);/, 'onboarding Next should persist auth before summary');
+  assert.match(onbNextBlock, /_onbAuth = \{ enabled: true, password: '', confirm: '', saved: true \};/, 'onboarding should clear password fields after auth save');
+
+  const onboardingSaveBlock = functionBlock(settingsSource, 'onbLaunchScan');
+  assert.match(settingsSource, /\{ id: 'auth', step: 4,[\s\S]*render: \(\) => _onbStep4HTML\(\) \}/, 'onboarding should insert auth before summary');
+  assert.match(onboardingSaveBlock, /!\_onbAuth\.saved[\s\S]*auth:[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding launch should not resend password after auth was already saved');
+  assert.doesNotMatch(scannerSource, /APP_PASSWORD/, 'backend runtime should not read APP_PASSWORD');
+  assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
+});
+
+test('onboarding navigation is driven by one deterministic step flow', () => {
+  assert.match(settingsSource, /const _ONBOARDING_STEPS = \[[\s\S]*id: 'welcome'[\s\S]*id: 'folders'[\s\S]*id: 'seerr'[\s\S]*id: 'features'[\s\S]*id: 'auth'[\s\S]*id: 'scan'[\s\S]*\];/, 'onboarding should declare a single ordered step list');
+  assert.match(settingsSource, /function _onbFlow\(\)[\s\S]*_ONBOARDING_STEPS\.filter/, 'onboarding should compute visible flow from the shared step list');
+  const renderBlock = functionBlock(settingsSource, '_onbRender', '_onbStep0HTML');
+  assert.match(renderBlock, /const current = _onbCurrentStep\(\);/, 'render should use the centralized current step');
+  assert.match(renderBlock, /const flow = _onbFlow\(\);/, 'render/progress should use the computed flow');
+  assert.match(renderBlock, /panel\.innerHTML = current\.render\(\);/, 'render should not branch on hardcoded step numbers');
+  assert.doesNotMatch(renderBlock, /_onbStep === [1-5]|_onbStep <|_onbStep\+\+|_onbStep--/, 'render should avoid fixed numeric navigation rules');
+  const nextBlock = functionBlock(settingsSource, 'onbNext', 'onbPrev');
+  assert.match(nextBlock, /const current = _onbCurrentStep\(\);/, 'Next should use the current step id');
+  assert.match(nextBlock, /_onbMove\(1\);/, 'Next should advance through the shared flow');
+  assert.doesNotMatch(nextBlock, /_onbStep\+\+|_onbStep < 5|_onbStep === [1-5]/, 'Next should not use hardcoded numeric jumps');
+  const prevBlock = functionBlock(settingsSource, 'onbPrev', 'onbSkip');
+  assert.match(prevBlock, /_onbMove\(-1\);/, 'Previous should go backward through the shared flow');
+  assert.doesNotMatch(prevBlock, /_onbStep--|_onbStep >=/, 'Previous should not use hardcoded numeric jumps');
+  const skipBlock = functionBlock(settingsSource, 'onbSkip', 'onbLaunchScan');
+  assert.match(skipBlock, /_onbSkipCurrentStep\(\);/, 'Skip should remove the skipped step from the shared flow');
+  assert.doesNotMatch(skipBlock, /_onbStep = [0-9]/, 'Skip should not jump to hardcoded step numbers');
+});
+
+test('onboarding features and initial scan access match dynamic pipeline', () => {
+  const featuresBlock = functionBlock(settingsSource, '_onbStep3HTML', '_onbStep4HTML');
+  ['onbSynopsisEnabled', 'onbInventoryEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
+    assert.match(featuresBlock, new RegExp(`id="${id}"`), `onboarding should render ${id}`);
+  });
+  const captureBlock = functionBlock(settingsSource, '_captureOnbFeatures', '_onbFeaturesToggle');
+  assert.match(captureBlock, /recommendationsEnabled = scoreEnabled && recommendationsInput\?\.checked === true/, 'recommendations should depend on score in onboarding state');
+  const toggleBlock = functionBlock(settingsSource, '_onbFeaturesToggle', '_captureOnbAuth');
+  assert.match(toggleBlock, /rec\.disabled = !_onbFeatures\.scoreEnabled;/, 'recommendations toggle should be disabled when score is off');
+  assert.match(toggleBlock, /rec\.checked = false;/, 'recommendations toggle should be cleared when score is off');
+  assert.match(featuresBlock, /id="onbRecommendationsLabel" style="'\+recDisabledStyle\+'"/, 'recommendations label should expose its disabled style for dynamic updates');
+  assert.match(toggleBlock, /recLabel\.style\.opacity = _onbFeatures\.scoreEnabled \? '' : '\.45';/, 'recommendations label should visually re-enable when score is toggled on');
+  const launchBlock = functionBlock(settingsSource, 'onbLaunchScan');
+  assert.match(launchBlock, /recommendations: \{ enabled: _onbFeatures\.scoreEnabled && _onbFeatures\.recommendationsEnabled \}/, 'onboarding should persist recommendations only when score is enabled');
+  assert.match(launchBlock, /media_probe:[\s\S]*enabled: _onbFeatures\.mediaProbeEnabled/, 'onboarding should persist ffprobe feature choice');
+  assert.match(launchBlock, /ui: \{ theme: _onbTheme, synopsis_on_hover: _onbFeatures\.synopsisEnabled \}/, 'onboarding should persist synopsis feature choice');
+  assert.match(launchBlock, /initial_library_ready === true \|\| d\.status === 'done'/, 'onboarding should unlock UI after phase 1 readiness');
+  assert.match(launchBlock, /onboarding\.initial_ready/, 'onboarding should explain background phases after phase 1');
+});
+
+test('frontend does not expose or persist library root path settings', () => {
+  assert.doesNotMatch(indexSource, /cfgLibraryPath/, 'settings UI should not render a library root path field');
+  assert.doesNotMatch(indexSource, /settings\.library\.path/, 'library path i18n key should not be referenced by settings UI');
+  assert.doesNotMatch(settingsSource, /cfgLibraryPath|libraryPathLabel|library_path/, 'settings logic should not read or write library root path state');
+  assert.doesNotMatch(appSource, /libraryPathLabel|data\.library_path|brandSub.*library/i, 'app shell should not display library root path from library.json');
+  assert.equal(enI18n.settings.library.path, undefined, 'English library path label should be removed');
+  assert.equal(frI18n.settings.library.path, undefined, 'French library path label should be removed');
 });
 
 test('recommendations feature is gated by score and avoids fetch when disabled', () => {
@@ -205,6 +367,26 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
   const settingsBlock = functionBlock(settingsSource, 'syncRecommendationsToggle', 'loadSettings');
   assert.match(settingsBlock, /recEl\.disabled = !scoreEnabled;/, 'settings recommendations toggle should be disabled when score is off');
   assert.match(settingsBlock, /if \(!scoreEnabled\) recEl\.checked = false;/, 'settings should clear recommendations when score is off');
+});
+
+test('recommendations load lazily after initial library render', () => {
+  assert.match(appSource, /let recommendationsLoadPromise = null;/, 'recommendations should guard concurrent lazy loads');
+  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  assert.match(loadLibraryBlock, /if \(currentTab === 'recommendations'\) await ensureRecommendationsLoaded\(\);/, 'initial load should fetch recommendations only when restoring recommendations tab');
+  assert.doesNotMatch(loadLibraryBlock, /await loadRecommendations\(\);/, 'initial library load should not always fetch recommendations');
+  const switchBlock = functionBlock(appSource, 'switchTab', 'render');
+  assert.match(switchBlock, /ensureRecommendationsLoaded\(\)\.then/, 'opening recommendations should trigger lazy loading');
+  assert.match(switchBlock, /library\.loading/, 'lazy recommendations load should render a loading state');
+});
+
+test('library perf diagnostics and search debounce are debug-gated', () => {
+  assert.match(appSource, /function isPerfDebugEnabled\(\)/, 'frontend perf logging should be explicitly gated');
+  assert.match(appSource, /localStorage\.getItem\('mml_debug_perf'\) === '1'/, 'perf logs should be opt-in through localStorage');
+  assert.match(appSource, /function scheduleSearchFilter\(\)[\s\S]*setTimeout\(\(\) => \{[\s\S]*onFilter\(\);[\s\S]*\}, 120\)/, 'search should debounce expensive filtering and rendering');
+  assert.match(appSource, /logPerf\('library fetch'/, 'library fetch should expose debug timing');
+  assert.match(appSource, /logPerf\('renderLibrary'/, 'library render should expose debug timing');
+  assert.match(scannerSource, /\[perf\] \/api\/library cache=hit/, 'backend should expose debug cache timing for library API');
+  assert.match(scannerSource, /\[perf\] endpoint=%s status=%s bytes=%s json_ms=%.1f duration_ms=%.1f/, 'backend should expose debug endpoint timing and payload size');
 });
 
 test('recommendations page joins recommendations to filtered library items', () => {
@@ -243,7 +425,8 @@ test('recommendations page joins recommendations to filtered library items', () 
   assert.match(appSource, /'subtitle_languages'[\s\S]*'message'[\s\S]*'action'/, 'recommendations CSV should export one localized message/action pair');
   assert.doesNotMatch(appSource, /'message_fr'|'message_en'|'action_fr'|'action_en'/, 'recommendations CSV should not export both languages');
   assert.match(appSource, /csvC\(recText\(rec\.message\)\)[\s\S]*csvC\(recText\(rec\.suggested_action\)\)/, 'recommendations CSV should use the current UI language fallback');
-  assert.match(indexSource, /id="recommendationsControls"[\s\S]*exportRecommendationsCSV\(\)[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
+  assert.match(indexSource, /id="recommendationsControls"[\s\S]*id="exportRecCsvBtn"[\s\S]*<svg/, 'recommendations CSV button should use the tab-bar export control with download icon');
+  assert.match(eventsSource, /exportRecCsvBtn[\s\S]*exportRecommendationsCSV/, 'recommendations CSV button must be bound in events.js');
   assert.match(renderBlock, /recText\(rec\.message\)/, 'recommendations should use localized message fallback');
 });
 
@@ -324,6 +507,24 @@ test('settings trigger scan only when folders changed', () => {
 
   const saveSettingsBlock = functionBlock(settingsSource, 'saveSettingsAndClose', 'onFolderTypeChange');
   assert.match(saveSettingsBlock, /shouldTriggerScan\(\{ folders: _settingsFoldersSnapshot \}, \{ folders: folderUpdates \}\)/, 'settings save should compare folder edits against immutable snapshot');
+});
+
+test('settings save treats scan-skipped responses as successful saves', () => {
+  const saveStart = appSource.indexOf('async function saveConfig(');
+  const saveEnd = appSource.indexOf('\n  async function loadRecommendations(', saveStart);
+  assert.notEqual(saveStart, -1, 'saveConfig should be defined');
+  assert.notEqual(saveEnd, -1, 'loadRecommendations should follow saveConfig');
+  const saveConfigBlock = appSource.slice(saveStart, saveEnd);
+  assert.match(saveConfigBlock, /if \(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/, 'config save should only fail on non-2xx HTTP responses');
+  assert.doesNotMatch(saveConfigBlock, /scan_skipped|SCAN_RUNNING/, 'config save should not surface scan-skipped responses as errors');
+
+  const scoreStart = settingsSource.indexOf('async function _persistScoreSettings(');
+  const scoreEnd = settingsSource.indexOf('\n  async function resetScoreSettings(', scoreStart);
+  assert.notEqual(scoreStart, -1, '_persistScoreSettings should be defined');
+  assert.notEqual(scoreEnd, -1, 'resetScoreSettings should follow _persistScoreSettings');
+  const scorePersistBlock = settingsSource.slice(scoreStart, scoreEnd);
+  assert.match(scorePersistBlock, /if \(!res\.ok\) throw new Error/, 'score save should only fail on non-2xx HTTP before reading payload');
+  assert.doesNotMatch(scorePersistBlock, /scan_skipped|SCAN_RUNNING/, 'score settings save should not show a special error for skipped post-save scans');
 });
 
 test('restoreState defers stats tab render until library load is complete', () => {
@@ -457,7 +658,7 @@ test('provider size chart uses library-size reference base (not cumulative provi
 test('providers catalog loads runtime mapping API and logo catalog', () => {
   const block = functionBlock(appSource, 'loadProvidersCatalog');
   assert.match(block, /fetch\('\/api\/providers-map\?_=' \+ Date\.now\(\)\)/, 'providers mapping should come from runtime API');
-  assert.match(block, /fetch\('\/providers_logo\.json\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from dedicated logo catalog');
+  assert.match(block, /fetch\('\/api\/providers-logo\?_=' \+ Date\.now\(\)\)/, 'providers logos should come from runtime API');
   assert.doesNotMatch(block, /\/providers\.json/, 'legacy providers.json bundle should no longer drive mapping');
 });
 
@@ -493,4 +694,19 @@ test('score filter UI uses a standard section label and avoids header range dupl
   assert.match(block, /score-filter-current/, 'score filter should expose current selected range in its body');
   assert.doesNotMatch(block, /score-filter-title/, 'score filter should not use a custom embedded title row');
   assert.doesNotMatch(block, /score-filter-range/, 'score filter should not render the old top-right range label');
+});
+
+test('filter inline-clear handler is ordered before trigger handler in events.js', () => {
+  // .filter-dropdown-inline-clear is a child of .filter-dropdown-trigger.
+  // If the trigger check runs first it intercepts the click and calls
+  // toggleDropdown() instead of the clear function — the cross does nothing.
+  // Search for the specific closest() call lines (not comments containing the class names).
+  const clearIdx  = eventsSource.indexOf("closest('.filter-dropdown-inline-clear')");
+  const triggerIdx = eventsSource.indexOf("closest('.filter-dropdown-trigger')");
+  assert.ok(clearIdx !== -1, 'events.js must handle .filter-dropdown-inline-clear');
+  assert.ok(triggerIdx !== -1, 'events.js must handle .filter-dropdown-trigger');
+  assert.ok(
+    clearIdx < triggerIdx,
+    'inline-clear handler must be checked before trigger handler so the ✕ click is not swallowed'
+  );
 });
