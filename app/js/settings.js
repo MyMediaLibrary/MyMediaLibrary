@@ -1891,19 +1891,19 @@
   function _onbStep4HTML() {
     const validation = _authPasswordValidation(_onbAuth.password, _onbAuth.confirm);
     const dis = _onbAuth.enabled ? '' : ' disabled';
-    const disOp = _onbAuth.enabled ? '' : ';opacity:.45';
+    const secondaryState = _onbAuth.enabled ? '' : ' is-disabled';
     return '<div style="margin-bottom:16px">'
       + '<div style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">'+t('onboarding.step_auth_title')+'</div>'
-      + '<div style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
+      + '<div id="onbAuthDescription" class="onboarding-secondary'+secondaryState+'" style="font-size:13px;color:var(--muted)">'+t('onboarding.step_auth_desc')+'</div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;gap:14px">'
       + '<div class="settings-row"><label class="settings-label">'+t('onboarding.auth_enable')+'</label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbAuthEnabled"'+(_onbAuth.enabled?' checked':'')+'/><span class="toggle-switch-slider"></span></label></div>'
-      + '<div id="onbAuthFields">'
+      + '<div id="onbAuthFields" class="onboarding-secondary'+secondaryState+'">'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_password')+'</label>'
-        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+' style="'+disOp+'"/></div>'
+        + '<input type="password" id="onbAuthPassword" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.password)+'"'+dis+'/></div>'
       + '<div class="settings-row" style="margin-bottom:8px"><label class="settings-label">'+t('onboarding.auth_confirm')+'</label>'
-        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+' style="'+disOp+'"/></div>'
+        + '<input type="password" id="onbAuthConfirm" class="settings-input" autocomplete="new-password" value="'+escH(_onbAuth.confirm)+'"'+dis+'/></div>'
       + '<div id="onbAuthRules">'+_renderAuthRuleList(validation)+'</div>'
       + '</div>'
       + '</div>';
@@ -1972,7 +1972,11 @@
     _captureOnbAuth();
     ['onbAuthPassword', 'onbAuthConfirm'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) { el.disabled = !_onbAuth.enabled; el.style.opacity = _onbAuth.enabled ? '' : '.45'; }
+      if (el) el.disabled = !_onbAuth.enabled;
+    });
+    ['onbAuthDescription', 'onbAuthFields'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('is-disabled', !_onbAuth.enabled);
     });
     const skip = document.getElementById('onbSkipBtn');
     if (skip) {

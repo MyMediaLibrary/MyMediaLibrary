@@ -724,6 +724,8 @@
     .scan-btn:hover{filter:brightness(1.15)}
     .scan-btn:disabled{opacity:.5;cursor:not-allowed;filter:none}
     #onbNextBtn:disabled{background:var(--border)!important;color:var(--muted)!important;cursor:not-allowed!important}
+    .onboarding-secondary{transition:opacity var(--transition),color var(--transition)}
+    .onboarding-secondary.is-disabled{opacity:.45}
     .scan-btn svg{flex-shrink:0}
     /* SCAN LOG PANEL */
     .scan-log-panel{position:fixed;bottom:20px;right:20px;width:420px;max-width:calc(100vw - 32px);
