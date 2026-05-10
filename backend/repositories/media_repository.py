@@ -108,45 +108,55 @@ def clear_library_snapshot(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM app_config WHERE key = ?", (_LIBRARY_DOCUMENT_KEY,))
 
 
-def delete_stale_media(
+def mark_media_unavailable(
     json_path: str | Path,
     scanned_ids: set[str],
     category: str | None = None,
     db_path: str | Path | None = None,
 ) -> int:
-    """Delete media rows absent from scanned_ids (optionally scoped to one category).
+    """Mark media absent from scanned_ids as unavailable (is_available=0).
 
-    Returns the number of rows deleted.  When scanned_ids is empty and no category
-    is given, does nothing as a safety guard against wiping the table on scan errors.
+    Returns the number of rows updated.  When scanned_ids is empty and no category
+    is given, does nothing as a safety guard against marking everything unavailable
+    on scan errors.  last_seen_at is intentionally NOT updated — it preserves the
+    timestamp of the last time the media was actually found on disk.
     """
     if not scanned_ids and category is None:
         return 0
+    now = datetime.now().isoformat()
     conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         with conn:
-            return _delete_stale_media(conn, scanned_ids, category)
+            return _mark_media_unavailable(conn, scanned_ids, category, now)
     finally:
         conn.close()
 
 
-def _delete_stale_media(
+def _mark_media_unavailable(
     conn: sqlite3.Connection,
     scanned_ids: set[str],
     category: str | None,
+    now: str,
 ) -> int:
     ids = list(scanned_ids)
     if category is not None:
         if ids:
             placeholders = ",".join("?" * len(ids))
-            sql = f"DELETE FROM media WHERE category = ? AND id NOT IN ({placeholders})"
-            params: list = [category] + ids
+            sql = (
+                f"UPDATE media SET is_available = 0, last_scanned_at = ?"
+                f" WHERE category = ? AND id NOT IN ({placeholders}) AND is_available = 1"
+            )
+            params: list = [now, category] + ids
         else:
-            sql = "DELETE FROM media WHERE category = ?"
-            params = [category]
+            sql = "UPDATE media SET is_available = 0, last_scanned_at = ? WHERE category = ? AND is_available = 1"
+            params = [now, category]
     else:
         placeholders = ",".join("?" * len(ids))
-        sql = f"DELETE FROM media WHERE id NOT IN ({placeholders})"
-        params = ids
+        sql = (
+            f"UPDATE media SET is_available = 0, last_scanned_at = ?"
+            f" WHERE id NOT IN ({placeholders}) AND is_available = 1"
+        )
+        params = [now] + ids
     cursor = conn.execute(sql, params)
     return cursor.rowcount
 
@@ -154,12 +164,33 @@ def _delete_stale_media(
 def upsert_media_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
     if not isinstance(item, dict):
         return 0
+    media_id = str(item.get("id") or item.get("path") or "")
+    new_filename = _to_json(item["filename"]) if item.get("filename") is not None else None
+    # Read existing filename before upsert so we can track history on change
+    prev_filename: str | None = None
+    if new_filename is not None and media_id:
+        row = conn.execute("SELECT filename FROM media WHERE id = ?", (media_id,)).fetchone()
+        if row:
+            prev_filename = row["filename"]
     written = db_import.upsert_library_item(conn, item, overwrite=True)
     if written:
-        media_id = str(item.get("id") or item.get("path") or "")
         _sync_media_providers(conn, media_id, item.get("providers"))
         _sync_media_children(conn, media_id, item)
+        if prev_filename is not None and prev_filename != new_filename:
+            _append_to_filename_history(conn, media_id, prev_filename)
     return written
+
+
+def _append_to_filename_history(conn: sqlite3.Connection, media_id: str, old_filename_json: str) -> None:
+    row = conn.execute("SELECT filename_history FROM media WHERE id = ?", (media_id,)).fetchone()
+    if not row:
+        return
+    history = _from_json(row["filename_history"], [])
+    if not isinstance(history, list):
+        history = []
+    if old_filename_json not in history:
+        history.append(old_filename_json)
+    conn.execute("UPDATE media SET filename_history = ? WHERE id = ?", (_to_json(history), media_id))
 
 
 def _save_library_payload(conn: sqlite3.Connection, document: dict[str, Any], *, replace: bool) -> None:

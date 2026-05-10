@@ -1130,7 +1130,11 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         _to_json(item.get("providers") or []),
         _to_json(quality or {}),
         _to_json(item),
-        item.get("added_at"),
+        item.get("last_seen_at") or item.get("added_at"),
+        1 if item.get("is_available", True) else 0,
+        item.get("first_seen_at"),
+        item.get("last_scanned_at"),
+        _to_json(item["filename"]) if item.get("filename") is not None else None,
     )
 
 
@@ -1141,17 +1145,18 @@ runtime_min, runtime_min_avg, quality_score, width, height, resolution,
 video_codec, video_bitrate, audio_codec, audio_codec_raw, audio_bitrate,
 audio_channels, audio_languages_json, audio_language_group,
 subtitle_languages_json, framerate, container, hdr, hdr_type, dolby_vision,
-providers_json, quality_json, data_json, last_seen_at
+providers_json, quality_json, data_json, last_seen_at,
+is_available, first_seen_at, last_scanned_at, filename
 """
 
 _MEDIA_INSERT_IGNORE_SQL = f"""
 INSERT OR IGNORE INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 40)})
+VALUES ({",".join(["?"] * 44)})
 """
 
 _MEDIA_UPSERT_SQL = f"""
 INSERT INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 40)})
+VALUES ({",".join(["?"] * 44)})
 ON CONFLICT(id) DO UPDATE SET
     media_type = excluded.media_type,
     title = excluded.title,
@@ -1192,5 +1197,9 @@ ON CONFLICT(id) DO UPDATE SET
     quality_json = excluded.quality_json,
     data_json = excluded.data_json,
     updated_at = CURRENT_TIMESTAMP,
-    last_seen_at = excluded.last_seen_at
+    last_seen_at = excluded.last_seen_at,
+    is_available = excluded.is_available,
+    first_seen_at = COALESCE(first_seen_at, excluded.first_seen_at),
+    last_scanned_at = excluded.last_scanned_at,
+    filename = excluded.filename
 """

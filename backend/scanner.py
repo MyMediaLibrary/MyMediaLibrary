@@ -1270,6 +1270,50 @@ def count_media_files(path: Path) -> int:
     return count
 
 
+def _extract_filename_movie(media_dir: Path) -> str | None:
+    """Return the name of the largest video file in a movie directory."""
+    best: str | None = None
+    best_size = -1
+    try:
+        for entry in media_dir.iterdir():
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            if entry.suffix.lower() not in MEDIA_EXTENSIONS:
+                continue
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                size = 0
+            if size > best_size:
+                best_size = size
+                best = entry.name
+    except PermissionError:
+        pass
+    return best
+
+
+def _extract_filename_tv(series_dir: Path) -> dict | None:
+    """Return {SNN: {ENN: filename}} for all detected video files in a TV series dir."""
+    result: dict[str, dict[str, str]] = {}
+    try:
+        video_files = sorted(
+            p for p in series_dir.rglob("*")
+            if p.is_file(follow_symlinks=False)
+            and p.suffix.lower() in MEDIA_EXTENSIONS
+            and not p.name.startswith((".", "@"))
+        )
+    except PermissionError:
+        return None
+    for video in video_files:
+        season_num, episode_num = _extract_season_episode_from_name(str(video))
+        if season_num is None or episode_num is None:
+            continue
+        season_key = f"S{season_num:02d}"
+        episode_key = f"E{episode_num:02d}"
+        result.setdefault(season_key, {})[episode_key] = video.name
+    return result or None
+
+
 def format_size(size_bytes: int) -> str:
     if size_bytes == 0:
         return "0 B"
@@ -3260,6 +3304,11 @@ def scan_media_item(
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
         item["audio_languages_simple"] = None
+    # Filename map — never influences media_id, used for change tracking / probe cache
+    if is_tv:
+        item["filename"] = _extract_filename_tv(media_dir)
+    else:
+        item["filename"] = _extract_filename_movie(media_dir)
     return item
 
 
@@ -3327,6 +3376,9 @@ def run_quick(only_category: str | None = None) -> None:
     # Preserve previous file content for backward-compatible partial scans
     prev_data: dict = load_library_document_non_blocking(OUTPUT_PATH) or {}
 
+    # Single timestamp shared across all items in this scan run
+    scan_time = datetime.now().isoformat()
+
     items = []
     scanned_ids: set[str] = set()
     scanned_paths = set()
@@ -3364,6 +3416,11 @@ def run_quick(only_category: str | None = None) -> None:
                 score_config=effective_score_config,
                 jsr_for_counts=jsr_for_counts if cat["type"] == "tv" and seerr_counts_active else None,
             )
+            # Disk-state timestamps — COALESCE in upsert SQL preserves first_seen_at
+            item["is_available"] = 1
+            item["last_seen_at"] = scan_time
+            item["last_scanned_at"] = scan_time
+            item["first_seen_at"] = scan_time
             items.append(item)
             tv_series_scanned += int(item.get("_scan_tv_series_scanned") or 0)
             tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
@@ -3394,9 +3451,9 @@ def run_quick(only_category: str | None = None) -> None:
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
     if media_repository is not None:
-        removed = media_repository.delete_stale_media(OUTPUT_PATH, scanned_ids, only_category)
-        if removed:
-            log.info(f"{_phase_prefix('1')} Removed {removed} stale media entry(ies) from DB")
+        marked = media_repository.mark_media_unavailable(OUTPUT_PATH, scanned_ids, only_category)
+        if marked:
+            log.info(f"{_phase_prefix('1')} Marked {marked} media entry(ies) unavailable")
 
     size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
     size_str = f"{size_mb:.1f} MB"
