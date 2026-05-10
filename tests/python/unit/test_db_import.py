@@ -18,23 +18,21 @@ from repositories import config_repository  # noqa: E402
 
 class DatabaseImportTest(unittest.TestCase):
     def make_paths(self, root: pathlib.Path):
-        conf = root / "conf"
         data = root / "data"
         defaults = root / "defaults" / "conf"
-        conf.mkdir()
-        data.mkdir()
+        data.mkdir(parents=True, exist_ok=True)
         defaults.mkdir(parents=True)
         return types.SimpleNamespace(
-            PROVIDERS_LOGO_JSON=conf / "providers_logo.json",
-            PROVIDERS_MAPPING_JSON=conf / "providers_mapping.json",
-            RECOMMENDATIONS_RULES_JSON=conf / "recommendations_rules.json",
-            CONFIG_JSON=conf / "config.json",
+            PROVIDERS_LOGO_JSON=data / "providers_logo.json",
+            PROVIDERS_MAPPING_JSON=data / "providers_mapping.json",
+            RECOMMENDATIONS_RULES_JSON=data / "recommendations_rules.json",
+            CONFIG_JSON=data / "config.json",
             MEDIA_PROBE_CACHE_JSON=data / "media_probe_cache.json",
             LIBRARY_PROBE_JSON=data / "library_probe.json",
             INVENTORY_JSON=data / "library_inventory.json",
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
-            SECRETS_FILE=conf / ".secrets",
+            SECRETS_FILE=data / ".secrets",
             DEFAULT_CONFIG_JSON=defaults / "config.json",
             DEFAULT_PROVIDERS_MAPPING_JSON=defaults / "providers_mapping.json",
             DEFAULT_PROVIDERS_LOGO_JSON=defaults / "providers_logo.json",
@@ -732,6 +730,57 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(first, 1)
             self.assertEqual(second, 1)
             self.assertEqual(score, 75)
+
+    def test_upgrade_detects_and_migrates_json_when_db_already_bootstrapped(self):
+        """Simulate upgrade: DB exists with seeded defaults + legacy JSON in /data/ — migration must run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = self.make_paths(root)
+
+            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            # Simulate bootstrapped DB (seeded defaults)
+            db_import.seed_bundled_defaults(conn, paths=paths)
+
+            # Write user's legacy JSON files (simulating files left from pre-v0.5.0 install)
+            self.write_json(paths.CONFIG_JSON, {
+                "folders": [{"path": "/library/films", "type": "movies"}, {"path": "/library/series", "type": "series"}],
+                "system": {"log_level": "INFO"},
+                "score": {"enabled": False},
+            })
+            self.write_json(paths.PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix", "Prime": "Prime Video"})
+            self.write_json(paths.RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low_score", "enabled": True, "conditions": []}]})
+
+            # Verify detection works (core fix)
+            self.assertTrue(db_import.has_legacy_json_files(paths=paths))
+
+            # Run migration (as bootstrap_runtime_database would)
+            results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
+
+            # Config imported
+            config_result = next(r for r in results if r.name == "config")
+            self.assertEqual(config_result.status, "ok")
+            self.assertTrue(config_result.removed)
+            self.assertFalse(paths.CONFIG_JSON.exists())
+
+            # Folders preserved in SQLite
+            cfg_rows = {row["key"]: row["value_json"] for row in conn.execute("SELECT key, value_json FROM app_config").fetchall()}
+            import json as json_module
+            folders = json_module.loads(cfg_rows["folders"])
+            self.assertEqual(len(folders), 2)
+            folder_types = {f["path"]: f["type"] for f in folders}
+            self.assertIn("/library/films", folder_types)
+            self.assertEqual(folder_types["/library/films"], "movies")
+
+            # Providers and rules migrated and removed
+            self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
+            self.assertFalse(paths.RECOMMENDATIONS_RULES_JSON.exists())
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM provider_mappings").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0], 0)
+
+            # Legacy JSON detection now returns False (files removed)
+            self.assertFalse(db_import.has_legacy_json_files(paths=paths))
+
+            conn.close()
 
 
 if __name__ == "__main__":

@@ -116,7 +116,12 @@ def _has_legacy_json_sources(active_logger: logging.Logger) -> bool:
             from backend import db_import
         except Exception:
             import db_import  # type: ignore
-        return bool(db_import.has_legacy_json_files())
+        detected = db_import.list_detected_legacy_json_files()
+        if detected:
+            active_logger.info("[DB] Legacy JSON scan path: %s", detected[0].parent)
+            active_logger.info("[DB] Legacy JSON detected: %s", ", ".join(p.name for p in detected))
+            return True
+        return False
     except Exception as exc:
         active_logger.warning("[DB] Could not inspect legacy JSON files; running migration defensively: %s", exc)
         return True

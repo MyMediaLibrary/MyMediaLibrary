@@ -3,6 +3,9 @@
 This module is the single source of truth for v0.5.0 storage layout paths.
 Legacy paths are declared here only so the startup migration can reason about
 them explicitly.
+
+Legacy JSON sources are those that existed in ``/data/`` before the v0.5.0
+SQLite migration.
 """
 
 from __future__ import annotations
@@ -25,10 +28,10 @@ RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
 SCANNER_LOG = DATA_DIR / "scanner.log"
 SQLITE_DB = DATA_DIR / "mymedialibrary.db"
 
-CONFIG_JSON = LEGACY_CONF_DIR / "config.json"
-PROVIDERS_MAPPING_JSON = LEGACY_CONF_DIR / "providers_mapping.json"
-PROVIDERS_LOGO_JSON = LEGACY_CONF_DIR / "providers_logo.json"
-RECOMMENDATIONS_RULES_JSON = LEGACY_CONF_DIR / "recommendations_rules.json"
+CONFIG_JSON = DATA_DIR / "config.json"
+PROVIDERS_MAPPING_JSON = DATA_DIR / "providers_mapping.json"
+PROVIDERS_LOGO_JSON = DATA_DIR / "providers_logo.json"
+RECOMMENDATIONS_RULES_JSON = DATA_DIR / "recommendations_rules.json"
 SECRETS_FILE = DATA_DIR / ".secrets"
 LEGACY_SECRETS_FILE = LEGACY_CONF_DIR / ".secrets"
 

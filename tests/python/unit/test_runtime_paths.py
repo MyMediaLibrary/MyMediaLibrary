@@ -29,11 +29,11 @@ class RuntimePathsTest(unittest.TestCase):
             pathlib.Path("/data/mymedialibrary.db"),
         })
 
-    def test_legacy_json_import_sources_stay_under_legacy_conf(self):
-        self.assertEqual(paths.CONFIG_JSON, pathlib.Path("/conf/config.json"))
-        self.assertEqual(paths.PROVIDERS_MAPPING_JSON, pathlib.Path("/conf/providers_mapping.json"))
-        self.assertEqual(paths.PROVIDERS_LOGO_JSON, pathlib.Path("/conf/providers_logo.json"))
-        self.assertEqual(paths.RECOMMENDATIONS_RULES_JSON, pathlib.Path("/conf/recommendations_rules.json"))
+    def test_legacy_json_import_sources_stay_under_data(self):
+        self.assertEqual(paths.CONFIG_JSON, pathlib.Path("/data/config.json"))
+        self.assertEqual(paths.PROVIDERS_MAPPING_JSON, pathlib.Path("/data/providers_mapping.json"))
+        self.assertEqual(paths.PROVIDERS_LOGO_JSON, pathlib.Path("/data/providers_logo.json"))
+        self.assertEqual(paths.RECOMMENDATIONS_RULES_JSON, pathlib.Path("/data/recommendations_rules.json"))
         self.assertEqual(paths.SECRETS_FILE, pathlib.Path("/data/.secrets"))
         self.assertEqual(paths.LEGACY_SECRETS_FILE, pathlib.Path("/conf/.secrets"))
 
@@ -51,10 +51,10 @@ class RuntimePathsTest(unittest.TestCase):
     def test_fresh_install_defaults_are_bundled_under_app_defaults_conf(self):
         self.assertEqual(paths.DEFAULT_CONF_DIR, pathlib.Path("/app/defaults/conf"))
         defaults = {item.path: item.default_path for item in paths.CONFIG_FILES}
-        self.assertEqual(defaults[pathlib.Path("/conf/config.json")], pathlib.Path("/app/defaults/conf/config.json"))
-        self.assertEqual(defaults[pathlib.Path("/conf/providers_mapping.json")], pathlib.Path("/app/defaults/conf/providers_mapping.json"))
-        self.assertEqual(defaults[pathlib.Path("/conf/providers_logo.json")], pathlib.Path("/app/defaults/conf/providers_logo.json"))
-        self.assertEqual(defaults[pathlib.Path("/conf/recommendations_rules.json")], pathlib.Path("/app/defaults/conf/recommendations_rules.json"))
+        self.assertEqual(defaults[pathlib.Path("/data/config.json")], pathlib.Path("/app/defaults/conf/config.json"))
+        self.assertEqual(defaults[pathlib.Path("/data/providers_mapping.json")], pathlib.Path("/app/defaults/conf/providers_mapping.json"))
+        self.assertEqual(defaults[pathlib.Path("/data/providers_logo.json")], pathlib.Path("/app/defaults/conf/providers_logo.json"))
+        self.assertEqual(defaults[pathlib.Path("/data/recommendations_rules.json")], pathlib.Path("/app/defaults/conf/recommendations_rules.json"))
         self.assertIsNone(defaults[pathlib.Path("/data/.secrets")])
 
 

@@ -111,6 +111,8 @@ def migrate_runtime_json_files_at_startup(
     warnings = False
 
     active_logger.info("[DB] JSON migration starting")
+    data_dir = Path(paths.CONFIG_JSON).parent
+    active_logger.info("[DB] Legacy JSON scan path: %s", data_dir)
     _remove_obsolete_runtime_files(paths, active_logger)
     for spec in specs:
         result = _migrate_one_startup_json(conn, spec, active_logger, remove_validated=remove_validated)
@@ -186,10 +188,15 @@ def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
     ]
 
 
+def list_detected_legacy_json_files(*, paths=runtime_paths) -> list[Path]:
+    """Return legacy JSON sources that currently exist on disk."""
+    return [path for path in legacy_json_paths(paths=paths) if path.exists()]
+
+
 def has_legacy_json_files(*, paths=runtime_paths) -> bool:
     """Return True when at least one legacy runtime JSON source still exists."""
 
-    return any(path.exists() for path in legacy_json_paths(paths=paths))
+    return bool(list_detected_legacy_json_files(paths=paths))
 
 
 def _startup_json_specs(paths) -> list[dict[str, Any]]:
