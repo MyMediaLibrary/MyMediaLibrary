@@ -331,6 +331,8 @@ test('onboarding features and initial scan access match dynamic pipeline', () =>
   const toggleBlock = functionBlock(settingsSource, '_onbFeaturesToggle', '_captureOnbAuth');
   assert.match(toggleBlock, /rec\.disabled = !_onbFeatures\.scoreEnabled;/, 'recommendations toggle should be disabled when score is off');
   assert.match(toggleBlock, /rec\.checked = false;/, 'recommendations toggle should be cleared when score is off');
+  assert.match(featuresBlock, /id="onbRecommendationsLabel" style="'\+recDisabledStyle\+'"/, 'recommendations label should expose its disabled style for dynamic updates');
+  assert.match(toggleBlock, /recLabel\.style\.opacity = _onbFeatures\.scoreEnabled \? '' : '\.45';/, 'recommendations label should visually re-enable when score is toggled on');
   const launchBlock = functionBlock(settingsSource, 'onbLaunchScan');
   assert.match(launchBlock, /recommendations: \{ enabled: _onbFeatures\.scoreEnabled && _onbFeatures\.recommendationsEnabled \}/, 'onboarding should persist recommendations only when score is enabled');
   assert.match(launchBlock, /media_probe:[\s\S]*enabled: _onbFeatures\.mediaProbeEnabled/, 'onboarding should persist ffprobe feature choice');

@@ -1882,7 +1882,7 @@
         + '<label class="toggle-switch"><input type="checkbox" id="onbScoreEnabled"'+(_onbFeatures.scoreEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '<div class="settings-row">'
-        + '<label class="settings-label" style="'+recDisabledStyle+'">'+t('onboarding.features_recommendations_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_recommendations_desc')+'</span></label>'
+        + '<label class="settings-label" id="onbRecommendationsLabel" style="'+recDisabledStyle+'">'+t('onboarding.features_recommendations_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_recommendations_desc')+'</span></label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbRecommendationsEnabled"'+(_onbFeatures.recommendationsEnabled ? ' checked' : '')+recDisabledAttrs+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '</div>';
@@ -1957,6 +1957,8 @@
         _onbFeatures.recommendationsEnabled = false;
       }
     }
+    const recLabel = document.getElementById('onbRecommendationsLabel');
+    if (recLabel) recLabel.style.opacity = _onbFeatures.scoreEnabled ? '' : '.45';
   }
 
   function _captureOnbAuth() {
