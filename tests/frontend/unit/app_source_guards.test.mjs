@@ -295,10 +295,30 @@ test('auth password is configured through onboarding/settings and never via envi
   assert.match(onbNextBlock, /_onbAuth = \{ enabled: true, password: '', confirm: '', saved: true \};/, 'onboarding should clear password fields after auth save');
 
   const onboardingSaveBlock = functionBlock(settingsSource, 'onbLaunchScan');
-  assert.match(settingsSource, /else if \(_onbStep === 4\) panel\.innerHTML = _onbStep4HTML\(\);/, 'onboarding should insert auth before summary');
+  assert.match(settingsSource, /\{ id: 'auth', step: 4,[\s\S]*render: \(\) => _onbStep4HTML\(\) \}/, 'onboarding should insert auth before summary');
   assert.match(onboardingSaveBlock, /!\_onbAuth\.saved[\s\S]*auth:[\s\S]*password: _onbAuth\.password[\s\S]*password_confirm: _onbAuth\.confirm/, 'onboarding launch should not resend password after auth was already saved');
   assert.doesNotMatch(scannerSource, /APP_PASSWORD/, 'backend runtime should not read APP_PASSWORD');
   assert.doesNotMatch(composeSource + readmeSource + docsFrSource + docsEnSource, /APP_PASSWORD/, 'compose/docs should not document APP_PASSWORD');
+});
+
+test('onboarding navigation is driven by one deterministic step flow', () => {
+  assert.match(settingsSource, /const _ONBOARDING_STEPS = \[[\s\S]*id: 'welcome'[\s\S]*id: 'folders'[\s\S]*id: 'seerr'[\s\S]*id: 'features'[\s\S]*id: 'auth'[\s\S]*id: 'scan'[\s\S]*\];/, 'onboarding should declare a single ordered step list');
+  assert.match(settingsSource, /function _onbFlow\(\)[\s\S]*_ONBOARDING_STEPS\.filter/, 'onboarding should compute visible flow from the shared step list');
+  const renderBlock = functionBlock(settingsSource, '_onbRender', '_onbStep0HTML');
+  assert.match(renderBlock, /const current = _onbCurrentStep\(\);/, 'render should use the centralized current step');
+  assert.match(renderBlock, /const flow = _onbFlow\(\);/, 'render/progress should use the computed flow');
+  assert.match(renderBlock, /panel\.innerHTML = current\.render\(\);/, 'render should not branch on hardcoded step numbers');
+  assert.doesNotMatch(renderBlock, /_onbStep === [1-5]|_onbStep <|_onbStep\+\+|_onbStep--/, 'render should avoid fixed numeric navigation rules');
+  const nextBlock = functionBlock(settingsSource, 'onbNext', 'onbPrev');
+  assert.match(nextBlock, /const current = _onbCurrentStep\(\);/, 'Next should use the current step id');
+  assert.match(nextBlock, /_onbMove\(1\);/, 'Next should advance through the shared flow');
+  assert.doesNotMatch(nextBlock, /_onbStep\+\+|_onbStep < 5|_onbStep === [1-5]/, 'Next should not use hardcoded numeric jumps');
+  const prevBlock = functionBlock(settingsSource, 'onbPrev', 'onbSkip');
+  assert.match(prevBlock, /_onbMove\(-1\);/, 'Previous should go backward through the shared flow');
+  assert.doesNotMatch(prevBlock, /_onbStep--|_onbStep >=/, 'Previous should not use hardcoded numeric jumps');
+  const skipBlock = functionBlock(settingsSource, 'onbSkip', 'onbLaunchScan');
+  assert.match(skipBlock, /_onbSkipCurrentStep\(\);/, 'Skip should remove the skipped step from the shared flow');
+  assert.doesNotMatch(skipBlock, /_onbStep = [0-9]/, 'Skip should not jump to hardcoded step numbers');
 });
 
 test('onboarding features and initial scan access match dynamic pipeline', () => {

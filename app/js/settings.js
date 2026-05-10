@@ -33,6 +33,7 @@
 
   // ── Onboarding private state ──────────────────────────────────────────────
   let _onbStep = 0;
+  let _onbSkippedStepIds = new Set();
   let _onbJsr = { enabled: false, url: '', key: '' };
   let _onbFeatures = {
     synopsisEnabled: false,
@@ -46,6 +47,15 @@
   let _langTimer = null;
   let _onbLang = 'fr';
   let _onbTheme = 'dark';
+
+  const _ONBOARDING_STEPS = [
+    { id: 'welcome', step: 0, progress: false, skippable: false, render: () => _onbStep0HTML() },
+    { id: 'folders', step: 1, progress: true, skippable: false, render: () => _onbStep1HTML() },
+    { id: 'seerr', step: 2, progress: true, skippable: true, render: () => _onbStep2HTML() },
+    { id: 'features', step: 3, progress: true, skippable: false, render: () => _onbStep3HTML() },
+    { id: 'auth', step: 4, progress: true, skippable: true, render: () => _onbStep4HTML() },
+    { id: 'scan', step: 5, progress: true, skippable: false, render: () => _onbStep5HTML() },
+  ];
 
   const _ONB_TEXTS = {
     fr: {
@@ -1587,8 +1597,47 @@
     document.documentElement.setAttribute('data-theme', _onbTheme);
   }
 
+  function _onbFlow() {
+    return _ONBOARDING_STEPS.filter(step => !step.skippable || !_onbSkippedStepIds.has(step.id));
+  }
+
+  function _onbCurrentStep() {
+    return _ONBOARDING_STEPS.find(step => step.step === _onbStep) || _ONBOARDING_STEPS[0];
+  }
+
+  function _onbSetStep(stepId) {
+    const step = _ONBOARDING_STEPS.find(item => item.id === stepId);
+    if (!step) return false;
+    _onbStep = step.step;
+    return true;
+  }
+
+  function _onbMove(delta) {
+    const flow = _onbFlow();
+    const current = _onbCurrentStep();
+    const idx = flow.findIndex(step => step.id === current.id);
+    const next = flow[idx + delta];
+    if (!next) return false;
+    _onbStep = next.step;
+    _onbRender();
+    return true;
+  }
+
+  function _onbSkipCurrentStep() {
+    const flow = _onbFlow();
+    const current = _onbCurrentStep();
+    const idx = flow.findIndex(step => step.id === current.id);
+    const next = flow[idx + 1];
+    if (!current.skippable || !next) return false;
+    _onbSkippedStepIds.add(current.id);
+    _onbSetStep(next.id);
+    _onbRender();
+    return true;
+  }
+
   function showOnboarding() {
     _onbStep = 0;
+    _onbSkippedStepIds = new Set();
     _onbLang = null;
     _onbTheme = appConfig.ui?.theme || 'dark';
     const seerrCfg = _getSeerrConfig();
@@ -1613,55 +1662,53 @@
   }
 
   function _onbRender() {
-    // Step indicator: hidden on step 0, bars for configured steps
+    const current = _onbCurrentStep();
+    const flow = _onbFlow();
+    // Step indicator: hidden on welcome, bars for configured flow
     const stepsEl = document.getElementById('onbSteps');
     if (stepsEl) {
-      if (_onbStep === 0) {
+      if (!current.progress) {
         stepsEl.innerHTML = '';
       } else {
-        stepsEl.innerHTML = [1,2,3,4,5].map(n =>
-          '<div style="width:40px;height:4px;border-radius:2px;background:'+(n===_onbStep?'var(--accent)':'var(--border)')+'"></div>'
+        stepsEl.innerHTML = flow.filter(step => step.progress).map(step =>
+          '<div style="width:40px;height:4px;border-radius:2px;background:'+(step.id===current.id?'var(--accent)':'var(--border)')+'"></div>'
         ).join('');
       }
     }
 
     const panel = document.getElementById('onbPanel');
     if (!panel) return;
-    if      (_onbStep === 0) { panel.innerHTML = _onbStep0HTML(); _startLangToggle(); }
-    else if (_onbStep === 1) panel.innerHTML = _onbStep1HTML();
-    else if (_onbStep === 2) panel.innerHTML = _onbStep2HTML();
-    else if (_onbStep === 3) panel.innerHTML = _onbStep3HTML();
-    else if (_onbStep === 4) panel.innerHTML = _onbStep4HTML();
-    else                     panel.innerHTML = _onbStep5HTML();
+    panel.innerHTML = current.render();
+    if (current.id === 'welcome') _startLangToggle();
 
     // Nav buttons
     const prev = document.getElementById('onbPrevBtn');
     const next = document.getElementById('onbNextBtn');
     const skip = document.getElementById('onbSkipBtn');
     // Step 0: hide all nav buttons (step has its own Commencer button)
-    if (_onbStep === 0) {
+    if (current.id === 'welcome') {
       if (prev) prev.style.display = 'none';
       if (next) next.style.display = 'none';
       if (skip) skip.style.display = 'none';
       return;
     }
-    if (prev) prev.style.display = _onbStep >= 1 ? '' : 'none';
+    if (prev) prev.style.display = flow.findIndex(step => step.id === current.id) > 0 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (_onbStep === 5) { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
+      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
       else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
-      if (_onbStep === 1) { next.disabled = true; _onbValidateStep1(); }
-      else if (_onbStep === 2) { next.disabled = true; }
-      else if (_onbStep === 4) { next.disabled = true; _onbValidateAuth(); }
+      if (current.id === 'folders') { next.disabled = true; _onbValidateStep1(); }
+      else if (current.id === 'seerr') { next.disabled = true; }
+      else if (current.id === 'auth') { next.disabled = true; _onbValidateAuth(); }
       else next.disabled = false;
     }
     if (skip) {
       skip.textContent = t('nav.skip');
-      skip.style.display = (_onbStep === 2 || _onbStep === 4) ? '' : 'none';
-      if (_onbStep === 2) _updateOnbSkipStyle(skip);
-      else if (_onbStep === 4) {
+      skip.style.display = current.skippable ? '' : 'none';
+      if (current.id === 'seerr') _updateOnbSkipStyle(skip);
+      else if (current.id === 'auth') {
         const enabled = document.getElementById('onbAuthEnabled')?.checked ?? _onbAuth.enabled;
         skip.style.background = enabled ? 'transparent' : 'var(--accent)';
         skip.style.borderColor = enabled ? 'var(--border)' : 'var(--accent)';
@@ -1975,10 +2022,11 @@
   }
 
   async function onbNext() {
-    if (_onbStep === 0) { clearInterval(_langTimer); _langTimer = null; }
-    if (_onbStep === 2) _captureOnbJsr();
-    if (_onbStep === 3) _captureOnbFeatures();
-    if (_onbStep === 4) {
+    const current = _onbCurrentStep();
+    if (current.id === 'welcome') { clearInterval(_langTimer); _langTimer = null; }
+    if (current.id === 'seerr') _captureOnbJsr();
+    if (current.id === 'features') _captureOnbFeatures();
+    if (current.id === 'auth') {
       if (!_onbValidateAuth()) return;
       const next = document.getElementById('onbNextBtn');
       if (next) { next.disabled = true; next.textContent = t('onboarding.saving'); }
@@ -1991,22 +2039,23 @@
         return;
       }
     }
-    if (_onbStep < 5) { _onbStep++; _onbRender(); }
+    _onbMove(1);
   }
 
   function onbPrev() {
-    if (_onbStep >= 1) { _onbStep--; _onbRender(); }
+    _onbMove(-1);
   }
 
   function onbSkip() {
-    if (_onbStep === 2) {
+    const current = _onbCurrentStep();
+    if (current.id === 'seerr') {
       _captureOnbJsr();
       _onbJsr.enabled = false;
-      _onbStep = 3; _onbRender();
+      _onbSkipCurrentStep();
     }
-    else if (_onbStep === 4) {
+    else if (current.id === 'auth') {
       _onbAuth = { enabled: false, password: '', confirm: '', saved: false };
-      _onbStep = 5; _onbRender();
+      _onbSkipCurrentStep();
     }
   }
 
