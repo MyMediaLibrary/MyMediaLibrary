@@ -45,7 +45,8 @@ class ScoreCleanupTest(unittest.TestCase):
             item["quality"] = {"score": 80}
         return item
 
-    def test_category_only_scan_strips_score_fields_from_preserved_items_when_disabled(self):
+    def test_category_only_scan_preserves_quality_from_prev_for_other_categories(self):
+        """Quality from a previous Phase 3 run is kept for preserved (non-scanned) items."""
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp) / "library"
             movies = root / "Movies"
@@ -94,13 +95,19 @@ class ScoreCleanupTest(unittest.TestCase):
             payload = json.loads(out_path.read_text(encoding="utf-8"))
             for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
                 self.assertNotIn(root_key, payload)
+            by_path = {item["path"]: item for item in payload["items"]}
+            # Legacy top-level score field must be stripped everywhere
             for item in payload["items"]:
-                self.assertNotIn("quality", item)
                 self.assertNotIn("score", item)
                 self.assertNotIn("runtime", item)
                 self.assertNotIn("audio_codec_display", item)
+            # Newly scanned movie has no quality (prev had none, score disabled)
+            self.assertNotIn("quality", by_path["Movies/MovieA"])
+            # Preserved series item retains quality from previous Phase 3 enrichment
+            self.assertIn("quality", by_path["Series/ShowA"])
 
-    def test_category_only_scan_does_not_persist_score_fields_even_when_enabled(self):
+    def test_category_only_scan_preserves_quality_from_prev_when_score_feature_enabled(self):
+        """Quality from prev is preserved even when the score feature flag is enabled."""
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp) / "library"
             movies = root / "Movies"
@@ -149,8 +156,10 @@ class ScoreCleanupTest(unittest.TestCase):
             for root_key in ("config", "meta", "providers_meta", "providers_raw", "providers_raw_meta", "enriched_at"):
                 self.assertNotIn(root_key, payload)
             by_path = {item["path"]: item for item in payload["items"]}
+            # Newly scanned movie: no quality (prev had none, Phase 1 never computes quality)
             self.assertNotIn("quality", by_path["Movies/MovieA"])
-            self.assertNotIn("quality", by_path["Series/ShowA"])
+            # Preserved series item: quality retained from previous Phase 3 run
+            self.assertIn("quality", by_path["Series/ShowA"])
 
 
 if __name__ == "__main__":

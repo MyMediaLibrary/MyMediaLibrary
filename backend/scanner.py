@@ -2930,6 +2930,7 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     clean.pop("runtime", None)
     clean.pop("audio_codec_display", None)
     clean.pop("complete", None)
+    clean.pop("score", None)  # legacy top-level score field superseded by quality dict
     for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
         if _is_unknown_sentinel(clean.get(field)):
             clean[field] = None
@@ -3248,6 +3249,13 @@ def scan_media_item(
                 q = dict(preserved_quality)
                 q.pop("level", None)
                 item["quality"] = q  # preserved during phase 1; overwritten by phase 3 when enabled
+    else:
+        # Phase 1 (score disabled): carry forward quality computed by a previous Phase 3 run
+        preserved_quality = prev.get("quality")
+        if isinstance(preserved_quality, dict):
+            q = dict(preserved_quality)
+            q.pop("level", None)
+            item["quality"] = q
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
@@ -3320,6 +3328,7 @@ def run_quick(only_category: str | None = None) -> None:
     prev_data: dict = load_library_document_non_blocking(OUTPUT_PATH) or {}
 
     items = []
+    scanned_ids: set[str] = set()
     scanned_paths = set()
     tv_series_scanned = 0
     tv_episodes_scanned = 0
@@ -3360,6 +3369,8 @@ def run_quick(only_category: str | None = None) -> None:
             tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
             tv_series_with_seerr_counts += int(1 if item.get("_scan_tv_seerr_counts") else 0)
             scanned_paths.add(item_path)
+            if item.get("id"):
+                scanned_ids.add(item["id"])
 
         count = len(items) - cat_items_before
         # Incremental write after each folder
@@ -3371,22 +3382,21 @@ def run_quick(only_category: str | None = None) -> None:
         preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
         log.info(f"{_phase_prefix('1')} Preserving {len(preserved)} item(s) from other categories")
         for i in preserved:
-            if not score_enabled:
-                _strip_score_fields(i)
             # Ensure preserved items use the string id format (may be an old integer id)
             i_media_type = "tv" if i.get("type") == "tv" else "movie"
             i_folder = Path(i.get("path", "")).name
             i["id"] = _inventory_item_id(i_media_type, i.get("category", ""), i_folder)
         items = items + preserved
 
-    if not score_enabled:
-        for item in items:
-            _strip_score_fields(item)
-
     # Only_category: final write is required to include preserved items from other categories.
     # Whole-library pipeline: the last per-folder incremental write already captured all items — skip.
     if only_category:
         _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
+
+    if media_repository is not None:
+        removed = media_repository.delete_stale_media(OUTPUT_PATH, scanned_ids, only_category)
+        if removed:
+            log.info(f"{_phase_prefix('1')} Removed {removed} stale media entry(ies) from DB")
 
     size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
     size_str = f"{size_mb:.1f} MB"

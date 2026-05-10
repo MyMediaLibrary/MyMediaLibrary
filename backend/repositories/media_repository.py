@@ -108,6 +108,49 @@ def clear_library_snapshot(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM app_config WHERE key = ?", (_LIBRARY_DOCUMENT_KEY,))
 
 
+def delete_stale_media(
+    json_path: str | Path,
+    scanned_ids: set[str],
+    category: str | None = None,
+    db_path: str | Path | None = None,
+) -> int:
+    """Delete media rows absent from scanned_ids (optionally scoped to one category).
+
+    Returns the number of rows deleted.  When scanned_ids is empty and no category
+    is given, does nothing as a safety guard against wiping the table on scan errors.
+    """
+    if not scanned_ids and category is None:
+        return 0
+    conn = db.initialize_database(_effective_db_path(json_path, db_path))
+    try:
+        with conn:
+            return _delete_stale_media(conn, scanned_ids, category)
+    finally:
+        conn.close()
+
+
+def _delete_stale_media(
+    conn: sqlite3.Connection,
+    scanned_ids: set[str],
+    category: str | None,
+) -> int:
+    ids = list(scanned_ids)
+    if category is not None:
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            sql = f"DELETE FROM media WHERE category = ? AND id NOT IN ({placeholders})"
+            params: list = [category] + ids
+        else:
+            sql = "DELETE FROM media WHERE category = ?"
+            params = [category]
+    else:
+        placeholders = ",".join("?" * len(ids))
+        sql = f"DELETE FROM media WHERE id NOT IN ({placeholders})"
+        params = ids
+    cursor = conn.execute(sql, params)
+    return cursor.rowcount
+
+
 def upsert_media_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
     if not isinstance(item, dict):
         return 0
