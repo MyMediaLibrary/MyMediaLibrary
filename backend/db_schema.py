@@ -220,7 +220,6 @@ CREATE_TABLES_SQL = (
         mapped_name TEXT,
         is_ignored INTEGER NOT NULL DEFAULT 0,
         logo_path TEXT,
-        logo_url TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )

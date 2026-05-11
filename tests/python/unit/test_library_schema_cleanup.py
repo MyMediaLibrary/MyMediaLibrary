@@ -113,7 +113,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     return_value=[{"raw_name": "Netflix Standard with Ads", "logo": None, "logo_url": None}],
+                     return_value=[{"raw_name": "Netflix Standard with Ads", "logo": None}],
                  ):
                 scanner.run_enrich(force=True)
 
@@ -161,10 +161,10 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                      scanner,
                      "fetch_providers",
                      return_value=[
-                         {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None, "logo_url": None},
-                         {"raw_name": "Autres", "logo": None, "logo_url": None},
-                         {"raw_name": "Netflix   ", "logo": None, "logo_url": None},
-                         {"raw_name": "Netflix", "logo": None, "logo_url": None},
+                         {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None},
+                         {"raw_name": "Autres", "logo": None},
+                         {"raw_name": "Netflix   ", "logo": None},
+                         {"raw_name": "Netflix", "logo": None},
                      ],
                  ):
                 scanner.run_enrich(force=True)
@@ -301,9 +301,9 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
-            providers_hulu = [{"raw_name": "Hulu", "logo": None, "logo_url": None}]
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_disney = [{"raw_name": "Disney+", "logo": None}]
+            providers_hulu = [{"raw_name": "Hulu", "logo": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 mapping = {
@@ -381,7 +381,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -422,7 +422,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -460,7 +460,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
+            providers_disney = [{"raw_name": "Disney+", "logo": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -498,7 +498,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_apple = [{"raw_name": "Apple TV+", "logo": None, "logo_url": None}]
+            providers_apple = [{"raw_name": "Apple TV+", "logo": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -534,7 +534,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            default_providers = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            default_providers = [{"raw_name": "Netflix", "logo": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 return default_providers

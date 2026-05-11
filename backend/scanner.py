@@ -891,7 +891,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     Fetch FR streaming providers from Seerr.
     Returns:
       list[dict]   — success as flat raw provider entries
-                     each dict entry: {raw_name, logo, logo_url}
+                     each dict entry: {raw_name, logo}
       _FETCH_ERROR — Seerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
@@ -950,15 +950,13 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
             # logoPath (camelCase Seerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
             if raw_logo and raw_logo.startswith("http"):
-                logo_url  = raw_logo
-                logo      = None  # relative path unknown
+                logo = None  # absolute URL — relative path unknown, not stored
             elif raw_logo:
-                logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
-                logo      = raw_logo
+                logo = raw_logo
             else:
                 log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{media_id}, raw={p}")
-                logo_url = logo = None
-            result.append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
+                logo = None
+            result.append({"raw_name": raw_name, "logo": logo})
     return result
 
 

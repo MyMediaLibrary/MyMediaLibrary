@@ -472,6 +472,58 @@ class V8UnifiedProvidersTest(unittest.TestCase):
             conn.close()
             self.assertEqual(version, db_schema.SCHEMA_VERSION)
 
+    def test_v8_migration_idempotent_when_raw_name_already_present(self):
+        """Migration must not crash when providers already has raw_name (partially migrated DB)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = sqlite3.connect(path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+            # providers already has raw_name (not name) — simulates partial or re-run migration
+            conn.execute("""
+                CREATE TABLE providers (
+                    id INTEGER PRIMARY KEY,
+                    raw_name TEXT NOT NULL UNIQUE,
+                    mapped_name TEXT,
+                    is_ignored INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT INTO providers(raw_name, mapped_name) VALUES (?, ?)", ("Netflix", "Netflix"))
+            for v in range(1, 8):
+                conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+            conn.execute("PRAGMA user_version = 7")
+            conn.commit()
+
+            # Must not raise
+            db_migrations.migrate(conn)
+
+            row = conn.execute("SELECT raw_name, mapped_name FROM providers WHERE raw_name = ?", ("Netflix",)).fetchone()
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["mapped_name"], "Netflix")
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+    def test_v8_migration_no_logo_url_column_in_providers(self):
+        """providers table must not have logo_url after migration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(providers)").fetchall()}
+            conn.close()
+            self.assertNotIn("logo_url", cols)
+
+    def test_v8_migration_logo_url_absent_on_pre_v8_db_after_migration(self):
+        """logo_url must not be added to providers when migrating from old schema."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            db_migrations.migrate(conn)
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(providers)").fetchall()}
+            conn.close()
+            self.assertNotIn("logo_url", cols)
+
 
 if __name__ == "__main__":
     unittest.main()

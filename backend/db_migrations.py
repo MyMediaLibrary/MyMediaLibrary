@@ -130,22 +130,28 @@ def _apply_v7_drop_inventory(conn: sqlite3.Connection) -> None:
 def _apply_v8_unified_providers(conn: sqlite3.Connection) -> None:
     """Consolidate provider_mappings + provider_logos into the unified providers table."""
 
-    # Step 1: rename providers.name → providers.raw_name on existing DBs
+    # Step 1: rename providers.name → providers.raw_name on existing DBs (idempotent)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(providers)").fetchall()}
     if "name" in cols and "raw_name" not in cols:
         conn.execute("ALTER TABLE providers RENAME COLUMN name TO raw_name")
+    elif "raw_name" not in cols and "name" not in cols:
+        raise sqlite3.OperationalError(
+            "providers table has neither 'name' nor 'raw_name' column — cannot apply v8 migration"
+        )
+    # If raw_name already exists (partially or fully migrated DB): skip rename.
 
-    # Step 2: add new columns (idempotent — fresh DBs already have them)
+    # Step 2: add missing columns (idempotent — existing columns raise OperationalError, ignored)
     for sql in (
         "ALTER TABLE providers ADD COLUMN mapped_name TEXT",
         "ALTER TABLE providers ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE providers ADD COLUMN logo_path TEXT",
-        "ALTER TABLE providers ADD COLUMN logo_url TEXT",
+        "ALTER TABLE providers ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE providers ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
     ):
         try:
             conn.execute(sql)
         except sqlite3.OperationalError:
-            pass
+            pass  # column already exists
 
     # Step 3: rebuild index under the new column name
     conn.execute("DROP INDEX IF EXISTS idx_providers_name")
@@ -175,7 +181,7 @@ def _apply_v8_unified_providers(conn: sqlite3.Connection) -> None:
         """)
         conn.execute("DROP TABLE IF EXISTS provider_mappings")
 
-    # Step 5: merge provider_logos into providers, matched by mapped_name then raw_name
+    # Step 5: merge logo_path from provider_logos into providers (if old table still exists)
     pl_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_logos'"
     ).fetchone()
@@ -185,9 +191,6 @@ def _apply_v8_unified_providers(conn: sqlite3.Connection) -> None:
             UPDATE providers
             SET logo_path  = (
                     SELECT logo_path FROM provider_logos WHERE provider_name = providers.mapped_name
-                ),
-                logo_url   = (
-                    SELECT logo_url  FROM provider_logos WHERE provider_name = providers.mapped_name
                 ),
                 updated_at = CURRENT_TIMESTAMP
             WHERE providers.mapped_name IS NOT NULL
@@ -200,9 +203,6 @@ def _apply_v8_unified_providers(conn: sqlite3.Connection) -> None:
             UPDATE providers
             SET logo_path  = (
                     SELECT logo_path FROM provider_logos WHERE provider_name = providers.raw_name
-                ),
-                logo_url   = (
-                    SELECT logo_url  FROM provider_logos WHERE provider_name = providers.raw_name
                 ),
                 updated_at = CURRENT_TIMESTAMP
             WHERE providers.logo_path IS NULL
