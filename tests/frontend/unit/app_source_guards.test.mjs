@@ -188,7 +188,8 @@ test('loadLibrary restores active tab only after data is loaded', () => {
 test('loadLibrary loads from SQLite API and treats empty library as a first-run state', () => {
   const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
   assert.match(block, /const lib = await _fetchLibraryWithRetry\(\);/, 'loadLibrary should fetch library data through API retry helper');
-  assert.match(appSource, /const libraryUrl = '\/api\/library\?_=' \+ Date\.now\(\);/, 'library fetch helper should load SQLite-backed API');
+  assert.match(appSource, /const libraryUrl = '\/api\/library\?availability='/, 'library fetch helper should include availability param');
+  assert.match(appSource, /Date\.now\(\)/, 'library fetch helper should include cache-busting timestamp');
   assert.doesNotMatch(appSource, /\/library\.json/, 'frontend should not request legacy runtime library.json');
   assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
@@ -327,9 +328,10 @@ test('onboarding navigation is driven by one deterministic step flow', () => {
 
 test('onboarding features and initial scan access match dynamic pipeline', () => {
   const featuresBlock = functionBlock(settingsSource, '_onbStep3HTML', '_onbStep4HTML');
-  ['onbSynopsisEnabled', 'onbInventoryEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
+  ['onbSynopsisEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
     assert.match(featuresBlock, new RegExp(`id="${id}"`), `onboarding should render ${id}`);
   });
+  assert.doesNotMatch(featuresBlock, /id="onbInventoryEnabled"/, 'inventory toggle removed from onboarding');
   const captureBlock = functionBlock(settingsSource, '_captureOnbFeatures', '_onbFeaturesToggle');
   assert.match(captureBlock, /recommendationsEnabled = scoreEnabled && recommendationsInput\?\.checked === true/, 'recommendations should depend on score in onboarding state');
   const toggleBlock = functionBlock(settingsSource, '_onbFeaturesToggle', '_captureOnbAuth');

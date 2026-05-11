@@ -179,5 +179,86 @@ class TestAvailabilityAPIParameter(unittest.TestCase):
                 self.assertIn("absent_1", ids)
 
 
+class RecommendationsExcludeAbsentTest(unittest.TestCase):
+    def test_run_recommendations_uses_available_only(self):
+        """run_recommendations must only process is_available=1 items."""
+        import scanner
+
+        calls = {}
+        def fake_load(path, availability='available'):
+            calls['availability'] = availability
+            return {"items": []}
+
+        with unittest.mock.patch.object(scanner, 'load_library_document_non_blocking', side_effect=fake_load), \
+             unittest.mock.patch.object(scanner, 'load_config', return_value={
+                 'score': {'enabled': True},
+                 'recommendations': {'enabled': True},
+             }), \
+             unittest.mock.patch.object(scanner, '_load_runtime_recommendation_rules', return_value=[]), \
+             unittest.mock.patch.object(scanner, 'generate_recommendations', return_value=[]), \
+             unittest.mock.patch.object(scanner.recommendations_repository, 'save_recommendations', return_value={"items": []}):
+            scanner.run_recommendations()
+
+        self.assertEqual(calls.get('availability'), 'available',
+                         "run_recommendations must pass availability='available' to exclude absent items")
+
+    def test_run_recommendations_excludes_absent_items_from_library(self):
+        """Absent media must not appear in library passed to recommendation engine."""
+        import scanner
+        from unittest import mock
+
+        available_item = {"id": "movie:films:Avail", "title": "Available", "type": "movie", "is_available": True}
+        absent_item = {"id": "movie:films:Gone", "title": "Gone", "type": "movie", "is_available": False}
+
+        seen_items = {}
+        def fake_load(path, availability='available'):
+            seen_items['availability'] = availability
+            if availability == 'available':
+                return {"items": [available_item]}
+            return {"items": [available_item, absent_item]}
+
+        with mock.patch.object(scanner, 'load_library_document_non_blocking', side_effect=fake_load), \
+             mock.patch.object(scanner, 'load_config', return_value={
+                 'score': {'enabled': True},
+                 'recommendations': {'enabled': True},
+             }), \
+             mock.patch.object(scanner, '_load_runtime_recommendation_rules', return_value=[]), \
+             mock.patch.object(scanner, 'generate_recommendations', return_value=[]) as gen, \
+             mock.patch.object(scanner.recommendations_repository, 'save_recommendations', return_value={"items": []}):
+            scanner.run_recommendations()
+
+        # Verify recommendations received only available items
+        if gen.called:
+            items_passed = gen.call_args[0][0] if gen.call_args[0] else gen.call_args[1].get('items', [])
+            if isinstance(items_passed, list):
+                ids = {i.get("id") for i in items_passed if isinstance(i, dict)}
+                self.assertNotIn("movie:films:Gone", ids, "Absent items must not reach recommendation engine")
+
+
+class NoDeletionInScanPathTest(unittest.TestCase):
+    def test_scan_source_has_no_global_delete_from_media(self):
+        """Scan code paths (excluding reset) must never do DELETE FROM media."""
+        import ast, pathlib
+
+        scanner_path = pathlib.Path(__file__).resolve().parents[3] / "backend" / "scanner.py"
+        source = scanner_path.read_text(encoding="utf-8")
+
+        # Only run_reset is allowed to DELETE FROM media — check it's scoped to that function
+        lines = source.splitlines()
+        in_reset = False
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith('def run_reset'):
+                in_reset = True
+            elif stripped.startswith('def ') and in_reset:
+                in_reset = False
+            # DELETE FROM media in any non-reset function is forbidden
+            if 'DELETE FROM media"' in line or "DELETE FROM media'" in line:
+                self.assertTrue(in_reset,
+                    f"Line {i}: 'DELETE FROM media' found outside run_reset(): {line.strip()}")
+
+
+import unittest.mock  # noqa: E402 — needed for mock.patch
+
 if __name__ == "__main__":
     unittest.main()

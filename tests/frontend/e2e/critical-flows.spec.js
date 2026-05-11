@@ -263,16 +263,9 @@ test('settings do not expose or persist library root path', async ({ page }) => 
   expect(capturedPayload.library_path).toBeUndefined();
 });
 
-test('inventory toggle is in settings and persists via /api/config', async ({ page }) => {
-  let capturedPayload = null;
-
+test('inventory toggle is removed from settings (v0.5.1)', async ({ page }) => {
   await page.route('**/api/config', async (route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({ json: configuredPayload() });
-      return;
-    }
-    capturedPayload = JSON.parse(route.request().postData() || '{}');
-    await route.fulfill({ json: { ok: true } });
+    await route.fulfill({ json: configuredPayload() });
   });
   await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
@@ -286,21 +279,8 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   await page.locator('.stab[data-stab="stab-system"]').click();
   await expect(page.locator('#stab-system')).toBeVisible();
 
-  const inventoryToggle = page.locator('#cfgInventoryEnabled');
-  await expect(inventoryToggle).toBeAttached();
-  await expect(inventoryToggle).not.toBeChecked();
-
-  await page.evaluate(() => {
-    const el = document.getElementById('cfgInventoryEnabled');
-    if (!el) return;
-    el.checked = true;
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-  await page.click('#settingsSaveBtn');
-
-  await expect.poll(() => capturedPayload).not.toBeNull();
-  expect(capturedPayload.system.inventory_enabled).toBe(true);
-  expect(capturedPayload.library_path).toBeUndefined();
+  // Inventory toggle must be gone — superseded by media.is_available tracking
+  await expect(page.locator('#cfgInventoryEnabled')).not.toBeAttached();
 });
 
 test('folder active toggle persists using enabled without visible persistence', async ({ page }) => {

@@ -2963,8 +2963,8 @@ def scan_media_item(
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing SQLite library item (may be empty dict).
-    `id` is computed using the same helper as inventory so records share
-    identical stable IDs.
+    `id` is computed as `{media_type}:{category}:{folder_name}` — stable across
+    rescans regardless of filename changes.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
@@ -3046,7 +3046,7 @@ def scan_media_item(
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
-        # id must be first — identical to inventory ids for cross-table matching
+        # id first — stable key shared across media, media_probe_cache, recommendations
         "id":                lib_id,
         "path":              item_path,
         "title":             title,
@@ -3178,7 +3178,6 @@ def run_quick(only_category: str | None = None) -> None:
             else:
                 log.warning("%s No folder configured with type 'movie' or 'tv'", _phase_prefix("1"))
         else:
-            # Folders exist but all are disabled — update inventory to mark them missing
             log.warning("%s All configured folders are disabled — skipping phase", _phase_prefix("1"))
         return
 
@@ -3218,7 +3217,7 @@ def run_quick(only_category: str | None = None) -> None:
             # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
-            # scan_media_item computes id = _inventory_item_id(...) for inventory joins
+            # scan_media_item computes stable media_id via _inventory_item_id
             item = scan_media_item(
                 media_dir,
                 root,
