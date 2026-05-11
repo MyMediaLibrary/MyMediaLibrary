@@ -97,7 +97,7 @@ def export_library(conn: sqlite3.Connection, availability: str = "available") ->
         where = " WHERE is_available = 0"
     else:
         where = ""
-    # For available-only with no filter, check if we have a snapshot first
+    # For available-only with non-empty media, check if we have a snapshot first
     if availability == "available":
         document = _load_document_snapshot(conn)
         if document is not None:

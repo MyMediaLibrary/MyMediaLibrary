@@ -2111,7 +2111,9 @@ def _list_video_files(path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def load_existing(output_path: str) -> dict:
-    data = load_library_document_non_blocking(output_path)
+    # Use availability='all' so absent items (is_available=0) are included as prev data.
+    # This preserves quality/enrichment even for items temporarily off-disk.
+    data = load_library_document_non_blocking(output_path, availability="all")
     if not isinstance(data, dict):
         return {}
     try:
@@ -3241,13 +3243,13 @@ def run_quick(only_category: str | None = None) -> None:
                 scanned_ids.add(item["id"])
 
         count = len(items) - cat_items_before
-        # Incremental write after each folder
-        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
         log.info(f'{_phase_prefix("1")} Folder [{cat["folder"]}] completed in {time.monotonic() - cat_started_at:.1f}s — {count} item(s)')
 
     # When filtering by category, preserve items from other categories
     if only_category:
-        preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
+        # Preserve items from OTHER categories only — same-category absent items are
+        # handled by mark_media_unavailable and must not be upserted with stale state.
+        preserved = [i for i in existing.values() if i.get("category") != only_category]
         log.info(f"{_phase_prefix('1')} Preserving {len(preserved)} item(s) from other categories")
         for i in preserved:
             # Ensure preserved items use the string id format (may be an old integer id)
@@ -3256,15 +3258,14 @@ def run_quick(only_category: str | None = None) -> None:
             i["id"] = _inventory_item_id(i_media_type, i.get("category", ""), i_folder)
         items = items + preserved
 
-    # Only_category: final write is required to include preserved items from other categories.
-    # Whole-library pipeline: the last per-folder incremental write already captured all items — skip.
-    if only_category:
-        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
-
     if media_repository is not None:
         marked = media_repository.mark_media_unavailable(OUTPUT_PATH, scanned_ids, only_category)
         if marked:
             log.info(f"{_phase_prefix('1')} Marked {marked} media entry(ies) unavailable")
+
+    # Write snapshot once, after all folders and mark_unavailable.
+    # For only_category: items already merged with preserved items from other categories above.
+    _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
     size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
     size_str = f"{size_mb:.1f} MB"
