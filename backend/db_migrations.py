@@ -59,6 +59,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 7:
             _apply_v7_drop_inventory(conn)
             current_version = 7
+        if current_version < 8:
+            _apply_v8_unified_providers(conn)
+            current_version = 8
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -121,6 +124,97 @@ def _apply_v7_drop_inventory(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (7,),
+    )
+
+
+def _apply_v8_unified_providers(conn: sqlite3.Connection) -> None:
+    """Consolidate provider_mappings + provider_logos into the unified providers table."""
+
+    # Step 1: rename providers.name → providers.raw_name on existing DBs
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(providers)").fetchall()}
+    if "name" in cols and "raw_name" not in cols:
+        conn.execute("ALTER TABLE providers RENAME COLUMN name TO raw_name")
+
+    # Step 2: add new columns (idempotent — fresh DBs already have them)
+    for sql in (
+        "ALTER TABLE providers ADD COLUMN mapped_name TEXT",
+        "ALTER TABLE providers ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE providers ADD COLUMN logo_path TEXT",
+        "ALTER TABLE providers ADD COLUMN logo_url TEXT",
+    ):
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # Step 3: rebuild index under the new column name
+    conn.execute("DROP INDEX IF EXISTS idx_providers_name")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_raw_name ON providers(raw_name)")
+
+    # Step 4: merge provider_mappings into providers (if old table still exists)
+    pm_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_mappings'"
+    ).fetchone()
+    if pm_exists:
+        conn.execute("""
+            INSERT OR IGNORE INTO providers(raw_name, mapped_name, is_ignored)
+            SELECT raw_name, mapped_name, is_ignored FROM provider_mappings
+        """)
+        conn.execute("""
+            UPDATE providers
+            SET mapped_name = (
+                    SELECT mapped_name FROM provider_mappings WHERE raw_name = providers.raw_name
+                ),
+                is_ignored  = (
+                    SELECT is_ignored  FROM provider_mappings WHERE raw_name = providers.raw_name
+                ),
+                updated_at  = CURRENT_TIMESTAMP
+            WHERE EXISTS (
+                SELECT 1 FROM provider_mappings WHERE raw_name = providers.raw_name
+            )
+        """)
+        conn.execute("DROP TABLE IF EXISTS provider_mappings")
+
+    # Step 5: merge provider_logos into providers, matched by mapped_name then raw_name
+    pl_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_logos'"
+    ).fetchone()
+    if pl_exists:
+        # Primary match: logo provider_name == providers.mapped_name
+        conn.execute("""
+            UPDATE providers
+            SET logo_path  = (
+                    SELECT logo_path FROM provider_logos WHERE provider_name = providers.mapped_name
+                ),
+                logo_url   = (
+                    SELECT logo_url  FROM provider_logos WHERE provider_name = providers.mapped_name
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE providers.mapped_name IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM provider_logos WHERE provider_name = providers.mapped_name
+              )
+        """)
+        # Fallback: logo provider_name == providers.raw_name (no mapped_name)
+        conn.execute("""
+            UPDATE providers
+            SET logo_path  = (
+                    SELECT logo_path FROM provider_logos WHERE provider_name = providers.raw_name
+                ),
+                logo_url   = (
+                    SELECT logo_url  FROM provider_logos WHERE provider_name = providers.raw_name
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE providers.logo_path IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM provider_logos WHERE provider_name = providers.raw_name
+              )
+        """)
+        conn.execute("DROP TABLE IF EXISTS provider_logos")
+
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (8,),
     )
 
 

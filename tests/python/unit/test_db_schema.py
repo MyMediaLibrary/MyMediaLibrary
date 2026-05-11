@@ -310,5 +310,168 @@ class DatabaseSchemaTest(unittest.TestCase):
             self.assertEqual(after, db_schema.SCHEMA_VERSION)
 
 
+class V8UnifiedProvidersTest(unittest.TestCase):
+    """Tests for v8 migration: 3-table provider structure → unified providers table."""
+
+    def _make_pre_v8_db(self, path: pathlib.Path) -> sqlite3.Connection:
+        """Create a minimal DB at schema v7 (old 3-table provider structure)."""
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        # Minimal tables needed for v8 migration to run
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+        conn.execute("""
+            CREATE TABLE providers (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE provider_mappings (
+                id INTEGER PRIMARY KEY,
+                raw_name TEXT NOT NULL UNIQUE,
+                mapped_name TEXT,
+                is_ignored INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE provider_logos (
+                id INTEGER PRIMARY KEY,
+                provider_name TEXT NOT NULL UNIQUE,
+                logo_path TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for v in range(1, 8):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 7")
+        conn.commit()
+        return conn
+
+    def test_v8_migration_preserves_provider_with_mapping(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            conn.execute(
+                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                ("Netflix", "Netflix", 0),
+            )
+            conn.commit()
+
+            db_migrations.migrate(conn)
+
+            row = conn.execute("SELECT mapped_name, is_ignored FROM providers WHERE raw_name = ?", ("Netflix",)).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["mapped_name"], "Netflix")
+            self.assertEqual(row["is_ignored"], 0)
+
+    def test_v8_migration_preserves_ignored_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            conn.execute(
+                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                ("Canal VOD", None, 1),
+            )
+            conn.commit()
+
+            db_migrations.migrate(conn)
+
+            row = conn.execute("SELECT mapped_name, is_ignored FROM providers WHERE raw_name = ?", ("Canal VOD",)).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertIsNone(row["mapped_name"])
+            self.assertEqual(row["is_ignored"], 1)
+
+    def test_v8_migration_merges_logo_by_mapped_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            conn.execute(
+                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                ("Disney Plus", "Disney+", 0),
+            )
+            conn.execute(
+                "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                ("Disney+", "disney.webp"),
+            )
+            conn.commit()
+
+            db_migrations.migrate(conn)
+
+            row = conn.execute("SELECT mapped_name, logo_path FROM providers WHERE raw_name = ?", ("Disney Plus",)).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["mapped_name"], "Disney+")
+            self.assertEqual(row["logo_path"], "disney.webp")
+
+    def test_v8_migration_preserves_provider_without_mapping(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            # Provider in providers table (from scan) but no explicit mapping
+            conn.execute("INSERT INTO providers(name) VALUES (?)", ("Prime Video",))
+            conn.commit()
+
+            db_migrations.migrate(conn)
+
+            row = conn.execute("SELECT raw_name, mapped_name, is_ignored FROM providers WHERE raw_name = ?", ("Prime Video",)).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertIsNone(row["mapped_name"])
+            self.assertEqual(row["is_ignored"], 0)
+
+    def test_v8_migration_new_provider_detectable_after_migration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+            conn.execute(
+                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                ("Netflix", "Netflix", 0),
+            )
+            conn.commit()
+            db_migrations.migrate(conn)
+
+            # Simulate scan detecting a new provider post-migration
+            conn.execute("INSERT OR IGNORE INTO providers(raw_name) VALUES (?)", ("Crunchyroll",))
+            conn.commit()
+
+            rows = conn.execute("SELECT raw_name FROM providers ORDER BY raw_name").fetchall()
+            conn.close()
+            names = [r["raw_name"] for r in rows]
+            self.assertIn("Netflix", names)
+            self.assertIn("Crunchyroll", names)
+
+    def test_v8_migration_drops_old_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+
+            db_migrations.migrate(conn)
+
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+            self.assertNotIn("provider_mappings", tables)
+            self.assertNotIn("provider_logos", tables)
+
+    def test_v8_migration_registers_schema_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = self._make_pre_v8_db(path)
+
+            db_migrations.migrate(conn)
+
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
 if __name__ == "__main__":
     unittest.main()

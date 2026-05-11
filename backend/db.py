@@ -147,8 +147,7 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
         "app_config",
         "score_settings",
         "schema_migrations",
-        "provider_mappings",
-        "provider_logos",
+        "providers",
         "recommendation_rules",
     }
     rows = conn.execute(
@@ -164,8 +163,7 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
     if app_config_count <= 0 or score_count <= 0:
         return False
     bundled_defaults = (
-        (runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON, "provider_mappings"),
-        (runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON, "provider_logos"),
+        (runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON, "providers"),
         (runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, "recommendation_rules"),
     )
     for default_path, table_name in bundled_defaults:

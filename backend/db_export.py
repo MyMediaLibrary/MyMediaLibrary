@@ -8,15 +8,26 @@ from typing import Any
 
 
 def export_providers_logo(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return {display_name: logo_path} keyed by mapped_name (or raw_name if no mapping)."""
     rows = conn.execute(
-        "SELECT provider_name, logo_path FROM provider_logos ORDER BY provider_name"
+        """
+        SELECT COALESCE(mapped_name, raw_name) AS display_name, logo_path
+        FROM providers
+        WHERE logo_path IS NOT NULL
+        ORDER BY display_name
+        """
     ).fetchall()
-    return {row["provider_name"]: row["logo_path"] for row in rows if row["logo_path"] is not None}
+    return {row["display_name"]: row["logo_path"] for row in rows}
 
 
 def export_providers_mapping(conn: sqlite3.Connection) -> dict[str, str | None]:
+    """Return {raw_name: mapped_name|None} for explicitly mapped/ignored providers only."""
     rows = conn.execute(
-        "SELECT raw_name, mapped_name, is_ignored FROM provider_mappings ORDER BY raw_name"
+        """
+        SELECT raw_name, mapped_name, is_ignored FROM providers
+        WHERE mapped_name IS NOT NULL OR is_ignored = 1
+        ORDER BY raw_name
+        """
     ).fetchall()
     return {
         row["raw_name"]: None if row["is_ignored"] else row["mapped_name"]

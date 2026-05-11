@@ -442,7 +442,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO provider_mappings(raw_name, mapped_name) VALUES (?, ?)",
+                    "INSERT INTO providers(raw_name, mapped_name) VALUES (?, ?)",
                     ("Netflix", "db-value"),
                 )
                 conn.commit()
@@ -466,7 +466,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(mapping, {"Ignored": None, "Netflix": "Netflix"})
             conn = db.initialize_database(db_path)
             try:
-                count = conn.execute("SELECT COUNT(*) FROM provider_mappings").fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1").fetchone()[0]
             finally:
                 conn.close()
             self.assertEqual(count, 2)
@@ -483,7 +483,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             with self.assertRaises(Exception):
                 providers_repository.load_provider_mappings(json_path, blocked_parent / "mml.db")
 
-    def test_provider_mapping_save_updates_sqlite_and_json(self):
+    def test_provider_mapping_save_updates_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -491,11 +491,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             providers_repository.save_provider_mappings({"Netflix": "Netflix", "Raw": None}, json_path, db_path)
 
-            self.assertEqual(json.loads(json_path.read_text(encoding="utf-8")), {"Netflix": "Netflix", "Raw": None})
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute(
-                    "SELECT raw_name, mapped_name, is_ignored FROM provider_mappings ORDER BY raw_name"
+                    "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
                 ).fetchall()
             finally:
                 conn.close()
@@ -515,7 +514,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                    "INSERT INTO providers(raw_name, logo_path) VALUES (?, ?)",
                     ("Netflix", "db.webp"),
                 )
                 conn.commit()

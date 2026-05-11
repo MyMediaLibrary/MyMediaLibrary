@@ -61,7 +61,7 @@ class DatabaseImportTest(unittest.TestCase):
 
             inserted = db_import.import_providers_mapping(conn, path)
             rows = conn.execute(
-                "SELECT raw_name, mapped_name, is_ignored FROM provider_mappings ORDER BY raw_name"
+                "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
             ).fetchall()
             conn.close()
 
@@ -224,7 +224,7 @@ class DatabaseImportTest(unittest.TestCase):
 
             first = db_import.import_providers_logo(conn, path)
             second = db_import.import_providers_logo(conn, path)
-            count = conn.execute("SELECT COUNT(*) FROM provider_logos").fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM providers WHERE logo_path IS NOT NULL").fetchone()[0]
             conn.close()
 
             self.assertEqual(first, 1)
@@ -564,14 +564,14 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertFalse(paths.LIBRARY_PROBE_JSON.exists())
             conn.close()
 
-    def test_startup_migration_keeps_json_when_validation_fails(self):
+    def test_startup_migration_with_preexisting_logos_in_db(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = self.make_paths(root)
             self.write_json(paths.PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
             conn.execute(
-                "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                "INSERT INTO providers(raw_name, logo_path) VALUES (?, ?)",
                 ("Disney+", "disney.webp"),
             )
             conn.commit()
@@ -579,8 +579,9 @@ class DatabaseImportTest(unittest.TestCase):
             results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
 
             logo_result = next(result for result in results if result.name == "providers_logo")
-            self.assertEqual(logo_result.status, "warning")
-            self.assertTrue(paths.PROVIDERS_LOGO_JSON.exists())
+            # db_count >= source_count is valid for logos (pre-existing logos are fine)
+            self.assertEqual(logo_result.status, "ok")
+            self.assertFalse(paths.PROVIDERS_LOGO_JSON.exists())
             self.assertEqual(logo_result.source_count, 1)
             self.assertEqual(logo_result.db_count, 2)
             conn.close()
@@ -633,8 +634,8 @@ class DatabaseImportTest(unittest.TestCase):
             rows = db_import.seed_bundled_defaults(conn, paths=paths)
 
             self.assertGreaterEqual(rows["config"], 1)
-            self.assertEqual(rows["provider_mappings"], 1)
-            self.assertEqual(rows["provider_logos"], 1)
+            self.assertEqual(rows["providers_mapping"], 1)
+            self.assertEqual(rows["providers_logo"], 1)
             self.assertEqual(rows["recommendation_rules"], 1)
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
@@ -649,7 +650,7 @@ class DatabaseImportTest(unittest.TestCase):
             self.write_json(paths.DEFAULT_PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix", "Disney+": "Disney+"})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
             conn.execute(
-                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                "INSERT INTO providers(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
                 ("Netflix", "NFX-custom", 0),
             )
             conn.commit()
@@ -657,11 +658,11 @@ class DatabaseImportTest(unittest.TestCase):
             first = db_import.seed_bundled_defaults(conn, paths=paths)
             second = db_import.seed_bundled_defaults(conn, paths=paths)
             rows = conn.execute(
-                "SELECT raw_name, mapped_name FROM provider_mappings ORDER BY raw_name"
+                "SELECT raw_name, mapped_name FROM providers ORDER BY raw_name"
             ).fetchall()
 
-            self.assertEqual(first["provider_mappings"], 1)
-            self.assertEqual(second["provider_mappings"], 0)
+            self.assertEqual(first["providers_mapping"], 1)
+            self.assertEqual(second["providers_mapping"], 0)
             self.assertEqual(
                 [(row["raw_name"], row["mapped_name"]) for row in rows],
                 [("Disney+", "Disney+"), ("Netflix", "NFX-custom")],
@@ -747,7 +748,7 @@ class DatabaseImportTest(unittest.TestCase):
             # Providers and rules migrated and removed
             self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_RULES_JSON.exists())
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM provider_mappings").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1").fetchone()[0], 0)
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0], 0)
 
             # Legacy JSON detection now returns False (files removed)

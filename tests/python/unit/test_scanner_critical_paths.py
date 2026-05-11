@@ -579,13 +579,23 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
                  patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
                 added = scanner._upsert_runtime_provider_mapping(items)
             self.assertEqual(added, 2)
+            # Provider mappings are now stored in SQLite; check DB state
+            import db as _db
+            db_path = pathlib.Path(tmp) / "data" / "mymedialibrary.db"
+            conn = _db.initialize_database(db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
+                ).fetchall()
+            finally:
+                conn.close()
             self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
+                {row["raw_name"]: None if row["is_ignored"] else row["mapped_name"] for row in rows},
                 {
-                    "Netflix": "Netflix",
-                    "Disney+": "Disney+",
-                    "Premiere Max": None,
                     "Canal VOD": None,
+                    "Disney+": "Disney+",
+                    "Netflix": "Netflix",
+                    "Premiere Max": None,
                 },
             )
 

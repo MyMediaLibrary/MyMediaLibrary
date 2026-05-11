@@ -242,10 +242,10 @@ def _sync_media_providers(conn: sqlite3.Connection, media_id: str, providers: An
     conn.execute("DELETE FROM media_providers WHERE media_id = ?", (media_id,))
     for name in names:
         conn.execute(
-            "INSERT OR IGNORE INTO providers(name) VALUES (?)",
+            "INSERT OR IGNORE INTO providers(raw_name) VALUES (?)",
             (name,),
         )
-        provider_id = conn.execute("SELECT id FROM providers WHERE name = ?", (name,)).fetchone()
+        provider_id = conn.execute("SELECT id FROM providers WHERE raw_name = ?", (name,)).fetchone()
         if provider_id is not None:
             conn.execute(
                 "INSERT OR IGNORE INTO media_providers(media_id, provider_id) VALUES (?, ?)",

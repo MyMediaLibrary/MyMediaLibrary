@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 CREATE_TABLES_SQL = (
@@ -49,24 +49,6 @@ CREATE_TABLES_SQL = (
         rule_key TEXT NOT NULL UNIQUE,
         rule_json TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS provider_mappings (
-        id INTEGER PRIMARY KEY,
-        raw_name TEXT NOT NULL UNIQUE,
-        mapped_name TEXT,
-        is_ignored INTEGER NOT NULL DEFAULT 0 CHECK (is_ignored IN (0, 1)),
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS provider_logos (
-        id INTEGER PRIMARY KEY,
-        provider_name TEXT NOT NULL UNIQUE,
-        logo_path TEXT,
-        logo_url TEXT,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -234,7 +216,11 @@ CREATE_TABLES_SQL = (
     """
     CREATE TABLE IF NOT EXISTS providers (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        raw_name TEXT NOT NULL UNIQUE,
+        mapped_name TEXT,
+        is_ignored INTEGER NOT NULL DEFAULT 0,
+        logo_path TEXT,
+        logo_url TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -335,7 +321,7 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_files_season_id ON files(season_id)",
     "CREATE INDEX IF NOT EXISTS idx_files_episode_id ON files(episode_id)",
     "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
-    "CREATE INDEX IF NOT EXISTS idx_providers_name ON providers(name)",
+    "CREATE INDEX IF NOT EXISTS idx_providers_raw_name ON providers(raw_name)",
     "CREATE INDEX IF NOT EXISTS idx_streams_file_id ON streams(file_id)",
     "CREATE INDEX IF NOT EXISTS idx_streams_file_type ON streams(file_id, stream_type)",
     "CREATE INDEX IF NOT EXISTS idx_media_providers_media_id ON media_providers(media_id)",
@@ -363,8 +349,6 @@ EXPECTED_TABLES = frozenset(
         "scan_settings",
         "score_settings",
         "recommendation_rules",
-        "provider_mappings",
-        "provider_logos",
         "media",
         "seasons",
         "episodes",

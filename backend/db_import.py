@@ -84,7 +84,7 @@ def import_runtime_json_files(
     try:
         report = ImportReport()
         import_providers_logo(conn, paths.PROVIDERS_LOGO_JSON, report)
-        import_providers_mapping(conn, paths.PROVIDERS_MAPPING_JSON, report)
+        import_providers_mapping(conn, paths.PROVIDERS_MAPPING_JSON, report, overwrite=True)
         import_recommendation_rules(conn, paths.RECOMMENDATIONS_RULES_JSON, report)
         import_config(conn, paths.CONFIG_JSON, report)
         import_media_probe_cache(conn, paths.MEDIA_PROBE_CACHE_JSON, report)
@@ -145,15 +145,16 @@ def seed_bundled_defaults(
     active_logger = logger or log
     seeds = {
         "config": (Path(paths.DEFAULT_CONFIG_JSON), import_config, "config defaults"),
-        "provider_mappings": (
+        # Mapping first so logos can match by mapped_name
+        "providers_mapping": (
             Path(paths.DEFAULT_PROVIDERS_MAPPING_JSON),
             import_providers_mapping,
-            "provider_mappings",
+            "providers (mapping)",
         ),
-        "provider_logos": (
+        "providers_logo": (
             Path(paths.DEFAULT_PROVIDERS_LOGO_JSON),
             import_providers_logo,
-            "provider_logos",
+            "providers (logos)",
         ),
         "recommendation_rules": (
             Path(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON),
@@ -211,15 +212,21 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "name": "providers_mapping",
             "path": Path(paths.PROVIDERS_MAPPING_JSON),
             "source_count": _count_mapping_source,
-            "db_count": lambda conn: _table_count(conn, "provider_mappings"),
-            "import": import_providers_mapping,
+            "db_count": lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1"
+            ).fetchone()[0],
+            "import": lambda conn, path: import_providers_mapping(conn, path, overwrite=True),
         },
         {
             "name": "providers_logo",
             "path": Path(paths.PROVIDERS_LOGO_JSON),
             "source_count": _count_mapping_source,
-            "db_count": lambda conn: _table_count(conn, "provider_logos"),
+            "db_count": lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM providers WHERE logo_path IS NOT NULL"
+            ).fetchone()[0],
             "import": import_providers_logo,
+            # One logo can match multiple providers (same mapped_name) → db_count >= source_count
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "recommendation_rules",
@@ -390,6 +397,11 @@ def _remove_obsolete_runtime_files(paths, active_logger: logging.Logger) -> None
 
 
 def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
+    """Import {display_name: logo_path} into the unified providers table.
+
+    Logo key is matched to mapped_name first, then to raw_name as fallback.
+    If no match exists, a new provider row is created with raw_name = key.
+    """
     payload = _read_json(path, "providers_logo", report)
     if not isinstance(payload, dict):
         return 0
@@ -399,19 +411,52 @@ def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: Im
             if not isinstance(provider_name, str) or not provider_name:
                 continue
             logo_path = logo if isinstance(logo, str) else None
+            if not logo_path:
+                continue
+            # 1. Update by mapped_name (only when logo actually changes)
+            updated = conn.execute(
+                "UPDATE providers SET logo_path = ?, updated_at = CURRENT_TIMESTAMP"
+                " WHERE mapped_name = ? AND logo_path IS NOT ?",
+                (logo_path, provider_name, logo_path),
+            ).rowcount
+            if updated > 0:
+                rows += updated
+                continue
+            if conn.execute("SELECT 1 FROM providers WHERE mapped_name = ?", (provider_name,)).fetchone():
+                continue
+            # 2. Update by raw_name (only when logo actually changes)
+            updated = conn.execute(
+                "UPDATE providers SET logo_path = ?, updated_at = CURRENT_TIMESTAMP"
+                " WHERE raw_name = ? AND logo_path IS NOT ?",
+                (logo_path, provider_name, logo_path),
+            ).rowcount
+            if updated > 0:
+                rows += updated
+                continue
+            if conn.execute("SELECT 1 FROM providers WHERE raw_name = ?", (provider_name,)).fetchone():
+                continue
+            # 3. Insert new provider with just raw_name + logo
             rows += _insert_count(
                 conn,
-                """
-                INSERT OR IGNORE INTO provider_logos(provider_name, logo_path)
-                VALUES (?, ?)
-                """,
+                "INSERT OR IGNORE INTO providers(raw_name, logo_path) VALUES (?, ?)",
                 (provider_name, logo_path),
             )
     _record(report, "providers_logo", rows)
     return rows
 
 
-def import_providers_mapping(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
+def import_providers_mapping(
+    conn: sqlite3.Connection,
+    path: str | Path,
+    report: ImportReport | None = None,
+    *,
+    overwrite: bool = False,
+) -> int:
+    """Import {raw_name: mapped_name|null} into the unified providers table.
+
+    When overwrite=False (default, used by seed), existing rows are preserved.
+    When overwrite=True (used by user-facing save), existing mappings are updated.
+    """
     payload = _read_json(path, "providers_mapping", report)
     if not isinstance(payload, dict):
         return 0
@@ -422,14 +467,24 @@ def import_providers_mapping(conn: sqlite3.Connection, path: str | Path, report:
                 continue
             ignored = mapped_name is None
             mapped = mapped_name if isinstance(mapped_name, str) else None
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO provider_mappings(raw_name, mapped_name, is_ignored)
-                VALUES (?, ?, ?)
-                """,
-                (raw_name, mapped, 1 if ignored else 0),
-            )
+            if overwrite:
+                rows += conn.execute(
+                    """
+                    INSERT INTO providers(raw_name, mapped_name, is_ignored)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(raw_name) DO UPDATE SET
+                        mapped_name = excluded.mapped_name,
+                        is_ignored  = excluded.is_ignored,
+                        updated_at  = CURRENT_TIMESTAMP
+                    """,
+                    (raw_name, mapped, 1 if ignored else 0),
+                ).rowcount
+            else:
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO providers(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                    (raw_name, mapped, 1 if ignored else 0),
+                )
     _record(report, "providers_mapping", rows)
     return rows
 
