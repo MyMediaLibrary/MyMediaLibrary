@@ -2165,10 +2165,10 @@ def _write_json_file_atomic(data: dict, output_path: str | Path) -> None:
         raise
 
 
-def load_library_document_non_blocking(path: str) -> dict | None:
+def load_library_document_non_blocking(path: str, availability: str = "available") -> dict | None:
     """Load library document from SQLite."""
     if media_repository is not None:
-        document = media_repository.load_library(path)
+        document = media_repository.load_library(path, availability=availability)
         if isinstance(document, dict):
             items = document.get("items", [])
             if isinstance(items, list):
@@ -3658,7 +3658,7 @@ def run_recommendations() -> int:
         return 0
 
     _log_phase_start("5")
-    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH, availability="available")
     if not isinstance(lib_data, dict):
         log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}")
         save_recommendations_document_non_blocking([], RECOMMENDATIONS_OUTPUT_PATH)
@@ -4524,10 +4524,7 @@ def _recommendations_api_payload(cfg: dict | None = None) -> dict:
     return payload
 
 
-_library_api_cache: dict[str, object] = {
-    "signature": None,
-    "payload": None,
-}
+_library_api_cache: dict[tuple, dict] = {}
 
 
 def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
@@ -4548,24 +4545,25 @@ def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
     return tuple(signature)
 
 
-def _library_api_payload() -> dict:
+def _library_api_payload(availability: str = "available") -> dict:
     started = time.perf_counter()
     cache_enabled = Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
     signature = _runtime_db_signature()
-    if cache_enabled and _library_api_cache.get("signature") == signature and isinstance(_library_api_cache.get("payload"), dict):
-        payload = _library_api_cache["payload"]
+    cache_key = (signature, availability)
+    if cache_enabled and cache_key in _library_api_cache:
+        payload = _library_api_cache[cache_key]
         items = payload.get("items") if isinstance(payload.get("items"), list) else []
-        log.debug("[perf] /api/library cache=hit items=%s duration_ms=%.1f", len(items), (time.perf_counter() - started) * 1000)
+        log.debug("[perf] /api/library cache=hit availability=%s items=%s duration_ms=%.1f", availability, len(items), (time.perf_counter() - started) * 1000)
         return payload
 
     load_started = time.perf_counter()
-    payload = load_library_document_non_blocking(OUTPUT_PATH)
+    payload = load_library_document_non_blocking(OUTPUT_PATH, availability=availability)
     load_ms = (time.perf_counter() - load_started) * 1000
     if not isinstance(payload, dict):
         payload = {"items": [], "categories": [], "total_items": 0}
         if cache_enabled:
-            _library_api_cache.update({"signature": signature, "payload": payload})
-        log.debug("[perf] /api/library cache=miss sql_ms=%.1f items=0 duration_ms=%.1f", load_ms, (time.perf_counter() - started) * 1000)
+            _library_api_cache[cache_key] = payload
+        log.debug("[perf] /api/library cache=miss availability=%s sql_ms=%.1f items=0 duration_ms=%.1f", availability, load_ms, (time.perf_counter() - started) * 1000)
         return payload
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
     categories = payload.get("categories")
@@ -4579,9 +4577,10 @@ def _library_api_payload() -> dict:
     payload["categories"] = categories
     payload["total_items"] = len(items)
     if cache_enabled:
-        _library_api_cache.update({"signature": signature, "payload": payload})
+        _library_api_cache[cache_key] = payload
     log.debug(
-        "[perf] /api/library cache=miss sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        "[perf] /api/library cache=miss availability=%s sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        availability,
         load_ms,
         len(items),
         len(categories),
@@ -4774,7 +4773,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             ok = library_document_exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {"status": "ok" if ok else "degraded"})
         elif path == "/api/library":
-            self._json(200, _library_api_payload())
+            _avail_raw = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("availability", ["available"])[0]
+            _availability = _avail_raw if _avail_raw in ("available", "absent", "all") else "available"
+            self._json(200, _library_api_payload(availability=_availability))
         elif path == "/api/config":
             cfg = load_config()
             cfg, changed = _ensure_needs_onboarding(cfg)

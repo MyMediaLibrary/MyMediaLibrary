@@ -22,25 +22,32 @@ log = logging.getLogger(__name__)
 _LIBRARY_DOCUMENT_KEY = "runtime_library_document"
 
 
-def load_library(json_path: str | Path, db_path: str | Path | None = None) -> dict[str, Any] | None:
+def load_library(json_path: str | Path, db_path: str | Path | None = None, availability: str = "available") -> dict[str, Any] | None:
     """Load the media library from SQLite only."""
 
     conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         if _table_is_empty(conn, "media"):
-            document = _load_document_snapshot(conn)
-            if document is not None:
-                return document
+            # For available-only (default), we can use the snapshot
+            if availability == "available":
+                document = _load_document_snapshot(conn)
+                if document is not None:
+                    return document
             if not _is_canonical_json_path(json_path):
                 payload = _read_library_json(json_path)
                 if payload is not None:
                     _save_library_payload(conn, payload, replace=False)
-                    return _load_document_snapshot(conn)
+                    if availability == "available":
+                        return _load_document_snapshot(conn)
+                    return export_library(conn, availability=availability)
             return None
+        # For non-default availability, bypass snapshot and query DB directly
+        if availability != "available":
+            return export_library(conn, availability=availability)
         document = _load_document_snapshot(conn)
         if document is not None:
             return document
-        return export_library(conn)
+        return export_library(conn, availability=availability)
     finally:
         conn.close()
 
@@ -83,13 +90,25 @@ def import_library_if_empty(json_path: str | Path, db_path: str | Path | None = 
         conn.close()
 
 
-def export_library(conn: sqlite3.Connection) -> dict[str, Any]:
-    document = _load_document_snapshot(conn)
-    if document is not None:
-        return document
-    rows = conn.execute("SELECT data_json FROM media ORDER BY title, id").fetchall()
-    items = [_from_json(row["data_json"], {}) for row in rows]
-    items = [item for item in items if isinstance(item, dict)]
+def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:
+    if availability == "available":
+        where = " WHERE is_available = 1"
+    elif availability == "absent":
+        where = " WHERE is_available = 0"
+    else:
+        where = ""
+    # For available-only with no filter, check if we have a snapshot first
+    if availability == "available":
+        document = _load_document_snapshot(conn)
+        if document is not None:
+            return document
+    rows = conn.execute(f"SELECT data_json, is_available FROM media{where} ORDER BY title, id").fetchall()
+    items = []
+    for row in rows:
+        item = _from_json(row["data_json"], {})
+        if isinstance(item, dict):
+            item["is_available"] = bool(row["is_available"])
+            items.append(item)
     return _normalize_library_document({
         "scanned_at": None,
         "library_path": None,

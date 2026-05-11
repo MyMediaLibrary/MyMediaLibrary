@@ -63,9 +63,20 @@ def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
     return {"version": 1, "items": [_from_json(row["details_json"], {}) for row in rows]}
 
 
-def export_library(conn: sqlite3.Connection) -> dict[str, Any]:
-    rows = conn.execute("SELECT data_json FROM media ORDER BY title, id").fetchall()
-    items = [_from_json(row["data_json"], {}) for row in rows]
+def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:
+    if availability == "available":
+        where = " WHERE is_available = 1"
+    elif availability == "absent":
+        where = " WHERE is_available = 0"
+    else:
+        where = ""
+    rows = conn.execute(f"SELECT data_json, is_available FROM media{where} ORDER BY title, id").fetchall()
+    items = []
+    for row in rows:
+        item = _from_json(row["data_json"], {})
+        if isinstance(item, dict):
+            item["is_available"] = bool(row["is_available"])
+            items.append(item)
     return {"total_items": len(items), "items": items}
 
 

@@ -28,8 +28,6 @@
     "features_ffprobe_desc": "Fiabilise les métadonnées techniques directement depuis les fichiers médias.",
     "features_score_label": "Activer le score qualité",
     "features_score_desc": "Utilise la configuration par défaut du score pour calculer la qualité de vos médias.",
-    "features_inventory_label": "Activer l’inventaire brut",
-    "features_inventory_desc": "Génère un inventaire technique des fichiers détectés pour analyses avancées.",
     "features_recommendations_label": "Activer les recommandations",
     "features_recommendations_desc": "Génère des recommandations après le calcul du score qualité.",
     "features_enabled": "activé",
@@ -106,7 +104,11 @@
       "range_40_60": "40–60",
       "range_60_80": "60–80",
       "range_80_100": "80–100"
-    }
+    },
+    "availability": "Disponibilité",
+    "availability_available": "Disponibles",
+    "availability_absent": "Absents du disque",
+    "availability_all": "Tous"
   },
   "genres": {
     "Action": "Action",
@@ -309,8 +311,6 @@
       "version": "Version",
       "synopsis": "Synopsis au survol",
       "synopsis_hint": "Affiche le synopsis lors du survol d'une tuile",
-      "inventory_enabled": "Générer l'inventaire brut",
-      "inventory_enabled_hint": "Suit les médias présents et absents pendant les scans.",
       "media_probe_enabled": "Analyse technique ffprobe",
       "media_probe_enabled_hint": "Enrichit la bibliothèque avec les données techniques extraites par ffprobe.",
       "cron": "Scan automatique (cron)",
@@ -434,27 +434,27 @@
     "quality_score": "Score de qualité",
     "genres_chart_title": "Genres",
     "audio_channels_chart_title": "Channels audio",
-        "subtab_general": "Générales",
-        "subtab_technical": "Techniques",
-        "subtab_evolution": "Évolution",
-        "subtab_recommendations": "Recommandations",
-        "recommendations_priority_distribution": "Répartition par priorité",
-        "recommendations_type_distribution": "Répartition par type",
-        "recommendations_folder_distribution": "Répartition par dossier",
-        "recommendations_media_by_folder": "Médias avec recommandations par dossier",
-        "recommendations_per_media": "Nombre de recommandations par média",
-        "recommendations_score_distribution": "Distribution des scores",
-        "recommendations_space_size": "Taille concernée par les recos espace",
-        "recommendations_space_size_sub": "taille concernée",
-        "recommendations_per_media_0": "0 recommandation",
-        "recommendations_per_media_1": "1 recommandation",
-        "recommendations_per_media_2": "2 recommandations",
-        "recommendations_per_media_3plus": "3 recommandations",
-        "recommendations_reset_local": "Réinitialiser ces filtres",
-        "recommendations_empty": "Aucune donnée de recommandation pour les filtres actuels.",
-        "providers_by_group": "Fournisseurs par groupe",
-        "providers_by_category": "Fournisseurs par dossier"
-    },
+    "subtab_general": "Générales",
+    "subtab_technical": "Techniques",
+    "subtab_evolution": "Évolution",
+    "subtab_recommendations": "Recommandations",
+    "recommendations_priority_distribution": "Répartition par priorité",
+    "recommendations_type_distribution": "Répartition par type",
+    "recommendations_folder_distribution": "Répartition par dossier",
+    "recommendations_media_by_folder": "Médias avec recommandations par dossier",
+    "recommendations_per_media": "Nombre de recommandations par média",
+    "recommendations_score_distribution": "Distribution des scores",
+    "recommendations_space_size": "Taille concernée par les recos espace",
+    "recommendations_space_size_sub": "taille concernée",
+    "recommendations_per_media_0": "0 recommandation",
+    "recommendations_per_media_1": "1 recommandation",
+    "recommendations_per_media_2": "2 recommandations",
+    "recommendations_per_media_3plus": "3 recommandations",
+    "recommendations_reset_local": "Réinitialiser ces filtres",
+    "recommendations_empty": "Aucune donnée de recommandation pour les filtres actuels.",
+    "providers_by_group": "Fournisseurs par groupe",
+    "providers_by_category": "Fournisseurs par dossier"
+  },
   "recommendations": {
     "empty_run_scan": "Aucune recommandation disponible. Lancez un scan.",
     "empty_filters": "Aucune recommandation pour les filtres actuels.",
@@ -569,5 +569,8 @@
     "audio": "Audio",
     "languages": "Langues",
     "size": "Taille"
+  },
+  "badge": {
+    "absent_from_disk": "Absent du disque"
   }
 }

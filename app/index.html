@@ -137,6 +137,9 @@
       </div>
     </div>
 
+    <!-- AVAILABILITY FILTER -->
+    <div class="sidebar-section filter-section" id="availabilitySection"></div>
+
     <!-- CATEGORY / GROUP FILTERS -->
     <div class="sidebar-section" id="storageSection" style="display:none;width:100%"></div>
     <div class="sidebar-section" id="folderSection" style="display:none;width:100%"></div>
@@ -331,11 +334,6 @@
               <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
-            <div class="settings-row" style="margin-bottom:8px">
-              <label class="settings-label" data-i18n="settings.system.inventory_enabled">Générer l'inventaire brut</label>
-              <label class="toggle-switch"><input type="checkbox" id="cfgInventoryEnabled"/><span class="toggle-switch-slider"></span></label>
-            </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.inventory_enabled_hint">Suit les médias présents et absents pendant les scans.</div>
             <div class="settings-row" style="margin-bottom:8px">
               <label class="settings-label" data-i18n="settings.system.media_probe_enabled">Analyse technique ffprobe</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgMediaProbeEnabled"/><span class="toggle-switch-slider"></span></label>
@@ -553,6 +551,7 @@
           </div>
         </div>
       </div>
+      <div id="availabilitySectionMobile" class="filter-section" style="margin-bottom:8px"></div>
       <div id="storageSectionMobile" style="margin-bottom:8px"></div>
       <div id="folderSectionMobile" style="margin-bottom:8px"></div>
       <div id="genreSectionMobile" style="margin-bottom:8px"></div>

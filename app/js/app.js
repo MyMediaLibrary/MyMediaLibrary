@@ -493,6 +493,7 @@ let allItems=[], categories=[], groups=[];
   let audioChannelsExclude = false;
   let audioLanguageExclude = false;
   let folderExclude = false;
+  let activeAvailability = 'available'; // 'available' | 'absent' | 'all'
   let qualityExclude = false;
   let technicalFiltersOpenDesktop = false;
   let technicalFiltersOpenMobile = false;
@@ -637,6 +638,7 @@ let allItems=[], categories=[], groups=[];
         scoreMax,
         includeNoScore,
         audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, genreExclude, audioChannelsExclude, audioLanguageExclude, folderExclude, qualityExclude,
+        activeAvailability,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -693,6 +695,7 @@ let allItems=[], categories=[], groups=[];
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
       if (s.folderExclude !== undefined)         folderExclude         = !!s.folderExclude;
       if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
+      if (s.activeAvailability && ['available', 'absent', 'all'].includes(s.activeAvailability)) activeAvailability = s.activeAvailability;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -704,6 +707,7 @@ let allItems=[], categories=[], groups=[];
       }
       // Re-render all filter pills with correct active states (no saveState)
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -802,6 +806,7 @@ let allItems=[], categories=[], groups=[];
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.run_scan');
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -914,6 +919,7 @@ let allItems=[], categories=[], groups=[];
       applyRecommendationsFeatureVisibility();
       if (currentTab === 'recommendations') await ensureRecommendationsLoaded();
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -1151,7 +1157,7 @@ let allItems=[], categories=[], groups=[];
   async function _fetchLibraryWithRetry() {
     let parseError = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const libraryUrl = '/api/library?_=' + Date.now();
+      const libraryUrl = '/api/library?availability=' + activeAvailability + '&_=' + Date.now();
       const fetchStarted = perfNow();
       const r = await fetch(libraryUrl);
       if (r.status === 404) return { missing: true };
@@ -1767,6 +1773,37 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
+  function renderAvailabilityFilter() {
+    const opts = [
+      { value: 'available', labelKey: 'filters.availability_available' },
+      { value: 'absent',    labelKey: 'filters.availability_absent' },
+      { value: 'all',       labelKey: 'filters.availability_all' },
+    ];
+    ['availabilitySection', 'availabilitySectionMobile'].forEach(function(cid) {
+      const sec = document.getElementById(cid);
+      if (!sec) return;
+      const btns = opts.map(o =>
+        '<button type="button" class="provider-pill'+(activeAvailability === o.value ? ' active' : '')+
+        '" onclick="setAvailabilityFilter(\''+o.value+'\')">'+
+        escH(t(o.labelKey))+'</button>'
+      ).join('');
+      sec.style.display = '';
+      sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+escH(t('filters.availability'))+'</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">'+btns+'</div></div>';
+    });
+  }
+
+  function setAvailabilityFilter(value) {
+    if (!['available', 'absent', 'all'].includes(value)) return;
+    if (activeAvailability === value) return;
+    activeAvailability = value;
+    saveState();
+    // Re-fetch library since filtering is SQL-level
+    allItems = [];
+    window.MMLState.isLoaded = false;
+    loadLibrary();
+  }
+
   function renderFolderFilter() {
     const base = baseItems('folder');
     const counts = {};
@@ -1994,6 +2031,7 @@ let allItems=[], categories=[], groups=[];
     const items = filterItems();
     syncTypePills();
     renderStorageBar();
+    renderAvailabilityFilter();
     renderFolderFilter();
     renderGenreFilter();
     renderProviderFilter();
@@ -2816,6 +2854,7 @@ let allItems=[], categories=[], groups=[];
     if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
       infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
     }
+    const isAbsent = item.is_available === false || item.is_available === 0;
     return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'"':'')+'>'
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
@@ -2826,6 +2865,7 @@ let allItems=[], categories=[], groups=[];
             +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
             +'<span class="tl-cat">'+escH(item.category)+'</span>'
             +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
+            +(isAbsent?'<span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')
           +'</div>'
           +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
@@ -2855,6 +2895,7 @@ let allItems=[], categories=[], groups=[];
     const hg=items.some(i=>i.group);
     const hp=items.some(i=>i.poster||getEnabledProvidersForItem(i).length);
     const rows=items.map(item=>{
+      const _itemAbsent = item.is_available === false || item.is_available === 0;
       // Mobile info cell: title + meta badges
       const mobileInfo = '<td class="col-mobile-info">'
         +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+escH(item.title)+'</div>'
@@ -2865,6 +2906,7 @@ let allItems=[], categories=[], groups=[];
           +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
+          +(_itemAbsent?'<span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')
         +'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
           +'<span style="font-size:11px;color:var(--muted)">'+escH(item.size)+'</span>'
@@ -2876,7 +2918,7 @@ let allItems=[], categories=[], groups=[];
       return '<tr>'
         +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy" decoding="async"/>':'<div class="ph">🎬</div>')+'</td>':'')
         +mobileInfo
-        +'<td class="col-title">'+escH(item.title)+'</td>'
+        +'<td class="col-title">'+escH(item.title)+(_itemAbsent?' <span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')+'</td>'
         +'<td class="col-year">'+escH(String(item.year||'-'))+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'
