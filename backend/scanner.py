@@ -3344,19 +3344,19 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     label = "force" if force else "missing only"
     scope = f" [category: {only_category}]" if only_category else ""
-    _log_phase_start("2", suffix=f" ({label}){scope}")
+    _log_phase_start("3", suffix=f" ({label}){scope}")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("2"))
+        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("3"))
         return
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
+        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("3"))
         return
 
     data = load_library_document_non_blocking(OUTPUT_PATH)
     if not isinstance(data, dict):
-        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}")
+        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3374,10 +3374,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
 
     to_enrich = [i for i in items if needs_enrich(i)]
     skipped   = len(items) - len(to_enrich)
-    log.info(f"{_phase_prefix('2')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
+    log.info(f"{_phase_prefix('3')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        _log_phase_complete("2", time.monotonic() - _t0, "0 item(s)")
+        _log_phase_complete("3", time.monotonic() - _t0, "0 item(s)")
         return
 
     by_cat = defaultdict(list)
@@ -3417,7 +3417,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                             item["tmdb_id"] = str(resolved_tmdb)
                         if resolved_tvdb not in (None, ""):
                             log.debug(
-                                f"{_phase_prefix('2')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                                f"{_phase_prefix('3')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
                             providers = fetch_providers(item["tvdb_id"], True, jsr)
@@ -3434,13 +3434,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                         resolved_tmdb = resolved_ids.get("tmdb_id")
                         if resolved_tmdb not in (None, ""):
                             log.debug(
-                                f"{_phase_prefix('2')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                                f"{_phase_prefix('3')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
                             )
                             item["tmdb_id"] = str(resolved_tmdb)
                             providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
             log.warning(
-                f"{_phase_prefix('2')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{_phase_prefix('3')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
                 f"{item.get('title')!r}: {e}"
             )
             providers = _FETCH_ERROR
@@ -3456,7 +3456,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
         cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
         cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
@@ -3478,25 +3478,25 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                 item["providers_fetched"] = True
                 enriched += 1
                 total_providers = len(providers or [])
-                log.debug(f"{_phase_prefix('2')} {item['title']} — {total_providers} provider(s)")
+                log.debug(f"{_phase_prefix('3')} {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"{_phase_prefix('2')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
+        log.info(f"{_phase_prefix('3')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"{_phase_prefix('2')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
+        log.warning(f"{_phase_prefix('3')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
     parts = [f"{enriched} OK"]
     if not_found_count: parts.append(f"{not_found_count} not found")
     if failed_count:    parts.append(_count_label(failed_count, "error"))
-    _log_phase_complete("2", elapsed, " / ".join(parts))
+    _log_phase_complete("3", elapsed, " / ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -3584,13 +3584,13 @@ def run_scoring(only_category: str | None = None) -> None:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("3"))
+        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("4"))
         return
 
-    _log_phase_start("3")
+    _log_phase_start("4")
     data = load_library_document_non_blocking(OUTPUT_PATH)
     if not isinstance(data, dict):
-        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
+        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
         return
 
     items = data.get("items", [])
@@ -3604,7 +3604,7 @@ def run_scoring(only_category: str | None = None) -> None:
         by_cat[cat_name].append(item)
 
     if not by_cat:
-        _log_phase_complete("3", time.monotonic() - _t0, _count_label(0, "item"))
+        _log_phase_complete("4", time.monotonic() - _t0, _count_label(0, "item"))
         return
 
     # Build category display-name → raw folder name lookup for consistent log labels
@@ -3618,14 +3618,14 @@ def run_scoring(only_category: str | None = None) -> None:
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
         cat_folder = cat_folder_by_name.get(cat_name, cat_name)
         cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('4')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
         scored_total += recompute_scores_for_items(cat_items, effective_score_config)
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('4')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
-    _log_phase_complete("3", elapsed, f"{_count_label(scored_total, 'item')} scored")
+    _log_phase_complete("4", elapsed, f"{_count_label(scored_total, 'item')} scored")
 
 
 def run_score_only() -> int:
