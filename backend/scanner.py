@@ -1229,7 +1229,7 @@ def _extract_filename_movie(media_dir: Path) -> str | None:
     best_size = -1
     try:
         for entry in media_dir.iterdir():
-            if not entry.is_file(follow_symlinks=False):
+            if entry.is_symlink() or not entry.is_file():
                 continue
             if entry.suffix.lower() not in MEDIA_EXTENSIONS:
                 continue
@@ -1251,7 +1251,7 @@ def _extract_filename_tv(series_dir: Path) -> dict | None:
     try:
         video_files = sorted(
             p for p in series_dir.rglob("*")
-            if p.is_file(follow_symlinks=False)
+            if not p.is_symlink() and p.is_file()
             and p.suffix.lower() in MEDIA_EXTENSIONS
             and not p.name.startswith((".", "@"))
         )
