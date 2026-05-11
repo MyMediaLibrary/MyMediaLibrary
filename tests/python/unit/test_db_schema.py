@@ -96,6 +96,10 @@ class DatabaseSchemaTest(unittest.TestCase):
                 "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
                 ("default", 1, '{"weights":{"video":50,"audio":20,"languages":15,"size":15}}'),
             )
+            conn.execute(
+                "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
+                ("low_score", '{"id":"low_score"}', 1),
+            )
             conn.commit()
             conn.close()
             previous_done = db._startup_tasks_done
@@ -129,6 +133,10 @@ class DatabaseSchemaTest(unittest.TestCase):
             conn.execute(
                 "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
                 ("default", 1, "{}"),
+            )
+            conn.execute(
+                "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
+                ("low_score", '{"id":"low_score"}', 1),
             )
             conn.commit()
             conn.close()

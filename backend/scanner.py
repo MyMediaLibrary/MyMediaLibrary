@@ -153,15 +153,11 @@ def run_media_probe_pipeline_if_enabled(
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
 RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
-DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
-RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
 RECOMMENDATIONS_RULES_PATH = str(runtime_paths.RECOMMENDATIONS_RULES_JSON)
 CONFIG_PATH = str(runtime_paths.CONFIG_JSON)
 SECRETS_PATH = str(runtime_paths.SECRETS_FILE)
 SCAN_LOCK_PATH = str(runtime_paths.SCAN_LOCK)
-PROVIDERS_MAPPING_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON)
 PROVIDERS_MAPPING_RUNTIME_PATH = str(runtime_paths.PROVIDERS_MAPPING_JSON)
-PROVIDERS_LOGO_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON)
 PROVIDERS_LOGO_PATH = str(runtime_paths.PROVIDERS_LOGO_JSON)
 logging.basicConfig(
     level=logging.INFO,
@@ -2227,13 +2223,6 @@ _DEFAULT_CONFIG: dict = {
 
 
 def _load_default_config() -> dict:
-    try:
-        with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return copy.deepcopy(payload)
-    except Exception:
-        pass
     return copy.deepcopy(_DEFAULT_CONFIG)
 
 
@@ -4835,6 +4824,18 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self._json(200, _load_runtime_provider_mapping())
         elif path == "/api/providers-logo":
             self._json(200, _load_runtime_provider_logos())
+        elif path == "/api/audio-languages":
+            try:
+                from backend.defaults.audio_language_defaults import DEFAULT_AUDIO_LANGUAGES
+            except Exception:
+                from defaults.audio_language_defaults import DEFAULT_AUDIO_LANGUAGES  # type: ignore
+            self._json(200, DEFAULT_AUDIO_LANGUAGES)
+        elif path == "/api/audiocodec-mapping":
+            try:
+                from backend.defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING
+            except Exception:
+                from defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING  # type: ignore
+            self._json(200, DEFAULT_AUDIO_CODEC_MAPPING)
         elif path == "/api/recommendations":
             self._json(200, _recommendations_api_payload())
         else:

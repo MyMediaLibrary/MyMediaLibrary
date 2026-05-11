@@ -2,21 +2,26 @@
 NFO parsing, codec normalisation and audio language helpers.
 
 All functions are pure or depend only on static data and the local filesystem
-(audiocodec_mapping.json, poster files). They have no dependency on scanner
-runtime state (config, library.json, Seerr, etc.) and can be tested in
-isolation.
+(poster files). They have no dependency on scanner runtime state (config,
+library.json, Seerr, etc.) and can be tested in isolation.
 
 Imported by scanner.py at runtime.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+try:
+    from backend.defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING
+    from backend.defaults.genre_defaults import DEFAULT_GENRE_MAPPING
+except Exception:
+    from defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING  # type: ignore
+    from defaults.genre_defaults import DEFAULT_GENRE_MAPPING  # type: ignore
 
 log = logging.getLogger("scanner")
 
@@ -69,49 +74,8 @@ def normalize_codec(raw: str | None) -> str | None:
     return CODEC_CANONICAL.get(raw.lower().strip()) or raw.upper().strip()
 
 
-def _load_audiocodec_mapping() -> dict:
-    """Load audiocodec_mapping.json from image path or dev-local fallback."""
-    paths = [
-        "/usr/share/nginx/html/audiocodec_mapping.json",
-        os.path.join(os.path.dirname(__file__), "../app/audiocodec_mapping.json"),
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            try:
-                with open(p, encoding="utf-8") as f:
-                    data = json.load(f)
-                log.debug(f"[audiocodec] Mapping loaded from {p} ({len(data.get('priority', []))} entries)")
-                return data
-            except Exception as e:
-                log.warning(f"[audiocodec] Failed to load {p}: {e}")
-    log.warning("[audiocodec] audiocodec_mapping.json not found — all codecs will be UNKNOWN")
-    return {"priority": [], "mapping": {}, "fallback": {"normalized": "UNKNOWN", "display": "Unknown"}}
-
-
-AUDIOCODEC_MAPPING = _load_audiocodec_mapping()
-
-
-def _load_genres_mapping() -> dict:
-    """Load mapping_genres.json from runtime path or dev-local fallback."""
-    paths = [
-        "/app/mapping_genres.json",
-        os.path.join(os.path.dirname(__file__), "../app/mapping_genres.json"),
-    ]
-    for p in paths:
-        if not os.path.exists(p):
-            continue
-        try:
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            # Silent fallback requested: keep current behavior with no crash.
-            return {}
-    return {}
-
-
-GENRES_MAPPING = _load_genres_mapping()
+AUDIOCODEC_MAPPING = DEFAULT_AUDIO_CODEC_MAPPING
+GENRES_MAPPING = DEFAULT_GENRE_MAPPING
 _GENRES_UNKNOWN_LOGGED: set[str] = set()
 
 # ---------------------------------------------------------------------------
@@ -389,7 +353,7 @@ def normalize_audio_codec(raw: str | None) -> dict:
       'normalized' — canonical constant used for filters/stats (e.g. 'ATMOS', 'EAC3')
       'display'    — human-readable label used in the UI (e.g. 'Dolby Atmos')
 
-    Matching follows the priority order in audiocodec_mapping.json.
+    Matching follows the priority order in DEFAULT_AUDIO_CODEC_MAPPING.
     Tolerance: case-insensitive, dashes and spaces ignored (EAC-3 == EAC3).
     """
     fb = AUDIOCODEC_MAPPING.get("fallback", {"normalized": "UNKNOWN", "display": "Unknown"})

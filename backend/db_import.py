@@ -137,40 +137,14 @@ def migrate_runtime_json_files_at_startup(
 def seed_bundled_defaults(
     conn: sqlite3.Connection,
     *,
-    paths=runtime_paths,
     logger: logging.Logger | None = None,
 ) -> dict[str, int]:
-    """Seed bundled defaults directly into SQLite without writing runtime JSON files."""
-
-    active_logger = logger or log
-    seeds = {
-        "config": (Path(paths.DEFAULT_CONFIG_JSON), import_config, "config defaults"),
-        # Mapping first so logos can match by mapped_name
-        "providers_mapping": (
-            Path(paths.DEFAULT_PROVIDERS_MAPPING_JSON),
-            import_providers_mapping,
-            "providers (mapping)",
-        ),
-        "providers_logo": (
-            Path(paths.DEFAULT_PROVIDERS_LOGO_JSON),
-            import_providers_logo,
-            "providers (logos)",
-        ),
-        "recommendation_rules": (
-            Path(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON),
-            import_recommendation_rules,
-            "recommendation_rules",
-        ),
-    }
-    rows: dict[str, int] = {}
-    for key, (path, importer, label) in seeds.items():
-        inserted = importer(conn, path)
-        rows[key] = inserted
-        if path.exists():
-            active_logger.info("[DB] Seeded %s from bundled defaults — rows=%s", label, inserted)
-        else:
-            active_logger.info("[DB] Seed skipped — bundled default %s not found", path)
-    return rows
+    """Seed defaults from Python constants into SQLite (idempotent, INSERT OR IGNORE)."""
+    try:
+        from backend import db_seed
+    except Exception:
+        import db_seed  # type: ignore
+    return db_seed.seed_all(conn, logger=logger)
 
 
 def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
@@ -216,6 +190,8 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
                 "SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1"
             ).fetchone()[0],
             "import": lambda conn, path: import_providers_mapping(conn, path, overwrite=True),
+            # DB may have more entries from Python seed than user's legacy JSON — that's fine
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "providers_logo",
@@ -225,7 +201,6 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
                 "SELECT COUNT(*) FROM providers WHERE logo_path IS NOT NULL"
             ).fetchone()[0],
             "import": import_providers_logo,
-            # One logo can match multiple providers (same mapped_name) → db_count >= source_count
             "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
@@ -234,6 +209,8 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "source_count": _count_rules_source,
             "db_count": lambda conn: _table_count(conn, "recommendation_rules"),
             "import": import_recommendation_rules,
+            # DB may have more default rules than user's legacy JSON — that's fine
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "media_probe_cache",

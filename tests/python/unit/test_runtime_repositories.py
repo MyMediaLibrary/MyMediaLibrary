@@ -453,7 +453,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual(mapping, {"Netflix": "db-value"})
 
-    def test_provider_mappings_import_json_when_sqlite_empty(self):
+    def test_provider_mappings_returns_empty_when_sqlite_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -461,15 +461,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             json_path.parent.mkdir()
             json_path.write_text('{"Netflix":"Netflix","Ignored":null}', encoding="utf-8")
 
+            # No JSON fallback: empty DB → empty result (seed runs at bootstrap, not here)
             mapping = providers_repository.load_provider_mappings(json_path, db_path)
 
-            self.assertEqual(mapping, {"Ignored": None, "Netflix": "Netflix"})
-            conn = db.initialize_database(db_path)
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1").fetchone()[0]
-            finally:
-                conn.close()
-            self.assertEqual(count, 2)
+            self.assertEqual(mapping, {})
 
     def test_provider_mappings_require_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -732,7 +727,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual([rule["id"] for rule in rules], ["db-rule"])
 
-    def test_recommendation_rules_import_json_when_sqlite_empty(self):
+    def test_recommendation_rules_returns_empty_when_sqlite_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -743,15 +738,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            # No JSON fallback: empty DB → empty result (seed runs at bootstrap, not here)
             rules = recommendations_repository.load_recommendation_rules(json_path, db_path)
 
-            self.assertEqual([rule["id"] for rule in rules], ["json-rule"])
-            conn = db.initialize_database(db_path)
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
-            finally:
-                conn.close()
-            self.assertEqual(count, 2)
+            self.assertEqual(rules, [])
 
     def test_recommendation_rules_do_not_fallback_when_sqlite_rules_are_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

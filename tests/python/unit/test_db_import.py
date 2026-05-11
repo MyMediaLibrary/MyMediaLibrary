@@ -19,9 +19,7 @@ from repositories import config_repository  # noqa: E402
 class DatabaseImportTest(unittest.TestCase):
     def make_paths(self, root: pathlib.Path):
         data = root / "data"
-        defaults = root / "defaults" / "conf"
         data.mkdir(parents=True, exist_ok=True)
-        defaults.mkdir(parents=True)
         return types.SimpleNamespace(
             PROVIDERS_LOGO_JSON=data / "providers_logo.json",
             PROVIDERS_MAPPING_JSON=data / "providers_mapping.json",
@@ -32,10 +30,6 @@ class DatabaseImportTest(unittest.TestCase):
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
             SECRETS_FILE=data / ".secrets",
-            DEFAULT_CONFIG_JSON=defaults / "config.json",
-            DEFAULT_PROVIDERS_MAPPING_JSON=defaults / "providers_mapping.json",
-            DEFAULT_PROVIDERS_LOGO_JSON=defaults / "providers_logo.json",
-            DEFAULT_RECOMMENDATIONS_RULES_JSON=defaults / "recommendations_rules.json",
         )
 
     def write_json(self, path: pathlib.Path, payload):
@@ -376,15 +370,6 @@ class DatabaseImportTest(unittest.TestCase):
             paths = self.make_paths(root)
             db_path = root / "data" / "mymedialibrary.db"
             self.write_json(
-                paths.DEFAULT_CONFIG_JSON,
-                {
-                    "system": {"log_level": "INFO"},
-                    "folders": [],
-                    "score": {"enabled": False},
-                    "media_probe": {"enabled": False},
-                },
-            )
-            self.write_json(
                 paths.CONFIG_JSON,
                 {
                     "system": {"log_level": "DEBUG", "scan_cron": "*/10 * * * *"},
@@ -403,7 +388,7 @@ class DatabaseImportTest(unittest.TestCase):
             )
             paths.SECRETS_FILE.write_text('{"seerr_apikey":"secret"}', encoding="utf-8")
             conn = db.initialize_database(db_path)
-            db_import.seed_bundled_defaults(conn, paths=paths)
+            db_import.seed_bundled_defaults(conn)
 
             with self.assertLogs("db-import", level="INFO") as logs:
                 results = db_import.migrate_runtime_json_files_at_startup(
@@ -621,52 +606,56 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(json.loads(paths.SECRETS_FILE.read_text(encoding="utf-8"))["seerr_apikey"], "secret")
             conn.close()
 
-    def test_seed_bundled_defaults_imports_without_writing_conf_files(self):
+    def test_seed_bundled_defaults_seeds_from_python_defaults_without_json_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = self.make_paths(root)
-            self.write_json(paths.DEFAULT_CONFIG_JSON, {"folders": [], "score": {"enabled": False}})
-            self.write_json(paths.DEFAULT_PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix"})
-            self.write_json(paths.DEFAULT_PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
-            self.write_json(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low"}]})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
 
-            rows = db_import.seed_bundled_defaults(conn, paths=paths)
+            rows = db_import.seed_bundled_defaults(conn)
 
-            self.assertGreaterEqual(rows["config"], 1)
-            self.assertEqual(rows["providers_mapping"], 1)
-            self.assertEqual(rows["providers_logo"], 1)
-            self.assertEqual(rows["recommendation_rules"], 1)
+            # Python defaults are seeded without reading any JSON file
+            self.assertGreater(rows["config"], 0)
+            self.assertGreater(rows["providers"], 0)
+            self.assertGreater(rows["recommendation_rules"], 0)
+            # No runtime JSON files should have been created
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
             self.assertFalse(paths.PROVIDERS_LOGO_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_RULES_JSON.exists())
+            # Verify actual content
+            netflix = conn.execute(
+                "SELECT mapped_name FROM providers WHERE raw_name = 'Netflix'"
+            ).fetchone()
+            self.assertIsNotNone(netflix)
+            self.assertEqual(netflix["mapped_name"], "Netflix")
+            rule_count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
+            self.assertGreaterEqual(rule_count, 16)
             conn.close()
 
     def test_seed_bundled_defaults_is_idempotent_and_preserves_user_customizations(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            paths = self.make_paths(root)
-            self.write_json(paths.DEFAULT_PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix", "Disney+": "Disney+"})
-            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn = db.initialize_database(root / "mymedialibrary.db")
+            # Pre-insert Netflix with a user-customised mapping
             conn.execute(
                 "INSERT INTO providers(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
                 ("Netflix", "NFX-custom", 0),
             )
             conn.commit()
 
-            first = db_import.seed_bundled_defaults(conn, paths=paths)
-            second = db_import.seed_bundled_defaults(conn, paths=paths)
-            rows = conn.execute(
-                "SELECT raw_name, mapped_name FROM providers ORDER BY raw_name"
-            ).fetchall()
+            first = db_import.seed_bundled_defaults(conn)
+            second = db_import.seed_bundled_defaults(conn)
 
-            self.assertEqual(first["providers_mapping"], 1)
-            self.assertEqual(second["providers_mapping"], 0)
-            self.assertEqual(
-                [(row["raw_name"], row["mapped_name"]) for row in rows],
-                [("Disney+", "Disney+"), ("Netflix", "NFX-custom")],
-            )
+            # User customisation must be preserved
+            netflix = conn.execute(
+                "SELECT mapped_name FROM providers WHERE raw_name = 'Netflix'"
+            ).fetchone()
+            self.assertEqual(netflix["mapped_name"], "NFX-custom")
+            # Second seed must be fully idempotent
+            self.assertEqual(second["providers"], 0)
+            self.assertEqual(second["recommendation_rules"], 0)
+            self.assertEqual(second["config"], 0)
             conn.close()
 
     def test_has_legacy_json_files_detects_only_migration_sources(self):
@@ -712,8 +701,8 @@ class DatabaseImportTest(unittest.TestCase):
             paths = self.make_paths(root)
 
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
-            # Simulate bootstrapped DB (seeded defaults)
-            db_import.seed_bundled_defaults(conn, paths=paths)
+            # Simulate bootstrapped DB (seeded from Python defaults)
+            db_import.seed_bundled_defaults(conn)
 
             # Write user's legacy JSON files (simulating files left from pre-v0.5.0 install)
             self.write_json(paths.CONFIG_JSON, {

@@ -63,8 +63,8 @@ let allItems=[], categories=[], groups=[];
   let libraryExportSource = null; // raw library API payload used for explicit export
   let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
   let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /api/providers-logo
-  let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
-  let audioLanguages = {};         // loaded from /audio_languages.json
+  let audioCodecMapping = {};      // loaded from /api/audiocodec-mapping
+  let audioLanguages = {};         // loaded from /api/audio-languages
 
   async function loadProvidersCatalog() {
     try {
@@ -85,16 +85,16 @@ let allItems=[], categories=[], groups=[];
 
   async function loadAudioCodecMapping() {
     try {
-      const res = await fetch('/audiocodec_mapping.json?_=' + Date.now());
+      const res = await fetch('/api/audiocodec-mapping?_=' + Date.now());
       if (res.ok) audioCodecMapping = await res.json();
-    } catch(e) { console.warn('audiocodec_mapping.json load error:', e); }
+    } catch(e) { console.warn('audiocodec-mapping load error:', e); }
   }
 
   async function loadAudioLanguages() {
     try {
-      const res = await fetch('/audio_languages.json?_=' + Date.now());
+      const res = await fetch('/api/audio-languages?_=' + Date.now());
       if (res.ok) audioLanguages = await res.json();
-    } catch(e) { console.warn('audio_languages.json load error:', e); }
+    } catch(e) { console.warn('audio-languages load error:', e); }
   }
 
   function getLanguageDisplay(isoCode) {

@@ -130,10 +130,10 @@ def _has_legacy_json_sources(active_logger: logging.Logger) -> bool:
 def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logger) -> None:
     try:
         try:
-            from backend import db_import
+            from backend import db_seed
         except Exception:
-            import db_import  # type: ignore
-        db_import.seed_bundled_defaults(conn, logger=active_logger)
+            import db_seed  # type: ignore
+        db_seed.seed_all(conn, logger=active_logger)
     except Exception as exc:
         active_logger.warning("[DB] Bundled default seed completed with warnings: %s", exc)
 
@@ -160,15 +160,9 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
         return False
     app_config_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
     score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-    if app_config_count <= 0 or score_count <= 0:
+    rules_count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
+    if app_config_count <= 0 or score_count <= 0 or rules_count <= 0:
         return False
-    bundled_defaults = (
-        (runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON, "providers"),
-        (runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, "recommendation_rules"),
-    )
-    for default_path, table_name in bundled_defaults:
-        if Path(default_path).exists() and conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] <= 0:
-            return False
     return True
 
 

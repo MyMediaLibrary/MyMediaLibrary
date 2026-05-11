@@ -131,13 +131,6 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
 def _load_rules_from_db(json_path: str | Path, db_path: str | Path | None) -> list[dict[str, Any]] | None:
     conn = db.initialize_database(_effective_db_path(json_path, db_path, runtime_paths.RECOMMENDATIONS_RULES_JSON))
     try:
-        if _table_is_empty(conn, "recommendation_rules"):
-            if not _is_canonical_json_path(json_path, runtime_paths.RECOMMENDATIONS_RULES_JSON):
-                db_import.import_recommendation_rules(conn, json_path)
-                if _table_is_empty(conn, "recommendation_rules"):
-                    return None
-            else:
-                return None
         payload = db_export.export_recommendation_rules(conn)
     finally:
         conn.close()

@@ -155,9 +155,11 @@ class NfoResilienceIntegrationTest(unittest.TestCase):
             nfo_module._GENRES_UNKNOWN_LOGGED.clear()
             nfo_module._GENRES_UNKNOWN_LOGGED.update(original_seen)
 
-    def test_genres_mapping_loader_fallbacks_silently_when_file_missing(self):
-        with unittest.mock.patch.object(nfo_module.os.path, "exists", return_value=False):
-            self.assertEqual(nfo_module._load_genres_mapping(), {})
+    def test_genres_mapping_is_python_constant_no_file_required(self):
+        from defaults.genre_defaults import DEFAULT_GENRE_MAPPING
+        self.assertIsInstance(nfo_module.GENRES_MAPPING, dict)
+        self.assertGreater(len(nfo_module.GENRES_MAPPING), 0)
+        self.assertEqual(nfo_module.GENRES_MAPPING, DEFAULT_GENRE_MAPPING)
 
     def test_movie_nfo_prefers_tmdb_uniqueid(self):
         xml = """<?xml version="1.0" encoding="UTF-8"?>

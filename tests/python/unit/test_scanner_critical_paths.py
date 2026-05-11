@@ -554,11 +554,8 @@ class SeerrConfigMigrationTest(unittest.TestCase):
 class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
     def test_bootstrap_runtime_mapping_warms_sqlite_without_copying_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
-            src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
-            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
+            with patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
                  patch.object(scanner.providers_repository, "load_provider_mappings", return_value={"Netflix": "Netflix"}) as load:
                 scanner._ensure_runtime_provider_mapping()
             load.assert_called_once_with(str(dst))
@@ -566,19 +563,16 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
 
     def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
         with tempfile.TemporaryDirectory() as tmp:
-            src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
-            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
-            dst.write_text('{"Netflix":"Netflix","Disney+":"Disney+"}', encoding="utf-8")
             items = [
                 {"providers": ["Netflix", "Premiere Max", "Premiere Max"]},
                 {"providers": ["Disney+", "Canal VOD"]},
                 {"providers": []},
             ]
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+            with patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
                 added = scanner._upsert_runtime_provider_mapping(items)
-            self.assertEqual(added, 2)
+            # DB starts empty: all 4 unique providers are new
+            self.assertEqual(added, 4)
             # Provider mappings are now stored in SQLite; check DB state
             import db as _db
             db_path = pathlib.Path(tmp) / "data" / "mymedialibrary.db"
@@ -593,8 +587,8 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
                 {row["raw_name"]: None if row["is_ignored"] else row["mapped_name"] for row in rows},
                 {
                     "Canal VOD": None,
-                    "Disney+": "Disney+",
-                    "Netflix": "Netflix",
+                    "Disney+": None,
+                    "Netflix": None,
                     "Premiere Max": None,
                 },
             )

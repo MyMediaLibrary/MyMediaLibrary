@@ -310,13 +310,17 @@ class RecommendationsTest(unittest.TestCase):
             self.assertEqual(doc["version"], 1)
             self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["items"], [])
 
+    def _default_rules(self):
+        from defaults.recommendation_defaults import DEFAULT_RECOMMENDATION_RULES
+        return [r for r in DEFAULT_RECOMMENDATION_RULES if r.get("enabled", True) is not False]
+
     def test_low_score_default_rule_is_medium(self):
-        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        rules = self._default_rules()
         rec = next(r for r in recommendations.json_rule_recommendations(item(quality={"score": 50}), rules) if r["rule_id"] == "low_score")
         self.assertEqual(rec["priority"], "medium")
 
     def test_language_rules_require_reliable_audio_languages(self):
-        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        rules = self._default_rules()
         no_languages = item(audio_languages=None, audio_languages_simple="VF")
         known_without_french = item(audio_languages=["eng"], audio_languages_simple="VO")
 
@@ -327,7 +331,7 @@ class RecommendationsTest(unittest.TestCase):
         self.assertTrue(any(r["rule_id"] == "missing_french_audio" for r in known_recs))
 
     def test_vo_only_requires_known_language_group(self):
-        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        rules = self._default_rules()
         unknown_group = item(audio_language_group=None, audio_languages_simple="UNKNOWN")
         vo_group = item(audio_language_group="VO", audio_languages_simple="VF")
 
@@ -338,7 +342,7 @@ class RecommendationsTest(unittest.TestCase):
         self.assertTrue(any(r["rule_id"] == "vo_only" for r in vo_recs))
 
     def test_missing_french_subtitles_requires_known_subtitles(self):
-        rules = recommendations.load_rules(ROOT / "backend" / "recommendations_rules.json")
+        rules = self._default_rules()
         unknown_subtitles = item(audio_language_group="VO", subtitle_languages=[])
         known_without_french = item(audio_language_group="VO", subtitle_languages=["eng"])
 
