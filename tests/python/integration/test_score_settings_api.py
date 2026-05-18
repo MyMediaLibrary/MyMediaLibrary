@@ -159,34 +159,34 @@ class TestScoreSettingsApi(unittest.TestCase):
     def test_put_score_settings_recomputes_scores_only(self):
         status, get_payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
-        baseline_cfg = copy.deepcopy(get_payload["effective"])
-        baseline_status, baseline_payload = self._request(
-            "/api/settings/score",
-            method="PUT",
-            payload={"score": baseline_cfg},
-        )
-        self.assertEqual(baseline_status, 200)
-        self.assertTrue(baseline_payload["ok"])
-        baseline_data = json.loads(self.output_path.read_text(encoding="utf-8"))
-        score_before = baseline_data["items"][0]["quality"]["score"]
 
-        weighted_cfg = copy.deepcopy(get_payload["effective"])
-        weighted_cfg["weights"]["video"] = 10
-        weighted_cfg["weights"]["audio"] = 10
-        weighted_cfg["weights"]["languages"] = 10
-        weighted_cfg["weights"]["size"] = 70
+        # PUT A: weights biased toward size
+        cfg_a = copy.deepcopy(get_payload["effective"])
+        cfg_a["weights"]["video"] = 10
+        cfg_a["weights"]["audio"] = 10
+        cfg_a["weights"]["languages"] = 10
+        cfg_a["weights"]["size"] = 70
+        put_a_status, put_a_payload = self._request("/api/settings/score", method="PUT", payload={"score": cfg_a})
+        self.assertEqual(put_a_status, 200)
+        self.assertTrue(put_a_payload["ok"])
+        self.assertEqual(put_a_payload["status"]["mode"], "score_only")
+        self.assertEqual(put_a_payload["status"]["recalculated_items"], 1)
+        score_a = json.loads(self.output_path.read_text(encoding="utf-8"))["items"][0]["quality"]["score"]
 
-        put_status, put_payload = self._request("/api/settings/score", method="PUT", payload={"score": weighted_cfg})
-        self.assertEqual(put_status, 200)
-        self.assertTrue(put_payload["ok"])
-        self.assertEqual(put_payload["status"]["mode"], "score_only")
-        self.assertEqual(put_payload["status"]["recalculated_items"], 1)
+        # PUT B: weights biased toward video — score must change
+        cfg_b = copy.deepcopy(get_payload["effective"])
+        cfg_b["weights"]["video"] = 70
+        cfg_b["weights"]["audio"] = 10
+        cfg_b["weights"]["languages"] = 10
+        cfg_b["weights"]["size"] = 10
+        put_b_status, put_b_payload = self._request("/api/settings/score", method="PUT", payload={"score": cfg_b})
+        self.assertEqual(put_b_status, 200)
+        self.assertTrue(put_b_payload["ok"])
+        self.assertEqual(put_b_payload["status"]["mode"], "score_only")
+        self.assertEqual(put_b_payload["status"]["recalculated_items"], 1)
+        score_b = json.loads(self.output_path.read_text(encoding="utf-8"))["items"][0]["quality"]["score"]
 
-        data = json.loads(self.output_path.read_text(encoding="utf-8"))
-        self.assertIn("quality", data["items"][0])
-        self.assertIn("score", data["items"][0]["quality"])
-        score_after = data["items"][0]["quality"]["score"]
-        self.assertNotEqual(score_before, score_after)
+        self.assertNotEqual(score_a, score_b)
 
     def test_put_invalid_weights_returns_structured_error(self):
         status, get_payload = self._request("/api/settings/score")
@@ -319,6 +319,87 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertEqual(put_status, 500)
         self.assertFalse(put_payload["ok"])
         self.assertEqual(put_payload["error"]["code"], "SCORE_SETTINGS_SAVE_FAILED")
+
+    def test_put_changed_score_logs_score_configuration(self):
+        """PUT /api/settings/score with changed weights must log '[config] Saved: score_configuration'."""
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        changed = copy.deepcopy(get_payload["effective"])
+        changed["weights"]["video"] = 10
+        changed["weights"]["audio"] = 10
+        changed["weights"]["languages"] = 10
+        changed["weights"]["size"] = 70
+
+        with self.assertLogs("scanner", level="INFO") as logs:
+            put_status, _ = self._request("/api/settings/score", method="PUT", payload={"score": changed})
+
+        self.assertEqual(put_status, 200)
+        output = "\n".join(logs.output)
+        self.assertIn("[config] Saved: score_configuration", output)
+        self.assertNotIn("(no change)", output)
+        self.assertNotIn("{", output)
+
+    def test_put_identical_score_does_not_recompute_and_logs_no_change(self):
+        """PUT /api/settings/score with identical effective config must skip score_only and log '(no change)'."""
+        # First PUT to populate DB with the full effective config
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        effective = copy.deepcopy(get_payload["effective"])
+        self._request("/api/settings/score", method="PUT", payload={"score": effective})
+
+        # Second PUT with the exact same payload — nothing changed in DB
+        status2, get_payload2 = self._request("/api/settings/score")
+        self.assertEqual(status2, 200)
+        same_effective = copy.deepcopy(get_payload2["effective"])
+
+        with self.assertLogs("scanner", level="INFO") as logs:
+            put_status, put_payload = self._request(
+                "/api/settings/score", method="PUT", payload={"score": same_effective}
+            )
+
+        self.assertEqual(put_status, 200)
+        self.assertTrue(put_payload["ok"])
+        self.assertEqual(put_payload["status"]["mode"], "config_only")
+        self.assertEqual(put_payload["status"]["recalculated_items"], 0)
+        output = "\n".join(logs.output)
+        self.assertIn("[config] Saved: (no change)", output)
+        self.assertNotIn("score_configuration", output.replace("[config] Saved: (no change)", ""))
+
+    def test_reset_logs_score_configuration(self):
+        """POST /api/settings/score/reset must log '[config] Saved: score_configuration'."""
+        # Modify config so reset has something to restore
+        status, get_payload = self._request("/api/settings/score")
+        self.assertEqual(status, 200)
+        changed = copy.deepcopy(get_payload["effective"])
+        changed["weights"]["video"] = 10
+        changed["weights"]["size"] = 70
+        changed["weights"]["audio"] = 10
+        changed["weights"]["languages"] = 10
+        self._request("/api/settings/score", method="PUT", payload={"score": changed})
+
+        with self.assertLogs("scanner", level="INFO") as logs:
+            reset_status, _ = self._request("/api/settings/score/reset", method="POST", payload={})
+
+        self.assertEqual(reset_status, 200)
+        output = "\n".join(logs.output)
+        self.assertIn("[config] Saved: score_configuration", output)
+        self.assertNotIn("{", output)
+
+    def test_api_config_no_change_does_not_log_info_saved(self):
+        """POST /api/config with an unchanged payload must not emit INFO '[config] Saved: (no change)'."""
+        cfg = self._read_config()
+        payload = {"score": cfg.get("score", {})}
+
+        import logging
+        with self.assertLogs("scanner", level="DEBUG") as logs:
+            status, _ = self._request("/api/config", method="POST", payload=payload)
+
+        self.assertEqual(status, 200)
+        info_lines = [l for l in logs.output if "INFO" in l and "Saved:" in l]
+        self.assertFalse(
+            any("(no change)" in l for l in info_lines),
+            f"Found INFO-level '(no change)' log: {info_lines}",
+        )
 
     def test_legacy_score_block_migrates_to_score_configuration(self):
         legacy_cfg = self._read_config()

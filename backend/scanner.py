@@ -4950,18 +4950,21 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             cfg = load_config()
+            score_config_before = cfg.get("score_configuration")
             merged = merge_score_config(defaults, payload.get("score"))
             effective, _ = validate_score_config(merged, defaults=defaults)
             cfg["score_configuration"] = effective
             cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
             if score_changed:
                 log.info("[score] Score configuration normalized during PUT /api/settings/score")
+            score_config_changed = score_config_before != cfg.get("score_configuration")
             save_config(cfg)
+            log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0
             mode = "config_only"
             scan_skipped = None
-            if _is_score_enabled(cfg):
+            if _is_score_enabled(cfg) and score_config_changed:
                 if _is_scan_running():
                     _log_post_save_scan_skipped()
                     mode = "scan_skipped"
@@ -5004,11 +5007,14 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         try:
             defaults = load_score_defaults()
             cfg = load_config()
+            score_config_before = cfg.get("score_configuration")
             cfg["score_configuration"] = copy.deepcopy(defaults)
             cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
             if score_changed:
                 log.info("[score] Score configuration normalized during POST /api/settings/score/reset")
+            score_config_changed = score_config_before != cfg.get("score_configuration")
             save_config(cfg)
+            log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0
             mode = "config_only"
@@ -5212,7 +5218,11 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             elif auth_action == "disabled":
                 log.info("[config] Authentication disabled")
 
-            log.info("[config] Saved: %s", _config_changed_summary(cfg, merged))
+            _save_summary = _config_changed_summary(cfg, merged)
+            if _save_summary == "(no change)":
+                log.debug("[config] Saved: %s", _save_summary)
+            else:
+                log.info("[config] Saved: %s", _save_summary)
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:
