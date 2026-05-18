@@ -91,6 +91,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 16:
             _apply_v16_recommendation_rules_structured(conn)
             current_version = 16
+        if current_version < 17:
+            _apply_v17_recommendations_drop_redundant_columns(conn)
+            current_version = 17
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -527,6 +530,28 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v17_recommendations_drop_redundant_columns(conn: sqlite3.Connection) -> None:
+    """Drop title, reason, dedupe_group, severity from recommendations.
+
+    These columns were denormalised from details_json and are never read back;
+    details_json remains the sole source of truth for the API payload.
+    Uses ALTER TABLE DROP COLUMN (SQLite 3.35+, idempotent via PRAGMA table_info).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendations'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (17,))
+        return
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+    for col in ("title", "reason", "dedupe_group", "severity"):
+        if col in cols:
+            conn.execute(f"ALTER TABLE recommendations DROP COLUMN {col}")
+
+    log.info("[DB] v17: recommendations — dropped title, reason, dedupe_group, severity")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (17,))
 
 
 def _apply_v16_recommendation_rules_structured(conn: sqlite3.Connection) -> None:

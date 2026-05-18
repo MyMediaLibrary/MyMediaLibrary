@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 CREATE_TABLES_SQL = (
@@ -167,11 +167,7 @@ CREATE_TABLES_SQL = (
         media_id TEXT,
         recommendation_type TEXT NOT NULL,
         priority TEXT,
-        title TEXT NOT NULL,
-        reason TEXT,
         rule_id TEXT,
-        dedupe_group TEXT,
-        severity INTEGER,
         details_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

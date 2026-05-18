@@ -620,26 +620,20 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
             rec_id = str(item.get("id") or f"recommendation:{index}")
             media_ref = item.get("media_ref") if isinstance(item.get("media_ref"), dict) else {}
             media_id = _existing_media_id(conn, media_ref.get("id"))
-            display = item.get("display") if isinstance(item.get("display"), dict) else {}
             rows += _insert_count(
                 conn,
                 """
                 INSERT OR IGNORE INTO recommendations(
-                    id, media_id, recommendation_type, priority, title, reason, rule_id,
-                    dedupe_group, severity, details_json
+                    id, media_id, recommendation_type, priority, rule_id, details_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec_id,
                     media_id,
                     item.get("recommendation_type") or "unknown",
                     item.get("priority"),
-                    display.get("title") or item.get("title") or rec_id,
-                    item.get("reason"),
                     item.get("rule_id"),
-                    item.get("dedupe_group"),
-                    _as_int(item.get("severity")),
                     _to_json(item),
                 ),
             )

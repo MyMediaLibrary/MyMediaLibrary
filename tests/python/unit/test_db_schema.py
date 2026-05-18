@@ -303,15 +303,14 @@ class DatabaseSchemaTest(unittest.TestCase):
             )
             conn.execute(
                 """
-                INSERT INTO recommendations(id, media_id, recommendation_type, priority, title)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO recommendations(id, media_id, recommendation_type, priority)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     "rec:movie:Films:Inception (2010):low_score",
                     "movie:Films:Inception (2010)",
                     "quality",
                     "medium",
-                    "Low score",
                 ),
             )
             conn.commit()
@@ -855,9 +854,9 @@ class V13DropRecommendationJsonColumnsTest(unittest.TestCase):
                     pass
                 conn.execute(
                     "INSERT OR IGNORE INTO recommendations"
-                    "(id, recommendation_type, title, details_json, message_json, suggested_action_json)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
-                    ("rec:1", "quality", "Low score",
+                    "(id, recommendation_type, details_json, message_json, suggested_action_json)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    ("rec:1", "quality",
                      '{"id":"rec:1","message":{"en":"bad"},"suggested_action":{"en":"replace"}}',
                      '{"en":"bad"}', '{"en":"replace"}'),
                 )
@@ -1328,6 +1327,113 @@ class V16RecommendationRulesStructuredTest(unittest.TestCase):
             self.assertIsInstance(rule.get("conditions"), list)
             self.assertIsInstance(rule.get("message"), dict)
             self.assertIsInstance(rule.get("suggested_action"), dict)
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
+    """Tests for the v17 migration: drop title, reason, dedupe_group, severity from recommendations."""
+
+    _DROPPED = ("title", "reason", "dedupe_group", "severity")
+
+    def test_fresh_db_has_no_dropped_columns(self):
+        """A fresh v17 DB must not contain the four dropped columns in recommendations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in self._DROPPED:
+                self.assertNotIn(col, cols, f"dropped column '{col}' found in fresh recommendations table")
+
+    def test_fresh_db_retains_required_columns(self):
+        """A fresh v17 DB must keep id, media_id, recommendation_type, priority, rule_id, details_json."""
+        required = {"id", "media_id", "recommendation_type", "priority", "rule_id", "details_json"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in required:
+                self.assertIn(col, cols, f"required column '{col}' missing from fresh recommendations table")
+
+    def test_migration_drops_columns_from_existing_db(self):
+        """v17 migration must remove the four dead columns from an existing DB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                for col in ("title TEXT NOT NULL DEFAULT ''",
+                            "reason TEXT", "dedupe_group TEXT", "severity INTEGER"):
+                    try:
+                        conn.execute(f"ALTER TABLE recommendations ADD COLUMN {col}")
+                    except Exception:
+                        pass
+            db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in self._DROPPED:
+                self.assertNotIn(col, cols, f"column '{col}' must be absent after v17 migration")
+
+    def test_migration_preserves_recommendation_rows(self):
+        """v17 migration must not lose any recommendation rows."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT INTO recommendations(id, recommendation_type, details_json)"
+                    " VALUES (?, ?, ?)",
+                    ("rec:1", "quality", '{"id":"rec:1"}'),
+                )
+            db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
+            count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+
+    def test_migration_idempotent(self):
+        """v17 migration must not raise when the columns are already absent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
+            db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
+            conn.close()
+
+    def test_upsert_recommendation_writes_without_dropped_columns(self):
+        """upsert_recommendation must succeed and store details_json without the dropped columns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            item = {
+                "id": "rec:movie:Films:Demo:low_score",
+                "recommendation_type": "quality",
+                "priority": "high",
+                "rule_id": "low_score",
+                "dedupe_group": "score_low",
+                "severity": 2,
+                "title": "Demo",
+                "reason": "Quality too low",
+                "media_ref": {"id": "movie:Films:Demo", "type": "movie"},
+                "display": {"title": "Demo", "year": 2024},
+                "message": {"fr": "Score faible.", "en": "Low score."},
+                "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+            }
+            with conn:
+                recommendations_repository.upsert_recommendation(conn, item)
+            row = conn.execute(
+                "SELECT recommendation_type, priority, rule_id, details_json FROM recommendations"
+                " WHERE id = 'rec:movie:Films:Demo:low_score'"
+            ).fetchone()
+            conn.close()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["recommendation_type"], "quality")
+            self.assertEqual(row["priority"], "high")
+            self.assertEqual(row["rule_id"], "low_score")
+            details = json.loads(row["details_json"])
+            self.assertEqual(details["message"]["en"], "Low score.")
+            self.assertEqual(details["suggested_action"]["en"], "Look for better.")
 
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""

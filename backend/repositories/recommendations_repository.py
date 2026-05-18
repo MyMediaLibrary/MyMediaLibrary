@@ -106,19 +106,14 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
     conn.execute(
         """
         INSERT INTO recommendations(
-            id, media_id, recommendation_type, priority, title, reason, rule_id,
-            dedupe_group, severity, details_json
+            id, media_id, recommendation_type, priority, rule_id, details_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             media_id = excluded.media_id,
             recommendation_type = excluded.recommendation_type,
             priority = excluded.priority,
-            title = excluded.title,
-            reason = excluded.reason,
             rule_id = excluded.rule_id,
-            dedupe_group = excluded.dedupe_group,
-            severity = excluded.severity,
             details_json = excluded.details_json,
             updated_at = CURRENT_TIMESTAMP
         """,
@@ -145,17 +140,12 @@ def _table_is_empty(conn: sqlite3.Connection, table_name: str) -> bool:
 
 def _recommendation_params(conn: sqlite3.Connection, rec_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
     media_ref = item.get("media_ref") if isinstance(item.get("media_ref"), dict) else {}
-    display = item.get("display") if isinstance(item.get("display"), dict) else {}
     return (
         rec_id,
         _existing_media_id(conn, media_ref.get("id")),
         str(item.get("recommendation_type") or "unknown"),
         item.get("priority"),
-        display.get("title") or item.get("title") or rec_id,
-        item.get("reason"),
         item.get("rule_id"),
-        item.get("dedupe_group"),
-        _as_int(item.get("severity")),
         _to_json(item),
     )
 
