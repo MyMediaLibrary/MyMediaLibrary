@@ -620,13 +620,16 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
             rec_id = str(item.get("id") or f"recommendation:{index}")
             media_ref = item.get("media_ref") if isinstance(item.get("media_ref"), dict) else {}
             media_id = _existing_media_id(conn, media_ref.get("id"))
+            msg = item.get("message") or {}
+            action = item.get("suggested_action") or {}
             rows += _insert_count(
                 conn,
                 """
                 INSERT OR IGNORE INTO recommendations(
-                    id, media_id, recommendation_type, priority, rule_id, details_json
+                    id, media_id, recommendation_type, priority, rule_id,
+                    message_fr, message_en, suggested_action_fr, suggested_action_en
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec_id,
@@ -634,7 +637,10 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
                     item.get("recommendation_type") or "unknown",
                     item.get("priority"),
                     item.get("rule_id"),
-                    _to_json(item),
+                    msg.get("fr") or None,
+                    msg.get("en") or None,
+                    action.get("fr") or None,
+                    action.get("en") or None,
                 ),
             )
     _record(report, "recommendations", rows)

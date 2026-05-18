@@ -94,6 +94,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 17:
             _apply_v17_recommendations_drop_redundant_columns(conn)
             current_version = 17
+        if current_version < 18:
+            _apply_v18_recommendations_replace_details_json(conn)
+            current_version = 18
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -530,6 +533,78 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v18_recommendations_replace_details_json(conn: sqlite3.Connection) -> None:
+    """Replace recommendations.details_json with message_fr/en and suggested_action_fr/en columns.
+
+    Adds the four message/action columns, migrates values from details_json,
+    then drops details_json. Idempotent: safe to call when details_json is
+    already absent (fresh v18 DB).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendations'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (18,))
+        return
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+
+    for col in ("message_fr", "message_en", "suggested_action_fr", "suggested_action_en"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE recommendations ADD COLUMN {col} TEXT")
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+
+    if "details_json" not in cols:
+        log.info("[DB] v18: recommendations — details_json already absent, skipped")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (18,))
+        return
+
+    rows = conn.execute("SELECT id, details_json FROM recommendations").fetchall()
+    migrated = skipped = malformed = 0
+
+    for row in rows:
+        try:
+            item = _json.loads(row[1] or "{}")
+        except Exception:
+            malformed += 1
+            log.warning("[DB] v18: malformed details_json for recommendation id=%s", row[0])
+            continue
+        if not isinstance(item, dict):
+            malformed += 1
+            continue
+
+        msg = item.get("message") or {}
+        action = item.get("suggested_action") or {}
+        conn.execute(
+            """
+            UPDATE recommendations SET
+                message_fr          = COALESCE(message_fr, ?),
+                message_en          = COALESCE(message_en, ?),
+                suggested_action_fr = COALESCE(suggested_action_fr, ?),
+                suggested_action_en = COALESCE(suggested_action_en, ?)
+            WHERE id = ?
+            """,
+            (
+                msg.get("fr") or None,
+                msg.get("en") or None,
+                action.get("fr") or None,
+                action.get("en") or None,
+                row[0],
+            ),
+        )
+        migrated += 1
+
+    conn.execute("ALTER TABLE recommendations DROP COLUMN details_json")
+
+    log.info(
+        "[DB] v18: recommendations replace details_json — migrated=%d skipped=%d malformed=%d",
+        migrated,
+        skipped,
+        malformed,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (18,))
 
 
 def _apply_v17_recommendations_drop_redundant_columns(conn: sqlite3.Connection) -> None:

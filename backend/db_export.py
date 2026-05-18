@@ -77,8 +77,38 @@ def export_config(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
-    rows = conn.execute("SELECT details_json FROM recommendations ORDER BY id").fetchall()
-    return {"version": 1, "items": [_from_json(row["details_json"], {}) for row in rows]}
+    rows = conn.execute(
+        """
+        SELECT r.id, r.media_id, r.recommendation_type, r.priority, r.rule_id,
+               r.message_fr, r.message_en, r.suggested_action_fr, r.suggested_action_en,
+               m.title AS media_title, m.year AS media_year, m.media_type
+        FROM recommendations r
+        LEFT JOIN media m ON m.id = r.media_id
+        ORDER BY r.priority, r.recommendation_type, r.id
+        """
+    ).fetchall()
+    items = []
+    for row in rows:
+        item: dict[str, Any] = {
+            "id": row["id"],
+            "recommendation_type": row["recommendation_type"],
+            "priority": row["priority"],
+            "rule_id": row["rule_id"],
+            "message": {"fr": row["message_fr"], "en": row["message_en"]},
+            "suggested_action": {"fr": row["suggested_action_fr"], "en": row["suggested_action_en"]},
+        }
+        if row["media_id"]:
+            item["media_ref"] = {
+                "id": row["media_id"],
+                "type": row["media_type"] or "media",
+            }
+            if row["media_title"] or row["media_year"] is not None:
+                item["display"] = {
+                    "title": row["media_title"],
+                    "year": row["media_year"],
+                }
+        items.append(item)
+    return {"version": 1, "items": items}
 
 
 def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:

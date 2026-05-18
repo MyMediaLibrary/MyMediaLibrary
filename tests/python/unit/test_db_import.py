@@ -198,15 +198,19 @@ class DatabaseImportTest(unittest.TestCase):
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_recommendations(conn, path)
-            rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
+            rows = conn.execute(
+                "SELECT id, media_id, priority, rule_id, message_en, suggested_action_en"
+                " FROM recommendations"
+            ).fetchall()
             conn.close()
 
             self.assertEqual(inserted, 1)
             self.assertEqual(rows[0]["id"], rec["id"])
             self.assertIsNone(rows[0]["media_id"])
             self.assertEqual(rows[0]["priority"], "medium")
-            self.assertEqual(json.loads(rows[0]["details_json"])["media_ref"]["id"], "movie:Films:Inception (2010)")
-            self.assertEqual(json.loads(rows[0]["details_json"])["rule_id"], "low_score")
+            self.assertEqual(rows[0]["rule_id"], "low_score")
+            self.assertEqual(rows[0]["message_en"], "Low score")
+            self.assertEqual(rows[0]["suggested_action_en"], "Replace")
 
     def test_import_library_json(self):
         with tempfile.TemporaryDirectory() as tmp:

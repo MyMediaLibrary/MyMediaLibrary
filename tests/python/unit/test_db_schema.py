@@ -854,19 +854,14 @@ class V13DropRecommendationJsonColumnsTest(unittest.TestCase):
                     pass
                 conn.execute(
                     "INSERT OR IGNORE INTO recommendations"
-                    "(id, recommendation_type, details_json, message_json, suggested_action_json)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    ("rec:1", "quality",
-                     '{"id":"rec:1","message":{"en":"bad"},"suggested_action":{"en":"replace"}}',
-                     '{"en":"bad"}', '{"en":"replace"}'),
+                    "(id, recommendation_type, message_en, suggested_action_en, message_json, suggested_action_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    ("rec:1", "quality", "bad", "replace", '{"en":"bad"}', '{"en":"replace"}'),
                 )
             db_migrations._apply_v13_drop_recommendation_json_columns(conn)
             count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
-            row = conn.execute("SELECT details_json FROM recommendations WHERE id = 'rec:1'").fetchone()
             conn.close()
             self.assertEqual(count, 1)
-            self.assertIsNotNone(row)
-            self.assertIn("message", json.loads(row[0]))
 
     def test_migration_idempotent(self):
         """v13 migration must not raise when columns are already gone."""
@@ -893,13 +888,12 @@ class V13DropRecommendationJsonColumnsTest(unittest.TestCase):
             with conn:
                 recommendations_repository.upsert_recommendation(conn, item)
             row = conn.execute(
-                "SELECT details_json FROM recommendations WHERE id = 'rec:test:1'"
+                "SELECT message_en, suggested_action_en FROM recommendations WHERE id = 'rec:test:1'"
             ).fetchone()
             conn.close()
             self.assertIsNotNone(row)
-            details = json.loads(row["details_json"])
-            self.assertEqual(details["message"]["en"], "Quality too low")
-            self.assertEqual(details["suggested_action"]["en"], "Replace the file")
+            self.assertEqual(row["message_en"], "Quality too low")
+            self.assertEqual(row["suggested_action_en"], "Replace the file")
 
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""
@@ -1352,8 +1346,8 @@ class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
                 self.assertNotIn(col, cols, f"dropped column '{col}' found in fresh recommendations table")
 
     def test_fresh_db_retains_required_columns(self):
-        """A fresh v17 DB must keep id, media_id, recommendation_type, priority, rule_id, details_json."""
-        required = {"id", "media_id", "recommendation_type", "priority", "rule_id", "details_json"}
+        """A fresh v17+ DB must keep id, media_id, recommendation_type, priority, rule_id."""
+        required = {"id", "media_id", "recommendation_type", "priority", "rule_id"}
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
@@ -1384,9 +1378,9 @@ class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             with conn:
                 conn.execute(
-                    "INSERT INTO recommendations(id, recommendation_type, details_json)"
-                    " VALUES (?, ?, ?)",
-                    ("rec:1", "quality", '{"id":"rec:1"}'),
+                    "INSERT INTO recommendations(id, recommendation_type)"
+                    " VALUES (?, ?)",
+                    ("rec:1", "quality"),
                 )
             db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
             count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
@@ -1401,8 +1395,8 @@ class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
             db_migrations._apply_v17_recommendations_drop_redundant_columns(conn)
             conn.close()
 
-    def test_upsert_recommendation_writes_without_dropped_columns(self):
-        """upsert_recommendation must succeed and store details_json without the dropped columns."""
+    def test_upsert_recommendation_writes_message_columns(self):
+        """upsert_recommendation must write message/action columns (no details_json)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             item = {
@@ -1410,20 +1404,16 @@ class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
                 "recommendation_type": "quality",
                 "priority": "high",
                 "rule_id": "low_score",
-                "dedupe_group": "score_low",
-                "severity": 2,
-                "title": "Demo",
-                "reason": "Quality too low",
                 "media_ref": {"id": "movie:Films:Demo", "type": "movie"},
-                "display": {"title": "Demo", "year": 2024},
                 "message": {"fr": "Score faible.", "en": "Low score."},
                 "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
             }
             with conn:
                 recommendations_repository.upsert_recommendation(conn, item)
             row = conn.execute(
-                "SELECT recommendation_type, priority, rule_id, details_json FROM recommendations"
-                " WHERE id = 'rec:movie:Films:Demo:low_score'"
+                "SELECT recommendation_type, priority, rule_id,"
+                "       message_en, suggested_action_en"
+                " FROM recommendations WHERE id = 'rec:movie:Films:Demo:low_score'"
             ).fetchone()
             conn.close()
 
@@ -1431,9 +1421,187 @@ class V17RecommendationsDropRedundantColumnsTest(unittest.TestCase):
             self.assertEqual(row["recommendation_type"], "quality")
             self.assertEqual(row["priority"], "high")
             self.assertEqual(row["rule_id"], "low_score")
-            details = json.loads(row["details_json"])
-            self.assertEqual(details["message"]["en"], "Low score.")
-            self.assertEqual(details["suggested_action"]["en"], "Look for better.")
+            self.assertEqual(row["message_en"], "Low score.")
+            self.assertEqual(row["suggested_action_en"], "Look for better.")
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V18RecommendationsReplaceDetailsJsonTest(unittest.TestCase):
+    """Tests for the v18 migration: replace details_json with message/action columns."""
+
+    _DROPPED = ("details_json",)
+    _ADDED = ("message_fr", "message_en", "suggested_action_fr", "suggested_action_en")
+
+    def test_fresh_db_has_no_details_json(self):
+        """A fresh v18 DB must not contain details_json in recommendations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            self.assertNotIn("details_json", cols)
+
+    def test_fresh_db_has_message_action_columns(self):
+        """A fresh v18 DB must have message_fr/en and suggested_action_fr/en columns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in self._ADDED:
+                self.assertIn(col, cols, f"missing column: {col}")
+
+    def test_migration_extracts_message_from_details_json(self):
+        """v18 migration must populate message/action columns from details_json."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute(
+            "CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE recommendations ("
+            "  id TEXT PRIMARY KEY,"
+            "  media_id TEXT,"
+            "  recommendation_type TEXT NOT NULL,"
+            "  priority TEXT,"
+            "  rule_id TEXT,"
+            "  details_json TEXT,"
+            "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        )
+        for v in range(1, 18):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 17")
+        conn.execute(
+            "INSERT INTO recommendations(id, recommendation_type, priority, rule_id, details_json)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("rec:m:rule", "quality", "high", "low_score",
+             '{"message":{"fr":"Score faible.","en":"Low score."},'
+             '"suggested_action":{"fr":"Chercher.","en":"Look for better."}}'),
+        )
+        conn.commit()
+
+        db_migrations._apply_v18_recommendations_replace_details_json(conn)
+        conn.commit()
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+        self.assertNotIn("details_json", cols)
+        for col in self._ADDED:
+            self.assertIn(col, cols)
+
+        row = conn.execute("SELECT * FROM recommendations WHERE id = 'rec:m:rule'").fetchone()
+        conn.close()
+        self.assertEqual(row["message_fr"], "Score faible.")
+        self.assertEqual(row["message_en"], "Low score.")
+        self.assertEqual(row["suggested_action_fr"], "Chercher.")
+        self.assertEqual(row["suggested_action_en"], "Look for better.")
+
+    def test_migration_preserves_rows(self):
+        """v18 migration must not delete any recommendation rows."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                for i in range(3):
+                    conn.execute(
+                        "INSERT INTO recommendations(id, recommendation_type) VALUES (?, ?)",
+                        (f"rec:{i}", "quality"),
+                    )
+            db_migrations._apply_v18_recommendations_replace_details_json(conn)
+            count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 3)
+
+    def test_migration_idempotent(self):
+        """v18 migration must not raise when details_json is already absent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v18_recommendations_replace_details_json(conn)
+            db_migrations._apply_v18_recommendations_replace_details_json(conn)
+            conn.close()
+
+    def test_upsert_and_export_round_trip(self):
+        """upsert then export must return message/action and media_ref via JOIN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT INTO media(id, media_type, title, year) VALUES (?, ?, ?, ?)",
+                    ("movie:Films:Demo", "movie", "Demo", 2024),
+                )
+                recommendations_repository.upsert_recommendation(
+                    conn,
+                    {
+                        "id": "rec:movie:Films:Demo:low_score",
+                        "recommendation_type": "quality",
+                        "priority": "high",
+                        "rule_id": "low_score",
+                        "media_ref": {"id": "movie:Films:Demo", "type": "movie"},
+                        "message": {"fr": "Score faible.", "en": "Low score."},
+                        "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+                    },
+                )
+            from repositories import recommendations_repository as repo
+            payload = repo.export_recommendations(conn)
+            conn.close()
+
+        items = payload["items"]
+        self.assertEqual(len(items), 1)
+        rec = items[0]
+        self.assertEqual(rec["id"], "rec:movie:Films:Demo:low_score")
+        self.assertEqual(rec["recommendation_type"], "quality")
+        self.assertEqual(rec["priority"], "high")
+        self.assertEqual(rec["rule_id"], "low_score")
+        self.assertEqual(rec["message"], {"fr": "Score faible.", "en": "Low score."})
+        self.assertEqual(rec["suggested_action"], {"fr": "Chercher mieux.", "en": "Look for better."})
+        self.assertEqual(rec["media_ref"], {"id": "movie:Films:Demo", "type": "movie"})
+        self.assertEqual(rec["display"]["title"], "Demo")
+        self.assertEqual(rec["display"]["year"], 2024)
+
+    def test_dynamic_rule_without_recommendation_rules_entry(self):
+        """Recommendations from hardcoded rules (no DB rule) must be preserved."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT INTO media(id, media_type, title) VALUES (?, ?, ?)",
+                    ("tv:Series:Demo", "tv", "Demo Serie"),
+                )
+                recommendations_repository.upsert_recommendation(
+                    conn,
+                    {
+                        "id": "rec:tv:Series:Demo:series_mixed_resolution:s2",
+                        "recommendation_type": "series",
+                        "priority": "medium",
+                        "rule_id": "series_mixed_resolution:s2",
+                        "media_ref": {"id": "tv:Series:Demo", "type": "tv"},
+                        "message": {
+                            "fr": "La saison 2 est en 720p alors que la majorité est en 1080p.",
+                            "en": "Season 2 is in 720p while most of the series is in 1080p.",
+                        },
+                        "suggested_action": {
+                            "fr": "Vérifier la saison 2.",
+                            "en": "Review season 2.",
+                        },
+                    },
+                )
+            from repositories import recommendations_repository as repo
+            payload = repo.export_recommendations(conn)
+            conn.close()
+
+        items = payload["items"]
+        self.assertEqual(len(items), 1)
+        rec = items[0]
+        self.assertEqual(rec["rule_id"], "series_mixed_resolution:s2")
+        self.assertIn("Season 2", rec["message"]["en"])
+        self.assertEqual(rec["media_ref"]["type"], "tv")
 
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""

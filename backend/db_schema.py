@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 CREATE_TABLES_SQL = (
@@ -168,7 +168,10 @@ CREATE_TABLES_SQL = (
         recommendation_type TEXT NOT NULL,
         priority TEXT,
         rule_id TEXT,
-        details_json TEXT,
+        message_fr TEXT,
+        message_en TEXT,
+        suggested_action_fr TEXT,
+        suggested_action_en TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL

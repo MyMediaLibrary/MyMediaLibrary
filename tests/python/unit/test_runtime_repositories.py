@@ -595,7 +595,9 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             conn = db.initialize_database(db_path)
             try:
-                rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
+                rows = conn.execute(
+                    "SELECT id, media_id, priority, message_en FROM recommendations"
+                ).fetchall()
             finally:
                 conn.close()
 
@@ -604,7 +606,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in rows], ["new-rec"])
             self.assertIsNone(rows[0]["media_id"])
             self.assertEqual(rows[0]["priority"], "high")
-            self.assertEqual(json.loads(rows[0]["details_json"])["media_ref"]["id"], "movie:Films:Inception (2010)")
+            self.assertEqual(rows[0]["message_en"], "Low score")
 
     def test_recommendations_upsert_keeps_existing_media_id_when_present(self):
         with tempfile.TemporaryDirectory() as tmpdir:

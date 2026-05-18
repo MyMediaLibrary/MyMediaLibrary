@@ -71,21 +71,44 @@ def save_recommendations(
 def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT details_json, created_at, updated_at
-        FROM recommendations
-        ORDER BY priority, recommendation_type, id
+        SELECT r.id, r.media_id, r.recommendation_type, r.priority, r.rule_id,
+               r.message_fr, r.message_en, r.suggested_action_fr, r.suggested_action_en,
+               r.created_at, r.updated_at,
+               m.title AS media_title, m.year AS media_year, m.media_type
+        FROM recommendations r
+        LEFT JOIN media m ON m.id = r.media_id
+        ORDER BY r.priority, r.recommendation_type, r.id
         """
     ).fetchall()
-    items = [_from_json(row["details_json"], {}) for row in rows]
-    timestamps = [
-        row["updated_at"] or row["created_at"]
-        for row in rows
-        if row["updated_at"] or row["created_at"]
-    ]
+    items = []
+    timestamps = []
+    for row in rows:
+        item: dict[str, Any] = {
+            "id": row["id"],
+            "recommendation_type": row["recommendation_type"],
+            "priority": row["priority"],
+            "rule_id": row["rule_id"],
+            "message": {"fr": row["message_fr"], "en": row["message_en"]},
+            "suggested_action": {"fr": row["suggested_action_fr"], "en": row["suggested_action_en"]},
+        }
+        if row["media_id"]:
+            item["media_ref"] = {
+                "id": row["media_id"],
+                "type": row["media_type"] or "media",
+            }
+            if row["media_title"] or row["media_year"] is not None:
+                item["display"] = {
+                    "title": row["media_title"],
+                    "year": row["media_year"],
+                }
+        items.append(item)
+        ts = row["updated_at"] or row["created_at"]
+        if ts:
+            timestamps.append(ts)
     return {
         "generated_at": max(timestamps) if timestamps else None,
         "version": 1,
-        "items": [item for item in items if isinstance(item, dict)],
+        "items": items,
     }
 
 
@@ -106,16 +129,20 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
     conn.execute(
         """
         INSERT INTO recommendations(
-            id, media_id, recommendation_type, priority, rule_id, details_json
+            id, media_id, recommendation_type, priority, rule_id,
+            message_fr, message_en, suggested_action_fr, suggested_action_en
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-            media_id = excluded.media_id,
+            media_id            = excluded.media_id,
             recommendation_type = excluded.recommendation_type,
-            priority = excluded.priority,
-            rule_id = excluded.rule_id,
-            details_json = excluded.details_json,
-            updated_at = CURRENT_TIMESTAMP
+            priority            = excluded.priority,
+            rule_id             = excluded.rule_id,
+            message_fr          = excluded.message_fr,
+            message_en          = excluded.message_en,
+            suggested_action_fr = excluded.suggested_action_fr,
+            suggested_action_en = excluded.suggested_action_en,
+            updated_at          = CURRENT_TIMESTAMP
         """,
         _recommendation_params(conn, rec_id, item),
     )
@@ -140,13 +167,18 @@ def _table_is_empty(conn: sqlite3.Connection, table_name: str) -> bool:
 
 def _recommendation_params(conn: sqlite3.Connection, rec_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
     media_ref = item.get("media_ref") if isinstance(item.get("media_ref"), dict) else {}
+    msg = item.get("message") or {}
+    action = item.get("suggested_action") or {}
     return (
         rec_id,
         _existing_media_id(conn, media_ref.get("id")),
         str(item.get("recommendation_type") or "unknown"),
         item.get("priority"),
         item.get("rule_id"),
-        _to_json(item),
+        msg.get("fr") or None,
+        msg.get("en") or None,
+        action.get("fr") or None,
+        action.get("en") or None,
     )
 
 
@@ -158,10 +190,6 @@ def _existing_media_id(conn: sqlite3.Connection, value: Any) -> str | None:
     return media_id if row else None
 
 
-def _to_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -170,20 +198,6 @@ def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     tmp.replace(output)
 
 
-def _from_json(value: str | None, default: Any) -> Any:
-    if not isinstance(value, str):
-        return default
-    try:
-        return json.loads(value)
-    except Exception:
-        return default
-
-
-def _as_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except Exception:
-        return None
 
 
 def _effective_db_path(
