@@ -122,8 +122,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
             conn.execute(
-                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                ("default", 1, '{"weights":{"video":50,"audio":20,"languages":15,"size":15}}'),
+                "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                ("weights", "weight", "video", 50),
             )
             conn.execute(
                 "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
@@ -161,8 +161,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
             conn.execute(
-                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                ("default", 1, "{}"),
+                "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                ("weights", "weight", "video", 50),
             )
             conn.execute(
                 "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
@@ -560,7 +560,7 @@ class SchemaTargetTest(unittest.TestCase):
         "active_sessions", "app_config", "auth_settings", "media",
         "media_probe_cache", "media_providers", "providers",
         "recommendation_rules", "recommendations", "scan_runs",
-        "schema_migrations", "score_settings", "seasons",
+        "schema_migrations", "score_rules", "score_size_profiles", "seasons",
     })
 
     def test_fresh_db_has_no_deleted_tables(self):
@@ -1812,6 +1812,184 @@ class BootstrapStartupTest(unittest.TestCase):
             capture_output=True, env=env, cwd=str(ROOT),
         )
         self.assertNotEqual(p.returncode, 0)
+
+
+class V19MigrationTest(unittest.TestCase):
+    """Schema v19: replace score_settings with score_rules + score_size_profiles."""
+
+    def _make_v18_db_with_score(self, path: pathlib.Path, config_json: str, enabled: int = 1) -> None:
+        conn = sqlite3.connect(str(path))
+        conn.execute("PRAGMA user_version = 18")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_settings (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, configuration_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL)")
+        conn.execute("CREATE TABLE seasons (id INTEGER PRIMARY KEY, media_id TEXT, season_number INTEGER)")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE, mapped_name TEXT, is_ignored INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY, mode TEXT, phases TEXT, started_at TEXT NOT NULL, status TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE media_probe_cache (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL)")
+        for v in range(1, 19):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute(
+            "INSERT INTO score_settings(id, enabled, configuration_json) VALUES ('default', ?, ?)",
+            (enabled, config_json),
+        )
+        conn.execute("INSERT INTO app_config(key, value_json) VALUES ('system.log_level', '\"INFO\"')")
+        conn.commit()
+        conn.close()
+
+    def test_v19_migration_creates_score_rules_and_size_profiles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, '{}')
+            conn = db.initialize_database(path)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+            self.assertIn("score_rules", tables)
+            self.assertIn("score_size_profiles", tables)
+            self.assertNotIn("score_settings", tables)
+
+    def test_v19_migration_removes_score_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, '{}')
+            conn = db.initialize_database(path)
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='score_settings'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNone(exists)
+
+    def test_v19_migration_migrates_enabled_to_app_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, '{}', enabled=1)
+            conn = db.initialize_database(path)
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(json.loads(row["value_json"]), True)
+
+    def test_v19_migration_flattens_configuration_json_to_score_rules(self):
+        config = json.dumps({
+            "weights": {"video": 40, "audio": 25, "languages": 20, "size": 15},
+            "max_score": {"max_video": 50, "max_audio": 30, "max_languages": 15, "max_size": 15},
+            "video": {"resolution": {"2160p": 25, "default": 8}},
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, config)
+            conn = db.initialize_database(path)
+            rules = {
+                (r["category"], r["group_key"], r["value_key"]): r["score_value"]
+                for r in conn.execute(
+                    "SELECT category, group_key, value_key, score_value FROM score_rules"
+                ).fetchall()
+            }
+            conn.close()
+            self.assertEqual(rules[("weights", "weight", "video")], 40)
+            self.assertEqual(rules[("weights", "weight", "audio")], 25)
+            self.assertEqual(rules[("max_score", "max_score", "max_video")], 50)
+            self.assertEqual(rules[("video", "resolution", "2160p")], 25)
+            self.assertEqual(rules[("video", "resolution", "default")], 8)
+
+    def test_v19_migration_flattens_size_profiles(self):
+        config = json.dumps({
+            "size": {
+                "profiles": {
+                    "movie": {"1080p": {"hevc": {"min_gb": 2, "max_gb": 10}}},
+                    "series": {"720p": {"default": {"min_gb": 0.2, "max_gb": 1.5}}},
+                }
+            }
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, config)
+            conn = db.initialize_database(path)
+            profiles = {
+                (r["media_type"], r["resolution_key"], r["codec_key"]): (r["min_gb"], r["max_gb"])
+                for r in conn.execute(
+                    "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles"
+                ).fetchall()
+            }
+            conn.close()
+            self.assertIn(("movie", "1080p", "hevc"), profiles)
+            self.assertEqual(profiles[("movie", "1080p", "hevc")], (2.0, 10.0))
+            self.assertIn(("series", "720p", "default"), profiles)
+            self.assertAlmostEqual(profiles[("series", "720p", "default")][0], 0.2)
+
+    def test_v19_migration_empty_config_json_migrates_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v18_db_with_score(path, '{}')
+            conn = db.initialize_database(path)
+            rules_count = conn.execute("SELECT COUNT(*) FROM score_rules").fetchone()[0]
+            score_enabled = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            conn.close()
+            self.assertEqual(rules_count, 0)
+            self.assertIsNotNone(score_enabled)
+
+    def test_v19_migration_idempotent_on_fresh_db(self):
+        """v19 migration on a fresh v19 DB (no score_settings) must be a no-op."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertIn("score_rules", tables)
+            self.assertNotIn("score_settings", tables)
+
+    def test_v19_from_v8_db_full_chain(self):
+        """A v8 DB (with score_settings) must reach v19 and have score_rules after full migration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = sqlite3.connect(str(path))
+            conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE score_settings (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, configuration_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+            conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, rule_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)")
+            conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL, title TEXT NOT NULL, message_json TEXT, suggested_action_json TEXT, details_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, quality_json TEXT, missing_since TEXT, is_available INTEGER NOT NULL DEFAULT 1)")
+            conn.execute("CREATE TABLE seasons (media_id TEXT, season_number INTEGER, quality_json TEXT, PRIMARY KEY(media_id, season_number))")
+            for v in range(1, 9):
+                conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+            conn.execute(
+                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES ('default', 1, ?)",
+                (json.dumps({"weights": {"video": 45}}),),
+            )
+            conn.execute("PRAGMA user_version = 8")
+            conn.commit()
+            conn.close()
+
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            rules = conn.execute("SELECT category, value_key, score_value FROM score_rules").fetchall()
+            score_enabled = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("score_settings", tables)
+            self.assertIn("score_rules", tables)
+            self.assertIsNotNone(score_enabled)
+            video_rule = next((r for r in rules if r["value_key"] == "video"), None)
+            self.assertIsNotNone(video_rule)
+            self.assertEqual(video_rule["score_value"], 45)
 
 
 if __name__ == "__main__":

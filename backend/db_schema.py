@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 CREATE_TABLES_SQL = (
@@ -29,11 +29,28 @@ CREATE_TABLES_SQL = (
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS score_settings (
-        id TEXT PRIMARY KEY,
-        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-        configuration_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS score_rules (
+        id INTEGER PRIMARY KEY,
+        category TEXT NOT NULL,
+        group_key TEXT NOT NULL,
+        value_key TEXT NOT NULL,
+        score_value REAL NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(category, group_key, value_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS score_size_profiles (
+        id INTEGER PRIMARY KEY,
+        media_type TEXT NOT NULL,
+        resolution_key TEXT NOT NULL,
+        codec_key TEXT NOT NULL,
+        min_gb REAL NOT NULL,
+        max_gb REAL NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(media_type, resolution_key, codec_key)
     )
     """,
     """
@@ -240,6 +257,8 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_rule_type ON recommendation_rules(rule_type)",
     "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_priority ON recommendation_rules(priority)",
     "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_enabled ON recommendation_rules(enabled)",
+    "CREATE INDEX IF NOT EXISTS idx_score_rules_category ON score_rules(category)",
+    "CREATE INDEX IF NOT EXISTS idx_score_rules_lookup ON score_rules(category, group_key, value_key)",
 )
 
 
@@ -248,7 +267,8 @@ EXPECTED_TABLES = frozenset(
         "schema_migrations",
         "app_config",
         "auth_settings",
-        "score_settings",
+        "score_rules",
+        "score_size_profiles",
         "recommendation_rules",
         "media",
         "seasons",

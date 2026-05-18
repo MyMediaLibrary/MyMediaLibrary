@@ -11,10 +11,20 @@ from typing import Any
 
 try:
     from backend import db, db_import, runtime_paths
+    from backend.scoring import (
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 except Exception:
     import db  # type: ignore
     import db_import  # type: ignore
     import runtime_paths  # type: ignore
+    from scoring import (  # type: ignore
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 
 
 log = logging.getLogger(__name__)
@@ -64,7 +74,7 @@ def save_config(
     try:
         with conn:
             _replace_app_config(conn, sanitized)
-            _replace_score_settings(conn, sanitized)
+            _replace_score_data(conn, sanitized)
             if auth_enabled is not None or password_hash is not None:
                 _replace_auth_settings(conn, bool(auth_enabled), password_hash)
     finally:
@@ -112,7 +122,7 @@ def sanitize_config(value: Any) -> Any:
 
 
 def _config_tables_empty(conn: sqlite3.Connection) -> bool:
-    for table in ("app_config", "score_settings", "auth_settings"):
+    for table in ("app_config", "score_rules", "auth_settings"):
         if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
             return False
     return True
@@ -132,7 +142,7 @@ def _is_canonical_json_path(json_path: str | Path) -> bool:
     return Path(json_path) == runtime_paths.CONFIG_JSON
 
 
-_FLAT_CONFIG_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+_FLAT_CONFIG_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe", "score"})
 
 
 def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -149,12 +159,13 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     for group, subkeys in group_flat.items():
         cfg[group] = subkeys
 
-    score_row = conn.execute(
-        "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
-    ).fetchone()
-    if score_row is not None:
-        cfg["score"] = {"enabled": bool(score_row["enabled"])}
-        cfg["score_configuration"] = _from_json(score_row["configuration_json"], {})
+    rule_rows = conn.execute(
+        "SELECT category, group_key, value_key, score_value FROM score_rules ORDER BY id"
+    ).fetchall()
+    profile_rows = conn.execute(
+        "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles ORDER BY id"
+    ).fetchall()
+    cfg["score_configuration"] = reconstruct_score_config_from_rows(rule_rows, profile_rows)
 
     return sanitize_config(cfg)
 
@@ -171,7 +182,7 @@ _APP_CONFIG_USER_KEYS = frozenset({
 
 
 def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
-    _SKIP_KEYS = {"auth", "score", "score_configuration"}
+    _SKIP_KEYS = {"auth", "score_configuration"}
     # Wipe only scalar user-config keys — never touch runtime keys (e.g. runtime_library_document).
     incoming_keys = {str(k) for k in config if k not in _SKIP_KEYS and k not in _FLAT_CONFIG_GROUPS}
     managed_keys = tuple(_APP_CONFIG_USER_KEYS | incoming_keys)
@@ -211,17 +222,21 @@ def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> Non
         )
 
 
-def _replace_score_settings(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
-    score = config.get("score") if isinstance(config.get("score"), dict) else {}
+def _replace_score_data(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
     score_config = config.get("score_configuration") if isinstance(config.get("score_configuration"), dict) else {}
-    conn.execute("DELETE FROM score_settings")
-    conn.execute(
-        """
-        INSERT INTO score_settings(id, enabled, configuration_json, updated_at)
-        VALUES ('default', ?, ?, CURRENT_TIMESTAMP)
-        """,
-        (1 if score.get("enabled") is True else 0, _to_json(score_config)),
-    )
+    conn.execute("DELETE FROM score_rules")
+    conn.execute("DELETE FROM score_size_profiles")
+    for (category, group_key, value_key, score_value) in flatten_score_to_rules(score_config):
+        conn.execute(
+            "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+            (category, group_key, value_key, score_value),
+        )
+    for (media_type, res_key, codec_key, min_gb, max_gb) in flatten_score_to_size_profiles(score_config):
+        conn.execute(
+            "INSERT INTO score_size_profiles(media_type, resolution_key, codec_key, min_gb, max_gb)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (media_type, res_key, codec_key, min_gb, max_gb),
+        )
 
 
 def _replace_auth_settings(conn: sqlite3.Connection, auth_enabled: bool, password_hash: str | None) -> None:

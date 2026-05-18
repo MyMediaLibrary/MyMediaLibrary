@@ -97,6 +97,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 18:
             _apply_v18_recommendations_replace_details_json(conn)
             current_version = 18
+        if current_version < 19:
+            _apply_v19_replace_score_settings(conn)
+            current_version = 19
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -533,6 +536,97 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v19_replace_score_settings(conn: sqlite3.Connection) -> None:
+    """Replace score_settings with score_rules + score_size_profiles, and score.enabled in app_config.
+
+    Idempotent: if score_settings no longer exists (already migrated or fresh v19 install),
+    the function simply ensures the new tables exist and marks the version.
+    """
+    try:
+        from backend.scoring import flatten_score_to_rules, flatten_score_to_size_profiles
+    except Exception:
+        from scoring import flatten_score_to_rules, flatten_score_to_size_profiles  # type: ignore
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS score_rules (
+            id INTEGER PRIMARY KEY,
+            category TEXT NOT NULL,
+            group_key TEXT NOT NULL,
+            value_key TEXT NOT NULL,
+            score_value REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(category, group_key, value_key)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS score_size_profiles (
+            id INTEGER PRIMARY KEY,
+            media_type TEXT NOT NULL,
+            resolution_key TEXT NOT NULL,
+            codec_key TEXT NOT NULL,
+            min_gb REAL NOT NULL,
+            max_gb REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(media_type, resolution_key, codec_key)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_score_rules_category ON score_rules(category)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_score_rules_lookup ON score_rules(category, group_key, value_key)"
+    )
+
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='score_settings'"
+    ).fetchone():
+        log.info("[DB] v19: score_settings absent — new tables created, skipped data migration")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (19,))
+        return
+
+    row = conn.execute(
+        "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
+    ).fetchone()
+
+    if row is not None:
+        enabled = bool(row[0])
+        try:
+            score_config = _json.loads(row[1] or "{}")
+        except Exception:
+            score_config = {}
+            log.warning("[DB] v19: malformed configuration_json in score_settings — treating as empty")
+        if not isinstance(score_config, dict):
+            score_config = {}
+
+        conn.execute(
+            "INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', ?)",
+            (_json.dumps(enabled),),
+        )
+        rules = flatten_score_to_rules(score_config)
+        profiles = flatten_score_to_size_profiles(score_config)
+        for (category, group_key, value_key, score_value) in rules:
+            conn.execute(
+                "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+                " VALUES (?, ?, ?, ?)",
+                (category, group_key, value_key, score_value),
+            )
+        for (media_type, res_key, codec_key, min_gb, max_gb) in profiles:
+            conn.execute(
+                "INSERT OR IGNORE INTO score_size_profiles"
+                "(media_type, resolution_key, codec_key, min_gb, max_gb) VALUES (?, ?, ?, ?, ?)",
+                (media_type, res_key, codec_key, min_gb, max_gb),
+            )
+        log.info(
+            "[DB] v19: score_settings migrated — enabled=%s rules=%d profiles=%d",
+            enabled, len(rules), len(profiles),
+        )
+
+    conn.execute("DROP TABLE IF EXISTS score_settings")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (19,))
 
 
 def _apply_v18_recommendations_replace_details_json(conn: sqlite3.Connection) -> None:

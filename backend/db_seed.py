@@ -14,16 +14,26 @@ try:
     from backend.defaults.config_defaults import DEFAULT_CONFIG
     from backend.defaults.provider_defaults import DEFAULT_PROVIDERS, DEFAULT_PROVIDER_LOGOS
     from backend.defaults.recommendation_defaults import DEFAULT_RECOMMENDATION_RULES
+    from backend.scoring import (
+        DEFAULT_SCORE_CONFIG,
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+    )
 except Exception:
     from defaults.config_defaults import DEFAULT_CONFIG  # type: ignore
     from defaults.provider_defaults import DEFAULT_PROVIDERS, DEFAULT_PROVIDER_LOGOS  # type: ignore
     from defaults.recommendation_defaults import DEFAULT_RECOMMENDATION_RULES  # type: ignore
+    from scoring import (  # type: ignore
+        DEFAULT_SCORE_CONFIG,
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+    )
 
 
 log = logging.getLogger(__name__)
 
-_CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe")
-_CONFIG_SKIP_KEYS = frozenset({"score", "score_configuration", "auth"} | set(_CONFIG_FLAT_GROUPS))
+_CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe", "score")
+_CONFIG_SKIP_KEYS = frozenset({"score_configuration", "auth"} | set(_CONFIG_FLAT_GROUPS))
 
 
 def seed_config(conn: sqlite3.Connection) -> int:
@@ -38,12 +48,6 @@ def seed_config(conn: sqlite3.Connection) -> int:
                 "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
                 (key, _to_json(value)),
             )
-        score = DEFAULT_CONFIG.get("score", {})
-        rows += _insert_count(
-            conn,
-            "INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-            ("default", 1 if score.get("enabled") else 0, "{}"),
-        )
         for group in _CONFIG_FLAT_GROUPS:
             blob = DEFAULT_CONFIG.get(group)
             if isinstance(blob, dict):
@@ -53,6 +57,27 @@ def seed_config(conn: sqlite3.Connection) -> int:
                         "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
                         (f"{group}.{subkey}", _to_json(subval)),
                     )
+    return rows
+
+
+def seed_score_data(conn: sqlite3.Connection) -> int:
+    """Seed default score rules and size profiles. INSERT OR IGNORE — never overwrites user data."""
+    rows = 0
+    with conn:
+        for (category, group_key, value_key, score_value) in flatten_score_to_rules(DEFAULT_SCORE_CONFIG):
+            rows += _insert_count(
+                conn,
+                "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+                " VALUES (?, ?, ?, ?)",
+                (category, group_key, value_key, score_value),
+            )
+        for (media_type, res_key, codec_key, min_gb, max_gb) in flatten_score_to_size_profiles(DEFAULT_SCORE_CONFIG):
+            rows += _insert_count(
+                conn,
+                "INSERT OR IGNORE INTO score_size_profiles"
+                "(media_type, resolution_key, codec_key, min_gb, max_gb) VALUES (?, ?, ?, ?, ?)",
+                (media_type, res_key, codec_key, min_gb, max_gb),
+            )
     return rows
 
 
@@ -139,6 +164,10 @@ def seed_all(conn: sqlite3.Connection, logger: logging.Logger | None = None) -> 
     n = seed_config(conn)
     results["config"] = n
     active_logger.info("[DB] Seeded config defaults — rows=%s", n)
+
+    n = seed_score_data(conn)
+    results["score_data"] = n
+    active_logger.info("[DB] Seeded score defaults — rows=%s", n)
 
     n = seed_providers(conn)
     results["providers"] = n

@@ -149,6 +149,128 @@ def get_builtin_score_defaults() -> dict[str, Any]:
     return copy.deepcopy(DEFAULT_SCORE_CONFIG)
 
 
+def flatten_score_to_rules(score_config: dict) -> list[tuple]:
+    """Flatten score_configuration dict to (category, group_key, value_key, score_value) tuples.
+
+    Mapping:
+      weights.*          → (weights, weight, key, value)
+      max_score.*        → (max_score, max_score, key, value)
+      video|audio|languages.group.key → (cat, group, key, value)
+      size.points.key    → (size, points, key, value)
+      size.profiles      → handled by flatten_score_to_size_profiles
+    """
+    if not isinstance(score_config, dict):
+        return []
+    rows: list[tuple] = []
+
+    weights = score_config.get("weights")
+    if isinstance(weights, dict):
+        for k, v in weights.items():
+            try:
+                rows.append(("weights", "weight", str(k), float(v)))
+            except (TypeError, ValueError):
+                pass
+
+    max_score = score_config.get("max_score")
+    if isinstance(max_score, dict):
+        for k, v in max_score.items():
+            try:
+                rows.append(("max_score", "max_score", str(k), float(v)))
+            except (TypeError, ValueError):
+                pass
+
+    for cat in ("video", "audio", "languages"):
+        cat_data = score_config.get(cat)
+        if not isinstance(cat_data, dict):
+            continue
+        for group_key, group_data in cat_data.items():
+            if not isinstance(group_data, dict):
+                continue
+            for value_key, v in group_data.items():
+                try:
+                    rows.append((cat, str(group_key), str(value_key), float(v)))
+                except (TypeError, ValueError):
+                    pass
+
+    size = score_config.get("size")
+    if isinstance(size, dict):
+        points = size.get("points")
+        if isinstance(points, dict):
+            for k, v in points.items():
+                try:
+                    rows.append(("size", "points", str(k), float(v)))
+                except (TypeError, ValueError):
+                    pass
+
+    return rows
+
+
+def flatten_score_to_size_profiles(score_config: dict) -> list[tuple]:
+    """Flatten score_configuration size.profiles to (media_type, resolution_key, codec_key, min_gb, max_gb) tuples."""
+    if not isinstance(score_config, dict):
+        return []
+    rows: list[tuple] = []
+    size = score_config.get("size")
+    if not isinstance(size, dict):
+        return rows
+    profiles = size.get("profiles")
+    if not isinstance(profiles, dict):
+        return rows
+
+    for media_type, res_data in profiles.items():
+        if not isinstance(res_data, dict):
+            continue
+        for res_key, codec_data in res_data.items():
+            if not isinstance(codec_data, dict):
+                continue
+            for codec_key, bounds in codec_data.items():
+                if not isinstance(bounds, dict):
+                    continue
+                try:
+                    rows.append((
+                        str(media_type), str(res_key), str(codec_key),
+                        float(bounds.get("min_gb", 0)),
+                        float(bounds.get("max_gb", 0)),
+                    ))
+                except (TypeError, ValueError):
+                    pass
+
+    return rows
+
+
+def reconstruct_score_config_from_rows(rule_rows: Any, profile_rows: Any) -> dict:
+    """Reconstruct score_configuration dict from raw DB row sequences.
+
+    rule_rows: iterable of (category, group_key, value_key, score_value)
+    profile_rows: iterable of (media_type, resolution_key, codec_key, min_gb, max_gb)
+
+    Floats that are exact integers are returned as int (e.g. 50.0 → 50).
+    """
+    config: dict[str, Any] = {}
+
+    for row in rule_rows:
+        category, group_key, value_key, sv = row[0], row[1], row[2], row[3]
+        val: Any = int(sv) if isinstance(sv, float) and sv == int(sv) else sv
+        if category == "weights":
+            config.setdefault("weights", {})[value_key] = val
+        elif category == "max_score":
+            config.setdefault("max_score", {})[value_key] = val
+        else:
+            config.setdefault(category, {}).setdefault(group_key, {})[value_key] = val
+
+    profiles: dict = {}
+    for row in profile_rows:
+        mt, rk, ck, min_gb, max_gb = row[0], row[1], row[2], row[3], row[4]
+        min_val: Any = int(min_gb) if isinstance(min_gb, float) and min_gb == int(min_gb) else min_gb
+        max_val: Any = int(max_gb) if isinstance(max_gb, float) and max_gb == int(max_gb) else max_gb
+        profiles.setdefault(mt, {}).setdefault(rk, {})[ck] = {"min_gb": min_val, "max_gb": max_val}
+
+    if profiles:
+        config.setdefault("size", {})["profiles"] = profiles
+
+    return config
+
+
 def _resolve_score_config(score_config: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(score_config, dict):
         return score_config

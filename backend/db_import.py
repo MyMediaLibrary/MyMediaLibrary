@@ -11,9 +11,19 @@ from typing import Any
 
 try:
     from backend import db, runtime_paths
+    from backend.scoring import (
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 except Exception:
     import db  # type: ignore
     import runtime_paths  # type: ignore
+    from scoring import (  # type: ignore
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 
 
 log = logging.getLogger(__name__)
@@ -524,19 +534,18 @@ def import_config(
         VALUES (?, ?)
         """
     )
-    score_sql = (
+    score_enabled_sql = (
         """
-        INSERT INTO score_settings(id, enabled, configuration_json)
-        VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            enabled = excluded.enabled,
-            configuration_json = excluded.configuration_json,
+        INSERT INTO app_config(key, value_json)
+        VALUES ('score.enabled', ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
             updated_at = CURRENT_TIMESTAMP
         """
         if overwrite
         else """
-        INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json)
-        VALUES (?, ?, ?)
+        INSERT OR IGNORE INTO app_config(key, value_json)
+        VALUES ('score.enabled', ?)
         """
     )
     with conn:
@@ -562,13 +571,26 @@ def import_config(
                 score_configuration = _deep_merge(legacy_score_configuration, score_configuration)
             rows += _insert_count(
                 conn,
-                score_sql,
-                (
-                    "default",
-                    1 if score.get("enabled") is True else 0,
-                    _to_json(score_configuration),
-                ),
+                score_enabled_sql,
+                (_to_json(score.get("enabled") is True),),
             )
+            if overwrite:
+                conn.execute("DELETE FROM score_rules")
+                conn.execute("DELETE FROM score_size_profiles")
+            for (category, group_key, value_key, score_value) in flatten_score_to_rules(score_configuration):
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+                    " VALUES (?, ?, ?, ?)",
+                    (category, group_key, value_key, score_value),
+                )
+            for (media_type, res_key, codec_key, min_gb, max_gb) in flatten_score_to_size_profiles(score_configuration):
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO score_size_profiles"
+                    "(media_type, resolution_key, codec_key, min_gb, max_gb) VALUES (?, ?, ?, ?, ?)",
+                    (media_type, res_key, codec_key, min_gb, max_gb),
+                )
         for group in _CONFIG_FLAT_GROUPS:
             if isinstance(payload.get(group), dict):
                 for subkey, subval in payload[group].items():
@@ -787,13 +809,17 @@ def _count_config_total_source(payload: Any) -> int:
 
 
 def _count_config_db(conn: sqlite3.Connection) -> int:
-    # Exclude runtime key and all flat group prefix keys from the raw count.
+    # Exclude runtime key, flat group prefix keys, and score.* from raw count.
     group_excludes = " AND ".join(f"key NOT LIKE '{g}.%'" for g in _CONFIG_FLAT_GROUPS)
     app_config = conn.execute(
-        f"SELECT COUNT(*) FROM app_config WHERE key != ? AND {group_excludes}",
+        f"SELECT COUNT(*) FROM app_config WHERE key != ? AND key NOT LIKE 'score.%' AND {group_excludes}",
         (_LIBRARY_DOCUMENT_KEY,),
     ).fetchone()[0]
-    score = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+    # Score (score.enabled in app_config + score_rules/score_size_profiles) counts as 1 unit.
+    score = 1 if (
+        conn.execute("SELECT 1 FROM score_rules LIMIT 1").fetchone()
+        or conn.execute("SELECT 1 FROM app_config WHERE key = 'score.enabled' LIMIT 1").fetchone()
+    ) else 0
     auth = conn.execute("SELECT COUNT(*) FROM auth_settings").fetchone()[0]
     # Count each flat group as 1 logical unit regardless of how many subkeys it has.
     group_count = sum(
@@ -896,17 +922,25 @@ def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
     ).fetchall()
     for row in rows:
         key = row["key"]
+        if key.startswith("score."):
+            continue  # handled below as part of score block
         prefix, sep, _ = key.partition(".")
         if sep and prefix in set(_CONFIG_FLAT_GROUPS):
             continue  # handled below
         document[key] = _from_json(row["value_json"], None)
 
-    score_row = conn.execute(
-        "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
+    score_enabled_row = conn.execute(
+        "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
     ).fetchone()
-    if score_row is not None:
-        document["score"] = {"enabled": bool(score_row["enabled"])}
-        document["score_configuration"] = _from_json(score_row["configuration_json"], {})
+    if score_enabled_row is not None:
+        document["score"] = {"enabled": bool(_from_json(score_enabled_row["value_json"], False))}
+    rule_rows = conn.execute(
+        "SELECT category, group_key, value_key, score_value FROM score_rules ORDER BY id"
+    ).fetchall()
+    profile_rows = conn.execute(
+        "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles ORDER BY id"
+    ).fetchall()
+    document["score_configuration"] = reconstruct_score_config_from_rows(rule_rows, profile_rows)
 
     for group in _CONFIG_FLAT_GROUPS:
         group_rows = conn.execute(

@@ -35,8 +35,11 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                     ("system", '{"log_level":"DB","scan_cron":"0 3 * * *"}'),
                 )
                 conn.execute(
-                    "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                    ("default", 1, '{"weights":{"video":40}}'),
+                    "INSERT INTO app_config(key, value_json) VALUES ('score.enabled', 'true')",
+                )
+                conn.execute(
+                    "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                    ("weights", "weight", "video", 40),
                 )
                 conn.execute(
                     "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
@@ -80,14 +83,18 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 app_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
-                score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+                score_rules_count = conn.execute("SELECT COUNT(*) FROM score_rules").fetchone()[0]
+                score_enabled = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+                ).fetchone()
                 probe_count = conn.execute(
                     "SELECT COUNT(*) FROM app_config WHERE key LIKE 'media_probe.%'"
                 ).fetchone()[0]
             finally:
                 conn.close()
             self.assertGreater(app_count, 0)
-            self.assertEqual(score_count, 1)
+            self.assertGreater(score_rules_count, 0)
+            self.assertIsNotNone(score_enabled)
             self.assertGreater(probe_count, 0)
 
     def test_config_requires_sqlite(self):

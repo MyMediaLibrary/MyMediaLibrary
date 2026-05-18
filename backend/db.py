@@ -149,7 +149,7 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
         return False
     expected_tables = {
         "app_config",
-        "score_settings",
+        "score_rules",
         "schema_migrations",
         "providers",
         "recommendation_rules",
@@ -163,7 +163,7 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
     if {row["name"] for row in rows} != expected_tables:
         return False
     app_config_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
-    score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
+    score_count = conn.execute("SELECT COUNT(*) FROM score_rules").fetchone()[0]
     rules_count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
     if app_config_count <= 0 or score_count <= 0 or rules_count <= 0:
         return False

@@ -113,14 +113,24 @@ class DatabaseImportTest(unittest.TestCase):
 
             inserted = db_import.import_config(conn, path)
             exported = db_export.export_config(conn)
-            score = conn.execute("SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'").fetchone()
+            score_enabled = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            score_rules = conn.execute(
+                "SELECT category, group_key, value_key, score_value FROM score_rules"
+            ).fetchall()
             probe_workers = conn.execute("SELECT value_json FROM app_config WHERE key = 'media_probe.workers'").fetchone()
             conn.close()
 
             self.assertGreaterEqual(inserted, 4)
             self.assertIn("folders", exported)
             self.assertEqual(exported["seerr"], {"enabled": True, "url": "https://example.test"})
-            self.assertEqual(score["enabled"], 1)
+            self.assertIsNotNone(score_enabled)
+            self.assertEqual(json.loads(score_enabled["value_json"]), True)
+            self.assertTrue(any(
+                r["category"] == "weights" and r["value_key"] == "video" and r["score_value"] == 40
+                for r in score_rules
+            ))
             self.assertEqual(json.loads(probe_workers["value_json"]), 2)
 
     def test_export_config_reconstructs_nested_groups_from_flat_keys(self):
@@ -459,9 +469,10 @@ class DatabaseImportTest(unittest.TestCase):
             )
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
             conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
             conn.execute(
-                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                ("default", 1, '{"weights":{"video":30}}'),
+                "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                ("weights", "weight", "video", 30),
             )
             conn.commit()
 
