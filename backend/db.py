@@ -79,11 +79,13 @@ def bootstrap_runtime_database(
         version = get_schema_version(conn)
         wal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        active_logger.info("[DB] SQLite initialized — path=%s", target)
-        active_logger.info("[DB] Schema version: %s", version)
-        active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
-        active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
-        if os.environ.get("MML_SKIP_DB_STARTUP_TASKS") == "1":
+        skip = os.environ.get("MML_SKIP_DB_STARTUP_TASKS") == "1"
+        _log = active_logger.debug if skip else active_logger.info
+        _log("[DB] SQLite initialized — path=%s", target)
+        _log("[DB] Schema version: %s", version)
+        _log("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
+        _log("[DB] Foreign keys enabled: %s", bool(foreign_keys))
+        if skip:
             active_logger.debug("[DB] Startup JSON migration/seed skipped for child process")
             return True
         with _startup_tasks_lock:
