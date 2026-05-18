@@ -565,14 +565,22 @@ def _config_flat_keys(d: dict) -> list[str]:
 
 def _config_changed_keys(before: dict, after: dict) -> list[str]:
     """Return sorted flat key names whose values differ between before and after."""
-    _SKIP = {"auth", "score", "score_configuration"}
+    _SKIP = {"auth"}
     changed: list[str] = []
     all_keys = set(before) | set(after)
     for k in all_keys:
         if k in _SKIP:
             continue
         v_b, v_a = before.get(k), after.get(k)
-        if k in _CONFIG_FLAT_GROUPS:
+        if k == "score":
+            b_en = v_b.get("enabled") if isinstance(v_b, dict) else None
+            a_en = v_a.get("enabled") if isinstance(v_a, dict) else None
+            if b_en != a_en:
+                changed.append("score.enabled")
+        elif k == "score_configuration":
+            if v_b != v_a:
+                changed.append("score_configuration")
+        elif k in _CONFIG_FLAT_GROUPS:
             b = v_b if isinstance(v_b, dict) else {}
             a = v_a if isinstance(v_a, dict) else {}
             for sk in set(b) | set(a):
@@ -607,6 +615,9 @@ def _config_changed_summary(before: dict, after: dict) -> str:
         return "(no change)"
     parts = []
     for flat_key in keys:
+        if flat_key == "score_configuration":
+            parts.append("score_configuration")
+            continue
         if "." in flat_key:
             group, subkey = flat_key.split(".", 1)
             group_val = after.get(group)

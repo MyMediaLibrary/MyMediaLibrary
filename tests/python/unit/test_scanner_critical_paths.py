@@ -803,14 +803,76 @@ class ConfigLogHelpersTest(unittest.TestCase):
         self.assertIn("seerr.enabled", result)
         self.assertNotIn("seerr.apikey", result)
 
-    def test_changed_keys_skips_auth_score(self):
-        """auth and score changes must not appear in the diff list."""
-        before = {"auth": {"enabled": False}, "score": {"enabled": False}, "ui": {"theme": "light"}}
-        after  = {"auth": {"enabled": True},  "score": {"enabled": True},  "ui": {"theme": "dark"}}
+    def test_changed_keys_skips_auth(self):
+        """auth changes must never appear in the diff list."""
+        before = {"auth": {"enabled": False}, "ui": {"theme": "light"}}
+        after  = {"auth": {"enabled": True},  "ui": {"theme": "dark"}}
         result = scanner._config_changed_keys(before, after)
         self.assertNotIn("auth", result)
-        self.assertNotIn("score", result)
         self.assertIn("ui.theme", result)
+
+    def test_changed_keys_detects_score_enabled_change(self):
+        """A change in score.enabled must surface as 'score.enabled' in the diff."""
+        before = {"score": {"enabled": False}, "ui": {"theme": "light"}}
+        after  = {"score": {"enabled": True},  "ui": {"theme": "light"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score.enabled", result)
+        self.assertNotIn("score", result)
+
+    def test_changed_keys_no_change_when_score_enabled_identical(self):
+        """score.enabled unchanged must not appear in the diff."""
+        cfg = {"score": {"enabled": True}, "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(cfg, cfg)
+        self.assertNotIn("score.enabled", result)
+        self.assertEqual(result, [])
+
+    def test_changed_keys_detects_score_configuration_change(self):
+        """A weight change in score_configuration must surface as 'score_configuration'."""
+        before = {"score_configuration": {"weights": {"video": 50, "audio": 20}}}
+        after  = {"score_configuration": {"weights": {"video": 40, "audio": 20}}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score_configuration", result)
+
+    def test_changed_keys_detects_size_profile_change(self):
+        """A size profile change in score_configuration must surface as 'score_configuration'."""
+        before = {"score_configuration": {"size": {"profiles": {"movie": {"1080p": {"hevc": {"min_gb": 2, "max_gb": 10}}}}}}}
+        after  = {"score_configuration": {"size": {"profiles": {"movie": {"1080p": {"hevc": {"min_gb": 3, "max_gb": 10}}}}}}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score_configuration", result)
+
+    def test_changed_keys_no_change_when_score_configuration_identical(self):
+        """Identical score_configuration must not appear in the diff."""
+        cfg = {"score_configuration": {"weights": {"video": 50}}}
+        result = scanner._config_changed_keys(cfg, cfg)
+        self.assertNotIn("score_configuration", result)
+
+    def test_changed_keys_ui_theme_only(self):
+        """A ui.theme change in isolation must not bleed into score keys."""
+        before = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}, "ui": {"theme": "light"}}
+        after  = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}, "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertEqual(result, ["ui.theme"])
+
+    def test_changed_summary_score_configuration_no_json(self):
+        """score_configuration change must log the key name only — no JSON dump."""
+        before = {"score_configuration": {"weights": {"video": 50}}}
+        after  = {"score_configuration": {"weights": {"video": 40}}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "score_configuration")
+        self.assertNotIn("{", result)
+        self.assertNotIn("weights", result)
+
+    def test_changed_summary_score_enabled_shows_value(self):
+        """score.enabled change must log 'score.enabled : true/false'."""
+        before = {"score": {"enabled": False}}
+        after  = {"score": {"enabled": True}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "score.enabled : true")
+
+    def test_changed_summary_score_no_change(self):
+        """Identical score payload must still return '(no change)'."""
+        cfg = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}}
+        self.assertEqual(scanner._config_changed_summary(cfg, cfg), "(no change)")
 
     def test_changed_summary_includes_new_value(self):
         """_config_changed_summary must show 'key : new_value' format."""
