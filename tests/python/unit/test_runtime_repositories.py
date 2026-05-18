@@ -13,7 +13,6 @@ import db  # noqa: E402
 import scanner  # noqa: E402
 from repositories import (  # noqa: E402
     config_repository,
-    ffprobe_repository,
     media_repository,
     providers_repository,
     recommendations_repository,
@@ -40,8 +39,12 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                     ("default", 1, '{"weights":{"video":40}}'),
                 )
                 conn.execute(
-                    "INSERT INTO scan_settings(id, value_json) VALUES (?, ?)",
-                    ("media_probe", '{"enabled":true,"workers":2}'),
+                    "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("media_probe.enabled", "true"),
+                )
+                conn.execute(
+                    "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("media_probe.workers", "2"),
                 )
                 conn.commit()
             finally:
@@ -78,12 +81,14 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             try:
                 app_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
                 score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-                scan_count = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
+                probe_count = conn.execute(
+                    "SELECT COUNT(*) FROM app_config WHERE key LIKE 'media_probe.%'"
+                ).fetchone()[0]
             finally:
                 conn.close()
             self.assertGreater(app_count, 0)
             self.assertEqual(score_count, 1)
-            self.assertEqual(scan_count, 1)
+            self.assertGreater(probe_count, 0)
 
     def test_config_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -119,6 +124,66 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(cfg["score"], {"enabled": True})
             self.assertEqual(cfg["media_probe"], {"enabled": True, "workers": 2})
 
+    def test_save_config_full_writes_only_flat_keys_no_blobs(self):
+        """save_config must write group.*  flat keys and never recreate group-name blobs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            payload = {
+                "system": {"scan_cron": "0 4 * * *", "log_level": "DEBUG",
+                           "needs_onboarding": False, "inventory_enabled": False},
+                "seerr": {"enabled": True, "url": "http://seerr.local"},
+                "ui": {"theme": "light", "default_view": "list", "default_sort": "title-asc",
+                       "synopsis_on_hover": True, "accent_color": "#000"},
+                "recommendations": {"enabled": True},
+                "media_probe": {"enabled": True, "mode": "compare", "workers": 2, "cache_enabled": False},
+                "folders": ["/movies"],
+                "enable_movies": True,
+            }
+
+            config_repository.save_config(payload, json_path, db_path)
+
+            conn = db.initialize_database(db_path)
+            try:
+                all_keys = {r["key"] for r in conn.execute("SELECT key FROM app_config").fetchall()}
+            finally:
+                conn.close()
+            for group in ("system", "seerr", "ui", "recommendations", "media_probe"):
+                self.assertNotIn(group, all_keys, f"blob key '{group}' must not exist after save_config")
+            for expected in ("system.scan_cron", "system.log_level", "seerr.enabled",
+                             "ui.theme", "recommendations.enabled", "media_probe.enabled"):
+                self.assertIn(expected, all_keys, f"flat key '{expected}' missing after save_config")
+
+    def test_save_config_partial_preserves_other_groups(self):
+        """save_config with a partial payload must not wipe flat keys of absent groups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            # Seed a full config first
+            config_repository.save_config({
+                "folders": [], "enable_movies": True,
+                "system": {"scan_cron": "0 3 * * *", "log_level": "INFO",
+                           "needs_onboarding": True, "inventory_enabled": False},
+                "seerr": {"enabled": False, "url": ""},
+                "ui": {"theme": "dark", "default_view": "grid", "default_sort": "title-asc",
+                       "synopsis_on_hover": False, "accent_color": "#7c6aff"},
+                "recommendations": {"enabled": False},
+                "media_probe": {"enabled": False, "mode": "compare", "workers": 4, "cache_enabled": True},
+            }, json_path, db_path)
+
+            # Partial save: only scalar keys — no groups
+            config_repository.save_config({"folders": ["/movies"], "enable_movies": False},
+                                          json_path, db_path)
+
+            cfg = config_repository.load_config(json_path, db_path)
+            self.assertIsNotNone(cfg.get("system"), "system group must survive partial save")
+            self.assertIsNotNone(cfg.get("seerr"), "seerr group must survive partial save")
+            self.assertIsNotNone(cfg.get("ui"), "ui group must survive partial save")
+            self.assertIsNotNone(cfg.get("recommendations"), "recommendations group must survive partial save")
+            self.assertIsNotNone(cfg.get("media_probe"), "media_probe group must survive partial save")
+
     def test_config_sanitizes_sensitive_keys_recursively(self):
         payload = {
             "api_key": "top",
@@ -151,110 +216,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(enabled["password_hash"], "pbkdf2_sha256$260000$salt$digest")
             self.assertEqual(disabled["auth_enabled"], False)
             self.assertIsNone(disabled["password_hash"])
-
-    def test_ffprobe_cache_hit_and_miss_by_file_signature(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            media_file = root / "library" / "movie.mkv"
-            media_file.parent.mkdir()
-            media_file.write_bytes(b"movie")
-            stat = media_file.stat()
-            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                repo.upsert_probe(
-                    media_file,
-                    size=stat.st_size,
-                    mtime=stat.st_mtime,
-                    probe={"ok": True, "technical": {"resolution": "1080p"}},
-                )
-                hit = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
-                miss = repo.get(media_file, size=stat.st_size + 1, mtime=stat.st_mtime)
-            finally:
-                repo.close()
-
-            self.assertEqual(hit, {"ok": True, "technical": {"resolution": "1080p"}})
-            self.assertIsNone(miss)
-
-    def test_ffprobe_cache_upsert_error(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            media_file = root / "library" / "broken.mkv"
-            media_file.parent.mkdir()
-            media_file.write_bytes(b"broken")
-            stat = media_file.stat()
-            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                repo.upsert_error(media_file, size=stat.st_size, mtime=stat.st_mtime, error="broken file")
-                cached = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
-            finally:
-                repo.close()
-
-            self.assertEqual(cached, {"ok": False, "error": "broken file"})
-
-    def test_ffprobe_cache_imports_json_once_and_is_idempotent(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            cache_json.parent.mkdir()
-            cache_json.write_text(
-                json.dumps({
-                    "version": 1,
-                    "files": {
-                        "/library/movie.mkv": {
-                            "path": "/library/movie.mkv",
-                            "size_b": 123,
-                            "mtime": 42.5,
-                            "probe": {"ok": True, "technical": {"codec": "H.265"}},
-                        }
-                    },
-                }),
-                encoding="utf-8",
-            )
-
-            first = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            first.close()
-            second = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                cached = second.get("/library/movie.mkv", size=123, mtime=42.5)
-                count = second.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            finally:
-                second.close()
-
-            self.assertEqual(cached, {"ok": True, "technical": {"codec": "H.265"}})
-            self.assertEqual(count, 1)
-
-    def test_ffprobe_cache_tolerates_absent_and_invalid_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            missing_json = root / "data" / "missing.json"
-            invalid_json = root / "data" / "invalid.json"
-            invalid_json.parent.mkdir()
-            invalid_json.write_text("{ invalid", encoding="utf-8")
-
-            missing_repo = ffprobe_repository.open_cache(json_path=missing_json, db_path=db_path)
-            missing_count = missing_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            missing_repo.close()
-            invalid_repo = ffprobe_repository.open_cache(json_path=invalid_json, db_path=root / "data" / "other.db")
-            invalid_count = invalid_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            invalid_repo.close()
-
-            self.assertEqual(missing_count, 0)
-            self.assertEqual(invalid_count, 0)
-
-    def test_ffprobe_cache_requires_sqlite(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            blocked_parent = root / "not-a-directory"
-            blocked_parent.write_text("blocked", encoding="utf-8")
-
-            with self.assertRaises(Exception):
-                ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
 
     def test_media_library_loads_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

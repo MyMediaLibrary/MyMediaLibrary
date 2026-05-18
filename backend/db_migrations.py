@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json as _json
+import logging
+import os
 import sqlite3
 
 try:
     from backend import db_schema
 except Exception:
     import db_schema  # type: ignore
+
+log = logging.getLogger(__name__)
 
 
 class DatabaseMigrationError(RuntimeError):
@@ -62,6 +67,27 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 8:
             _apply_v8_unified_providers(conn)
             current_version = 8
+        if current_version < 9:
+            _apply_v9_drop_ffprobe_cache(conn)
+            current_version = 9
+        if current_version < 10:
+            _apply_v10_drop_scan_settings(conn)
+            current_version = 10
+        if current_version < 11:
+            _apply_v11_drop_dead_tables(conn)
+            current_version = 11
+        if current_version < 12:
+            _apply_v12_flatten_app_config_blobs(conn)
+            current_version = 12
+        if current_version < 13:
+            _apply_v13_drop_recommendation_json_columns(conn)
+            current_version = 13
+        if current_version < 14:
+            _apply_v14_recommendation_rules_extract_scalars(conn)
+            current_version = 14
+        if current_version < 15:
+            _apply_v15_drop_dead_columns(conn)
+            current_version = 15
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -78,7 +104,11 @@ def _apply_initial_schema(conn: sqlite3.Connection) -> None:
 
 
 def _apply_v2_ffprobe_lookup_index(conn: sqlite3.Connection) -> None:
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)")
+    # ffprobe_cache is dropped in v9; skip index creation on fresh installs where the table never existed.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ffprobe_cache'"
+    ).fetchone():
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)")
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (2,),
@@ -279,3 +309,285 @@ def _apply_v5_active_sessions(conn: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (5,),
     )
+
+
+def _apply_v9_drop_ffprobe_cache(conn: sqlite3.Connection) -> None:
+    """Migrate ffprobe_cache data into media_probe_cache, then drop ffprobe_cache.
+
+    Matching strategy: extract the filename (basename) from ffprobe_cache.file_path and
+    look up the media row whose filename column equals it (direct match for movies) or
+    contains it as a JSON string value (series). Rows that cannot be matched to a
+    media_id are logged as orphaned and skipped — they cannot be imported into
+    media_probe_cache because that table requires a media_id FK.
+
+    The migration is idempotent: INSERT OR IGNORE skips existing (media_id, filename)
+    pairs and DROP TABLE IF EXISTS is a no-op when the table is already gone.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ffprobe_cache'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (9,))
+        return
+
+    rows = conn.execute(
+        "SELECT file_path, size, mtime, probed_at, normalized_json FROM ffprobe_cache"
+    ).fetchall()
+
+    migrated = 0
+    skipped = 0
+    orphaned = 0
+
+    for row in rows:
+        file_path = row[0] or ""
+        filename = os.path.basename(file_path)
+        probe_data = row[4]
+
+        if not filename or probe_data is None:
+            orphaned += 1
+            continue
+
+        # Try exact filename match (movies store a plain string in media.filename).
+        media = conn.execute(
+            "SELECT id FROM media WHERE filename = ? LIMIT 1", (filename,)
+        ).fetchone()
+
+        # Fallback: JSON containment match (series store a nested JSON object).
+        if media is None:
+            media = conn.execute(
+                'SELECT id FROM media WHERE filename LIKE ? LIMIT 1',
+                (f'%"{filename}"%',),
+            ).fetchone()
+
+        if media is None:
+            orphaned += 1
+            continue
+
+        try:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO media_probe_cache
+                    (media_id, filename, file_path, file_size, modified_at, probed_at, probe_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (media[0], filename, file_path, row[1], row[2], row[3], probe_data),
+            )
+            if cursor.rowcount > 0:
+                migrated += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+
+    conn.execute("DROP TABLE IF EXISTS ffprobe_cache")
+    log.info(
+        "[DB] v9: ffprobe_cache → media_probe_cache — migrated=%d skipped=%d orphaned=%d",
+        migrated,
+        skipped,
+        orphaned,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (9,))
+
+
+def _apply_v10_drop_scan_settings(conn: sqlite3.Connection) -> None:
+    """Migrate scan_settings.media_probe blob into flat app_config keys, then drop scan_settings.
+
+    The media_probe JSON dict (e.g. {"enabled":false,"mode":"compare","workers":4,"cache_enabled":true})
+    is expanded into individual app_config rows keyed as media_probe.<subkey>.
+
+    The migration is idempotent:
+    - INSERT OR IGNORE skips flat keys that already exist in app_config.
+    - DROP TABLE IF EXISTS is a no-op when scan_settings is already gone.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scan_settings'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (10,))
+        return
+
+    row = conn.execute(
+        "SELECT value_json FROM scan_settings WHERE id = 'media_probe'"
+    ).fetchone()
+
+    migrated = 0
+    skipped = 0
+    missing = 0
+
+    if row is not None:
+        try:
+            probe = _json.loads(row[0] or "{}")
+            if isinstance(probe, dict):
+                for subkey, subval in probe.items():
+                    cursor = conn.execute(
+                        "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
+                        (
+                            f"media_probe.{subkey}",
+                            _json.dumps(subval, ensure_ascii=False, separators=(",", ":")),
+                        ),
+                    )
+                    if cursor.rowcount > 0:
+                        migrated += 1
+                    else:
+                        skipped += 1
+        except Exception:
+            missing += 1
+    else:
+        missing += 1
+
+    conn.execute("DROP TABLE IF EXISTS scan_settings")
+    log.info(
+        "[DB] v10: scan_settings → app_config (media_probe.*) — migrated=%d skipped=%d missing=%d",
+        migrated,
+        skipped,
+        missing,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (10,))
+
+
+def _apply_v15_drop_dead_columns(conn: sqlite3.Connection) -> None:
+    """Drop columns that are written but never read back, or never written at all.
+
+    media.missing_since  — never written in v0.5.x; superseded by is_available + last_seen_at.
+    media.quality_json   — written as a duplicate of data_json.quality; never SELECTed.
+    seasons.quality_json — same rationale as media.quality_json.
+
+    All three DROPs are idempotent via PRAGMA table_info checks.
+    SQLite 3.35+ DROP COLUMN is used throughout.
+    """
+    drops = [
+        ("media",   "missing_since"),
+        ("media",   "quality_json"),
+        ("seasons", "quality_json"),
+    ]
+    for table, col in drops:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if col in cols:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+    log.info("[DB] v15: dropped media.missing_since, media.quality_json, seasons.quality_json")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (15,))
+
+
+def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) -> None:
+    """Add rule_type and priority columns to recommendation_rules, populated from rule_json.
+
+    Both columns are added via ALTER TABLE (idempotent — existing columns are skipped).
+    Rows already having non-NULL values in either column are not updated (preserves user edits).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_rules'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+        return
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+    for col in ("rule_type", "priority"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE recommendation_rules ADD COLUMN {col} TEXT")
+
+    rows = conn.execute(
+        "SELECT id, rule_json, rule_type, priority FROM recommendation_rules"
+        " WHERE rule_type IS NULL OR priority IS NULL"
+    ).fetchall()
+
+    migrated = 0
+    skipped = 0
+    malformed = 0
+
+    for row in rows:
+        try:
+            rule = _json.loads(row[1] or "{}")
+        except Exception:
+            malformed += 1
+            continue
+        if not isinstance(rule, dict):
+            malformed += 1
+            continue
+        new_type = row[2] or str(rule.get("type") or "") or None
+        new_priority = row[3] or str(rule.get("priority") or "") or None
+        if new_type is None and new_priority is None:
+            skipped += 1
+            continue
+        conn.execute(
+            "UPDATE recommendation_rules SET rule_type = ?, priority = ? WHERE id = ?",
+            (new_type, new_priority, row[0]),
+        )
+        migrated += 1
+
+    log.info(
+        "[DB] v14: recommendation_rules extract scalars — migrated=%d skipped=%d malformed=%d",
+        migrated,
+        skipped,
+        malformed,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v13_drop_recommendation_json_columns(conn: sqlite3.Connection) -> None:
+    """Drop the redundant message_json and suggested_action_json columns from recommendations.
+
+    details_json is the canonical source for both fields. The two dedicated columns
+    were a write-through cache that could drift; dropping them removes the redundancy.
+    SQLite 3.35+ DROP COLUMN is used (idempotent via PRAGMA table_info check).
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+    for col in ("message_json", "suggested_action_json"):
+        if col in cols:
+            conn.execute(f"ALTER TABLE recommendations DROP COLUMN {col}")
+    log.info("[DB] v13: dropped recommendations.message_json and suggested_action_json")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (13,))
+
+
+def _apply_v12_flatten_app_config_blobs(conn: sqlite3.Connection) -> None:
+    """Expand system/seerr/ui/recommendations blobs into flat app_config keys.
+
+    Blobs stored under the group name are expanded into group.subkey rows.
+    INSERT OR IGNORE preserves any existing flat keys (never overwrites user data).
+    The blob key itself is then removed so only flat keys remain.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_config'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (12,))
+        return
+
+    _GROUPS = ("system", "seerr", "ui", "recommendations")
+    migrated = 0
+    skipped = 0
+    for group in _GROUPS:
+        row = conn.execute(
+            "SELECT value_json FROM app_config WHERE key = ?", (group,)
+        ).fetchone()
+        if row is None:
+            continue
+        try:
+            blob = _json.loads(row[0] or "{}")
+        except Exception:
+            blob = {}
+        if isinstance(blob, dict):
+            for subkey, subval in blob.items():
+                try:
+                    cursor = conn.execute(
+                        "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
+                        (f"{group}.{subkey}", _json.dumps(subval, ensure_ascii=False, separators=(",", ":"))),
+                    )
+                    if cursor.rowcount > 0:
+                        migrated += 1
+                    else:
+                        skipped += 1
+                except Exception:
+                    skipped += 1
+        conn.execute("DELETE FROM app_config WHERE key = ?", (group,))
+    log.info("[DB] v12: flatten app_config blobs — migrated=%d skipped=%d", migrated, skipped)
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (12,))
+
+
+def _apply_v11_drop_dead_tables(conn: sqlite3.Connection) -> None:
+    """Drop the episodes, files, and streams tables — never populated, superseded by media.data_json.
+
+    Drop order respects FK constraints: streams → files → episodes.
+    All three DROPs are IF EXISTS so the migration is idempotent.
+    """
+    conn.execute("DROP TABLE IF EXISTS streams")
+    conn.execute("DROP TABLE IF EXISTS files")
+    conn.execute("DROP TABLE IF EXISTS episodes")
+    log.info("[DB] v11: dropped dead tables — streams, files, episodes")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (11,))

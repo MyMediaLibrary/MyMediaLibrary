@@ -107,9 +107,9 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
         """
         INSERT INTO recommendations(
             id, media_id, recommendation_type, priority, title, reason, rule_id,
-            dedupe_group, severity, message_json, suggested_action_json, details_json
+            dedupe_group, severity, details_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             media_id = excluded.media_id,
             recommendation_type = excluded.recommendation_type,
@@ -119,8 +119,6 @@ def upsert_recommendation(conn: sqlite3.Connection, item: dict[str, Any], *, ind
             rule_id = excluded.rule_id,
             dedupe_group = excluded.dedupe_group,
             severity = excluded.severity,
-            message_json = excluded.message_json,
-            suggested_action_json = excluded.suggested_action_json,
             details_json = excluded.details_json,
             updated_at = CURRENT_TIMESTAMP
         """,
@@ -158,8 +156,6 @@ def _recommendation_params(conn: sqlite3.Connection, rec_id: str, item: dict[str
         item.get("rule_id"),
         item.get("dedupe_group"),
         _as_int(item.get("severity")),
-        _to_json(item.get("message") or {}),
-        _to_json(item.get("suggested_action") or {}),
         _to_json(item),
     )
 

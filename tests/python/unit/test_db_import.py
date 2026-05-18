@@ -96,14 +96,49 @@ class DatabaseImportTest(unittest.TestCase):
             inserted = db_import.import_config(conn, path)
             exported = db_export.export_config(conn)
             score = conn.execute("SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'").fetchone()
-            probe = conn.execute("SELECT value_json FROM scan_settings WHERE id = 'media_probe'").fetchone()
+            probe_workers = conn.execute("SELECT value_json FROM app_config WHERE key = 'media_probe.workers'").fetchone()
             conn.close()
 
             self.assertGreaterEqual(inserted, 4)
             self.assertIn("folders", exported)
             self.assertEqual(exported["seerr"], {"enabled": True, "url": "https://example.test"})
             self.assertEqual(score["enabled"], 1)
-            self.assertEqual(json.loads(probe["value_json"])["workers"], 2)
+            self.assertEqual(json.loads(probe_workers["value_json"]), 2)
+
+    def test_export_config_reconstructs_nested_groups_from_flat_keys(self):
+        """export_config must return nested dicts, not raw flat keys like 'system.log_level'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.json"
+            self.write_json(
+                path,
+                {
+                    "system": {"scan_cron": "0 4 * * *", "log_level": "DEBUG",
+                               "needs_onboarding": False, "inventory_enabled": False},
+                    "seerr": {"enabled": True, "url": "http://seerr.local"},
+                    "ui": {"theme": "light", "default_view": "list", "default_sort": "title-asc",
+                           "synopsis_on_hover": False, "accent_color": "#000"},
+                    "recommendations": {"enabled": True},
+                    "media_probe": {"enabled": False, "mode": "compare", "workers": 4, "cache_enabled": True},
+                },
+            )
+            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
+            db_import.import_config(conn, path)
+            exported = db_export.export_config(conn)
+            conn.close()
+
+            # Must be nested dicts, not raw flat keys
+            self.assertIsInstance(exported.get("system"), dict, "system must be a nested dict")
+            self.assertIsInstance(exported.get("seerr"), dict, "seerr must be a nested dict")
+            self.assertIsInstance(exported.get("ui"), dict, "ui must be a nested dict")
+            self.assertIsInstance(exported.get("recommendations"), dict)
+            self.assertIsInstance(exported.get("media_probe"), dict)
+            self.assertEqual(exported["system"]["scan_cron"], "0 4 * * *")
+            self.assertEqual(exported["seerr"]["enabled"], True)
+            self.assertEqual(exported["ui"]["theme"], "light")
+            # No raw flat keys at top level
+            for raw_key in ("system.scan_cron", "seerr.enabled", "ui.theme",
+                            "recommendations.enabled", "media_probe.workers"):
+                self.assertNotIn(raw_key, exported, f"raw flat key '{raw_key}' must not appear in exported config")
 
     def test_import_config_migrates_legacy_score_details(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,33 +162,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(exported["score"], {"enabled": True})
             self.assertEqual(exported["score_configuration"]["weights"]["video"], 48)
             self.assertEqual(exported["score_configuration"]["audio"]["codec"]["aac"], 7)
-
-    def test_import_media_probe_cache_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "media_probe_cache.json"
-            self.write_json(
-                path,
-                {
-                    "version": 1,
-                    "files": {
-                        "/library/movie.mkv": {
-                            "path": "/library/movie.mkv",
-                            "size_b": 123,
-                            "mtime": 42.5,
-                            "probe": {"ok": True, "technical": {"resolution": "1080p"}},
-                        }
-                    },
-                },
-            )
-            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
-
-            inserted = db_import.import_media_probe_cache(conn, path)
-            exported = db_export.export_media_probe_cache(conn)
-            conn.close()
-
-            self.assertEqual(inserted, 1)
-            self.assertEqual(exported["files"]["/library/movie.mkv"]["size_b"], 123)
-            self.assertTrue(exported["files"]["/library/movie.mkv"]["probe"]["ok"])
 
     def test_import_recommendations_json(self):
         with tempfile.TemporaryDirectory() as tmp:

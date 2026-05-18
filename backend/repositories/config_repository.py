@@ -65,7 +65,6 @@ def save_config(
         with conn:
             _replace_app_config(conn, sanitized)
             _replace_score_settings(conn, sanitized)
-            _replace_scan_settings(conn, sanitized)
             if auth_enabled is not None or password_hash is not None:
                 _replace_auth_settings(conn, bool(auth_enabled), password_hash)
     finally:
@@ -113,7 +112,7 @@ def sanitize_config(value: Any) -> Any:
 
 
 def _config_tables_empty(conn: sqlite3.Connection) -> bool:
-    for table in ("app_config", "scan_settings", "score_settings", "auth_settings"):
+    for table in ("app_config", "score_settings", "auth_settings"):
         if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
             return False
     return True
@@ -133,11 +132,22 @@ def _is_canonical_json_path(json_path: str | Path) -> bool:
     return Path(json_path) == runtime_paths.CONFIG_JSON
 
 
+_FLAT_CONFIG_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+
+
 def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     cfg: dict[str, Any] = {}
+    group_flat: dict[str, dict[str, Any]] = {}
     rows = conn.execute("SELECT key, value_json FROM app_config ORDER BY key").fetchall()
     for row in rows:
-        cfg[row["key"]] = _from_json(row["value_json"], None)
+        key = row["key"]
+        prefix, sep, subkey = key.partition(".")
+        if sep and prefix in _FLAT_CONFIG_GROUPS:
+            group_flat.setdefault(prefix, {})[subkey] = _from_json(row["value_json"], None)
+        else:
+            cfg[key] = _from_json(row["value_json"], None)
+    for group, subkeys in group_flat.items():
+        cfg[group] = subkeys
 
     score_row = conn.execute(
         "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
@@ -146,40 +156,51 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
         cfg["score"] = {"enabled": bool(score_row["enabled"])}
         cfg["score_configuration"] = _from_json(score_row["configuration_json"], {})
 
-    scan_rows = conn.execute("SELECT id, value_json FROM scan_settings ORDER BY id").fetchall()
-    for row in scan_rows:
-        cfg[row["id"]] = _from_json(row["value_json"], {})
-
     return sanitize_config(cfg)
 
 
-# Keys owned exclusively by save_config (user configuration).
+# Scalar/list user-config keys that are stored directly (not as flat group prefixes).
 # Runtime-internal keys like runtime_library_document must never appear here.
 _APP_CONFIG_USER_KEYS = frozenset({
-    "system",
     "scan",
-    "recommendations",
-    "seerr",
     "folders",
     "enable_movies",
     "enable_series",
     "providers_visible",
-    "ui",
 })
 
 
 def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
-    structured_keys = {"auth", "score", "score_configuration", "media_probe"}
-    # Wipe only user-config keys — never touch runtime keys (e.g. runtime_library_document).
-    incoming_keys = {str(k) for k in config if k not in structured_keys}
+    _SKIP_KEYS = {"auth", "score", "score_configuration"}
+    # Wipe only scalar user-config keys — never touch runtime keys (e.g. runtime_library_document).
+    incoming_keys = {str(k) for k in config if k not in _SKIP_KEYS and k not in _FLAT_CONFIG_GROUPS}
     managed_keys = tuple(_APP_CONFIG_USER_KEYS | incoming_keys)
     if managed_keys:
         conn.execute(
             f"DELETE FROM app_config WHERE key IN ({','.join('?' * len(managed_keys))})",
             managed_keys,
         )
+    # For each flat group present in the incoming config, wipe both any residual blob key
+    # and all flat subkeys so the write is always a clean replace.
+    for group in _FLAT_CONFIG_GROUPS:
+        if group in config:
+            conn.execute(
+                "DELETE FROM app_config WHERE key = ? OR key LIKE ?",
+                (group, f"{group}.%"),
+            )
     for key, value in config.items():
-        if key in structured_keys:
+        if key in _SKIP_KEYS:
+            continue
+        if key in _FLAT_CONFIG_GROUPS:
+            if isinstance(value, dict):
+                for subkey, subval in value.items():
+                    sanitized = _sanitize_value(subkey, subval)
+                    if sanitized is _SKIP:
+                        continue
+                    conn.execute(
+                        "INSERT INTO app_config(key, value_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                        (f"{key}.{subkey}", _to_json(sanitized)),
+                    )
             continue
         sanitized = _sanitize_value(key, value)
         if sanitized is _SKIP:
@@ -201,20 +222,6 @@ def _replace_score_settings(conn: sqlite3.Connection, config: dict[str, Any]) ->
         """,
         (1 if score.get("enabled") is True else 0, _to_json(score_config)),
     )
-
-
-def _replace_scan_settings(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
-    conn.execute("DELETE FROM scan_settings")
-    for key in ("media_probe",):
-        value = config.get(key)
-        if isinstance(value, dict):
-            conn.execute(
-                """
-                INSERT INTO scan_settings(id, value_json, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                """,
-                (key, _to_json(value)),
-            )
 
 
 def _replace_auth_settings(conn: sqlite3.Connection, auth_enabled: bool, password_hash: str | None) -> None:

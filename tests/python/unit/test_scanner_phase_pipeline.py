@@ -172,7 +172,6 @@ class MediaProbeCacheTest(unittest.TestCase):
             }
 
             with patch.object(mp, "_open_media_probe_cache_repo", return_value=mock_repo), \
-                 patch.object(mp, "_open_probe_cache_repository", return_value=None), \
                  patch.object(mp, "_probe_video_file") as mock_ffprobe:
                 result_doc, stats = mp._generate_probe_document(
                     doc,
@@ -182,7 +181,6 @@ class MediaProbeCacheTest(unittest.TestCase):
                     timeout=5.0,
                     workers=1,
                     cache_enabled=True,
-                    cache_path="/tmp/unused.json",
                     only_category=None,
                     include_diagnostics=False,
                 )
@@ -218,7 +216,6 @@ class MediaProbeCacheTest(unittest.TestCase):
             }
 
             with patch.object(mp, "_open_media_probe_cache_repo", return_value=mock_repo), \
-                 patch.object(mp, "_open_probe_cache_repository", return_value=None), \
                  patch.object(mp, "_probe_video_file", return_value=probe_data) as mock_ffprobe:
                 mp._generate_probe_document(
                     doc,
@@ -228,7 +225,6 @@ class MediaProbeCacheTest(unittest.TestCase):
                     timeout=5.0,
                     workers=1,
                     cache_enabled=True,
-                    cache_path="/tmp/unused.json",
                     only_category=None,
                     include_diagnostics=False,
                 )
@@ -275,7 +271,6 @@ class MediaProbeCacheTest(unittest.TestCase):
             }
 
             with patch.object(mp, "_open_media_probe_cache_repo", return_value=mock_repo), \
-                 patch.object(mp, "_open_probe_cache_repository", return_value=None), \
                  patch.object(mp, "_probe_video_file", return_value=probe_data) as mock_ffprobe:
                 mp._generate_probe_document(
                     doc,
@@ -285,7 +280,6 @@ class MediaProbeCacheTest(unittest.TestCase):
                     timeout=5.0,
                     workers=1,
                     cache_enabled=True,
-                    cache_path="/tmp/unused.json",
                     only_category=None,
                     include_diagnostics=False,
                 )

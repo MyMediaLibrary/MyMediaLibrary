@@ -1,3 +1,4 @@
+import json
 import logging
 import pathlib
 import sqlite3
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import db  # noqa: E402
 import db_migrations  # noqa: E402
 import db_schema  # noqa: E402
+import db_seed  # noqa: E402
 
 
 class DatabaseSchemaTest(unittest.TestCase):
@@ -292,18 +294,6 @@ class DatabaseSchemaTest(unittest.TestCase):
             self.assertEqual(season_count, 0)
             self.assertIsNone(rec_media_id)
 
-    def test_episode_numbering_is_nullable_for_non_classic_series_layouts(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conn = db.initialize_database(pathlib.Path(tmpdir) / "mymedialibrary.db")
-            episode_columns = {
-                row["name"]: row["notnull"]
-                for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
-            }
-            conn.close()
-
-            self.assertEqual(episode_columns["season_number"], 0)
-            self.assertEqual(episode_columns["episode_number"], 0)
-
     def test_migration_is_noop_when_database_is_current(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mymedialibrary.db")
@@ -531,6 +521,544 @@ class V8UnifiedProvidersTest(unittest.TestCase):
             cols = {row["name"] for row in conn.execute("PRAGMA table_info(providers)").fetchall()}
             conn.close()
             self.assertNotIn("logo_url", cols)
+
+
+class SchemaTargetTest(unittest.TestCase):
+    """Schema target state after v9-v12 cleanup — fresh DB and seed invariants."""
+
+    _DELETED = frozenset({"ffprobe_cache", "scan_settings", "episodes", "files", "streams"})
+    _REQUIRED = frozenset({
+        "active_sessions", "app_config", "auth_settings", "media",
+        "media_probe_cache", "media_providers", "providers",
+        "recommendation_rules", "recommendations", "scan_runs",
+        "schema_migrations", "score_settings", "seasons",
+    })
+
+    def test_fresh_db_has_no_deleted_tables(self):
+        """Tables removed in v9-v11 must not appear in a fresh DB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            conn.close()
+            for t in self._DELETED:
+                self.assertNotIn(t, tables, f"deleted table '{t}' found in fresh DB")
+
+    def test_fresh_db_has_all_required_tables(self):
+        """All required tables must be present in a fresh DB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            conn.close()
+            missing = self._REQUIRED - tables
+            self.assertFalse(missing, f"required tables missing from fresh DB: {missing}")
+
+    def test_seed_populates_media_probe_flat_keys(self):
+        """db_seed must write media_probe.* flat keys into app_config, not a JSON blob."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            keys = {r[0] for r in conn.execute(
+                "SELECT key FROM app_config WHERE key LIKE 'media_probe.%'"
+            ).fetchall()}
+            conn.close()
+            for k in ("media_probe.enabled", "media_probe.mode",
+                      "media_probe.workers", "media_probe.cache_enabled"):
+                self.assertIn(k, keys, f"flat probe key '{k}' not seeded")
+
+    def test_no_media_probe_blob_in_app_config(self):
+        """app_config must not have a key literally named 'media_probe' (blob form)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            row = conn.execute("SELECT 1 FROM app_config WHERE key = 'media_probe'").fetchone()
+            conn.close()
+            self.assertIsNone(row)
+
+
+class V10DropScanSettingsTest(unittest.TestCase):
+    """Tests for the v10 migration: scan_settings → app_config flat keys."""
+
+    def test_migrates_media_probe_blob_to_flat_keys(self):
+        """scan_settings.media_probe blob must be expanded into app_config flat keys."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute("""
+                    CREATE TABLE scan_settings (
+                        id TEXT PRIMARY KEY, value_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """)
+                conn.execute(
+                    "INSERT INTO scan_settings VALUES ('media_probe', ?, CURRENT_TIMESTAMP)",
+                    ('{"enabled":true,"mode":"compare","workers":6,"cache_enabled":false}',),
+                )
+            db_migrations._apply_v10_drop_scan_settings(conn)
+            probe = {
+                r[0]: json.loads(r[1])
+                for r in conn.execute(
+                    "SELECT key, value_json FROM app_config WHERE key LIKE 'media_probe.%'"
+                ).fetchall()
+            }
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            conn.close()
+            self.assertEqual(probe.get("media_probe.enabled"), True)
+            self.assertEqual(probe.get("media_probe.workers"), 6)
+            self.assertEqual(probe.get("media_probe.cache_enabled"), False)
+            self.assertNotIn("scan_settings", tables)
+
+    def test_preserves_existing_flat_key_not_overwritten(self):
+        """INSERT OR IGNORE must leave a user value already in app_config untouched."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute("""
+                    CREATE TABLE scan_settings (
+                        id TEXT PRIMARY KEY, value_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """)
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES ('media_probe.workers', '8')"
+                )
+                conn.execute(
+                    "INSERT INTO scan_settings VALUES ('media_probe', ?, CURRENT_TIMESTAMP)",
+                    ('{"enabled":false,"workers":2}',),
+                )
+            db_migrations._apply_v10_drop_scan_settings(conn)
+            workers = json.loads(
+                conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'media_probe.workers'"
+                ).fetchone()[0]
+            )
+            conn.close()
+            self.assertEqual(workers, 8)
+
+    def test_idempotent_when_scan_settings_absent(self):
+        """v10 migration must not raise when scan_settings does not exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v10_drop_scan_settings(conn)
+            conn.close()
+
+
+class V11DropDeadTablesTest(unittest.TestCase):
+    """Tests for the v11 migration: drop episodes, files, streams."""
+
+    def test_drops_all_three_tables(self):
+        """episodes, files, and streams must be absent after v11 migration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, media_id TEXT)")
+                conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY)")
+                conn.execute("CREATE TABLE streams (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL)")
+            db_migrations._apply_v11_drop_dead_tables(conn)
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            conn.close()
+            self.assertNotIn("episodes", tables)
+            self.assertNotIn("files", tables)
+            self.assertNotIn("streams", tables)
+
+    def test_idempotent_when_tables_already_gone(self):
+        """v11 migration must not raise when the dead tables are already absent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v11_drop_dead_tables(conn)
+            conn.close()
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline on a fresh DB, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V12FlattenAppConfigBlobsTest(unittest.TestCase):
+    """Tests for the v12 migration: flatten system/seerr/ui/recommendations blobs."""
+
+    def test_flattens_existing_blobs(self):
+        """Blob rows must be expanded into group.subkey flat keys."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("system", '{"scan_cron":"0 4 * * *","log_level":"DEBUG","needs_onboarding":false}'),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("seerr", '{"enabled":true,"url":"http://seerr.local"}'),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("ui", '{"theme":"light","default_view":"list"}'),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("recommendations", '{"enabled":true}'),
+                )
+            db_migrations._apply_v12_flatten_app_config_blobs(conn)
+            keys = {r[0] for r in conn.execute("SELECT key FROM app_config").fetchall()}
+            conn.close()
+            self.assertIn("system.scan_cron", keys)
+            self.assertIn("system.log_level", keys)
+            self.assertIn("seerr.enabled", keys)
+            self.assertIn("seerr.url", keys)
+            self.assertIn("ui.theme", keys)
+            self.assertIn("ui.default_view", keys)
+            self.assertIn("recommendations.enabled", keys)
+
+    def test_removes_blob_key_after_migration(self):
+        """The original blob key must be deleted after flattening."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("system", '{"scan_cron":"0 3 * * *"}'),
+                )
+            db_migrations._apply_v12_flatten_app_config_blobs(conn)
+            row = conn.execute("SELECT 1 FROM app_config WHERE key = 'system'").fetchone()
+            conn.close()
+            self.assertIsNone(row, "blob key 'system' must be removed after migration")
+
+    def test_no_overwrite_existing_flat_keys(self):
+        """INSERT OR IGNORE must leave existing flat keys untouched."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("system.log_level", '"WARNING"'),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("system", '{"log_level":"DEBUG","scan_cron":"0 3 * * *"}'),
+                )
+            db_migrations._apply_v12_flatten_app_config_blobs(conn)
+            level = json.loads(
+                conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'system.log_level'"
+                ).fetchone()[0]
+            )
+            conn.close()
+            self.assertEqual(level, "WARNING", "existing flat key must not be overwritten by migration")
+
+    def test_idempotent_when_already_flat(self):
+        """Migration must not raise when no blob keys exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            db_migrations._apply_v12_flatten_app_config_blobs(conn)
+            conn.close()
+
+    def test_fresh_db_seeds_all_groups_as_flat_keys(self):
+        """After seeding, system/seerr/ui/recommendations must be flat keys, never blobs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            all_keys = {r[0] for r in conn.execute("SELECT key FROM app_config").fetchall()}
+            conn.close()
+            for group in ("system", "seerr", "ui", "recommendations"):
+                self.assertNotIn(group, all_keys, f"blob key '{group}' must not exist after seeding")
+            for expected in (
+                "system.scan_cron", "system.log_level", "system.needs_onboarding",
+                "seerr.enabled", "seerr.url",
+                "ui.theme", "ui.default_view", "ui.default_sort",
+                "recommendations.enabled",
+            ):
+                self.assertIn(expected, all_keys, f"flat key '{expected}' missing after seeding")
+
+
+class V13DropRecommendationJsonColumnsTest(unittest.TestCase):
+    """Tests for the v13 migration: drop message_json and suggested_action_json."""
+
+    _DROPPED = ("message_json", "suggested_action_json")
+
+    def test_fresh_db_has_no_dropped_columns(self):
+        """A fresh DB must not contain message_json or suggested_action_json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in self._DROPPED:
+                self.assertNotIn(col, cols, f"dropped column '{col}' found in fresh recommendations table")
+
+    def test_migration_drops_columns_from_existing_db(self):
+        """v13 migration must remove the two redundant columns from an existing DB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            # Add the dropped columns back to simulate a pre-v13 DB
+            with conn:
+                try:
+                    conn.execute("ALTER TABLE recommendations ADD COLUMN message_json TEXT")
+                except Exception:
+                    pass
+                try:
+                    conn.execute("ALTER TABLE recommendations ADD COLUMN suggested_action_json TEXT")
+                except Exception:
+                    pass
+            db_migrations._apply_v13_drop_recommendation_json_columns(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+            conn.close()
+            for col in self._DROPPED:
+                self.assertNotIn(col, cols, f"column '{col}' must be absent after v13 migration")
+
+    def test_migration_preserves_existing_recommendations(self):
+        """v13 migration must not lose any recommendation rows."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                try:
+                    conn.execute("ALTER TABLE recommendations ADD COLUMN message_json TEXT")
+                    conn.execute("ALTER TABLE recommendations ADD COLUMN suggested_action_json TEXT")
+                except Exception:
+                    pass
+                conn.execute(
+                    "INSERT OR IGNORE INTO recommendations"
+                    "(id, recommendation_type, title, details_json, message_json, suggested_action_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    ("rec:1", "quality", "Low score",
+                     '{"id":"rec:1","message":{"en":"bad"},"suggested_action":{"en":"replace"}}',
+                     '{"en":"bad"}', '{"en":"replace"}'),
+                )
+            db_migrations._apply_v13_drop_recommendation_json_columns(conn)
+            count = conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0]
+            row = conn.execute("SELECT details_json FROM recommendations WHERE id = 'rec:1'").fetchone()
+            conn.close()
+            self.assertEqual(count, 1)
+            self.assertIsNotNone(row)
+            self.assertIn("message", json.loads(row[0]))
+
+    def test_migration_idempotent(self):
+        """v13 migration must not raise when columns are already gone."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v13_drop_recommendation_json_columns(conn)
+            db_migrations._apply_v13_drop_recommendation_json_columns(conn)
+            conn.close()
+
+    def test_upsert_recommendation_does_not_write_dropped_columns(self):
+        """upsert_recommendation must succeed without referencing the dropped columns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "backend" / "repositories"))
+            import recommendations_repository  # noqa: E402
+            item = {
+                "id": "rec:test:1",
+                "recommendation_type": "quality",
+                "priority": "medium",
+                "display": {"title": "Low score"},
+                "message": {"en": "Quality too low"},
+                "suggested_action": {"en": "Replace the file"},
+            }
+            with conn:
+                recommendations_repository.upsert_recommendation(conn, item)
+            row = conn.execute(
+                "SELECT details_json FROM recommendations WHERE id = 'rec:test:1'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            details = json.loads(row["details_json"])
+            self.assertEqual(details["message"]["en"], "Quality too low")
+            self.assertEqual(details["suggested_action"]["en"], "Replace the file")
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V14RecommendationRulesExtractScalarsTest(unittest.TestCase):
+    """Tests for the v14 migration: extract rule_type and priority from rule_json."""
+
+    def test_fresh_db_has_rule_type_and_priority_columns(self):
+        """A fresh DB must have rule_type and priority columns in recommendation_rules."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+            conn.close()
+            self.assertIn("rule_type", cols)
+            self.assertIn("priority", cols)
+
+    def test_seed_populates_rule_type_and_priority(self):
+        """seed_recommendation_rules must fill rule_type and priority from the rule dict."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            rows = conn.execute(
+                "SELECT rule_key, rule_type, priority FROM recommendation_rules"
+            ).fetchall()
+            conn.close()
+            self.assertGreater(len(rows), 0)
+            for row in rows:
+                self.assertIsNotNone(row["rule_type"], f"rule_type is NULL for {row['rule_key']}")
+                self.assertIsNotNone(row["priority"], f"priority is NULL for {row['rule_key']}")
+
+    def test_migration_extracts_scalars_from_existing_rows(self):
+        """v14 migration must populate rule_type and priority from rule_json on existing rows."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            # Insert a row with NULL rule_type/priority (simulates pre-v14 row)
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO recommendation_rules"
+                    "(rule_key, rule_json, rule_type, priority, enabled)"
+                    " VALUES (?, ?, NULL, NULL, 1)",
+                    ("test_rule", '{"id":"test_rule","type":"quality","priority":"high"}'),
+                )
+            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+            row = conn.execute(
+                "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
+            ).fetchone()
+            conn.close()
+            self.assertEqual(row["rule_type"], "quality")
+            self.assertEqual(row["priority"], "high")
+
+    def test_migration_does_not_overwrite_existing_values(self):
+        """v14 migration must not touch rows that already have rule_type or priority set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO recommendation_rules"
+                    "(rule_key, rule_json, rule_type, priority, enabled)"
+                    " VALUES (?, ?, ?, ?, 1)",
+                    ("test_rule", '{"id":"test_rule","type":"space","priority":"low"}',
+                     "quality", "high"),
+                )
+            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+            row = conn.execute(
+                "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
+            ).fetchone()
+            conn.close()
+            # Must keep the pre-existing values, not overwrite from JSON
+            self.assertEqual(row["rule_type"], "quality")
+            self.assertEqual(row["priority"], "high")
+
+    def test_migration_idempotent(self):
+        """v14 migration must not raise when run twice."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+            conn.close()
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V15DropDeadColumnsTest(unittest.TestCase):
+    """Tests for the v15 migration: drop missing_since, media.quality_json, seasons.quality_json."""
+
+    def test_fresh_db_has_no_dropped_columns(self):
+        """A fresh DB must not contain missing_since or quality_json on media/seasons."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            media_cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            season_cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+            conn.close()
+            self.assertNotIn("missing_since", media_cols)
+            self.assertNotIn("quality_json", media_cols)
+            self.assertNotIn("quality_json", season_cols)
+
+    def test_migration_drops_columns_from_existing_db(self):
+        """v15 migration must remove the three dead columns from an existing DB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            # Add the dropped columns back to simulate a pre-v15 DB
+            with conn:
+                for col in ("missing_since TEXT", "quality_json TEXT"):
+                    try:
+                        conn.execute(f"ALTER TABLE media ADD COLUMN {col}")
+                    except Exception:
+                        pass
+                try:
+                    conn.execute("ALTER TABLE seasons ADD COLUMN quality_json TEXT")
+                except Exception:
+                    pass
+            db_migrations._apply_v15_drop_dead_columns(conn)
+            media_cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            season_cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+            conn.close()
+            self.assertNotIn("missing_since", media_cols)
+            self.assertNotIn("quality_json", media_cols)
+            self.assertNotIn("quality_json", season_cols)
+
+    def test_migration_preserves_media_rows(self):
+        """v15 migration must not lose any media rows."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                for col in ("missing_since TEXT", "quality_json TEXT"):
+                    try:
+                        conn.execute(f"ALTER TABLE media ADD COLUMN {col}")
+                    except Exception:
+                        pass
+                conn.execute(
+                    "INSERT OR IGNORE INTO media(id, media_type, title) VALUES (?, ?, ?)",
+                    ("m:1", "movie", "Inception"),
+                )
+            db_migrations._apply_v15_drop_dead_columns(conn)
+            count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+
+    def test_migration_idempotent(self):
+        """v15 migration must not raise when columns are already gone."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v15_drop_dead_columns(conn)
+            db_migrations._apply_v15_drop_dead_columns(conn)
+            conn.close()
+
+    def test_upsert_media_does_not_write_quality_json(self):
+        """upsert_library_item must succeed without referencing quality_json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            import db_import
+            item = {
+                "id": "movie:Films:Inception",
+                "type": "movie",
+                "title": "Inception",
+                "quality": {"score": 87, "video": 50, "audio": 20},
+            }
+            with conn:
+                db_import.upsert_library_item(conn, item, overwrite=True)
+            row = conn.execute(
+                "SELECT quality_score, data_json FROM media WHERE id = 'movie:Films:Inception'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["quality_score"], 87.0)
+            data = json.loads(row["data_json"])
+            self.assertEqual(data["quality"]["score"], 87)
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

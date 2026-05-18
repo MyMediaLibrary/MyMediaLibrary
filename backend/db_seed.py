@@ -22,7 +22,8 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
-_CONFIG_SKIP_KEYS = frozenset({"score", "score_configuration", "media_probe", "auth"})
+_CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe")
+_CONFIG_SKIP_KEYS = frozenset({"score", "score_configuration", "auth"} | set(_CONFIG_FLAT_GROUPS))
 
 
 def seed_config(conn: sqlite3.Connection) -> int:
@@ -43,12 +44,15 @@ def seed_config(conn: sqlite3.Connection) -> int:
             "INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
             ("default", 1 if score.get("enabled") else 0, "{}"),
         )
-        if "media_probe" in DEFAULT_CONFIG:
-            rows += _insert_count(
-                conn,
-                "INSERT OR IGNORE INTO scan_settings(id, value_json) VALUES (?, ?)",
-                ("media_probe", _to_json(DEFAULT_CONFIG["media_probe"])),
-            )
+        for group in _CONFIG_FLAT_GROUPS:
+            blob = DEFAULT_CONFIG.get(group)
+            if isinstance(blob, dict):
+                for subkey, subval in blob.items():
+                    rows += _insert_count(
+                        conn,
+                        "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
+                        (f"{group}.{subkey}", _to_json(subval)),
+                    )
     return rows
 
 
@@ -103,8 +107,15 @@ def seed_recommendation_rules(conn: sqlite3.Connection) -> int:
                 continue
             rows += _insert_count(
                 conn,
-                "INSERT OR IGNORE INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                (rule_key, _to_json(rule), 0 if rule.get("enabled") is False else 1),
+                "INSERT OR IGNORE INTO recommendation_rules"
+                "(rule_key, rule_json, rule_type, priority, enabled) VALUES (?, ?, ?, ?, ?)",
+                (
+                    rule_key,
+                    _to_json(rule),
+                    str(rule.get("type") or "") or None,
+                    str(rule.get("priority") or "") or None,
+                    0 if rule.get("enabled") is False else 1,
+                ),
             )
     return rows
 

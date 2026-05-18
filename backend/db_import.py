@@ -18,7 +18,8 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
-_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "media_probe"}
+_CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe")
+_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration"} | set(_CONFIG_FLAT_GROUPS)
 _CONFIG_IMPORTABLE_KEYS = {
     "system",
     "scan",
@@ -87,7 +88,6 @@ def import_runtime_json_files(
         import_providers_mapping(conn, paths.PROVIDERS_MAPPING_JSON, report, overwrite=True)
         import_recommendation_rules(conn, paths.RECOMMENDATIONS_RULES_JSON, report)
         import_config(conn, paths.CONFIG_JSON, report)
-        import_media_probe_cache(conn, paths.MEDIA_PROBE_CACHE_JSON, report)
         import_recommendations(conn, paths.RECOMMENDATIONS_JSON, report)
         import_library(conn, paths.LIBRARY_JSON, report)
         return report
@@ -210,14 +210,6 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "db_count": lambda conn: _table_count(conn, "recommendation_rules"),
             "import": import_recommendation_rules,
             # DB may have more default rules than user's legacy JSON — that's fine
-            "valid_when": lambda source_count, db_count: db_count >= source_count,
-        },
-        {
-            "name": "media_probe_cache",
-            "path": Path(paths.MEDIA_PROBE_CACHE_JSON),
-            "source_count": _count_files_source,
-            "db_count": lambda conn: _table_count(conn, "ffprobe_cache"),
-            "import": import_media_probe_cache,
             "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
@@ -480,10 +472,17 @@ def import_recommendation_rules(conn: sqlite3.Connection, path: str | Path, repo
             rows += _insert_count(
                 conn,
                 """
-                INSERT OR IGNORE INTO recommendation_rules(rule_key, rule_json, enabled)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO recommendation_rules
+                    (rule_key, rule_json, rule_type, priority, enabled)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (rule_key, _to_json(rule), 0 if rule.get("enabled") is False else 1),
+                (
+                    rule_key,
+                    _to_json(rule),
+                    str(rule.get("type") or "") or None,
+                    str(rule.get("priority") or "") or None,
+                    0 if rule.get("enabled") is False else 1,
+                ),
             )
     _record(report, "recommendation_rules", rows)
     return rows
@@ -530,20 +529,6 @@ def import_config(
         VALUES (?, ?, ?)
         """
     )
-    scan_sql = (
-        """
-        INSERT INTO scan_settings(id, value_json)
-        VALUES (?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            value_json = excluded.value_json,
-            updated_at = CURRENT_TIMESTAMP
-        """
-        if overwrite
-        else """
-        INSERT OR IGNORE INTO scan_settings(id, value_json)
-        VALUES (?, ?)
-        """
-    )
     with conn:
         for key, value in payload.items():
             if key == "auth":
@@ -574,12 +559,17 @@ def import_config(
                     _to_json(score_configuration),
                 ),
             )
-        if isinstance(payload.get("media_probe"), dict):
-            rows += _insert_count(
-                conn,
-                scan_sql,
-                ("media_probe", _to_json(payload["media_probe"])),
-            )
+        for group in _CONFIG_FLAT_GROUPS:
+            if isinstance(payload.get(group), dict):
+                for subkey, subval in payload[group].items():
+                    clean = _strip_sensitive_value(subkey, subval)
+                    if clean is _SKIP_VALUE:
+                        continue
+                    rows += _insert_count(
+                        conn,
+                        app_config_sql,
+                        (f"{group}.{subkey}", _to_json(clean)),
+                    )
     _record(report, "config", rows)
     return rows
 
@@ -607,36 +597,6 @@ def sanitize_config_for_db(config: dict[str, Any]) -> dict[str, Any]:
     return sanitize_importable_config(config)
 
 
-def import_media_probe_cache(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
-    payload = _read_json(path, "media_probe_cache", report)
-    files = payload.get("files") if isinstance(payload, dict) else None
-    if not isinstance(files, dict):
-        return 0
-    rows = 0
-    with conn:
-        for file_path, entry in files.items():
-            if not isinstance(file_path, str) or not isinstance(entry, dict):
-                continue
-            probe = entry.get("probe") if isinstance(entry.get("probe"), dict) else {}
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO ffprobe_cache(file_path, size, mtime, status, normalized_json, error)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_path,
-                    _as_int(entry.get("size_b")),
-                    _as_float(entry.get("mtime")),
-                    "ok" if probe.get("ok") else "error",
-                    _to_json(probe),
-                    probe.get("error") if isinstance(probe.get("error"), str) else None,
-                ),
-            )
-    _record(report, "media_probe_cache", rows)
-    return rows
-
-
 def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
     payload = _read_json(path, "recommendations", report)
     items = payload.get("items") if isinstance(payload, dict) else None
@@ -656,9 +616,9 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
                 """
                 INSERT OR IGNORE INTO recommendations(
                     id, media_id, recommendation_type, priority, title, reason, rule_id,
-                    dedupe_group, severity, message_json, suggested_action_json, details_json
+                    dedupe_group, severity, details_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec_id,
@@ -670,8 +630,6 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
                     item.get("rule_id"),
                     item.get("dedupe_group"),
                     _as_int(item.get("severity")),
-                    _to_json(item.get("message") or {}),
-                    _to_json(item.get("suggested_action") or {}),
                     _to_json(item),
                 ),
             )
@@ -800,8 +758,9 @@ def _count_config_source(payload: Any) -> int:
             count += 1
     if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
         count += 1
-    if isinstance(payload.get("media_probe"), dict):
-        count += 1
+    for group in _CONFIG_FLAT_GROUPS:
+        if isinstance(payload.get(group), dict):
+            count += 1
     return count
 
 
@@ -818,14 +777,22 @@ def _count_config_total_source(payload: Any) -> int:
 
 
 def _count_config_db(conn: sqlite3.Connection) -> int:
+    # Exclude runtime key and all flat group prefix keys from the raw count.
+    group_excludes = " AND ".join(f"key NOT LIKE '{g}.%'" for g in _CONFIG_FLAT_GROUPS)
     app_config = conn.execute(
-        "SELECT COUNT(*) FROM app_config WHERE key != ?",
+        f"SELECT COUNT(*) FROM app_config WHERE key != ? AND {group_excludes}",
         (_LIBRARY_DOCUMENT_KEY,),
     ).fetchone()[0]
     score = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-    scan = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
     auth = conn.execute("SELECT COUNT(*) FROM auth_settings").fetchone()[0]
-    return int(app_config) + int(score) + int(scan) + int(auth)
+    # Count each flat group as 1 logical unit regardless of how many subkeys it has.
+    group_count = sum(
+        1 for g in _CONFIG_FLAT_GROUPS
+        if conn.execute(
+            "SELECT 1 FROM app_config WHERE key LIKE ? LIMIT 1", (f"{g}.%",)
+        ).fetchone()
+    )
+    return int(app_config) + int(score) + int(auth) + group_count
 
 
 def _validate_config_import(conn: sqlite3.Connection, payload: Any) -> dict[str, Any]:
@@ -905,8 +872,9 @@ def _config_source_document(payload: Any) -> dict[str, Any]:
             else {}
         )
         document["score_configuration"] = _deep_merge(legacy_score_configuration, score_configuration)
-    if isinstance(payload.get("media_probe"), dict):
-        document["media_probe"] = payload["media_probe"]
+    for group in _CONFIG_FLAT_GROUPS:
+        if isinstance(payload.get(group), dict):
+            document[group] = payload[group]
     return document
 
 
@@ -917,7 +885,11 @@ def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
         (_LIBRARY_DOCUMENT_KEY,),
     ).fetchall()
     for row in rows:
-        document[row["key"]] = _from_json(row["value_json"], None)
+        key = row["key"]
+        prefix, sep, _ = key.partition(".")
+        if sep and prefix in set(_CONFIG_FLAT_GROUPS):
+            continue  # handled below
+        document[key] = _from_json(row["value_json"], None)
 
     score_row = conn.execute(
         "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
@@ -926,9 +898,17 @@ def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
         document["score"] = {"enabled": bool(score_row["enabled"])}
         document["score_configuration"] = _from_json(score_row["configuration_json"], {})
 
-    scan_rows = conn.execute("SELECT id, value_json FROM scan_settings ORDER BY id").fetchall()
-    for row in scan_rows:
-        document[row["id"]] = _from_json(row["value_json"], {})
+    for group in _CONFIG_FLAT_GROUPS:
+        group_rows = conn.execute(
+            "SELECT key, value_json FROM app_config WHERE key LIKE ? ORDER BY key",
+            (f"{group}.%",),
+        ).fetchall()
+        if group_rows:
+            prefix_len = len(group) + 1
+            document[group] = {
+                row["key"][prefix_len:]: _from_json(row["value_json"], None)
+                for row in group_rows
+            }
 
     auth_row = conn.execute("SELECT auth_enabled FROM auth_settings WHERE id = 1").fetchone()
     if auth_row is not None:
@@ -1108,7 +1088,6 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         item.get("hdr_type"),
         1 if item.get("dolby_vision") is True else 0 if item.get("dolby_vision") is False else None,
         _to_json(item.get("providers") or []),
-        _to_json(quality or {}),
         _to_json(item),
         item.get("last_seen_at") or item.get("added_at"),
         1 if item.get("is_available", True) else 0,
@@ -1125,18 +1104,18 @@ runtime_min, runtime_min_avg, quality_score, width, height, resolution,
 video_codec, video_bitrate, audio_codec, audio_codec_raw, audio_bitrate,
 audio_channels, audio_languages_json, audio_language_group,
 subtitle_languages_json, framerate, container, hdr, hdr_type, dolby_vision,
-providers_json, quality_json, data_json, last_seen_at,
+providers_json, data_json, last_seen_at,
 is_available, first_seen_at, last_scanned_at, filename
 """
 
 _MEDIA_INSERT_IGNORE_SQL = f"""
 INSERT OR IGNORE INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 44)})
+VALUES ({",".join(["?"] * 43)})
 """
 
 _MEDIA_UPSERT_SQL = f"""
 INSERT INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 44)})
+VALUES ({",".join(["?"] * 43)})
 ON CONFLICT(id) DO UPDATE SET
     media_type = excluded.media_type,
     title = excluded.title,
@@ -1174,7 +1153,6 @@ ON CONFLICT(id) DO UPDATE SET
     hdr_type = excluded.hdr_type,
     dolby_vision = excluded.dolby_vision,
     providers_json = excluded.providers_json,
-    quality_json = excluded.quality_json,
     data_json = excluded.data_json,
     updated_at = CURRENT_TIMESTAMP,
     last_seen_at = excluded.last_seen_at,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 15
 
 
 CREATE_TABLES_SQL = (
@@ -29,13 +29,6 @@ CREATE_TABLES_SQL = (
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS scan_settings (
-        id TEXT PRIMARY KEY,
-        value_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS score_settings (
         id TEXT PRIMARY KEY,
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
@@ -48,6 +41,8 @@ CREATE_TABLES_SQL = (
         id INTEGER PRIMARY KEY,
         rule_key TEXT NOT NULL UNIQUE,
         rule_json TEXT NOT NULL,
+        rule_type TEXT,
+        priority TEXT,
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -93,12 +88,10 @@ CREATE_TABLES_SQL = (
         hdr_type TEXT,
         dolby_vision INTEGER CHECK (dolby_vision IN (0, 1)),
         providers_json TEXT,
-        quality_json TEXT,
         data_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TEXT,
-        missing_since TEXT,
         is_available INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0, 1)),
         first_seen_at TEXT,
         last_scanned_at TEXT,
@@ -134,83 +127,11 @@ CREATE_TABLES_SQL = (
         hdr INTEGER CHECK (hdr IN (0, 1)),
         hdr_type TEXT,
         dolby_vision INTEGER CHECK (dolby_vision IN (0, 1)),
-        quality_json TEXT,
         data_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
         UNIQUE (media_id, season_number)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS episodes (
-        id INTEGER PRIMARY KEY,
-        media_id TEXT NOT NULL,
-        season_id INTEGER,
-        season_number INTEGER,
-        episode_number INTEGER,
-        title TEXT,
-        overview TEXT,
-        air_date TEXT,
-        path TEXT,
-        size INTEGER,
-        duration REAL,
-        quality_json TEXT,
-        data_json TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
-        FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE SET NULL,
-        UNIQUE (media_id, season_number, episode_number)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY,
-        media_id TEXT,
-        season_id INTEGER,
-        episode_id INTEGER,
-        path TEXT NOT NULL,
-        relative_path TEXT,
-        file_name TEXT,
-        size INTEGER,
-        mtime REAL,
-        duration REAL,
-        container TEXT,
-        data_json TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        last_seen_at TEXT,
-        missing_since TEXT,
-        FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
-        FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE SET NULL,
-        FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE SET NULL,
-        UNIQUE (path)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS streams (
-        id INTEGER PRIMARY KEY,
-        file_id INTEGER NOT NULL,
-        stream_type TEXT NOT NULL,
-        stream_index INTEGER,
-        codec TEXT,
-        language TEXT,
-        channels INTEGER,
-        bitrate INTEGER,
-        width INTEGER,
-        height INTEGER,
-        resolution TEXT,
-        hdr INTEGER CHECK (hdr IN (0, 1)),
-        dolby_vision INTEGER CHECK (dolby_vision IN (0, 1)),
-        framerate REAL,
-        profile TEXT,
-        bit_depth INTEGER,
-        extra_json TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-        UNIQUE (file_id, stream_index)
     )
     """,
     """
@@ -244,8 +165,6 @@ CREATE_TABLES_SQL = (
         rule_id TEXT,
         dedupe_group TEXT,
         severity INTEGER,
-        message_json TEXT,
-        suggested_action_json TEXT,
         details_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -263,19 +182,6 @@ CREATE_TABLES_SQL = (
         status TEXT NOT NULL,
         summary_json TEXT,
         error TEXT
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ffprobe_cache (
-        id INTEGER PRIMARY KEY,
-        file_path TEXT NOT NULL,
-        size INTEGER,
-        mtime REAL,
-        probed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        status TEXT NOT NULL,
-        normalized_json TEXT,
-        error TEXT,
-        UNIQUE (file_path, size, mtime)
     )
     """,
     """
@@ -313,25 +219,13 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_media_quality_score ON media(quality_score)",
     "CREATE INDEX IF NOT EXISTS idx_media_resolution ON media(resolution)",
     "CREATE INDEX IF NOT EXISTS idx_seasons_media_id ON seasons(media_id)",
-    "CREATE INDEX IF NOT EXISTS idx_episodes_media_id ON episodes(media_id)",
-    "CREATE INDEX IF NOT EXISTS idx_episodes_media_season_episode ON episodes(media_id, season_number, episode_number)",
-    "CREATE INDEX IF NOT EXISTS idx_episodes_season_id ON episodes(season_id)",
-    "CREATE INDEX IF NOT EXISTS idx_files_media_id ON files(media_id)",
-    "CREATE INDEX IF NOT EXISTS idx_files_season_id ON files(season_id)",
-    "CREATE INDEX IF NOT EXISTS idx_files_episode_id ON files(episode_id)",
-    "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
     "CREATE INDEX IF NOT EXISTS idx_providers_raw_name ON providers(raw_name)",
-    "CREATE INDEX IF NOT EXISTS idx_streams_file_id ON streams(file_id)",
-    "CREATE INDEX IF NOT EXISTS idx_streams_file_type ON streams(file_id, stream_type)",
     "CREATE INDEX IF NOT EXISTS idx_media_providers_media_id ON media_providers(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_media_providers_provider_id ON media_providers(provider_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_media_id ON recommendations(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_type_priority ON recommendations(recommendation_type, priority)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_priority ON recommendations(priority)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_created_at ON recommendations(created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_path ON ffprobe_cache(file_path)",
-    "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_file_signature ON ffprobe_cache(file_path, size, mtime)",
-    "CREATE INDEX IF NOT EXISTS idx_ffprobe_cache_lookup ON ffprobe_cache(file_path, size, mtime)",
     "CREATE INDEX IF NOT EXISTS idx_active_sessions_expires_at ON active_sessions(expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_media_is_available ON media(is_available)",
     "CREATE INDEX IF NOT EXISTS idx_media_first_seen_at ON media(first_seen_at)",
@@ -345,19 +239,14 @@ EXPECTED_TABLES = frozenset(
         "schema_migrations",
         "app_config",
         "auth_settings",
-        "scan_settings",
         "score_settings",
         "recommendation_rules",
         "media",
         "seasons",
-        "episodes",
-        "files",
-        "streams",
         "providers",
         "media_providers",
         "recommendations",
         "scan_runs",
-        "ffprobe_cache",
         "active_sessions",
         "media_probe_cache",
     }

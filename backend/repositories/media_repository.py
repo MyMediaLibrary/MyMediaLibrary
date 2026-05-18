@@ -269,9 +269,9 @@ def _sync_media_children(conn: sqlite3.Connection, media_id: str, item: dict[str
                 media_id, season_number, title, episodes_count, size_total, runtime_min,
                 runtime_min_avg, quality_score, width, height, resolution, video_codec,
                 audio_codec, audio_channels, audio_languages_json, audio_language_group,
-                subtitle_languages_json, container, quality_json, data_json
+                subtitle_languages_json, container, data_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(media_id, season_number) DO UPDATE SET
                 title = excluded.title,
                 episodes_count = excluded.episodes_count,
@@ -289,7 +289,6 @@ def _sync_media_children(conn: sqlite3.Connection, media_id: str, item: dict[str
                 audio_language_group = excluded.audio_language_group,
                 subtitle_languages_json = excluded.subtitle_languages_json,
                 container = excluded.container,
-                quality_json = excluded.quality_json,
                 data_json = excluded.data_json,
                 updated_at = CURRENT_TIMESTAMP
             """,
@@ -318,7 +317,6 @@ def _season_params(media_id: str, season_number: int, season: dict[str, Any]) ->
         season.get("audio_language_group") or season.get("audio_languages_simple"),
         _to_json(season.get("subtitle_languages") or []),
         season.get("container"),
-        _to_json(quality or {}),
         _to_json(season),
     )
 

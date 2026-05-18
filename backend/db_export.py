@@ -42,31 +42,20 @@ def export_recommendation_rules(conn: sqlite3.Connection) -> dict[str, Any]:
     return {"version": 1, "rules": [_from_json(row["rule_json"], {}) for row in rows]}
 
 
+_EXPORT_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+
+
 def export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute("SELECT key, value_json FROM app_config ORDER BY key").fetchall()
-    return {row["key"]: _from_json(row["value_json"], None) for row in rows}
-
-
-def export_media_probe_cache(conn: sqlite3.Connection) -> dict[str, Any]:
-    rows = conn.execute(
-        """
-        SELECT file_path, size, mtime, normalized_json
-        FROM ffprobe_cache
-        ORDER BY file_path
-        """
-    ).fetchall()
-    return {
-        "version": 1,
-        "files": {
-            row["file_path"]: {
-                "path": row["file_path"],
-                "size_b": row["size"],
-                "mtime": row["mtime"],
-                "probe": _from_json(row["normalized_json"], {}),
-            }
-            for row in rows
-        },
-    }
+    result: dict[str, Any] = {}
+    for row in rows:
+        key = row["key"]
+        prefix, sep, subkey = key.partition(".")
+        if sep and prefix in _EXPORT_FLAT_GROUPS:
+            result.setdefault(prefix, {})[subkey] = _from_json(row["value_json"], None)
+        else:
+            result[key] = _from_json(row["value_json"], None)
+    return result
 
 
 def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:

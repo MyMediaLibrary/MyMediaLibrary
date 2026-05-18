@@ -129,7 +129,6 @@ def run_media_probe_pipeline_if_enabled(
     library_root: str | Path = runtime_paths.LIBRARY_DIR,
     timeout: float = 5.0,
     only_category: str | None = None,
-    cache_path: str | Path = runtime_paths.MEDIA_PROBE_CACHE_JSON,
 ):
     del output_path
     document = library_document
@@ -143,7 +142,6 @@ def run_media_probe_pipeline_if_enabled(
         library_root=library_root,
         timeout=timeout,
         only_category=only_category,
-        cache_path=cache_path,
     )
 
 # ---------------------------------------------------------------------------
