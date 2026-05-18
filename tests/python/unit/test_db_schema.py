@@ -1061,5 +1061,151 @@ class V15DropDeadColumnsTest(unittest.TestCase):
             self.assertEqual(version, db_schema.SCHEMA_VERSION)
 
 
+class BootstrapStartupTest(unittest.TestCase):
+    """Tests for the startup bootstrap sequence introduced to fix the startup race.
+
+    Context: the old entrypoint started --serve and --origin startup concurrently.
+    Both called bootstrap_runtime_database() at the same time, causing a race on
+    the fcntl startup-tasks lock.  --serve could block there and never bind port 8095.
+
+    Fix: entrypoint now runs `python3 -m backend.db` sequentially BEFORE services,
+    then sets MML_SKIP_DB_STARTUP_TASKS=1 for both child processes.
+    """
+
+    def _make_v8_db(self, path: pathlib.Path) -> None:
+        """Create a minimal v8 SQLite DB to simulate an upgrade scenario."""
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_settings (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, configuration_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, rule_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL, title TEXT NOT NULL, message_json TEXT, suggested_action_json TEXT, details_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, quality_json TEXT, missing_since TEXT, is_available INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE seasons (media_id TEXT, season_number INTEGER, quality_json TEXT, PRIMARY KEY(media_id, season_number))")
+        for v in range(1, 9):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+        conn.close()
+
+    def test_v8_db_migrates_to_current_schema_on_initialize_database(self):
+        """A v8 DB must reach SCHEMA_VERSION after initialize_database."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v8_db(path)
+
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            media_cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("missing_since", media_cols)
+            self.assertNotIn("quality_json", media_cols)
+
+    def test_skip_startup_tasks_still_runs_migrations(self):
+        """MML_SKIP_DB_STARTUP_TASKS=1 must still apply schema migrations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v8_db(path)
+
+            prev_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": "1"}):
+                    db.bootstrap_runtime_database(path)
+            finally:
+                db._startup_tasks_done = prev_done
+
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+    def test_skip_startup_tasks_skips_seed(self):
+        """MML_SKIP_DB_STARTUP_TASKS=1 must not call seed or JSON migration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            prev_done = db._startup_tasks_done
+            db._startup_tasks_done = False
+            try:
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": "1"}), \
+                     patch.object(db, "_seed_bundled_defaults") as seed, \
+                     patch.object(db, "_migrate_runtime_json_sources") as migrate_json:
+                    db.bootstrap_runtime_database(path)
+            finally:
+                db._startup_tasks_done = prev_done
+            self.assertEqual(seed.call_count, 0)
+            self.assertEqual(migrate_json.call_count, 0)
+
+    def test_concurrent_skip_processes_after_sequential_bootstrap(self):
+        """After sequential bootstrap, two concurrent SKIP processes must both see SCHEMA_VERSION.
+
+        This mirrors the new entrypoint sequence:
+          1. python3 -m backend.db  (sequential, migrates v8→v15)
+          2. MML_SKIP_DB_STARTUP_TASKS=1 python3 scanner.py --serve  (concurrent)
+          3. MML_SKIP_DB_STARTUP_TASKS=1 python3 scanner.py --origin startup  (concurrent)
+
+        With the DB already at SCHEMA_VERSION, migrate() is a no-op and the two
+        concurrent SKIP processes should not race on write access.
+        """
+        import threading
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            # Step 1: sequential bootstrap (simulates entrypoint step 2)
+            with patch.object(db, "_has_legacy_json_sources", return_value=False), \
+                 patch.object(db, "_seed_bundled_defaults"):
+                db.bootstrap_runtime_database(path)
+
+            errors = []
+            versions = []
+
+            def skip_worker():
+                try:
+                    # Simulate MML_SKIP_DB_STARTUP_TASKS=1 child process
+                    with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": "1"}):
+                        db.bootstrap_runtime_database(path)
+                    conn = db.initialize_database(path)
+                    versions.append(db_migrations.get_schema_version(conn))
+                    conn.close()
+                except Exception as exc:
+                    errors.append(exc)
+
+            t1 = threading.Thread(target=skip_worker)
+            t2 = threading.Thread(target=skip_worker)
+            t1.start(); t2.start()
+            t1.join(); t2.join()
+
+            self.assertEqual(errors, [], f"Unexpected errors in concurrent SKIP processes: {errors}")
+            for v in versions:
+                self.assertEqual(v, db_schema.SCHEMA_VERSION)
+
+    def test_db_main_exits_zero_on_success(self):
+        """python3 -m backend.db must exit 0 when bootstrap succeeds."""
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            ROOT = pathlib.Path(__file__).resolve().parents[3]
+            env = {**__import__("os").environ, "MYMEDIALIBRARY_DB_PATH": str(path)}
+            p = subprocess.run(
+                [__import__("sys").executable, str(ROOT / "backend" / "db.py")],
+                capture_output=True, env=env, cwd=str(ROOT),
+            )
+            self.assertEqual(p.returncode, 0, f"stderr: {p.stderr.decode()}")
+
+    def test_db_main_exits_nonzero_on_bad_path(self):
+        """python3 -m backend.db must exit non-zero when DB path is unwritable."""
+        import subprocess
+        ROOT = pathlib.Path(__file__).resolve().parents[3]
+        env = {**__import__("os").environ, "MYMEDIALIBRARY_DB_PATH": "/proc/nonexistent/mml.db"}
+        p = subprocess.run(
+            [__import__("sys").executable, str(ROOT / "backend" / "db.py")],
+            capture_output=True, env=env, cwd=str(ROOT),
+        )
+        self.assertNotEqual(p.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

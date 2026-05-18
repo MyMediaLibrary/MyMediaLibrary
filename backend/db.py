@@ -39,7 +39,9 @@ def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     path = Path(db_path) if db_path is not None else default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(path)
+    # timeout=30: give concurrent writers (e.g. --serve + --origin startup) 30 s to
+    # acquire the write lock rather than raising "database is locked" after 5 s.
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -221,3 +223,17 @@ def _write_startup_marker(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(Exception):
         path.write_text(str(time.time()), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=_sys.stdout,
+    )
+    try:
+        bootstrap_runtime_database()
+    except Exception as _exc:
+        logging.critical("[DB] Bootstrap failed: %s", _exc)
+        _sys.exit(1)
