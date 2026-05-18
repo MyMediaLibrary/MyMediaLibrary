@@ -587,6 +587,36 @@ def _config_changed_keys(before: dict, after: dict) -> list[str]:
     return sorted(changed)
 
 
+def _fmt_config_val(v: object) -> str:
+    """Format a config value for a single-line log entry (no secrets, no JSON quotes)."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return f"[{len(v)} items]"
+    return "(complex)"
+
+
+def _config_changed_summary(before: dict, after: dict) -> str:
+    """Return 'key : new_value, ...' for keys that changed, safe for INFO logging."""
+    keys = _config_changed_keys(before, after)
+    if not keys:
+        return "(no change)"
+    parts = []
+    for flat_key in keys:
+        if "." in flat_key:
+            group, subkey = flat_key.split(".", 1)
+            group_val = after.get(group)
+            val = group_val.get(subkey) if isinstance(group_val, dict) else None
+        else:
+            val = after.get(flat_key)
+        parts.append(f"{flat_key} : {_fmt_config_val(val)}")
+    return ", ".join(parts)
+
+
 def _normalize_seerr_secret_keys(secrets: dict) -> tuple[dict, bool]:
     changed = False
     if not isinstance(secrets, dict):
@@ -5129,7 +5159,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 if not system_payload:
                     payload.pop("system", None)
             cfg = load_config()
-            log.info("[config] Updating: %s", ", ".join(_config_flat_keys(payload)) or "(no keys)")
 
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
@@ -5152,7 +5181,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 merged["seerr"].pop("apikey", None)
                 merged["seerr"].pop("clear_apikey", None)
             merged.pop("jellyseerr", None)
-            changed_keys = _config_changed_keys(cfg, merged)
             save_config(merged)
             if secrets_after != secrets_before:
                 try:
@@ -5173,7 +5201,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             elif auth_action == "disabled":
                 log.info("[config] Authentication disabled")
 
-            log.info("[config] Saved: %s", ", ".join(changed_keys) or "(no change)")
+            log.info("[config] Saved: %s", _config_changed_summary(cfg, merged))
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:

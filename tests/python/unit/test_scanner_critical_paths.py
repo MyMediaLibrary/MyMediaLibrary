@@ -812,6 +812,39 @@ class ConfigLogHelpersTest(unittest.TestCase):
         self.assertNotIn("score", result)
         self.assertIn("ui.theme", result)
 
+    def test_changed_summary_includes_new_value(self):
+        """_config_changed_summary must show 'key : new_value' format."""
+        before = {"ui": {"theme": "light"}}
+        after  = {"ui": {"theme": "dark"}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "ui.theme : dark")
+
+    def test_changed_summary_no_change(self):
+        cfg = {"ui": {"theme": "dark"}}
+        self.assertEqual(scanner._config_changed_summary(cfg, cfg), "(no change)")
+
+    def test_changed_summary_bool_value(self):
+        before = {"seerr": {"enabled": False}}
+        after  = {"seerr": {"enabled": True}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertIn("seerr.enabled : true", result)
+
+    def test_changed_summary_omits_sensitive_values(self):
+        before = {"seerr": {"enabled": False, "apikey": "old"}}
+        after  = {"seerr": {"enabled": True,  "apikey": "new"}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("apikey", result)
+        self.assertNotIn("old", result)
+        self.assertNotIn("new", result)
+
+    def test_fmt_config_val_types(self):
+        self.assertEqual(scanner._fmt_config_val("dark"), "dark")
+        self.assertEqual(scanner._fmt_config_val(True), "true")
+        self.assertEqual(scanner._fmt_config_val(False), "false")
+        self.assertEqual(scanner._fmt_config_val(4), "4")
+        self.assertEqual(scanner._fmt_config_val([1, 2, 3]), "[3 items]")
+
     def test_seerr_log_suppressed_when_payload_has_no_seerr_key(self):
         """_apply_seerr_secret_update must return 'not modified' — no Seerr log should fire."""
         payload = {"ui": {"theme": "dark"}}
