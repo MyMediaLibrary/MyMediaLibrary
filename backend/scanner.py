@@ -543,10 +543,10 @@ _CONFIG_SENSITIVE_TOKENS = ("api_key", "apikey", "token", "secret", "password")
 def _config_flat_keys(d: dict) -> list[str]:
     """Return sorted flat key names (group.subkey or scalar) from a config dict.
 
-    Omits auth/score/score_configuration and any key whose name contains a
-    sensitive token — values are never included.
+    Omits auth/score/score_configuration/providers_visible and any key whose name
+    contains a sensitive token — values are never included.
     """
-    _SKIP = {"auth", "score", "score_configuration"}
+    _SKIP = {"auth", "score", "score_configuration", "providers_visible"}
     keys: list[str] = []
     for k, v in d.items():
         if k in _SKIP:
@@ -564,8 +564,12 @@ def _config_flat_keys(d: dict) -> list[str]:
 
 
 def _config_changed_keys(before: dict, after: dict) -> list[str]:
-    """Return sorted flat key names whose values differ between before and after."""
-    _SKIP = {"auth"}
+    """Return sorted flat key names whose values differ between before and after.
+
+    providers_visible is excluded: it maps to providers.is_ignored (not app_config)
+    and is never a loggable save key.
+    """
+    _SKIP = {"auth", "providers_visible"}
     changed: list[str] = []
     all_keys = set(before) | set(after)
     for k in all_keys:

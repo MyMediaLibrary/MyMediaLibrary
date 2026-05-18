@@ -779,9 +779,16 @@ class ConfigLogHelpersTest(unittest.TestCase):
         self.assertNotIn("seerr.apikey", result)
 
     def test_flat_keys_scalar_keys(self):
-        """Scalar keys (folders, enable_movies) are included as-is."""
-        result = scanner._config_flat_keys({"folders": ["/movies"], "enable_movies": True})
+        """Scalar keys (folders, enable_movies) are included; providers_visible is excluded."""
+        result = scanner._config_flat_keys({"folders": ["/movies"], "enable_movies": True, "providers_visible": ["Netflix"]})
         self.assertIn("folders", result)
+        self.assertIn("enable_movies", result)
+        self.assertNotIn("providers_visible", result)
+
+    def test_flat_keys_excludes_providers_visible(self):
+        """providers_visible is stored in providers.is_ignored — must not appear as a log key."""
+        result = scanner._config_flat_keys({"providers_visible": ["Netflix", "Prime"], "enable_movies": True})
+        self.assertNotIn("providers_visible", result)
         self.assertIn("enable_movies", result)
 
     def test_changed_keys_detects_single_change(self):
@@ -810,6 +817,23 @@ class ConfigLogHelpersTest(unittest.TestCase):
         result = scanner._config_changed_keys(before, after)
         self.assertNotIn("auth", result)
         self.assertIn("ui.theme", result)
+
+    def test_changed_keys_skips_providers_visible(self):
+        """providers_visible is stored in providers.is_ignored — must never appear in the diff."""
+        before = {"providers_visible": None,           "ui": {"theme": "light"}}
+        after  = {"providers_visible": ["Netflix"],    "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("providers_visible", result)
+        self.assertIn("ui.theme", result)
+
+    def test_changed_keys_auth_and_providers_visible_together(self):
+        """Simulates an auth+providers_visible change: neither should appear in the diff."""
+        before = {"auth": {"enabled": False}, "providers_visible": None,        "ui": {"theme": "light"}}
+        after  = {"auth": {"enabled": True},  "providers_visible": ["Netflix"], "ui": {"theme": "light"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("auth", result)
+        self.assertNotIn("providers_visible", result)
+        self.assertEqual(result, [])
 
     def test_changed_keys_detects_score_enabled_change(self):
         """A change in score.enabled must surface as 'score.enabled' in the diff."""
