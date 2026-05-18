@@ -103,6 +103,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 20:
             _apply_v20_folders_table_and_cleanup(conn)
             current_version = 20
+        if current_version < 21:
+            _apply_v21_media_probe_cache_flatten(conn)
+            current_version = 21
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -539,6 +542,113 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v21_media_probe_cache_flatten(conn: sqlite3.Connection) -> None:
+    """Replace probe_data JSON blob with structured columns in media_probe_cache.
+
+    Idempotent: checks for probe_data column before doing anything.
+    Handles NULL probe_data, invalid JSON, and missing technical block.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+
+    if "probe_data" not in cols:
+        # Fresh install or already migrated — new columns are in CREATE TABLE, nothing to do.
+        log.info("[DB] v21: media_probe_cache — probe_data already absent, skipped data migration")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (21,))
+        return
+
+    # Add all new columns that are not yet present
+    _NEW_COLS = [
+        ("probe_ok",              "INTEGER NOT NULL DEFAULT 0"),
+        ("width",                 "INTEGER"),
+        ("height",                "INTEGER"),
+        ("resolution",            "TEXT"),
+        ("codec",                 "TEXT"),
+        ("hdr",                   "INTEGER NOT NULL DEFAULT 0"),
+        ("hdr_type",              "TEXT"),
+        ("runtime_min",           "INTEGER"),
+        ("runtime_min_avg",       "INTEGER"),
+        ("video_bitrate",         "INTEGER"),
+        ("audio_codec",           "TEXT"),
+        ("audio_codec_raw",       "TEXT"),
+        ("audio_channels",        "TEXT"),
+        ("audio_languages_json",  "TEXT"),
+        ("subtitle_languages_json", "TEXT"),
+        ("audio_bitrate",         "INTEGER"),
+        ("audio_languages_simple","TEXT"),
+        ("framerate",             "REAL"),
+        ("container",             "TEXT"),
+        ("dolby_vision",          "INTEGER NOT NULL DEFAULT 0"),
+        ("size_b",                "INTEGER"),
+    ]
+    for col_name, col_def in _NEW_COLS:
+        if col_name not in cols:
+            conn.execute(f"ALTER TABLE media_probe_cache ADD COLUMN {col_name} {col_def}")
+
+    # Migrate existing rows from probe_data JSON → individual columns
+    rows = conn.execute(
+        "SELECT id, probe_data FROM media_probe_cache WHERE probe_data IS NOT NULL"
+    ).fetchall()
+    migrated = 0
+    malformed = 0
+    for row in rows:
+        try:
+            probe = _json.loads(row["probe_data"])
+        except Exception:
+            malformed += 1
+            continue
+        if not isinstance(probe, dict):
+            malformed += 1
+            continue
+        ok = 1 if probe.get("ok") else 0
+        tech = probe.get("technical")
+        tech = tech if isinstance(tech, dict) else {}
+        al = tech.get("audio_languages")
+        sl = tech.get("subtitle_languages")
+        conn.execute(
+            """UPDATE media_probe_cache SET
+                probe_ok=?, width=?, height=?, resolution=?, codec=?,
+                hdr=?, hdr_type=?,
+                runtime_min=?, runtime_min_avg=?, video_bitrate=?,
+                audio_codec=?, audio_codec_raw=?, audio_channels=?,
+                audio_languages_json=?, subtitle_languages_json=?,
+                audio_bitrate=?, audio_languages_simple=?,
+                framerate=?, container=?, dolby_vision=?, size_b=?
+            WHERE id=?""",
+            (
+                ok,
+                _as_int(tech.get("width")), _as_int(tech.get("height")),
+                tech.get("resolution"), tech.get("codec"),
+                1 if tech.get("hdr") else 0, tech.get("hdr_type"),
+                _as_int(tech.get("runtime_min")), _as_int(tech.get("runtime_min_avg")),
+                _as_int(tech.get("video_bitrate")),
+                tech.get("audio_codec"), tech.get("audio_codec_raw"), tech.get("audio_channels"),
+                _json.dumps(al, ensure_ascii=False, separators=(",", ":")) if isinstance(al, list) else None,
+                _json.dumps(sl, ensure_ascii=False, separators=(",", ":")) if isinstance(sl, list) else None,
+                _as_int(tech.get("audio_bitrate")), tech.get("audio_languages_simple"),
+                tech.get("framerate"), tech.get("container"),
+                1 if tech.get("dolby_vision") else 0,
+                _as_int(tech.get("size_b")),
+                row["id"],
+            ),
+        )
+        migrated += 1
+
+    # Drop the old JSON blob column
+    conn.execute("ALTER TABLE media_probe_cache DROP COLUMN probe_data")
+    log.info(
+        "[DB] v21: media_probe_cache — probe_data flattened to columns, migrated=%d malformed=%d",
+        migrated, malformed,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (21,))
+
+
+def _as_int(v: object) -> int | None:
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except Exception:
+        return None
 
 
 def _apply_v20_folders_table_and_cleanup(conn: sqlite3.Connection) -> None:

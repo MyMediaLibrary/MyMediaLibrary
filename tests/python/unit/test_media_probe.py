@@ -955,5 +955,128 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["seasons"][1]["subtitle_languages"], ["spa"])
 
 
+class MediaProbeCacheRepositoryTest(unittest.TestCase):
+    """Unit tests for media_probe_cache_repository without probe_data JSON."""
+
+    def _make_db(self, db_path: pathlib.Path, media_id: str) -> None:
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        conn = _db.initialize_database(db_path)
+        with conn:
+            conn.execute(
+                "INSERT INTO media(id, media_type, title) VALUES (?, 'movie', 'Film')", (media_id,)
+            )
+        conn.close()
+
+    def _make_probe(self, codec: str = "H.265", audio_lang: list | None = None) -> dict:
+        return {
+            "ok": True,
+            "technical": {
+                "width": 1920, "height": 1080, "resolution": "1080p",
+                "codec": codec, "hdr": False, "hdr_type": None,
+                "runtime_min": 90, "runtime_min_avg": 90, "video_bitrate": 4000000,
+                "audio_codec": "DTS-HD MA", "audio_codec_raw": "dts",
+                "audio_channels": "5.1",
+                "audio_languages": audio_lang or ["fr"],
+                "subtitle_languages": ["fr", "en"],
+                "audio_bitrate": 1200000, "audio_languages_simple": "VF",
+                "framerate": 23.976, "container": "MKV",
+                "dolby_vision": False, "size_b": 5368709120,
+            },
+        }
+
+    def test_upsert_and_get_round_trip(self):
+        """upsert() + get() returns the same probe dict (no JSON blob involved)."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:test"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"fake content")
+            self._make_db(db_path, media_id)
+            probe_in = self._make_probe()
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNotNone(probe_out)
+            self.assertIs(probe_out["ok"], True)
+            tech = probe_out["technical"]
+            self.assertEqual(tech["width"], 1920)
+            self.assertEqual(tech["codec"], "H.265")
+            self.assertEqual(tech["audio_languages"], ["fr"])
+            self.assertEqual(tech["subtitle_languages"], ["fr", "en"])
+            self.assertIs(tech["hdr"], False)
+            self.assertIs(tech["dolby_vision"], False)
+            self.assertEqual(tech["framerate"], 23.976)
+            self.assertEqual(tech["container"], "MKV")
+
+    def test_cache_miss_when_size_changes(self):
+        """get() returns None after file size changes (cache invalidation)."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:inval"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"v1")
+            self._make_db(db_path, media_id)
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, self._make_probe())
+            repo.close()
+            movie_file.write_bytes(b"v2 different size")
+            repo = mpcr.open_cache(db_path=db_path)
+            result = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNone(result)
+
+    def test_no_probe_data_column_in_schema(self):
+        """After v21, media_probe_cache must not have a probe_data column."""
+        import db as _db
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _db.initialize_database(pathlib.Path(tmp) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+            conn.close()
+            self.assertNotIn("probe_data", cols)
+            self.assertIn("probe_ok", cols)
+            self.assertIn("audio_languages_json", cols)
+
+    def test_audio_languages_json_stored_as_list(self):
+        """audio_languages must be stored as a JSON array and retrieved as a list."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:lang"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"content")
+            self._make_db(db_path, media_id)
+            probe_in = self._make_probe(audio_lang=["fr", "en", "de"])
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertEqual(probe_out["technical"]["audio_languages"], ["fr", "en", "de"])
+
+    def test_ok_false_probe_stored_and_retrieved(self):
+        """Probes with ok=False must also be cached correctly."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:err"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"bad")
+            self._make_db(db_path, media_id)
+            probe_in = {"ok": False, "technical": {}}
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNotNone(probe_out)
+            self.assertIs(probe_out["ok"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

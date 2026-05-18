@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 CREATE_TABLES_SQL = (
@@ -233,7 +233,27 @@ CREATE_TABLES_SQL = (
         file_size INTEGER,
         modified_at REAL,
         probed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        probe_data TEXT,
+        probe_ok INTEGER NOT NULL DEFAULT 0,
+        width INTEGER,
+        height INTEGER,
+        resolution TEXT,
+        codec TEXT,
+        hdr INTEGER NOT NULL DEFAULT 0,
+        hdr_type TEXT,
+        runtime_min INTEGER,
+        runtime_min_avg INTEGER,
+        video_bitrate INTEGER,
+        audio_codec TEXT,
+        audio_codec_raw TEXT,
+        audio_channels TEXT,
+        audio_languages_json TEXT,
+        subtitle_languages_json TEXT,
+        audio_bitrate INTEGER,
+        audio_languages_simple TEXT,
+        framerate REAL,
+        container TEXT,
+        dolby_vision INTEGER NOT NULL DEFAULT 0,
+        size_b INTEGER,
         FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
         UNIQUE (media_id, filename)
     )

@@ -2105,5 +2105,146 @@ class V20MigrationTest(unittest.TestCase):
             self.assertEqual(folder_count, 0)
 
 
+class V21MigrationTest(unittest.TestCase):
+    """Schema v21: media_probe_cache — replace probe_data JSON with typed columns."""
+
+    def _make_v20_db_with_probe(self, path: pathlib.Path, rows: list[dict]) -> None:
+        """Build a minimal v20 DB with media_probe_cache rows using probe_data JSON."""
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA user_version = 20")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_rules (id INTEGER PRIMARY KEY, category TEXT NOT NULL, group_key TEXT NOT NULL, value_key TEXT NOT NULL, score_value REAL NOT NULL, UNIQUE(category, group_key, value_key))")
+        conn.execute("CREATE TABLE score_size_profiles (id INTEGER PRIMARY KEY, media_type TEXT NOT NULL, resolution_key TEXT NOT NULL, codec_key TEXT NOT NULL, min_gb REAL NOT NULL, max_gb REAL NOT NULL, UNIQUE(media_type, resolution_key, codec_key))")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, media_type TEXT, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, is_available INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE seasons (id INTEGER PRIMARY KEY, media_id TEXT, season_number INTEGER)")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE, mapped_name TEXT, is_ignored INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY, mode TEXT, phases TEXT, started_at TEXT NOT NULL, status TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("""
+            CREATE TABLE media_probe_cache (
+                id INTEGER PRIMARY KEY,
+                media_id TEXT NOT NULL,
+                filename TEXT,
+                file_path TEXT,
+                file_size INTEGER,
+                modified_at REAL,
+                probed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                probe_data TEXT,
+                FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
+                UNIQUE (media_id, filename)
+            )
+        """)
+        for v in range(1, 21):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        for r in rows:
+            media_id = r["media_id"]
+            conn.execute("INSERT OR IGNORE INTO media(id, media_type, title) VALUES (?, 'movie', ?)", (media_id, media_id))
+            conn.execute(
+                "INSERT INTO media_probe_cache(media_id, filename, file_size, modified_at, probe_data)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (media_id, r.get("filename", "main.mkv"), r.get("file_size", 1000), r.get("modified_at", 1.0), r.get("probe_data")),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_v21_migration_adds_typed_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v20_db_with_probe(path, [])
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+            conn.close()
+            for expected in ("probe_ok", "width", "height", "resolution", "codec", "hdr", "hdr_type",
+                             "runtime_min", "runtime_min_avg", "video_bitrate",
+                             "audio_codec", "audio_codec_raw", "audio_channels",
+                             "audio_languages_json", "subtitle_languages_json",
+                             "audio_bitrate", "audio_languages_simple", "framerate",
+                             "container", "dolby_vision", "size_b"):
+                self.assertIn(expected, cols, f"missing column: {expected}")
+
+    def test_v21_migration_removes_probe_data_column(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v20_db_with_probe(path, [])
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+            conn.close()
+            self.assertNotIn("probe_data", cols)
+
+    def test_v21_migration_migrates_probe_data_to_columns(self):
+        probe_data = json.dumps({
+            "ok": True,
+            "technical": {
+                "width": 1920, "height": 1080, "resolution": "1080p",
+                "codec": "H.265", "hdr": True, "hdr_type": "HDR10",
+                "runtime_min": 120, "runtime_min_avg": 120, "video_bitrate": 5000000,
+                "audio_codec": "DTS-HD MA", "audio_codec_raw": "dts",
+                "audio_channels": "7.1",
+                "audio_languages": ["fr", "en"], "subtitle_languages": ["fr"],
+                "audio_bitrate": 1500000, "audio_languages_simple": "MULTI",
+                "framerate": 23.976, "container": "MKV",
+                "dolby_vision": False, "size_b": 10737418240,
+            },
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v20_db_with_probe(path, [{"media_id": "m1", "probe_data": probe_data}])
+            conn = db.initialize_database(path)
+            row = conn.execute("SELECT * FROM media_probe_cache WHERE media_id='m1'").fetchone()
+            conn.close()
+            self.assertEqual(row["probe_ok"], 1)
+            self.assertEqual(row["width"], 1920)
+            self.assertEqual(row["height"], 1080)
+            self.assertEqual(row["resolution"], "1080p")
+            self.assertEqual(row["codec"], "H.265")
+            self.assertEqual(row["hdr"], 1)
+            self.assertEqual(row["hdr_type"], "HDR10")
+            self.assertEqual(row["runtime_min"], 120)
+            self.assertEqual(row["audio_codec"], "DTS-HD MA")
+            self.assertEqual(json.loads(row["audio_languages_json"]), ["fr", "en"])
+            self.assertEqual(json.loads(row["subtitle_languages_json"]), ["fr"])
+            self.assertEqual(row["framerate"], 23.976)
+            self.assertEqual(row["container"], "MKV")
+            self.assertEqual(row["dolby_vision"], 0)
+
+    def test_v21_migration_handles_null_probe_data(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v20_db_with_probe(path, [{"media_id": "m_null", "probe_data": None}])
+            conn = db.initialize_database(path)
+            row = conn.execute("SELECT probe_ok FROM media_probe_cache WHERE media_id='m_null'").fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["probe_ok"], 0)
+
+    def test_v21_migration_handles_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v20_db_with_probe(path, [{"media_id": "m_bad", "probe_data": "NOT_JSON"}])
+            conn = db.initialize_database(path)
+            count = conn.execute("SELECT COUNT(*) FROM media_probe_cache WHERE media_id='m_bad'").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+
+    def test_v21_migration_is_idempotent_on_fresh_db(self):
+        """Fresh DB (no probe_data column) must survive the v21 migration without error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("probe_data", cols)
+            self.assertIn("probe_ok", cols)
+
+
 if __name__ == "__main__":
     unittest.main()
