@@ -216,6 +216,13 @@
       return;
     }
 
+    // Availability filter pills
+    var availPill = e.target.closest('.provider-pill[data-availability-value]');
+    if (availPill) {
+      setAvailabilityFilter(availPill.dataset.availabilityValue);
+      return;
+    }
+
     // Filter dropdown — inline ✕ clear button.
     // Must be checked BEFORE .filter-dropdown-trigger because the clear span
     // is a child of that div; checking the trigger first would intercept the

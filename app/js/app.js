@@ -1784,7 +1784,7 @@ let allItems=[], categories=[], groups=[];
       if (!sec) return;
       const btns = opts.map(o =>
         '<button type="button" class="provider-pill'+(activeAvailability === o.value ? ' active' : '')+
-        '" onclick="setAvailabilityFilter(\''+o.value+'\')">'+
+        '" data-availability-value="'+escH(o.value)+'">'+
         escH(t(o.labelKey))+'</button>'
       ).join('');
       sec.style.display = '';
