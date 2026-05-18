@@ -87,6 +87,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Films"],
                         "items": [
                             {
+                                "id": "m1",
                                 "title": "Movie",
                                 "type": "movie",
                                 "category": "Films",
@@ -140,6 +141,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Films"],
                         "items": [
                             {
+                                "id": "m2",
                                 "title": "Movie",
                                 "type": "movie",
                                 "category": "Films",
@@ -186,6 +188,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv1",
                                 "title": "Paradise",
                                 "type": "tv",
                                 "category": "Series",
@@ -228,6 +231,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv2",
                                 "title": "Paradise",
                                 "type": "tv",
                                 "category": "Series",
@@ -266,6 +270,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv3",
                                 "title": "Paradise",
                                 "year": "2025",
                                 "type": "tv",
@@ -276,6 +281,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "providers_fetched": False,
                             },
                             {
+                                "id": "tv4",
                                 "title": "Andor",
                                 "year": "2022",
                                 "type": "tv",
@@ -286,6 +292,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "providers_fetched": False,
                             },
                             {
+                                "id": "tv5",
                                 "title": "La Casa de Papel",
                                 "year": "2017",
                                 "type": "tv",
@@ -320,24 +327,22 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 }
                 return mapping.get(str(identifier), scanner._JSR_NOT_FOUND)
 
+            # Map by title since parallel processing makes call order non-deterministic.
+            _resolve_map = {
+                "Paradise": {"tmdb_id": "9001", "tvdb_id": "9991"},
+                "Andor": {"tmdb_id": "9002", "tvdb_id": "9992"},
+                "La Casa de Papel": {"tmdb_id": "9003", "tvdb_id": "9993"},
+            }
+
+            def fake_resolve(title, year, is_tv, jsr):
+                return _resolve_map.get(title, scanner._JSR_NOT_FOUND)
+
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
                  patch.object(scanner, "build_categories_from_config", return_value=[]), \
-                 patch.object(
-                     scanner,
-                     "fetch_providers",
-                     side_effect=fake_fetch,
-                 ), \
-                 patch.object(
-                     scanner,
-                     "_resolve_ids_from_search",
-                     side_effect=[
-                         {"tmdb_id": "9001", "tvdb_id": "9991"},
-                         {"tmdb_id": "9002", "tvdb_id": "9992"},
-                         {"tmdb_id": "9003", "tvdb_id": "9993"},
-                     ],
-                 ):
+                 patch.object(scanner, "fetch_providers", side_effect=fake_fetch), \
+                 patch.object(scanner, "_resolve_ids_from_search", side_effect=fake_resolve):
                 scanner.run_enrich(force=True)
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
@@ -367,6 +372,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Movies"],
                         "items": [
                             {
+                                "id": "m3",
                                 "title": "Back in Action",
                                 "year": "2025",
                                 "type": "movie",
@@ -408,6 +414,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Movies"],
                         "items": [
                             {
+                                "id": "m4",
                                 "title": "Rebel Moon - Partie 1",
                                 "year": "2023",
                                 "type": "movie",
@@ -445,6 +452,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Tv"],
                         "items": [
                             {
+                                "id": "tv6",
                                 "title": "Andor",
                                 "year": "2022",
                                 "type": "tv",
@@ -483,6 +491,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Tv"],
                         "items": [
                             {
+                                "id": "tv7",
                                 "title": "Debris",
                                 "year": "2021",
                                 "type": "tv",
@@ -515,11 +524,11 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
             items = [
-                {"title": "AnimA", "type": "movie", "category": "Animation", "tmdb_id": "1", "providers": [], "providers_fetched": False},
-                {"title": "MovieA", "type": "movie", "category": "Movies", "tmdb_id": "2", "providers": [], "providers_fetched": False},
-                {"title": "ShowA", "type": "movie", "category": "Spectacles", "tmdb_id": "3", "providers": [], "providers_fetched": False},
-                {"title": "TvA", "type": "tv", "category": "Tv", "tvdb_id": "4", "tmdb_id": "40", "providers": [], "providers_fetched": False},
-                {"title": "AnimeA", "type": "tv", "category": "Anime", "tvdb_id": "5", "tmdb_id": "50", "providers": [], "providers_fetched": False},
+                {"id": "m5", "title": "AnimA", "type": "movie", "category": "Animation", "tmdb_id": "1", "providers": [], "providers_fetched": False},
+                {"id": "m6", "title": "MovieA", "type": "movie", "category": "Movies", "tmdb_id": "2", "providers": [], "providers_fetched": False},
+                {"id": "m7", "title": "ShowA", "type": "movie", "category": "Spectacles", "tmdb_id": "3", "providers": [], "providers_fetched": False},
+                {"id": "tv8", "title": "TvA", "type": "tv", "category": "Tv", "tvdb_id": "4", "tmdb_id": "40", "providers": [], "providers_fetched": False},
+                {"id": "tv9", "title": "AnimeA", "type": "tv", "category": "Anime", "tvdb_id": "5", "tmdb_id": "50", "providers": [], "providers_fetched": False},
             ]
             out_path.write_text(
                 json.dumps(

@@ -74,6 +74,8 @@ def save_config(
     try:
         with conn:
             _replace_app_config(conn, sanitized)
+            _replace_folders(conn, sanitized)
+            _replace_providers_visibility(conn, sanitized)
             _replace_score_data(conn, sanitized)
             if auth_enabled is not None or password_hash is not None:
                 _replace_auth_settings(conn, bool(auth_enabled), password_hash)
@@ -159,6 +161,29 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     for group, subkeys in group_flat.items():
         cfg[group] = subkeys
 
+    # Reconstruct folders from dedicated table
+    folder_rows = conn.execute(
+        "SELECT name, media_type, enabled FROM folders ORDER BY id"
+    ).fetchall()
+    cfg["folders"] = [
+        {"name": r["name"], "type": r["media_type"], "enabled": bool(r["enabled"])}
+        for r in folder_rows
+    ]
+
+    # Reconstruct providers_visible from providers.is_ignored
+    # If any mapped provider is explicitly hidden → return whitelist of visible ones
+    # If none are hidden → return None (frontend shows all providers)
+    has_hidden = conn.execute(
+        "SELECT 1 FROM providers WHERE mapped_name IS NOT NULL AND is_ignored = 1 LIMIT 1"
+    ).fetchone() is not None
+    if has_hidden:
+        visible_rows = conn.execute(
+            "SELECT mapped_name FROM providers WHERE is_ignored = 0 AND mapped_name IS NOT NULL ORDER BY mapped_name"
+        ).fetchall()
+        cfg["providers_visible"] = [r["mapped_name"] for r in visible_rows]
+    else:
+        cfg["providers_visible"] = None
+
     rule_rows = conn.execute(
         "SELECT category, group_key, value_key, score_value FROM score_rules ORDER BY id"
     ).fetchall()
@@ -170,19 +195,18 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     return sanitize_config(cfg)
 
 
-# Scalar/list user-config keys that are stored directly (not as flat group prefixes).
-# Runtime-internal keys like runtime_library_document must never appear here.
+# Scalar user-config keys stored directly in app_config (no flat group prefix, no dedicated table).
+# runtime_library_document, folders, providers_visible must never appear here.
 _APP_CONFIG_USER_KEYS = frozenset({
     "scan",
-    "folders",
     "enable_movies",
     "enable_series",
-    "providers_visible",
 })
 
 
 def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
-    _SKIP_KEYS = {"auth", "score_configuration"}
+    # folders and providers_visible go to dedicated tables; score_configuration to score tables.
+    _SKIP_KEYS = {"auth", "score_configuration", "folders", "providers_visible"}
     # Wipe only scalar user-config keys — never touch runtime keys (e.g. runtime_library_document).
     incoming_keys = {str(k) for k in config if k not in _SKIP_KEYS and k not in _FLAT_CONFIG_GROUPS}
     managed_keys = tuple(_APP_CONFIG_USER_KEYS | incoming_keys)
@@ -220,6 +244,57 @@ def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> Non
             "INSERT INTO app_config(key, value_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
             (str(key), _to_json(sanitized)),
         )
+
+
+def _replace_folders(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
+    if "folders" not in config:
+        return
+    folders = config["folders"]
+    if not isinstance(folders, list):
+        return
+    conn.execute("DELETE FROM folders")
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        name = folder.get("name") or folder.get("path") or ""
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Support legacy "visible" as fallback for "enabled"; default is enabled.
+        enabled_raw = folder.get("enabled")
+        if enabled_raw is None:
+            enabled_raw = folder.get("visible", True)
+        conn.execute(
+            "INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES (?, ?, ?)",
+            (name.strip(), folder.get("type"), 1 if enabled_raw else 0),
+        )
+
+
+def _replace_providers_visibility(conn: sqlite3.Connection, config: dict[str, Any]) -> None:
+    """Update providers.is_ignored based on providers_visible list.
+
+    - Key absent from config → no change (partial save)
+    - None or empty list → no change (conservative: treat as "no preference")
+    - Non-empty list → set visible providers is_ignored=0, hidden is_ignored=1
+    """
+    if "providers_visible" not in config:
+        return
+    pv = config["providers_visible"]
+    if not isinstance(pv, list) or not pv:
+        return
+    visible_names = {str(n) for n in pv if isinstance(n, str) and n}
+    if not visible_names:
+        return
+    placeholders = ",".join("?" * len(visible_names))
+    conn.execute(
+        f"UPDATE providers SET is_ignored = 0, updated_at = CURRENT_TIMESTAMP"
+        f" WHERE mapped_name IS NOT NULL AND mapped_name IN ({placeholders})",
+        tuple(visible_names),
+    )
+    conn.execute(
+        f"UPDATE providers SET is_ignored = 1, updated_at = CURRENT_TIMESTAMP"
+        f" WHERE mapped_name IS NOT NULL AND mapped_name NOT IN ({placeholders})",
+        tuple(visible_names),
+    )
 
 
 def _replace_score_data(conn: sqlite3.Connection, config: dict[str, Any]) -> None:

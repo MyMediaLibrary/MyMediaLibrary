@@ -33,7 +33,8 @@ except Exception:
 log = logging.getLogger(__name__)
 
 _CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe", "score")
-_CONFIG_SKIP_KEYS = frozenset({"score_configuration", "auth"} | set(_CONFIG_FLAT_GROUPS))
+# folders and providers_visible are stored in dedicated tables, not in app_config
+_CONFIG_SKIP_KEYS = frozenset({"score_configuration", "auth", "folders", "providers_visible"} | set(_CONFIG_FLAT_GROUPS))
 
 
 def seed_config(conn: sqlite3.Connection) -> int:
@@ -57,6 +58,30 @@ def seed_config(conn: sqlite3.Connection) -> int:
                         "INSERT OR IGNORE INTO app_config(key, value_json) VALUES (?, ?)",
                         (f"{group}.{subkey}", _to_json(subval)),
                     )
+    return rows
+
+
+def seed_folders(conn: sqlite3.Connection) -> int:
+    """Seed default folders from DEFAULT_CONFIG. INSERT OR IGNORE — never overwrites existing rows."""
+    rows = 0
+    default_folders = DEFAULT_CONFIG.get("folders", [])
+    if not isinstance(default_folders, list):
+        return 0
+    with conn:
+        for folder in default_folders:
+            if not isinstance(folder, dict):
+                continue
+            name = folder.get("name") or folder.get("path") or ""
+            if not isinstance(name, str) or not name.strip():
+                continue
+            enabled_raw = folder.get("enabled")
+            if enabled_raw is None:
+                enabled_raw = folder.get("visible", True)
+            rows += _insert_count(
+                conn,
+                "INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES (?, ?, ?)",
+                (name.strip(), folder.get("type"), 1 if enabled_raw else 0),
+            )
     return rows
 
 
@@ -164,6 +189,10 @@ def seed_all(conn: sqlite3.Connection, logger: logging.Logger | None = None) -> 
     n = seed_config(conn)
     results["config"] = n
     active_logger.info("[DB] Seeded config defaults — rows=%s", n)
+
+    n = seed_folders(conn)
+    results["folders"] = n
+    active_logger.info("[DB] Seeded folders defaults — rows=%s", n)
 
     n = seed_score_data(conn)
     results["score_data"] = n

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 CREATE_TABLES_SQL = (
@@ -25,6 +25,16 @@ CREATE_TABLES_SQL = (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         auth_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auth_enabled IN (0, 1)),
         password_hash TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS folders (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        media_type TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -267,6 +277,7 @@ EXPECTED_TABLES = frozenset(
         "schema_migrations",
         "app_config",
         "auth_settings",
+        "folders",
         "score_rules",
         "score_size_profiles",
         "recommendation_rules",

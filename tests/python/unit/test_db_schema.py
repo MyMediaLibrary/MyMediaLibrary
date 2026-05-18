@@ -1992,5 +1992,118 @@ class V19MigrationTest(unittest.TestCase):
             self.assertEqual(video_rule["score_value"], 45)
 
 
+class V20MigrationTest(unittest.TestCase):
+    """Schema v20: folders table, remove runtime_library_document / providers_visible from app_config."""
+
+    def _make_v19_db(self, path: pathlib.Path, *, folders_json: str | None = None, providers_visible_json: str | None = None, has_library_snapshot: bool = False, has_providers: bool = False) -> None:
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA user_version = 19")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_rules (id INTEGER PRIMARY KEY, category TEXT NOT NULL, group_key TEXT NOT NULL, value_key TEXT NOT NULL, score_value REAL NOT NULL, UNIQUE(category, group_key, value_key))")
+        conn.execute("CREATE TABLE score_size_profiles (id INTEGER PRIMARY KEY, media_type TEXT NOT NULL, resolution_key TEXT NOT NULL, codec_key TEXT NOT NULL, min_gb REAL NOT NULL, max_gb REAL NOT NULL, UNIQUE(media_type, resolution_key, codec_key))")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, is_available INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE seasons (id INTEGER PRIMARY KEY, media_id TEXT, season_number INTEGER)")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE, mapped_name TEXT, is_ignored INTEGER NOT NULL DEFAULT 0, logo_path TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY, mode TEXT, phases TEXT, started_at TEXT NOT NULL, status TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE media_probe_cache (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL)")
+        for v in range(1, 20):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("INSERT INTO app_config(key, value_json) VALUES ('system.log_level', '\"INFO\"')")
+        if folders_json is not None:
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES ('folders', ?)", (folders_json,))
+        if providers_visible_json is not None:
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES ('providers_visible', ?)", (providers_visible_json,))
+        if has_library_snapshot:
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES ('runtime_library_document', '{\"items\":[]}')")
+        if has_providers:
+            conn.execute("INSERT INTO providers(raw_name, mapped_name) VALUES ('Netflix', 'Netflix')")
+            conn.execute("INSERT INTO providers(raw_name, mapped_name) VALUES ('Prime', 'Amazon Prime Video')")
+        conn.commit()
+        conn.close()
+
+    def test_v20_migration_creates_folders_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path)
+            conn = db.initialize_database(path)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+            self.assertIn("folders", tables)
+
+    def test_v20_migration_migrates_folders_json_to_table(self):
+        folders = [{"name": "/movies", "type": "movie", "enabled": True}, {"name": "/series", "type": "series", "enabled": False}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path, folders_json=json.dumps(folders))
+            conn = db.initialize_database(path)
+            rows = conn.execute("SELECT name, media_type, enabled FROM folders ORDER BY name").fetchall()
+            conn.close()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["name"], "/movies")
+            self.assertEqual(rows[0]["media_type"], "movie")
+            self.assertEqual(rows[0]["enabled"], 1)
+            self.assertEqual(rows[1]["name"], "/series")
+            self.assertEqual(rows[1]["enabled"], 0)
+
+    def test_v20_migration_handles_folders_visible_field_fallback(self):
+        folders = [{"name": "/movies", "type": "movie", "visible": True}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path, folders_json=json.dumps(folders))
+            conn = db.initialize_database(path)
+            row = conn.execute("SELECT enabled FROM folders WHERE name = '/movies'").fetchone()
+            conn.close()
+            self.assertEqual(row["enabled"], 1)
+
+    def test_v20_migration_removes_folders_from_app_config(self):
+        folders = [{"name": "/movies", "type": "movie", "enabled": True}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path, folders_json=json.dumps(folders))
+            conn = db.initialize_database(path)
+            row = conn.execute("SELECT 1 FROM app_config WHERE key = 'folders'").fetchone()
+            conn.close()
+            self.assertIsNone(row)
+
+    def test_v20_migration_removes_runtime_library_document(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path, has_library_snapshot=True)
+            conn = db.initialize_database(path)
+            row = conn.execute("SELECT 1 FROM app_config WHERE key = 'runtime_library_document'").fetchone()
+            conn.close()
+            self.assertIsNone(row)
+
+    def test_v20_migration_migrates_providers_visible_to_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path, providers_visible_json='["Netflix"]', has_providers=True)
+            conn = db.initialize_database(path)
+            rows = {r["mapped_name"]: r["is_ignored"] for r in conn.execute("SELECT mapped_name, is_ignored FROM providers WHERE mapped_name IS NOT NULL").fetchall()}
+            visible_key = conn.execute("SELECT 1 FROM app_config WHERE key = 'providers_visible'").fetchone()
+            conn.close()
+            self.assertEqual(rows.get("Netflix"), 0)
+            self.assertEqual(rows.get("Amazon Prime Video"), 1)
+            self.assertIsNone(visible_key)
+
+    def test_v20_migration_is_safe_on_fresh_db_without_old_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v19_db(path)
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            folder_count = conn.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertEqual(folder_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

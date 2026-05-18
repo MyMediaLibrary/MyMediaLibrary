@@ -60,7 +60,8 @@ def export_recommendation_rules(conn: sqlite3.Connection) -> dict[str, Any]:
     return {"version": 1, "rules": rules}
 
 
-_EXPORT_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+_EXPORT_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe", "score"})
+_EXPORT_SKIP_KEYS = frozenset({"runtime_library_document", "folders", "providers_visible"})
 
 
 def export_config(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -68,11 +69,33 @@ def export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for row in rows:
         key = row["key"]
+        if key in _EXPORT_SKIP_KEYS:
+            continue
         prefix, sep, subkey = key.partition(".")
         if sep and prefix in _EXPORT_FLAT_GROUPS:
             result.setdefault(prefix, {})[subkey] = _from_json(row["value_json"], None)
         else:
             result[key] = _from_json(row["value_json"], None)
+
+    # Reconstruct folders from dedicated table
+    folder_rows = conn.execute("SELECT name, media_type, enabled FROM folders ORDER BY id").fetchall()
+    result["folders"] = [
+        {"name": r["name"], "type": r["media_type"], "enabled": bool(r["enabled"])}
+        for r in folder_rows
+    ]
+
+    # Reconstruct providers_visible from providers.is_ignored
+    has_hidden = conn.execute(
+        "SELECT 1 FROM providers WHERE mapped_name IS NOT NULL AND is_ignored = 1 LIMIT 1"
+    ).fetchone() is not None
+    if has_hidden:
+        visible_rows = conn.execute(
+            "SELECT mapped_name FROM providers WHERE is_ignored = 0 AND mapped_name IS NOT NULL ORDER BY mapped_name"
+        ).fetchall()
+        result["providers_visible"] = [r["mapped_name"] for r in visible_rows]
+    else:
+        result["providers_visible"] = []
+
     return result
 
 

@@ -80,6 +80,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
             config_path.parent.mkdir()
             output_path.write_text(json.dumps({
                 "items": [{
+                    "id": "score-m1",
                     "title": "Movie",
                     "type": "movie",
                     "resolution": "1080p",
@@ -120,6 +121,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
             output_path = pathlib.Path(tmp) / "library.json"
             output_path.write_text(json.dumps({
                 "items": [{
+                    "id": "score-m2",
                     "title": "Movie",
                     "type": "movie",
                     "resolution": "1080p",

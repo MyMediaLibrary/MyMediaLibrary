@@ -149,6 +149,7 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
         return False
     expected_tables = {
         "app_config",
+        "folders",
         "score_rules",
         "schema_migrations",
         "providers",

@@ -14,7 +14,6 @@ DEFAULT_CONFIG: dict = {
         "enabled": False,
         "url": "",
     },
-    "providers_visible": [],
     "ui": {
         "synopsis_on_hover": False,
         "default_view": "grid",

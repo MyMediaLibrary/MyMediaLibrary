@@ -100,6 +100,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 19:
             _apply_v19_replace_score_settings(conn)
             current_version = 19
+        if current_version < 20:
+            _apply_v20_folders_table_and_cleanup(conn)
+            current_version = 20
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -536,6 +539,97 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v20_folders_table_and_cleanup(conn: sqlite3.Connection) -> None:
+    """Create dedicated folders table; migrate app_config.folders JSON into it.
+
+    Also removes obsolete app_config keys:
+      - folders              (moved to folders table)
+      - runtime_library_document  (replaced by on-demand media table queries)
+      - providers_visible    (replaced by providers.is_ignored)
+
+    Idempotent: safe to call multiple times.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS folders (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            media_type TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    app_config_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_config'"
+    ).fetchone() is not None
+    providers_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='providers'"
+    ).fetchone() is not None
+
+    if app_config_exists:
+        folders_row = conn.execute(
+            "SELECT value_json FROM app_config WHERE key = 'folders'"
+        ).fetchone()
+        migrated = 0
+        if folders_row is not None:
+            try:
+                folders_json = _json.loads(folders_row[0] or "[]")
+            except Exception:
+                folders_json = []
+            if isinstance(folders_json, list):
+                for folder in folders_json:
+                    if not isinstance(folder, dict):
+                        continue
+                    name = folder.get("name") or folder.get("path") or ""
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    media_type = folder.get("type")
+                    enabled_raw = folder.get("enabled")
+                    if enabled_raw is None:
+                        enabled_raw = folder.get("visible", True)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES (?, ?, ?)",
+                        (name.strip(), media_type, 1 if enabled_raw else 0),
+                    )
+                    migrated += 1
+            log.info("[DB] v20: folders migrated from app_config — count=%d", migrated)
+
+        # Migrate providers_visible → providers.is_ignored (conservative: only non-empty lists)
+        if providers_exists:
+            pv_row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'providers_visible'"
+            ).fetchone()
+            if pv_row is not None:
+                try:
+                    pv = _json.loads(pv_row[0] or "[]")
+                except Exception:
+                    pv = []
+                if isinstance(pv, list) and pv:
+                    visible_names = {str(n) for n in pv if isinstance(n, str) and n}
+                    if visible_names:
+                        placeholders = ",".join("?" * len(visible_names))
+                        conn.execute(
+                            f"UPDATE providers SET is_ignored = 0, updated_at = CURRENT_TIMESTAMP"
+                            f" WHERE mapped_name IS NOT NULL AND mapped_name IN ({placeholders})",
+                            tuple(visible_names),
+                        )
+                        conn.execute(
+                            f"UPDATE providers SET is_ignored = 1, updated_at = CURRENT_TIMESTAMP"
+                            f" WHERE mapped_name IS NOT NULL AND mapped_name NOT IN ({placeholders})",
+                            tuple(visible_names),
+                        )
+                        log.info(
+                            "[DB] v20: providers_visible migrated to providers.is_ignored — visible=%d",
+                            len(visible_names),
+                        )
+
+        conn.execute(
+            "DELETE FROM app_config WHERE key IN ('folders', 'runtime_library_document', 'providers_visible')"
+        )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (20,))
 
 
 def _apply_v19_replace_score_settings(conn: sqlite3.Connection) -> None:

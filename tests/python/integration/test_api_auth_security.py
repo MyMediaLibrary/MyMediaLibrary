@@ -10,6 +10,7 @@ import urllib.request
 
 from backend import db as _db
 from backend import scanner
+from backend.repositories import media_repository as _media_repo
 
 
 VALID_AUTH_PASSWORD = "aaAA11!!" + "x" * 17
@@ -344,6 +345,11 @@ class TestRecommendationsApi(unittest.TestCase):
 
     def setUp(self):
         self._write_config(recommendations_enabled=True)
+        # Clear the shared library DB so each test starts from a clean state.
+        db_path = pathlib.Path(self._library_path).parent / "mymedialibrary.db"
+        conn = _db.initialize_database(str(db_path))
+        _media_repo.replace_library(conn, {"items": []})
+        conn.close()
         scanner.write_json({"version": 1, "items": []}, str(self._library_path))
         scanner.save_recommendations_document_non_blocking([], str(self._recommendations_path))
 
@@ -410,7 +416,7 @@ class TestRecommendationsApi(unittest.TestCase):
         scanner.write_json(
             {
                 "version": 1,
-                "items": [{"id": "movie:test", "type": "movie", "title": "Film DB", "path": "Movies/Film DB"}],
+                "items": [{"id": "movie:test", "type": "movie", "category": "Movies", "title": "Film DB", "path": "Movies/Film DB"}],
                 "categories": ["Movies"],
             },
             str(self._library_path),

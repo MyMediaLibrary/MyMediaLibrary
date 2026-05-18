@@ -358,7 +358,7 @@ class DatabaseImportTest(unittest.TestCase):
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
             self.assertEqual(config_result.source_total_count, 4)
-            self.assertEqual(config_result.source_count, 3)
+            self.assertEqual(config_result.source_count, 2)  # folders:[] is empty → not counted
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
             self.assertIn("Import check passed for config.json", "\n".join(logs.output))
@@ -462,7 +462,7 @@ class DatabaseImportTest(unittest.TestCase):
                 paths.CONFIG_JSON,
                 {
                     "system": {"log_level": "DEBUG"},
-                    "folders": [],
+                    "folders": [{"name": "Movies", "type": "movie"}],
                     "score": {"enabled": True},
                     "score_configuration": {"weights": {"video": 40}},
                 },
@@ -766,12 +766,10 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertTrue(config_result.removed)
             self.assertFalse(paths.CONFIG_JSON.exists())
 
-            # Folders preserved in SQLite
-            cfg_rows = {row["key"]: row["value_json"] for row in conn.execute("SELECT key, value_json FROM app_config").fetchall()}
-            import json as json_module
-            folders = json_module.loads(cfg_rows["folders"])
-            self.assertEqual(len(folders), 2)
-            folder_types = {f["path"]: f["type"] for f in folders}
+            # Folders preserved in SQLite (now in dedicated folders table)
+            folder_rows = conn.execute("SELECT name, media_type FROM folders").fetchall()
+            self.assertEqual(len(folder_rows), 2)
+            folder_types = {r["name"]: r["media_type"] for r in folder_rows}
             self.assertIn("/library/films", folder_types)
             self.assertEqual(folder_types["/library/films"], "movies")
 

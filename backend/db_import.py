@@ -29,7 +29,8 @@ except Exception:
 log = logging.getLogger(__name__)
 
 _CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe")
-_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration"} | set(_CONFIG_FLAT_GROUPS)
+# folders and providers_visible go to dedicated tables / providers.is_ignored
+_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "folders", "providers_visible"} | set(_CONFIG_FLAT_GROUPS)
 _CONFIG_IMPORTABLE_KEYS = {
     "system",
     "scan",
@@ -591,6 +592,40 @@ def import_config(
                     "(media_type, resolution_key, codec_key, min_gb, max_gb) VALUES (?, ?, ?, ?, ?)",
                     (media_type, res_key, codec_key, min_gb, max_gb),
                 )
+        # Import folders into dedicated table
+        if isinstance(payload.get("folders"), list):
+            if overwrite:
+                conn.execute("DELETE FROM folders")
+            for folder in payload["folders"]:
+                if not isinstance(folder, dict):
+                    continue
+                name = folder.get("name") or folder.get("path") or ""
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                enabled_raw = folder.get("enabled")
+                if enabled_raw is None:
+                    enabled_raw = folder.get("visible", True)
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES (?, ?, ?)",
+                    (name.strip(), folder.get("type"), 1 if enabled_raw else 0),
+                )
+        # Import providers_visible → providers.is_ignored (non-empty list only)
+        pv = payload.get("providers_visible")
+        if isinstance(pv, list) and pv:
+            visible_names = {str(n) for n in pv if isinstance(n, str) and n}
+            if visible_names:
+                placeholders = ",".join("?" * len(visible_names))
+                conn.execute(
+                    f"UPDATE providers SET is_ignored = 0, updated_at = CURRENT_TIMESTAMP"
+                    f" WHERE mapped_name IS NOT NULL AND mapped_name IN ({placeholders})",
+                    tuple(visible_names),
+                )
+                conn.execute(
+                    f"UPDATE providers SET is_ignored = 1, updated_at = CURRENT_TIMESTAMP"
+                    f" WHERE mapped_name IS NOT NULL AND mapped_name NOT IN ({placeholders})",
+                    tuple(visible_names),
+                )
         for group in _CONFIG_FLAT_GROUPS:
             if isinstance(payload.get(group), dict):
                 for subkey, subval in payload[group].items():
@@ -680,7 +715,6 @@ def import_library(conn: sqlite3.Connection, path: str | Path, report: ImportRep
             if not isinstance(item, dict):
                 continue
             rows += upsert_library_item(conn, item, overwrite=False)
-        _store_library_document_snapshot(conn, payload)
     _record(report, "library", rows)
     return rows
 
@@ -790,6 +824,13 @@ def _count_config_source(payload: Any) -> int:
             count += 1
     if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
         count += 1
+    # folders / providers_visible go to dedicated tables — count only when non-empty
+    folders_val = payload.get("folders")
+    if isinstance(folders_val, list) and folders_val:
+        count += 1
+    pv_val = payload.get("providers_visible")
+    if isinstance(pv_val, list) and pv_val:
+        count += 1
     for group in _CONFIG_FLAT_GROUPS:
         if isinstance(payload.get(group), dict):
             count += 1
@@ -810,6 +851,7 @@ def _count_config_total_source(payload: Any) -> int:
 
 def _count_config_db(conn: sqlite3.Connection) -> int:
     # Exclude runtime key, flat group prefix keys, and score.* from raw count.
+    # folders and providers_visible are in dedicated tables, not in app_config.
     group_excludes = " AND ".join(f"key NOT LIKE '{g}.%'" for g in _CONFIG_FLAT_GROUPS)
     app_config = conn.execute(
         f"SELECT COUNT(*) FROM app_config WHERE key != ? AND key NOT LIKE 'score.%' AND {group_excludes}",
@@ -820,6 +862,12 @@ def _count_config_db(conn: sqlite3.Connection) -> int:
         conn.execute("SELECT 1 FROM score_rules LIMIT 1").fetchone()
         or conn.execute("SELECT 1 FROM app_config WHERE key = 'score.enabled' LIMIT 1").fetchone()
     ) else 0
+    # Folders table counts as 1 unit if it has rows.
+    folders = 1 if conn.execute("SELECT 1 FROM folders LIMIT 1").fetchone() else 0
+    # providers_visible counts as 1 unit if any provider is explicitly hidden.
+    providers_visible = 1 if conn.execute(
+        "SELECT 1 FROM providers WHERE mapped_name IS NOT NULL AND is_ignored = 1 LIMIT 1"
+    ).fetchone() else 0
     auth = conn.execute("SELECT COUNT(*) FROM auth_settings").fetchone()[0]
     # Count each flat group as 1 logical unit regardless of how many subkeys it has.
     group_count = sum(
@@ -828,7 +876,7 @@ def _count_config_db(conn: sqlite3.Connection) -> int:
             "SELECT 1 FROM app_config WHERE key LIKE ? LIMIT 1", (f"{g}.%",)
         ).fetchone()
     )
-    return int(app_config) + int(score) + int(auth) + group_count
+    return int(app_config) + int(score) + int(folders) + int(providers_visible) + int(auth) + group_count
 
 
 def _validate_config_import(conn: sqlite3.Connection, payload: Any) -> dict[str, Any]:
@@ -908,6 +956,21 @@ def _config_source_document(payload: Any) -> dict[str, Any]:
             else {}
         )
         document["score_configuration"] = _deep_merge(legacy_score_configuration, score_configuration)
+    # folders is now in its own table — include normalized form only when non-empty
+    if isinstance(payload.get("folders"), list):
+        normalized_folders = []
+        for f in payload["folders"]:
+            if not isinstance(f, dict):
+                continue
+            name = f.get("name") or f.get("path") or ""
+            if not name:
+                continue
+            enabled_raw = f.get("enabled")
+            if enabled_raw is None:
+                enabled_raw = f.get("visible", True)
+            normalized_folders.append({"name": str(name), "type": f.get("type"), "enabled": bool(enabled_raw)})
+        if normalized_folders:
+            document["folders"] = normalized_folders
     for group in _CONFIG_FLAT_GROUPS:
         if isinstance(payload.get(group), dict):
             document[group] = payload[group]
@@ -941,6 +1004,14 @@ def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
         "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles ORDER BY id"
     ).fetchall()
     document["score_configuration"] = reconstruct_score_config_from_rows(rule_rows, profile_rows)
+
+    # Reconstruct folders from dedicated table — only include when non-empty
+    folder_rows = conn.execute("SELECT name, media_type, enabled FROM folders ORDER BY id").fetchall()
+    if folder_rows:
+        document["folders"] = [
+            {"name": r["name"], "type": r["media_type"], "enabled": bool(r["enabled"])}
+            for r in folder_rows
+        ]
 
     for group in _CONFIG_FLAT_GROUPS:
         group_rows = conn.execute(

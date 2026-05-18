@@ -71,6 +71,7 @@ class TestScoreSettingsApi(unittest.TestCase):
         cls.output_path.write_text(json.dumps({
             "items": [
                 {
+                    "id": "film-test-1",
                     "title": "Film Test",
                     "type": "movie",
                     "resolution": "1080p",
