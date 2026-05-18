@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 CREATE_TABLES_SQL = (
@@ -161,7 +161,6 @@ CREATE_TABLES_SQL = (
         hdr INTEGER CHECK (hdr IN (0, 1)),
         hdr_type TEXT,
         dolby_vision INTEGER CHECK (dolby_vision IN (0, 1)),
-        data_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,

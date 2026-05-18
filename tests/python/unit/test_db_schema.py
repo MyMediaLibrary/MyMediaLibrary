@@ -2246,5 +2246,108 @@ class V21MigrationTest(unittest.TestCase):
             self.assertIn("probe_ok", cols)
 
 
+class V22MigrationTest(unittest.TestCase):
+    """Schema v22: seasons — drop data_json (written but never read at runtime)."""
+
+    def _make_v21_db_with_seasons(self, path: pathlib.Path) -> None:
+        """Build a minimal v21 DB with seasons rows that still have data_json."""
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA user_version = 21")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_rules (id INTEGER PRIMARY KEY, category TEXT NOT NULL, group_key TEXT NOT NULL, value_key TEXT NOT NULL, score_value REAL NOT NULL, UNIQUE(category, group_key, value_key))")
+        conn.execute("CREATE TABLE score_size_profiles (id INTEGER PRIMARY KEY, media_type TEXT NOT NULL, resolution_key TEXT NOT NULL, codec_key TEXT NOT NULL, min_gb REAL NOT NULL, max_gb REAL NOT NULL, UNIQUE(media_type, resolution_key, codec_key))")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, media_type TEXT, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, is_available INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("""
+            CREATE TABLE seasons (
+                id INTEGER PRIMARY KEY,
+                media_id TEXT NOT NULL,
+                season_number INTEGER NOT NULL,
+                title TEXT,
+                episodes_count INTEGER,
+                size_total INTEGER,
+                runtime_min INTEGER,
+                runtime_min_avg INTEGER,
+                quality_score REAL,
+                width INTEGER,
+                height INTEGER,
+                resolution TEXT,
+                video_codec TEXT,
+                data_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
+                UNIQUE (media_id, season_number)
+            )
+        """)
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE, mapped_name TEXT, is_ignored INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY, mode TEXT, phases TEXT, started_at TEXT NOT NULL, status TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE media_probe_cache (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL, filename TEXT, probe_ok INTEGER NOT NULL DEFAULT 0)")
+        for v in range(1, 22):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("INSERT INTO media(id, media_type, title) VALUES ('m1', 'tv', 'Show')")
+        conn.execute(
+            "INSERT INTO seasons(media_id, season_number, title, episodes_count, resolution, data_json)"
+            " VALUES ('m1', 1, 'Season 1', 10, '1080p', '{\"season\":1,\"codec\":\"H.265\"}')"
+        )
+        conn.execute(
+            "INSERT INTO seasons(media_id, season_number, episodes_count, resolution, data_json)"
+            " VALUES ('m1', 2, 8, '4K', NULL)"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_v22_migration_removes_data_json_column(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v21_db_with_seasons(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+            conn.close()
+            self.assertNotIn("data_json", cols)
+
+    def test_v22_migration_preserves_season_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v21_db_with_seasons(path)
+            conn = db.initialize_database(path)
+            count = conn.execute("SELECT COUNT(*) FROM seasons WHERE media_id='m1'").fetchone()[0]
+            row1 = conn.execute("SELECT resolution, episodes_count FROM seasons WHERE media_id='m1' AND season_number=1").fetchone()
+            conn.close()
+            self.assertEqual(count, 2)
+            self.assertEqual(row1["resolution"], "1080p")
+            self.assertEqual(row1["episodes_count"], 10)
+
+    def test_v22_migration_is_idempotent_on_fresh_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("data_json", cols)
+
+    def test_v22_no_data_json_in_schema_target(self):
+        """Fresh DB must not have data_json in seasons at all."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+            conn.close()
+            self.assertNotIn("data_json", cols)
+            # All important typed columns must still be there
+            for col in ("media_id", "season_number", "title", "episodes_count",
+                        "resolution", "width", "height", "video_codec", "audio_codec",
+                        "audio_languages_json", "runtime_min_avg"):
+                self.assertIn(col, cols, f"missing column: {col}")
+
+
 if __name__ == "__main__":
     unittest.main()

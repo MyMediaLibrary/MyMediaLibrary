@@ -106,6 +106,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 21:
             _apply_v21_media_probe_cache_flatten(conn)
             current_version = 21
+        if current_version < 22:
+            _apply_v22_seasons_drop_data_json(conn)
+            current_version = 22
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -542,6 +545,22 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v22_seasons_drop_data_json(conn: sqlite3.Connection) -> None:
+    """Drop seasons.data_json — written but never read at runtime.
+
+    All useful technical fields are already stored in typed columns.
+    Idempotent: checks for the column before acting.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
+    if "data_json" not in cols:
+        log.info("[DB] v22: seasons.data_json already absent, skipped")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (22,))
+        return
+    conn.execute("ALTER TABLE seasons DROP COLUMN data_json")
+    log.info("[DB] v22: seasons.data_json dropped")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (22,))
 
 
 def _apply_v21_media_probe_cache_flatten(conn: sqlite3.Connection) -> None:
