@@ -77,7 +77,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             previous_done = db._startup_tasks_done
             db._startup_tasks_done = False
             try:
-                with patch.object(db, "_has_legacy_json_sources", return_value=False), \
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": ""}), \
+                     patch.object(db, "_has_legacy_json_sources", return_value=False), \
                      patch.object(db, "_migrate_runtime_json_sources") as migrate, \
                      patch.object(db, "_seed_bundled_defaults") as seed:
                     self.assertTrue(db.bootstrap_runtime_database(db_path))
@@ -107,7 +108,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             previous_done = db._startup_tasks_done
             db._startup_tasks_done = False
             try:
-                with patch.object(db, "_has_legacy_json_sources", return_value=False), \
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": ""}), \
+                     patch.object(db, "_has_legacy_json_sources", return_value=False), \
                      patch.object(db, "_migrate_runtime_json_sources") as migrate, \
                      patch.object(db, "_seed_bundled_defaults") as seed, \
                      self.assertLogs("db-bootstrap-skip-test", level="INFO") as logs:
@@ -145,7 +147,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             previous_done = db._startup_tasks_done
             db._startup_tasks_done = False
             try:
-                with patch.object(db, "_has_legacy_json_sources", return_value=True), \
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": ""}), \
+                     patch.object(db, "_has_legacy_json_sources", return_value=True), \
                      patch.object(db, "_migrate_runtime_json_sources") as migrate, \
                      patch.object(db, "_seed_bundled_defaults") as seed:
                     self.assertTrue(db.bootstrap_runtime_database(db_path))
@@ -161,7 +164,8 @@ class DatabaseSchemaTest(unittest.TestCase):
             previous_done = db._startup_tasks_done
             db._startup_tasks_done = False
             try:
-                with patch.object(db, "_has_legacy_json_sources", return_value=True), \
+                with patch.dict("os.environ", {"MML_SKIP_DB_STARTUP_TASKS": ""}), \
+                     patch.object(db, "_has_legacy_json_sources", return_value=True), \
                      patch.object(db, "_migrate_runtime_json_sources") as migrate, \
                      patch.object(db, "_seed_bundled_defaults") as seed:
                     self.assertTrue(db.bootstrap_runtime_database(db_path))
