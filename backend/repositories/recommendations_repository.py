@@ -113,7 +113,12 @@ def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def replace_recommendations(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> None:
-    """Replace the generated recommendation set atomically for a scan output."""
+    """Replace the generated recommendation set atomically for a scan output.
+
+    Recommendations whose media was deleted between scans have media_id=NULL
+    (ON DELETE SET NULL) and are invisible in the UI; they are purged here on
+    the next scan. This is intentional, not a leak.
+    """
 
     with conn:
         conn.execute("DELETE FROM recommendations")

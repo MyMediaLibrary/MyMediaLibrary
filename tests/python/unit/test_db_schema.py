@@ -1603,6 +1603,62 @@ class V18RecommendationsReplaceDetailsJsonTest(unittest.TestCase):
         self.assertIn("Season 2", rec["message"]["en"])
         self.assertEqual(rec["media_ref"]["type"], "tv")
 
+    def test_export_after_media_deleted_returns_stable_payload(self):
+        """export_recommendations must not crash when media_id is NULL (ON DELETE SET NULL).
+
+        Verifies the LEFT JOIN behaviour: a recommendation whose media was deleted
+        keeps its message/action columns but has no media_ref or display in the
+        exported payload. The frontend filters these out via visibleRecommendations().
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            with conn:
+                conn.execute(
+                    "INSERT INTO media(id, media_type, title, year) VALUES (?, ?, ?, ?)",
+                    ("movie:Films:Demo", "movie", "Demo", 2024),
+                )
+                recommendations_repository.upsert_recommendation(
+                    conn,
+                    {
+                        "id": "rec:movie:Films:Demo:low_score",
+                        "recommendation_type": "quality",
+                        "priority": "high",
+                        "rule_id": "low_score",
+                        "media_ref": {"id": "movie:Films:Demo", "type": "movie"},
+                        "message": {"fr": "Score faible.", "en": "Low score."},
+                        "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+                    },
+                )
+            # Delete the media; FK is ON DELETE SET NULL so the rec row survives
+            with conn:
+                conn.execute("DELETE FROM media WHERE id = 'movie:Films:Demo'")
+
+            row = conn.execute(
+                "SELECT media_id FROM recommendations WHERE id = 'rec:movie:Films:Demo:low_score'"
+            ).fetchone()
+            self.assertIsNone(row["media_id"], "media_id must be NULL after media deletion")
+
+            from repositories import recommendations_repository as repo
+            payload = repo.export_recommendations(conn)
+            conn.close()
+
+        items = payload["items"]
+        self.assertEqual(len(items), 1, "orphan recommendation must still be exported")
+        rec = items[0]
+
+        # media_ref and display are absent when media_id is NULL
+        self.assertNotIn("media_ref", rec)
+        self.assertNotIn("display", rec)
+
+        # message and suggested_action are preserved from the columns
+        self.assertEqual(rec["message"], {"fr": "Score faible.", "en": "Low score."})
+        self.assertEqual(rec["suggested_action"], {"fr": "Chercher mieux.", "en": "Look for better."})
+
+        # core fields still present — frontend can render safely
+        self.assertEqual(rec["recommendation_type"], "quality")
+        self.assertEqual(rec["priority"], "high")
+        self.assertEqual(rec["rule_id"], "low_score")
+
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""
         with tempfile.TemporaryDirectory() as tmpdir:

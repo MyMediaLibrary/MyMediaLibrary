@@ -562,7 +562,7 @@ def _apply_v18_recommendations_replace_details_json(conn: sqlite3.Connection) ->
         return
 
     rows = conn.execute("SELECT id, details_json FROM recommendations").fetchall()
-    migrated = skipped = malformed = 0
+    migrated = malformed = 0
 
     for row in rows:
         try:
@@ -599,9 +599,8 @@ def _apply_v18_recommendations_replace_details_json(conn: sqlite3.Connection) ->
     conn.execute("ALTER TABLE recommendations DROP COLUMN details_json")
 
     log.info(
-        "[DB] v18: recommendations replace details_json — migrated=%d skipped=%d malformed=%d",
+        "[DB] v18: recommendations replace details_json — migrated=%d malformed=%d",
         migrated,
-        skipped,
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (18,))
@@ -610,8 +609,8 @@ def _apply_v18_recommendations_replace_details_json(conn: sqlite3.Connection) ->
 def _apply_v17_recommendations_drop_redundant_columns(conn: sqlite3.Connection) -> None:
     """Drop title, reason, dedupe_group, severity from recommendations.
 
-    These columns were denormalised from details_json and are never read back;
-    details_json remains the sole source of truth for the API payload.
+    These columns were denormalised redundancies; v18 then replaced details_json
+    with explicit message_fr/en and suggested_action_fr/en columns.
     Uses ALTER TABLE DROP COLUMN (SQLite 3.35+, idempotent via PRAGMA table_info).
     """
     if not conn.execute(
