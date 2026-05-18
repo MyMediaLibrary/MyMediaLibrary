@@ -4878,8 +4878,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 changed = True
             if changed:
                 save_config(cfg)
-                cfg = load_config()
-                cfg, _ = _ensure_needs_onboarding(cfg)
+                # cfg is already the normalized state that was just written — no reload needed.
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
             out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
@@ -4961,7 +4960,12 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if score_changed:
                 log.info("[score] Score configuration normalized during PUT /api/settings/score")
             score_config_changed = score_config_before != cfg.get("score_configuration")
-            save_config(cfg)
+            # Targeted write: only score_rules / score_size_profiles / score.enabled.
+            # The rest of cfg (seerr, folders, system, …) is already persisted by load_config().
+            config_repository.save_score_configuration(
+                cfg.get("score_configuration"),
+                _is_score_enabled(cfg),
+            )
             log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0
@@ -5016,7 +5020,10 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if score_changed:
                 log.info("[score] Score configuration normalized during POST /api/settings/score/reset")
             score_config_changed = score_config_before != cfg.get("score_configuration")
-            save_config(cfg)
+            config_repository.save_score_configuration(
+                cfg.get("score_configuration"),
+                _is_score_enabled(cfg),
+            )
             log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0

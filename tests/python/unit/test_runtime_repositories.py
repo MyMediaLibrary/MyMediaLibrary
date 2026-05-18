@@ -816,5 +816,126 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(rules, [{"id": "db"}])
 
 
+class TargetedSaveTest(unittest.TestCase):
+    """save_score_configuration touches only score tables; save_config sanitizes per-key."""
+
+    def _make_db(self, tmpdir: pathlib.Path) -> pathlib.Path:
+        db_path = tmpdir / "data" / "mml.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.log_level', '\"INFO\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute(
+            "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+            " VALUES ('weights', 'weight', 'video', 50)"
+        )
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies', 'movie', 1)")
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_save_score_configuration_does_not_touch_app_config_scalars(self):
+        """save_score_configuration must not modify system.log_level or other app_config keys."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 30, "audio": 30, "languages": 20, "size": 20}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            log_level = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'system.log_level'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(log_level)
+            self.assertEqual(json.loads(log_level["value_json"]), "INFO")
+
+    def test_save_score_configuration_does_not_touch_folders(self):
+        """save_score_configuration must not truncate or modify the folders table."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 40, "audio": 20, "languages": 20, "size": 20}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            folders = conn.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
+            conn.close()
+            self.assertEqual(folders, 1)
+
+    def test_save_score_configuration_updates_score_enabled(self):
+        """save_score_configuration must update score.enabled in app_config."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(None, score_enabled=False, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertIs(json.loads(row["value_json"]), False)
+
+    def test_save_score_configuration_updates_score_rules(self):
+        """save_score_configuration must overwrite score_rules with new weights."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 10, "audio": 10, "languages": 10, "size": 70}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["score_value"], 10)
+
+    def test_save_config_does_not_write_apikey_to_db(self):
+        """save_config must silently drop sensitive subkeys (api_key, token, etc.)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            json_path = pathlib.Path(tmp) / "config.json"
+            config_repository.save_config(
+                {"seerr": {"enabled": True, "url": "https://example.com", "apikey": "TOP_SECRET"}},
+                json_path,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'seerr.apikey'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNone(row)
+
+    def test_save_config_never_writes_apikey_to_db(self):
+        """save_config must never persist sensitive subkeys — DB stays clean after write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            json_path = pathlib.Path(tmp) / "config.json"
+            config_repository.save_config(
+                {"seerr": {"enabled": True, "url": "https://seerr.test", "apikey": "SHOULD_NOT_PERSIST"}},
+                json_path,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            apikey_row = conn.execute(
+                "SELECT 1 FROM app_config WHERE key = 'seerr.apikey'"
+            ).fetchone()
+            seerr_group = conn.execute(
+                "SELECT key, value_json FROM app_config WHERE key LIKE 'seerr.%'"
+            ).fetchall()
+            conn.close()
+            self.assertIsNone(apikey_row, "seerr.apikey must not be written to DB")
+            # seerr.enabled and seerr.url should be present; apikey must be absent
+            seerr_keys = {r["key"] for r in seerr_group}
+            self.assertIn("seerr.enabled", seerr_keys)
+            self.assertNotIn("seerr.apikey", seerr_keys)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -310,7 +310,7 @@ class TestScoreSettingsApi(unittest.TestCase):
     def test_true_score_settings_save_error_remains_error(self):
         status, get_payload = self._request("/api/settings/score")
         self.assertEqual(status, 200)
-        with patch.object(scanner, "save_config", side_effect=OSError("disk full")):
+        with patch.object(scanner.config_repository, "save_score_configuration", side_effect=OSError("disk full")):
             put_status, put_payload = self._request(
                 "/api/settings/score",
                 method="PUT",

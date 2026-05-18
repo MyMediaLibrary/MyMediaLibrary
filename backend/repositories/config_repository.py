@@ -67,18 +67,47 @@ def save_config(
     auth_enabled: bool | None = None,
     password_hash: str | None = None,
 ) -> None:
-    """Persist sanitized config to SQLite."""
+    """Persist config to SQLite.
 
-    sanitized = sanitize_config(config)
+    Sensitive subkeys (apikey, token, password, …) are filtered during write by
+    _replace_app_config — no upfront deepcopy needed here.
+    """
     conn = db.initialize_database(_effective_db_path(json_path, db_path))
     try:
         with conn:
-            _replace_app_config(conn, sanitized)
-            _replace_folders(conn, sanitized)
-            _replace_providers_visibility(conn, sanitized)
-            _replace_score_data(conn, sanitized)
+            _replace_app_config(conn, config)
+            _replace_folders(conn, config)
+            _replace_providers_visibility(conn, config)
+            _replace_score_data(conn, config)
             if auth_enabled is not None or password_hash is not None:
                 _replace_auth_settings(conn, bool(auth_enabled), password_hash)
+    finally:
+        conn.close()
+
+
+def save_score_configuration(
+    score_configuration: dict[str, Any] | None,
+    score_enabled: bool | None,
+    db_path: str | Path | None = None,
+) -> None:
+    """Persist ONLY score_rules / score_size_profiles / score.enabled — no other table touched.
+
+    Used by the score-settings PUT/POST/reset handlers so they don't trigger a
+    full config rewrite (folders, app_config scalars, providers, …).
+    """
+    conn = db.initialize_database(db_path)
+    try:
+        with conn:
+            _replace_score_data(conn, {"score_configuration": score_configuration or {}})
+            if score_enabled is not None:
+                conn.execute(
+                    "INSERT INTO app_config(key, value_json, updated_at)"
+                    " VALUES ('score.enabled', ?, CURRENT_TIMESTAMP)"
+                    " ON CONFLICT(key) DO UPDATE SET"
+                    "   value_json = excluded.value_json,"
+                    "   updated_at = CURRENT_TIMESTAMP",
+                    (_to_json(bool(score_enabled)),),
+                )
     finally:
         conn.close()
 
@@ -192,7 +221,8 @@ def _export_config(conn: sqlite3.Connection) -> dict[str, Any]:
     ).fetchall()
     cfg["score_configuration"] = reconstruct_score_config_from_rows(rule_rows, profile_rows)
 
-    return sanitize_config(cfg)
+    # Data came from DB which was already sanitized on write — no deepcopy needed.
+    return cfg
 
 
 # Scalar user-config keys stored directly in app_config (no flat group prefix, no dedicated table).
