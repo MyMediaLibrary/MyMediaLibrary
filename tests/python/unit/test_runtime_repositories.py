@@ -937,5 +937,200 @@ class TargetedSaveTest(unittest.TestCase):
             self.assertNotIn("seerr.apikey", seerr_keys)
 
 
+class LoadScoreConfigOnlyTest(unittest.TestCase):
+    """load_score_config_only() reads only score tables — no other tables touched."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.log_level', '\"DEBUG\"')")
+        conn.execute("INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value) VALUES ('weights','weight','video',42)")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def test_returns_score_and_score_configuration_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_score_config_only(db_path)
+            self.assertIn("score", result)
+            self.assertIn("score_configuration", result)
+            self.assertIs(result["score"]["enabled"], True)
+
+    def test_does_not_return_system_or_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_score_config_only(db_path)
+            self.assertNotIn("system", result)
+            self.assertNotIn("folders", result)
+            self.assertNotIn("providers_visible", result)
+            self.assertNotIn("seerr", result)
+
+    def test_score_enabled_false_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = db.initialize_database(db_path)
+            conn.commit()
+            conn.close()
+            result = config_repository.load_score_config_only(db_path)
+            self.assertIs(result["score"]["enabled"], False)
+
+
+class SaveConfigPatchTest(unittest.TestCase):
+    """save_config_patch() writes only the payload keys — other tables untouched."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('ui.theme', '\"light\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('ui.default_view', '\"grid\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.scan_cron', '\"0 3 * * *\"')")
+        conn.execute("INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value) VALUES ('weights','weight','video',50)")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def _read_app_config(self, db_path: pathlib.Path) -> dict:
+        conn = db.initialize_database(db_path)
+        rows = conn.execute("SELECT key, value_json FROM app_config").fetchall()
+        conn.close()
+        return {r["key"]: json.loads(r["value_json"]) for r in rows}
+
+    def test_patch_ui_theme_only_updates_that_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            written = config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            cfg = self._read_app_config(db_path)
+            self.assertEqual(cfg["ui.theme"], "dark")
+            self.assertEqual(cfg["ui.default_view"], "grid")   # untouched
+            self.assertEqual(cfg["system.scan_cron"], "0 3 * * *")  # untouched
+            self.assertIn("ui.theme", written)
+            self.assertNotIn("ui.default_view", written)
+
+    def test_patch_does_not_touch_score_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            conn.close()
+            self.assertEqual(row["score_value"], 50)
+
+    def test_patch_does_not_touch_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            count = conn.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+
+    def test_patch_score_configuration_updates_score_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch(
+                {"score_configuration": {"weights": {"video": 10, "audio": 10, "languages": 10, "size": 70}}},
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            ui = conn.execute("SELECT value_json FROM app_config WHERE key='ui.theme'").fetchone()
+            conn.close()
+            self.assertEqual(row["score_value"], 10)
+            self.assertEqual(json.loads(ui["value_json"]), "light")   # untouched
+
+    def test_patch_drops_sensitive_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch(
+                {"seerr": {"enabled": True, "url": "https://seerr.test", "apikey": "SECRET"}},
+                db_path=db_path,
+            )
+            cfg = self._read_app_config(db_path)
+            self.assertNotIn("seerr.apikey", cfg)
+            self.assertIn("seerr.enabled", cfg)
+
+    def test_patch_returns_written_flat_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            written = config_repository.save_config_patch(
+                {"ui": {"theme": "dark"}, "system": {"scan_cron": "0 4 * * *"}},
+                db_path=db_path,
+            )
+            self.assertIn("ui.theme", written)
+            self.assertIn("system.scan_cron", written)
+            self.assertNotIn("ui.default_view", written)
+
+
+class LoadPhaseAffectingConfigTest(unittest.TestCase):
+    """load_phase_affecting_config() reads only requested phase-affecting groups."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('recommendations.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('media_probe.enabled', 'false')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('seerr.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('seerr.url', '\"https://seerr.test\"')")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def test_loads_only_requested_groups(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"score"}), db_path=db_path
+            )
+            self.assertIn("score", result)
+            self.assertNotIn("folders", result)
+            self.assertNotIn("seerr", result)
+            self.assertNotIn("media_probe", result)
+
+    def test_empty_phase_keys_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(frozenset(), db_path=db_path)
+            self.assertEqual(result, {})
+
+    def test_recommendations_also_loads_score_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"recommendations"}), db_path=db_path
+            )
+            self.assertIn("recommendations", result)
+            self.assertIn("score", result)  # needed for _is_recommendations_enabled
+
+    def test_loads_folders_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"folders"}), db_path=db_path
+            )
+            self.assertIn("folders", result)
+            self.assertEqual(len(result["folders"]), 1)
+            self.assertEqual(result["folders"][0]["name"], "/movies")
+
+
 if __name__ == "__main__":
     unittest.main()

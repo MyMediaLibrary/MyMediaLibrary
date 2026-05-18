@@ -112,6 +112,152 @@ def save_score_configuration(
         conn.close()
 
 
+def load_score_config_only(db_path: str | Path | None = None) -> dict[str, Any]:
+    """Load ONLY score.enabled + score_configuration from DB.
+
+    Returns {"score": {"enabled": bool}, "score_configuration": {...}}.
+    Does NOT read folders, providers, seerr, system, ui, or any other table.
+    Used by score settings handlers that don't need the full config.
+    """
+    conn = db.initialize_database(db_path)
+    try:
+        score_row = conn.execute(
+            "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+        ).fetchone()
+        score_enabled = _from_json(score_row["value_json"], False) if score_row else False
+
+        rule_rows = conn.execute(
+            "SELECT category, group_key, value_key, score_value FROM score_rules ORDER BY id"
+        ).fetchall()
+        profile_rows = conn.execute(
+            "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles ORDER BY id"
+        ).fetchall()
+        return {
+            "score": {"enabled": bool(score_enabled)},
+            "score_configuration": reconstruct_score_config_from_rows(rule_rows, profile_rows),
+        }
+    finally:
+        conn.close()
+
+
+def load_phase_affecting_config(
+    phase_keys: frozenset[str],
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load ONLY the config fields needed to detect scan-phase changes.
+
+    phase_keys is the subset of {"folders", "media_probe", "seerr", "score",
+    "recommendations"} that are present in the incoming payload.  Only those
+    groups are read from the DB so the caller can compare before/after.
+    """
+    if not phase_keys:
+        return {}
+    conn = db.initialize_database(db_path)
+    try:
+        cfg: dict[str, Any] = {}
+
+        if "folders" in phase_keys:
+            rows = conn.execute(
+                "SELECT name, media_type, enabled FROM folders ORDER BY id"
+            ).fetchall()
+            cfg["folders"] = [
+                {"name": r["name"], "type": r["media_type"], "enabled": bool(r["enabled"])}
+                for r in rows
+            ]
+
+        # score.enabled is needed both for "score" and "recommendations" checks
+        if "score" in phase_keys or "recommendations" in phase_keys:
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            cfg["score"] = {"enabled": bool(_from_json(row["value_json"], False) if row else False)}
+
+        if "recommendations" in phase_keys:
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'recommendations.enabled'"
+            ).fetchone()
+            cfg["recommendations"] = {"enabled": bool(_from_json(row["value_json"], False) if row else False)}
+
+        if "media_probe" in phase_keys:
+            for subkey in ("enabled", "mode"):
+                row = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = ?",
+                    (f"media_probe.{subkey}",),
+                ).fetchone()
+                if row:
+                    cfg.setdefault("media_probe", {})[subkey] = _from_json(row["value_json"], None)
+
+        if "seerr" in phase_keys:
+            for subkey in ("enabled", "url"):
+                row = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = ?",
+                    (f"seerr.{subkey}",),
+                ).fetchone()
+                if row:
+                    cfg.setdefault("seerr", {})[subkey] = _from_json(row["value_json"], None)
+
+        return cfg
+    finally:
+        conn.close()
+
+
+def save_config_patch(
+    payload: dict[str, Any],
+    db_path: str | Path | None = None,
+) -> list[str]:
+    """Write ONLY the keys present in payload to their respective tables.
+
+    This is the patch-based alternative to save_config().  Only rows that
+    correspond to keys in payload are written; everything else is untouched.
+
+    Returns a sorted list of flat key names that were actually written
+    (e.g. ["score_configuration", "ui.theme"]).
+    """
+    written: list[str] = []
+    conn = db.initialize_database(db_path)
+    try:
+        with conn:
+            # Scalar user keys (enable_movies, enable_series, scan, …)
+            for key in _APP_CONFIG_USER_KEYS:
+                if key in payload:
+                    sanitized = _sanitize_value(key, payload[key])
+                    if sanitized is not _SKIP:
+                        _upsert_app_config(conn, key, sanitized)
+                        written.append(key)
+
+            # Flat groups: system, seerr, ui, recommendations, media_probe, score
+            for group in _FLAT_CONFIG_GROUPS:
+                if group not in payload or not isinstance(payload[group], dict):
+                    continue
+                group_val = payload[group]
+                for subkey, subval in group_val.items():
+                    sanitized = _sanitize_value(subkey, subval)
+                    if sanitized is _SKIP:
+                        continue
+                    _upsert_app_config(conn, f"{group}.{subkey}", sanitized)
+                    written.append(f"{group}.{subkey}")
+
+            # score_configuration → score tables (separate from "score" flat group)
+            if "score_configuration" in payload:
+                _replace_score_data(conn, {"score_configuration": payload["score_configuration"]})
+                written.append("score_configuration")
+
+            # folders → folders table
+            if "folders" in payload:
+                _replace_folders(conn, payload)
+                written.append("folders")
+
+            # providers_visible → providers.is_ignored
+            if "providers_visible" in payload:
+                _replace_providers_visibility(conn, payload)
+                # Not added to written (excluded from log output per provider_visible fix)
+
+    finally:
+        conn.close()
+
+    return sorted(written)
+
+
 def save_auth_settings(
     *,
     auth_enabled: bool,
@@ -232,6 +378,16 @@ _APP_CONFIG_USER_KEYS = frozenset({
     "enable_movies",
     "enable_series",
 })
+
+
+def _upsert_app_config(conn: sqlite3.Connection, key: str, value: Any) -> None:
+    """Insert or update a single app_config row."""
+    conn.execute(
+        "INSERT INTO app_config(key, value_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)"
+        " ON CONFLICT(key) DO UPDATE SET"
+        "   value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP",
+        (key, _to_json(value)),
+    )
 
 
 def _replace_app_config(conn: sqlite3.Connection, config: dict[str, Any]) -> None:

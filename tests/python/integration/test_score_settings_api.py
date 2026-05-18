@@ -425,3 +425,64 @@ class TestScoreSettingsApi(unittest.TestCase):
         self.assertIn("score_configuration", cfg)
         self.assertEqual(cfg["score_configuration"]["weights"]["video"], 48)
         self.assertEqual(payload["effective"]["weights"]["audio"], 22)
+
+    def test_patch_ui_does_not_affect_score_rules(self):
+        """POST /api/config {ui: {theme}} must NOT rewrite score_rules."""
+        import sqlite3 as _sqlite3
+        db_path = self._tmp_path / "data" / "mymedialibrary.db"
+        conn = _sqlite3.connect(str(db_path))
+        conn.row_factory = _sqlite3.Row
+        before = {r["value_key"]: r["score_value"] for r in conn.execute(
+            "SELECT value_key, score_value FROM score_rules WHERE category='weights'"
+        ).fetchall()}
+        conn.close()
+
+        status, response = self._request(
+            "/api/config", method="POST", payload={"ui": {"theme": "dark"}}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(response["ok"])
+
+        conn = _sqlite3.connect(str(db_path))
+        conn.row_factory = _sqlite3.Row
+        after = {r["value_key"]: r["score_value"] for r in conn.execute(
+            "SELECT value_key, score_value FROM score_rules WHERE category='weights'"
+        ).fetchall()}
+        conn.close()
+        self.assertEqual(before, after)
+
+    def test_patch_ui_does_not_affect_folders(self):
+        """POST /api/config {ui: {theme}} must NOT rewrite the folders table."""
+        import sqlite3 as _sqlite3
+        db_path = self._tmp_path / "data" / "mymedialibrary.db"
+
+        status, response = self._request(
+            "/api/config", method="POST",
+            payload={"folders": [{"name": "/movies", "type": "movie", "enabled": True}]},
+        )
+        self.assertEqual(status, 200)
+
+        status, response = self._request(
+            "/api/config", method="POST", payload={"ui": {"theme": "dark"}}
+        )
+        self.assertEqual(status, 200)
+
+        conn = _sqlite3.connect(str(db_path))
+        conn.row_factory = _sqlite3.Row
+        rows = conn.execute("SELECT name FROM folders").fetchall()
+        conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "/movies")
+
+    def test_patch_config_logs_only_changed_key(self):
+        """POST /api/config {ui: {theme}} must log only ui.theme — not score or folders."""
+        with self.assertLogs("scanner", level="INFO") as logs:
+            status, _ = self._request(
+                "/api/config", method="POST", payload={"ui": {"theme": "dark"}}
+            )
+        self.assertEqual(status, 200)
+        joined = "\n".join(logs.output)
+        self.assertIn("ui.theme", joined)
+        self.assertNotIn("score_configuration", joined)
+        self.assertNotIn("folders", joined)
+        self.assertNotIn("providers_visible", joined)

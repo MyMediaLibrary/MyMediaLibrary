@@ -632,6 +632,27 @@ def _config_changed_summary(before: dict, after: dict) -> str:
     return ", ".join(parts)
 
 
+def _patch_summary(written_keys: list[str], payload: dict) -> str:
+    """Format written flat keys with their new values for INFO log output."""
+    parts = []
+    for flat_key in written_keys:
+        if flat_key == "score_configuration":
+            parts.append("score_configuration")
+            continue
+        if flat_key == "folders":
+            parts.append(f"folders : [{len(payload.get('folders') or [])} items]")
+            continue
+        if "." in flat_key:
+            group, subkey = flat_key.split(".", 1)
+            val = (payload.get(group) or {}).get(subkey)
+        else:
+            val = payload.get(flat_key)
+        if any(t in flat_key.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+            continue
+        parts.append(f"{flat_key} : {_fmt_config_val(val)}")
+    return ", ".join(parts) if parts else "(no visible change)"
+
+
 def _normalize_seerr_secret_keys(secrets: dict) -> tuple[dict, bool]:
     changed = False
     if not isinstance(secrets, dict):
@@ -4951,7 +4972,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, err)
                 return
 
-            cfg = load_config()
+            # Load ONLY score tables + score.enabled — no folders, providers, seerr, etc.
+            cfg = config_repository.load_score_config_only()
             score_config_before = cfg.get("score_configuration")
             merged = merge_score_config(defaults, payload.get("score"))
             effective, _ = validate_score_config(merged, defaults=defaults)
@@ -4960,8 +4982,6 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             if score_changed:
                 log.info("[score] Score configuration normalized during PUT /api/settings/score")
             score_config_changed = score_config_before != cfg.get("score_configuration")
-            # Targeted write: only score_rules / score_size_profiles / score.enabled.
-            # The rest of cfg (seerr, folders, system, …) is already persisted by load_config().
             config_repository.save_score_configuration(
                 cfg.get("score_configuration"),
                 _is_score_enabled(cfg),
@@ -5013,7 +5033,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
     def _handle_score_settings_reset(self) -> None:
         try:
             defaults = load_score_defaults()
-            cfg = load_config()
+            cfg = config_repository.load_score_config_only()
             score_config_before = cfg.get("score_configuration")
             cfg["score_configuration"] = copy.deepcopy(defaults)
             cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
@@ -5177,6 +5197,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/config":
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
+
+            # ── Translate legacy enable_score field ──────────────────────────
             system_payload = payload.get("system")
             if isinstance(system_payload, dict) and "enable_score" in system_payload:
                 score_payload = payload.setdefault("score", {})
@@ -5185,8 +5207,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 system_payload.pop("enable_score", None)
                 if not system_payload:
                     payload.pop("system", None)
-            cfg = load_config()
 
+            # ── Handle secrets (auth, seerr apikey) ──────────────────────────
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
             try:
@@ -5196,20 +5218,40 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 return
             jsr_key_action = _apply_seerr_secret_update(payload, secrets_after)
 
-            merged = deep_merge(cfg, payload)
-            merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
-            normalize_folder_enabled_flags(merged, drop_visible=True)
-            merged, _ = normalize_seerr_config(merged)
-            merged, _, _ = normalize_score_configuration_sections(merged)
-            merged, _ = normalize_recommendations_configuration(merged)
-            _finalize_needs_onboarding_after_config_update(merged)
-            # Ensure apikey never persists in SQLite config
-            if "seerr" in merged:
-                merged["seerr"].pop("apikey", None)
-                merged["seerr"].pop("clear_apikey", None)
-            merged.pop("jellyseerr", None)
-            save_config(merged)
-            if secrets_after != secrets_before:
+            # ── Track which top-level keys were sent ─────────────────────────
+            original_keys = frozenset(payload)
+
+            # ── Normalize payload keys in place ──────────────────────────────
+            normalize_folder_enabled_flags(payload, drop_visible=True)
+            payload.pop("jellyseerr", None)
+            if "seerr" in original_keys:
+                payload, _ = normalize_seerr_config(payload)
+                if isinstance(payload.get("seerr"), dict):
+                    payload["seerr"].pop("apikey", None)
+                    payload["seerr"].pop("clear_apikey", None)
+            if "score" in original_keys or "score_configuration" in original_keys:
+                payload, _, _ = normalize_score_configuration_sections(payload)
+            if "recommendations" in original_keys:
+                payload, _ = normalize_recommendations_configuration(payload)
+            if "folders" in original_keys or "system" in original_keys:
+                _finalize_needs_onboarding_after_config_update(payload)
+
+            # ── Build the dict to save (only keys from original payload) ─────
+            to_save = {k: payload[k] for k in original_keys if k in payload}
+
+            # ── Load phase-affecting config from DB (only what's needed) ─────
+            _PHASE_KEYS = frozenset({"folders", "media_probe", "seerr", "score", "recommendations"})
+            phase_keys_in_payload = _PHASE_KEYS & original_keys
+            secrets_changed = secrets_before != secrets_after
+            if phase_keys_in_payload or secrets_changed:
+                cfg_before = config_repository.load_phase_affecting_config(phase_keys_in_payload)
+            else:
+                cfg_before = {}
+
+            # ── Patch-based save ─────────────────────────────────────────────
+            written_keys = config_repository.save_config_patch(to_save)
+
+            if secrets_changed:
                 try:
                     _write_secrets(secrets_after)
                     _sync_auth_settings_to_db(secrets_after)
@@ -5217,6 +5259,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     self._json(500, {"ok": False, "error": {"code": "SECRETS_WRITE_FAILED", "message": str(e)}})
                     return
 
+            # ── Log ──────────────────────────────────────────────────────────
             if jsr_key_action == "updated":
                 log.info("[config] Seerr API key updated")
             elif jsr_key_action == "preserved":
@@ -5228,24 +5271,26 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             elif auth_action == "disabled":
                 log.info("[config] Authentication disabled")
 
-            _save_summary = _config_changed_summary(cfg, merged)
-            if _save_summary == "(no change)":
-                log.debug("[config] Saved: %s", _save_summary)
+            if written_keys:
+                log.info("[config] Saved: %s", _patch_summary(written_keys, to_save))
             else:
-                log.info("[config] Saved: %s", _save_summary)
-            # Apply log_level change immediately without restart
-            new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
+                log.debug("[config] Saved: (no change)")
+
+            # ── Immediate side-effects ───────────────────────────────────────
+            new_level = (to_save.get("system") or {}).get("log_level") or to_save.get("log_level") or ""
             if new_level:
                 _set_global_log_level(new_level)
 
-            if isinstance(payload.get("system"), dict) and "scan_cron" in payload["system"]:
-                sync_user_scan_cron(merged, reason="config update")
+            if isinstance(to_save.get("system"), dict) and "scan_cron" in to_save["system"]:
+                sync_user_scan_cron(to_save, reason="config update")
 
+            # ── Phase calculation (partial before/after) ─────────────────────
+            cfg_after = dict(cfg_before)
+            for k in phase_keys_in_payload:
+                cfg_after[k] = to_save.get(k)
             phases = _compute_phases_for_config_change(
-                cfg,
-                merged,
-                secrets_before=secrets_before,
-                secrets_after=secrets_after,
+                cfg_before, cfg_after,
+                secrets_before=secrets_before, secrets_after=secrets_after,
             )
             response = {"ok": True, "phases": phases}
             if phases:
