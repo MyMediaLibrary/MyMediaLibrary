@@ -88,6 +88,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 15:
             _apply_v15_drop_dead_columns(conn)
             current_version = 15
+        if current_version < 16:
+            _apply_v16_recommendation_rules_structured(conn)
+            current_version = 16
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -483,6 +486,11 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         if col not in cols:
             conn.execute(f"ALTER TABLE recommendation_rules ADD COLUMN {col} TEXT")
 
+    if "rule_json" not in cols:
+        log.info("[DB] v14: recommendation_rules — rule_json absent, skipped")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+        return
+
     rows = conn.execute(
         "SELECT id, rule_json, rule_type, priority FROM recommendation_rules"
         " WHERE rule_type IS NULL OR priority IS NULL"
@@ -519,6 +527,107 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v16_recommendation_rules_structured(conn: sqlite3.Connection) -> None:
+    """Flatten recommendation_rules.rule_json into structured columns.
+
+    Adds dedupe_group, severity, conditions_json, message_fr/en, suggested_action_fr/en
+    and created_at columns (idempotent — existing columns are skipped).
+    Migrates data from rule_json into the new columns, then drops rule_json.
+    Safe to call when rule_json is already absent (fresh v16 DB).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_rules'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (16,))
+        return
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+
+    new_cols = {
+        "dedupe_group": "TEXT",
+        "severity": "INTEGER",
+        "conditions_json": "TEXT",
+        "message_fr": "TEXT",
+        "message_en": "TEXT",
+        "suggested_action_fr": "TEXT",
+        "suggested_action_en": "TEXT",
+        "created_at": "TEXT",
+    }
+    for col, col_type in new_cols.items():
+        if col not in cols:
+            conn.execute(f"ALTER TABLE recommendation_rules ADD COLUMN {col} {col_type}")
+    conn.execute(
+        "UPDATE recommendation_rules SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+    )
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+
+    if "rule_json" not in cols:
+        log.info("[DB] v16: recommendation_rules structured — rule_json already absent, skipped")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (16,))
+        return
+
+    rows = conn.execute("SELECT id, rule_key, rule_json FROM recommendation_rules").fetchall()
+    migrated = 0
+    skipped = 0
+    malformed = 0
+
+    for row in rows:
+        try:
+            rule = _json.loads(row[2] or "{}")
+        except Exception:
+            malformed += 1
+            log.warning("[DB] v16: malformed rule_json for rule_key=%s", row[1])
+            continue
+        if not isinstance(rule, dict):
+            malformed += 1
+            continue
+
+        msg = rule.get("message") or {}
+        action = rule.get("suggested_action") or {}
+        conditions = rule.get("conditions")
+        conditions_json = (
+            _json.dumps(conditions, ensure_ascii=False, separators=(",", ":"))
+            if isinstance(conditions, list)
+            else None
+        )
+
+        conn.execute(
+            """
+            UPDATE recommendation_rules SET
+                dedupe_group      = COALESCE(dedupe_group, ?),
+                severity          = COALESCE(severity, ?),
+                conditions_json   = COALESCE(conditions_json, ?),
+                message_fr        = COALESCE(message_fr, ?),
+                message_en        = COALESCE(message_en, ?),
+                suggested_action_fr = COALESCE(suggested_action_fr, ?),
+                suggested_action_en = COALESCE(suggested_action_en, ?)
+            WHERE id = ?
+            """,
+            (
+                str(rule.get("dedupe_group") or "") or None,
+                rule.get("severity"),
+                conditions_json,
+                msg.get("fr") or None,
+                msg.get("en") or None,
+                action.get("fr") or None,
+                action.get("en") or None,
+                row[0],
+            ),
+        )
+        migrated += 1
+
+    conn.execute("ALTER TABLE recommendation_rules DROP COLUMN rule_json")
+
+    log.info(
+        "[DB] v16: recommendation_rules structured — migrated=%d skipped=%d malformed=%d",
+        migrated,
+        skipped,
+        malformed,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (16,))
 
 
 def _apply_v13_drop_recommendation_json_columns(conn: sqlite3.Connection) -> None:

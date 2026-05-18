@@ -469,19 +469,29 @@ def import_recommendation_rules(conn: sqlite3.Connection, path: str | Path, repo
             if not isinstance(rule, dict):
                 continue
             rule_key = str(rule.get("id") or rule.get("rule_key") or f"rule_{index}")
+            conditions = rule.get("conditions")
+            msg = rule.get("message") or {}
+            action = rule.get("suggested_action") or {}
             rows += _insert_count(
                 conn,
                 """
                 INSERT OR IGNORE INTO recommendation_rules
-                    (rule_key, rule_json, rule_type, priority, enabled)
-                VALUES (?, ?, ?, ?, ?)
+                    (rule_key, rule_type, priority, enabled, dedupe_group, severity,
+                     conditions_json, message_fr, message_en, suggested_action_fr, suggested_action_en)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rule_key,
-                    _to_json(rule),
                     str(rule.get("type") or "") or None,
                     str(rule.get("priority") or "") or None,
                     0 if rule.get("enabled") is False else 1,
+                    str(rule.get("dedupe_group") or "") or None,
+                    rule.get("severity"),
+                    _to_json(conditions) if isinstance(conditions, list) else None,
+                    msg.get("fr") or None,
+                    msg.get("en") or None,
+                    action.get("fr") or None,
+                    action.get("en") or None,
                 ),
             )
     _record(report, "recommendation_rules", rows)

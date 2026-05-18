@@ -68,15 +68,33 @@ class DatabaseImportTest(unittest.TestCase):
     def test_import_recommendations_rules_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "recommendations_rules.json"
-            rule = {"id": "low_score", "enabled": True, "conditions": []}
+            rule = {
+                "id": "low_score",
+                "enabled": True,
+                "type": "quality",
+                "priority": "medium",
+                "dedupe_group": "score_low",
+                "severity": 1,
+                "conditions": [{"field": "score", "operator": "<", "value": 60}],
+                "message": {"fr": "Score faible.", "en": "Low score."},
+                "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+            }
             self.write_json(path, {"version": 1, "rules": [rule]})
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_recommendation_rules(conn, path)
+            exported_rules = db_export.export_recommendation_rules(conn)["rules"]
+            conn.close()
 
             self.assertEqual(inserted, 1)
-            self.assertEqual(db_export.export_recommendation_rules(conn)["rules"], [rule])
-            conn.close()
+            self.assertEqual(len(exported_rules), 1)
+            exported = exported_rules[0]
+            self.assertEqual(exported["id"], "low_score")
+            self.assertEqual(exported["enabled"], True)
+            self.assertEqual(exported["type"], "quality")
+            self.assertEqual(exported["priority"], "medium")
+            self.assertEqual(exported["conditions"], [{"field": "score", "operator": "<", "value": 60}])
+            self.assertEqual(exported["message"], {"fr": "Score faible.", "en": "Low score."})
 
     def test_import_config_json_without_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:

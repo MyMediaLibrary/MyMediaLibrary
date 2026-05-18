@@ -37,9 +37,27 @@ def export_providers_mapping(conn: sqlite3.Connection) -> dict[str, str | None]:
 
 def export_recommendation_rules(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
-        "SELECT rule_json FROM recommendation_rules ORDER BY id"
+        """
+        SELECT rule_key, enabled, rule_type, priority, dedupe_group, severity,
+               conditions_json, message_fr, message_en, suggested_action_fr, suggested_action_en
+        FROM recommendation_rules
+        ORDER BY id
+        """
     ).fetchall()
-    return {"version": 1, "rules": [_from_json(row["rule_json"], {}) for row in rows]}
+    rules = []
+    for row in rows:
+        rules.append({
+            "id": row["rule_key"],
+            "enabled": bool(row["enabled"]),
+            "type": row["rule_type"],
+            "priority": row["priority"],
+            "dedupe_group": row["dedupe_group"],
+            "severity": row["severity"],
+            "conditions": _from_json(row["conditions_json"], []),
+            "message": {"fr": row["message_fr"], "en": row["message_en"]},
+            "suggested_action": {"fr": row["suggested_action_fr"], "en": row["suggested_action_en"]},
+        })
+    return {"version": 1, "rules": rules}
 
 
 _EXPORT_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})

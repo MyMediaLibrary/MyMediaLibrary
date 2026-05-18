@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 CREATE_TABLES_SQL = (
@@ -40,10 +40,17 @@ CREATE_TABLES_SQL = (
     CREATE TABLE IF NOT EXISTS recommendation_rules (
         id INTEGER PRIMARY KEY,
         rule_key TEXT NOT NULL UNIQUE,
-        rule_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
         rule_type TEXT,
         priority TEXT,
-        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        dedupe_group TEXT,
+        severity INTEGER,
+        conditions_json TEXT,
+        message_fr TEXT,
+        message_en TEXT,
+        suggested_action_fr TEXT,
+        suggested_action_en TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -231,6 +238,9 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_media_first_seen_at ON media(first_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_media_id ON media_probe_cache(media_id)",
     "CREATE INDEX IF NOT EXISTS idx_media_probe_cache_lookup ON media_probe_cache(media_id, filename)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_rule_type ON recommendation_rules(rule_type)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_priority ON recommendation_rules(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_enabled ON recommendation_rules(enabled)",
 )
 
 

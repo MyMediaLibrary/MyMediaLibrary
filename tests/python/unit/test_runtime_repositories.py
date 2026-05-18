@@ -673,12 +673,12 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("db-rule", '{"id":"db-rule","enabled":true}', 1),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("db-rule", 1),
                 )
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("disabled-rule", '{"id":"disabled-rule","enabled":false}', 0),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("disabled-rule", 0),
                 )
                 conn.commit()
             finally:
@@ -718,8 +718,8 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("disabled-rule", '{"id":"disabled-rule","enabled":false}', 0),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("disabled-rule", 0),
                 )
                 conn.commit()
             finally:

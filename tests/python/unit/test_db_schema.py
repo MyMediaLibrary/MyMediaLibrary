@@ -12,9 +12,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "backend"))
 
 import db  # noqa: E402
+import db_export  # noqa: E402
 import db_migrations  # noqa: E402
 import db_schema  # noqa: E402
 import db_seed  # noqa: E402
+from repositories import recommendations_repository  # noqa: E402
 
 
 class DatabaseSchemaTest(unittest.TestCase):
@@ -124,8 +126,8 @@ class DatabaseSchemaTest(unittest.TestCase):
                 ("default", 1, '{"weights":{"video":50,"audio":20,"languages":15,"size":15}}'),
             )
             conn.execute(
-                "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                ("low_score", '{"id":"low_score"}', 1),
+                "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                ("low_score", 1),
             )
             conn.commit()
             conn.close()
@@ -163,8 +165,8 @@ class DatabaseSchemaTest(unittest.TestCase):
                 ("default", 1, "{}"),
             )
             conn.execute(
-                "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                ("low_score", '{"id":"low_score"}', 1),
+                "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                ("low_score", 1),
             )
             conn.commit()
             conn.close()
@@ -935,46 +937,65 @@ class V14RecommendationRulesExtractScalarsTest(unittest.TestCase):
                 self.assertIsNotNone(row["rule_type"], f"rule_type is NULL for {row['rule_key']}")
                 self.assertIsNotNone(row["priority"], f"priority is NULL for {row['rule_key']}")
 
+    def _make_pre_v14_conn(self) -> sqlite3.Connection:
+        """Return an in-memory connection with the pre-v14 recommendation_rules schema."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY,"
+            " applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE recommendation_rules ("
+            "  id INTEGER PRIMARY KEY,"
+            "  rule_key TEXT NOT NULL UNIQUE,"
+            "  rule_json TEXT NOT NULL,"
+            "  enabled INTEGER NOT NULL DEFAULT 1"
+            ")"
+        )
+        for v in range(1, 14):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 13")
+        conn.commit()
+        return conn
+
     def test_migration_extracts_scalars_from_existing_rows(self):
         """v14 migration must populate rule_type and priority from rule_json on existing rows."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
-            # Insert a row with NULL rule_type/priority (simulates pre-v14 row)
-            with conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO recommendation_rules"
-                    "(rule_key, rule_json, rule_type, priority, enabled)"
-                    " VALUES (?, ?, NULL, NULL, 1)",
-                    ("test_rule", '{"id":"test_rule","type":"quality","priority":"high"}'),
-                )
-            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
-            row = conn.execute(
-                "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
-            ).fetchone()
-            conn.close()
-            self.assertEqual(row["rule_type"], "quality")
-            self.assertEqual(row["priority"], "high")
+        conn = self._make_pre_v14_conn()
+        with conn:
+            conn.execute(
+                "INSERT INTO recommendation_rules(rule_key, rule_json, enabled)"
+                " VALUES (?, ?, 1)",
+                ("test_rule", '{"id":"test_rule","type":"quality","priority":"high"}'),
+            )
+        db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+        row = conn.execute(
+            "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row["rule_type"], "quality")
+        self.assertEqual(row["priority"], "high")
 
     def test_migration_does_not_overwrite_existing_values(self):
         """v14 migration must not touch rows that already have rule_type or priority set."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
-            with conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO recommendation_rules"
-                    "(rule_key, rule_json, rule_type, priority, enabled)"
-                    " VALUES (?, ?, ?, ?, 1)",
-                    ("test_rule", '{"id":"test_rule","type":"space","priority":"low"}',
-                     "quality", "high"),
-                )
-            db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
-            row = conn.execute(
-                "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
-            ).fetchone()
-            conn.close()
-            # Must keep the pre-existing values, not overwrite from JSON
-            self.assertEqual(row["rule_type"], "quality")
-            self.assertEqual(row["priority"], "high")
+        conn = self._make_pre_v14_conn()
+        # Add rule_type/priority columns manually (as v14 migration would)
+        conn.execute("ALTER TABLE recommendation_rules ADD COLUMN rule_type TEXT")
+        conn.execute("ALTER TABLE recommendation_rules ADD COLUMN priority TEXT")
+        with conn:
+            conn.execute(
+                "INSERT INTO recommendation_rules(rule_key, rule_json, rule_type, priority, enabled)"
+                " VALUES (?, ?, ?, ?, 1)",
+                ("test_rule", '{"id":"test_rule","type":"space","priority":"low"}', "quality", "high"),
+            )
+        db_migrations._apply_v14_recommendation_rules_extract_scalars(conn)
+        row = conn.execute(
+            "SELECT rule_type, priority FROM recommendation_rules WHERE rule_key = 'test_rule'"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row["rule_type"], "quality")
+        self.assertEqual(row["priority"], "high")
 
     def test_migration_idempotent(self):
         """v14 migration must not raise when run twice."""
@@ -1079,6 +1100,234 @@ class V15DropDeadColumnsTest(unittest.TestCase):
             self.assertEqual(row["quality_score"], 87.0)
             data = json.loads(row["data_json"])
             self.assertEqual(data["quality"]["score"], 87)
+
+    def test_version_reaches_schema_target(self):
+        """After full migration pipeline, user_version equals SCHEMA_VERSION."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            version = db_migrations.get_schema_version(conn)
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+
+
+class V16RecommendationRulesStructuredTest(unittest.TestCase):
+    """Tests for the v16 migration: flatten rule_json into structured columns."""
+
+    def test_fresh_db_has_no_rule_json_column(self):
+        """A fresh v16 DB must not have rule_json in recommendation_rules."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+            conn.close()
+            self.assertNotIn("rule_json", cols)
+
+    def test_fresh_db_has_all_structured_columns(self):
+        """A fresh v16 DB must have all new structured columns in recommendation_rules."""
+        expected = {"conditions_json", "message_fr", "message_en",
+                    "suggested_action_fr", "suggested_action_en", "dedupe_group", "severity"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+            conn.close()
+            for col in expected:
+                self.assertIn(col, cols, f"Missing column: {col}")
+
+    def test_seed_populates_all_structured_columns(self):
+        """seed_recommendation_rules must write conditions_json, message, suggested_action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            rows = conn.execute(
+                "SELECT rule_key, rule_type, priority, dedupe_group, severity,"
+                "       conditions_json, message_fr, message_en,"
+                "       suggested_action_fr, suggested_action_en"
+                " FROM recommendation_rules"
+            ).fetchall()
+            conn.close()
+        self.assertGreater(len(rows), 0)
+        for row in rows:
+            self.assertIsNotNone(row["rule_type"], f"rule_type NULL for {row['rule_key']}")
+            self.assertIsNotNone(row["priority"], f"priority NULL for {row['rule_key']}")
+            self.assertIsNotNone(row["message_fr"], f"message_fr NULL for {row['rule_key']}")
+            self.assertIsNotNone(row["message_en"], f"message_en NULL for {row['rule_key']}")
+            self.assertIsNotNone(row["conditions_json"], f"conditions_json NULL for {row['rule_key']}")
+
+    def test_export_reconstruction_matches_original_rule_format(self):
+        """export_recommendation_rules must return the dict format expected by the engine."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_seed.seed_all(conn)
+            payload = db_export.export_recommendation_rules(conn)
+            conn.close()
+        rules = payload["rules"]
+        self.assertGreater(len(rules), 0)
+        for rule in rules:
+            self.assertIn("id", rule)
+            self.assertIn("enabled", rule)
+            self.assertIn("type", rule)
+            self.assertIn("priority", rule)
+            self.assertIn("conditions", rule)
+            self.assertIsInstance(rule["conditions"], list)
+            self.assertIn("message", rule)
+            self.assertIsInstance(rule["message"], dict)
+            self.assertIn("fr", rule["message"])
+            self.assertIn("en", rule["message"])
+            self.assertIn("suggested_action", rule)
+            self.assertIsInstance(rule["suggested_action"], dict)
+
+    def test_migration_from_pre_v16_db_with_rule_json(self):
+        """v16 migration must extract all fields from rule_json and drop the column."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY,"
+            " applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE recommendation_rules ("
+            "  id INTEGER PRIMARY KEY,"
+            "  rule_key TEXT NOT NULL UNIQUE,"
+            "  rule_json TEXT NOT NULL,"
+            "  rule_type TEXT,"
+            "  priority TEXT,"
+            "  enabled INTEGER NOT NULL DEFAULT 1"
+            ")"
+        )
+        for v in range(1, 16):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 15")
+        rule = {
+            "id": "very_low_score",
+            "enabled": True,
+            "type": "quality",
+            "priority": "high",
+            "dedupe_group": "score_low",
+            "severity": 2,
+            "conditions": [{"field": "score", "operator": "<", "value": 40}],
+            "message": {"fr": "Score très faible.", "en": "Very low score."},
+            "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+        }
+        conn.execute(
+            "INSERT INTO recommendation_rules(rule_key, rule_json, rule_type, priority, enabled)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("very_low_score", json.dumps(rule), "quality", "high", 1),
+        )
+        conn.commit()
+
+        db_migrations._apply_v16_recommendation_rules_structured(conn)
+        conn.commit()
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+        self.assertNotIn("rule_json", cols)
+        self.assertIn("conditions_json", cols)
+
+        row = conn.execute("SELECT * FROM recommendation_rules WHERE rule_key = 'very_low_score'").fetchone()
+        conn.close()
+        self.assertEqual(row["rule_type"], "quality")
+        self.assertEqual(row["priority"], "high")
+        self.assertEqual(row["dedupe_group"], "score_low")
+        self.assertEqual(row["severity"], 2)
+        self.assertEqual(row["message_fr"], "Score très faible.")
+        self.assertEqual(row["message_en"], "Very low score.")
+        self.assertEqual(row["suggested_action_fr"], "Chercher mieux.")
+        self.assertEqual(row["suggested_action_en"], "Look for better.")
+        conditions = json.loads(row["conditions_json"])
+        self.assertEqual(conditions, [{"field": "score", "operator": "<", "value": 40}])
+
+    def test_migration_idempotent_on_fresh_db(self):
+        """v16 migration must be a no-op (no error) when rule_json is already absent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations._apply_v16_recommendation_rules_structured(conn)
+            db_migrations._apply_v16_recommendation_rules_structured(conn)
+            conn.close()
+
+    def test_migration_preserves_enabled_column(self):
+        """v16 migration must not alter the enabled column value."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY,"
+            " applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE recommendation_rules ("
+            "  id INTEGER PRIMARY KEY,"
+            "  rule_key TEXT NOT NULL UNIQUE,"
+            "  rule_json TEXT NOT NULL,"
+            "  enabled INTEGER NOT NULL DEFAULT 1"
+            ")"
+        )
+        for v in range(1, 16):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 15")
+        conn.execute(
+            "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
+            ("disabled_rule", '{"id":"disabled_rule","type":"quality","priority":"low",'
+             '"conditions":[],"message":{"fr":"f","en":"e"},"suggested_action":{"fr":"f","en":"e"}}',
+             0),
+        )
+        conn.commit()
+        db_migrations._apply_v16_recommendation_rules_structured(conn)
+        conn.commit()
+
+        row = conn.execute("SELECT enabled FROM recommendation_rules WHERE rule_key = 'disabled_rule'").fetchone()
+        conn.close()
+        self.assertEqual(row["enabled"], 0)
+
+    def test_migration_handles_malformed_rule_json(self):
+        """v16 migration must skip malformed rule_json without crashing."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY,"
+            " applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE recommendation_rules ("
+            "  id INTEGER PRIMARY KEY,"
+            "  rule_key TEXT NOT NULL UNIQUE,"
+            "  rule_json TEXT NOT NULL,"
+            "  enabled INTEGER NOT NULL DEFAULT 1"
+            ")"
+        )
+        for v in range(1, 16):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute("PRAGMA user_version = 15")
+        conn.execute(
+            "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
+            ("bad_rule", "NOT VALID JSON {{", 1),
+        )
+        conn.commit()
+        db_migrations._apply_v16_recommendation_rules_structured(conn)
+        conn.commit()
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_rules)").fetchall()}
+        self.assertNotIn("rule_json", cols)
+        row = conn.execute("SELECT rule_key FROM recommendation_rules WHERE rule_key = 'bad_rule'").fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+
+    def test_load_recommendation_rules_returns_engine_compatible_format(self):
+        """load_recommendation_rules must return dicts with conditions, message, suggested_action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "mml.db"
+            json_path = root / "recommendations_rules.json"
+            json_path.write_text('{"version":1,"rules":[]}', encoding="utf-8")
+            conn = db.initialize_database(db_path)
+            db_seed.seed_all(conn)
+            conn.close()
+            rules = recommendations_repository.load_recommendation_rules(json_path, db_path)
+        self.assertGreater(len(rules), 0)
+        for rule in rules:
+            self.assertIn("id", rule)
+            self.assertIsInstance(rule.get("conditions"), list)
+            self.assertIsInstance(rule.get("message"), dict)
+            self.assertIsInstance(rule.get("suggested_action"), dict)
 
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""
