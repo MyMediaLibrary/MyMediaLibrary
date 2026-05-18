@@ -536,6 +536,57 @@ def _redact_config_payload(payload: dict) -> dict:
     return safe_payload
 
 
+_CONFIG_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+_CONFIG_SENSITIVE_TOKENS = ("api_key", "apikey", "token", "secret", "password")
+
+
+def _config_flat_keys(d: dict) -> list[str]:
+    """Return sorted flat key names (group.subkey or scalar) from a config dict.
+
+    Omits auth/score/score_configuration and any key whose name contains a
+    sensitive token — values are never included.
+    """
+    _SKIP = {"auth", "score", "score_configuration"}
+    keys: list[str] = []
+    for k, v in d.items():
+        if k in _SKIP:
+            continue
+        if k in _CONFIG_FLAT_GROUPS and isinstance(v, dict):
+            for sk in v:
+                flat = f"{k}.{sk}"
+                if any(t in flat.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                    continue
+                keys.append(flat)
+        else:
+            if not any(t in str(k).casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                keys.append(str(k))
+    return sorted(keys)
+
+
+def _config_changed_keys(before: dict, after: dict) -> list[str]:
+    """Return sorted flat key names whose values differ between before and after."""
+    _SKIP = {"auth", "score", "score_configuration"}
+    changed: list[str] = []
+    all_keys = set(before) | set(after)
+    for k in all_keys:
+        if k in _SKIP:
+            continue
+        v_b, v_a = before.get(k), after.get(k)
+        if k in _CONFIG_FLAT_GROUPS:
+            b = v_b if isinstance(v_b, dict) else {}
+            a = v_a if isinstance(v_a, dict) else {}
+            for sk in set(b) | set(a):
+                if b.get(sk) != a.get(sk):
+                    flat = f"{k}.{sk}"
+                    if any(t in flat.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                        continue
+                    changed.append(flat)
+        else:
+            if v_b != v_a and not any(t in str(k).casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                changed.append(str(k))
+    return sorted(changed)
+
+
 def _normalize_seerr_secret_keys(secrets: dict) -> tuple[dict, bool]:
     changed = False
     if not isinstance(secrets, dict):
@@ -5078,8 +5129,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 if not system_payload:
                     payload.pop("system", None)
             cfg = load_config()
-            safe_payload = _redact_config_payload(payload)
-            log.info("[config] Received: %s", json.dumps(safe_payload))
+            log.info("[config] Updating: %s", ", ".join(_config_flat_keys(payload)) or "(no keys)")
 
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
@@ -5102,6 +5152,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 merged["seerr"].pop("apikey", None)
                 merged["seerr"].pop("clear_apikey", None)
             merged.pop("jellyseerr", None)
+            changed_keys = _config_changed_keys(cfg, merged)
             save_config(merged)
             if secrets_after != secrets_before:
                 try:
@@ -5117,14 +5168,12 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 log.info("[config] Seerr API key preserved")
             elif jsr_key_action == "cleared":
                 log.info("[config] Seerr API key cleared (explicit request)")
-            else:
-                log.info("[config] Seerr API key not modified")
             if auth_action == "updated":
                 log.info("[config] Authentication password updated")
             elif auth_action == "disabled":
                 log.info("[config] Authentication disabled")
 
-            log.info("[config] Saved")
+            log.info("[config] Saved: %s", ", ".join(changed_keys) or "(no change)")
             # Apply log_level change immediately without restart
             new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
             if new_level:

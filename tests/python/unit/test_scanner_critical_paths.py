@@ -745,5 +745,80 @@ class LibraryWriteSafetyTest(unittest.TestCase):
             self.assertEqual(mode, 0o644)
 
 
+class ConfigLogHelpersTest(unittest.TestCase):
+    """Tests for the config log helpers: _config_flat_keys and _config_changed_keys."""
+
+    def test_flat_keys_single_group_subkey(self):
+        """A partial payload with one group subkey returns that flat key only."""
+        self.assertEqual(scanner._config_flat_keys({"ui": {"theme": "dark"}}), ["ui.theme"])
+
+    def test_flat_keys_multiple_groups(self):
+        """Multiple groups produce all their flat subkeys."""
+        result = scanner._config_flat_keys({
+            "ui": {"theme": "dark", "default_view": "grid"},
+            "system": {"scan_cron": "0 3 * * *"},
+        })
+        self.assertEqual(result, ["system.scan_cron", "ui.default_view", "ui.theme"])
+
+    def test_flat_keys_skips_auth_score(self):
+        """auth, score, score_configuration must never appear in the key list."""
+        result = scanner._config_flat_keys({
+            "auth": {"password": "secret"},
+            "score": {"enabled": True},
+            "score_configuration": {"weights": {}},
+            "ui": {"theme": "dark"},
+        })
+        self.assertNotIn("auth", result)
+        self.assertNotIn("score", result)
+        self.assertIn("ui.theme", result)
+
+    def test_flat_keys_omits_sensitive_subkeys(self):
+        """apikey/token/password subkeys must not appear in log output."""
+        result = scanner._config_flat_keys({"seerr": {"enabled": True, "apikey": "secret"}})
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("seerr.apikey", result)
+
+    def test_flat_keys_scalar_keys(self):
+        """Scalar keys (folders, enable_movies) are included as-is."""
+        result = scanner._config_flat_keys({"folders": ["/movies"], "enable_movies": True})
+        self.assertIn("folders", result)
+        self.assertIn("enable_movies", result)
+
+    def test_changed_keys_detects_single_change(self):
+        """Only the key that changed must appear in the diff."""
+        before = {"ui": {"theme": "light", "default_view": "grid"}, "system": {"scan_cron": "0 3 * * *"}}
+        after  = {"ui": {"theme": "dark",  "default_view": "grid"}, "system": {"scan_cron": "0 3 * * *"}}
+        self.assertEqual(scanner._config_changed_keys(before, after), ["ui.theme"])
+
+    def test_changed_keys_empty_when_nothing_changed(self):
+        """No diff must return an empty list."""
+        cfg = {"ui": {"theme": "dark"}, "system": {"scan_cron": "0 3 * * *"}}
+        self.assertEqual(scanner._config_changed_keys(cfg, cfg), [])
+
+    def test_changed_keys_omits_sensitive_names(self):
+        """Keys whose flat name contains a sensitive token must be omitted from diff."""
+        before = {"seerr": {"enabled": False, "apikey": "old"}}
+        after  = {"seerr": {"enabled": True,  "apikey": "new"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("seerr.apikey", result)
+
+    def test_changed_keys_skips_auth_score(self):
+        """auth and score changes must not appear in the diff list."""
+        before = {"auth": {"enabled": False}, "score": {"enabled": False}, "ui": {"theme": "light"}}
+        after  = {"auth": {"enabled": True},  "score": {"enabled": True},  "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("auth", result)
+        self.assertNotIn("score", result)
+        self.assertIn("ui.theme", result)
+
+    def test_seerr_log_suppressed_when_payload_has_no_seerr_key(self):
+        """_apply_seerr_secret_update must return 'not modified' — no Seerr log should fire."""
+        payload = {"ui": {"theme": "dark"}}
+        secrets = {}
+        action = scanner._apply_seerr_secret_update(payload, secrets)
+        self.assertEqual(action, "not modified")
+
+
 if __name__ == "__main__":
     unittest.main()
