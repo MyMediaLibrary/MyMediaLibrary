@@ -60,7 +60,6 @@ let allItems=[], categories=[], groups=[];
     audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
-  let libraryExportSource = null; // raw library API payload used for explicit export
   let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
   let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /api/providers-logo
   let audioCodecMapping = {};      // loaded from /api/audiocodec-mapping
@@ -538,7 +537,6 @@ let allItems=[], categories=[], groups=[];
   }
 
   let appConfig = {};            // loaded from /api/config
-  let appVersionInfo = null;     // loaded from /version.json
   let recommendationsDoc = null;
   let recommendationsLoadPromise = null;
   let recommendationTypeFilters = new Set();
@@ -741,7 +739,6 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/version.json?_='+Date.now());
       if (!r.ok) return;
       const v = await r.json();
-      appVersionInfo = v;
       const el = document.getElementById('appVersionStr');
       if (!el) return;
       const parts = ['v' + (v.version || 'dev')];
@@ -789,8 +786,6 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded = false;
       window.MMLState.hasError = false;
       window.MMLState.isLibraryMissing = false;
-      libraryExportSource = null;
-      updateExportJsonButtonState();
       showOnboarding();
     };
     const finishWithEmptyLibrary = () => {
@@ -802,7 +797,6 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded = true;
       window.MMLState.hasError = false;
       window.MMLState.isLibraryMissing = true;
-      libraryExportSource = null;
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.run_scan');
       renderStorageBar();
@@ -819,7 +813,6 @@ let allItems=[], categories=[], groups=[];
       renderQualityFilter();
       renderStats(filterItems());
       switchTab(currentTab);
-      updateExportJsonButtonState();
     };
     if (explicitNeedsOnboarding === true) {
       finishWithOnboarding();
@@ -849,7 +842,6 @@ let allItems=[], categories=[], groups=[];
         }
         return;
       }
-      libraryExportSource = data;
       categories = safeArray(data.categories);
       groups = safeArray(data.groups);
       if (visibleProviders === null) {
@@ -935,7 +927,6 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       renderStats(filterItems());
       switchTab(currentTab);
-      updateExportJsonButtonState();
     } catch(e) {
       const _is401 = String(e).includes('401');
       if (!_is401) console.error('loadLibrary error:', e);
@@ -943,63 +934,11 @@ let allItems=[], categories=[], groups=[];
       if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
       window.MMLState.hasError = true;
       window.MMLState.isLibraryMissing = false;
-      libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.scan_error');
-      updateExportJsonButtonState();
     }
   }
-
-  function _dateYmd(d = new Date()) {
-    return [
-      d.getFullYear(),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0')
-    ].join('-');
-  }
-
-  async function _getVersionForExport() {
-    try {
-      const r = await fetch('/version.json?_=' + Date.now());
-      if (r.ok) {
-        const data = await r.json();
-        appVersionInfo = data;
-        return data;
-      }
-    } catch(_) {}
-    return appVersionInfo || { version: 'dev' };
-  }
-
-  async function exportLibraryJson() {
-    if (!libraryExportSource) {
-      alert(t('settings.system.export_unavailable'));
-      return;
-    }
-
-    const exportedAt = new Date();
-    const exportDate = _dateYmd(exportedAt);
-    const versionInfo = await _getVersionForExport();
-    const payload = {
-      exported_at: exportedAt.toISOString(),
-      export_date: exportDate,
-      app_version: versionInfo.version || 'dev',
-      app_version_meta: versionInfo,
-      library: libraryExportSource
-    };
-
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const filename = `mymedialibrary-export-${exportDate}.json`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
 
   // ── CONFIG ───────────────────────────────────────────
   function _isFolderEnabled(folder) {
@@ -1356,12 +1295,6 @@ let allItems=[], categories=[], groups=[];
       if (!btn) return;
       btn.disabled = disabled;
     });
-  }
-
-  function updateExportJsonButtonState() {
-    const btn = document.getElementById('cfgExportJsonBtn');
-    if (!btn) return;
-    btn.disabled = !libraryExportSource;
   }
 
   function resetAllFilters() {

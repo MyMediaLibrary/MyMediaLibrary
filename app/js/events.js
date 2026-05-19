@@ -111,8 +111,6 @@
       ?.addEventListener('input', syncSettingsAuthPasswordState);
     document.getElementById('cfgAuthConfirm')
       ?.addEventListener('input', syncSettingsAuthPasswordState);
-    document.getElementById('cfgExportJsonBtn')
-      ?.addEventListener('click', exportLibraryJson);
     document.getElementById('settingsLogoutBtn')
       ?.addEventListener('click', logoutFromSettings);
     document.getElementById('settingsCloseBtn')

@@ -354,10 +354,6 @@
     };
   }
 
-  function isExportEnabled(libraryExportSource) {
-    return !!libraryExportSource;
-  }
-
   function canonicalProviderFilterKey(raw, options = {}) {
     const knownProviders = options.knownProviders || null;
     if (typeof raw !== 'string') return null;
@@ -424,7 +420,6 @@
     hasActiveFilters,
     resetFiltersState,
     computeFilterCounts,
-    isExportEnabled,
     canonicalProviderFilterKey,
     groupedProviderCounts,
     getQualityLevelFromScore,

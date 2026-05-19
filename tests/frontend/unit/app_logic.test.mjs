@@ -171,12 +171,6 @@ test('audio channel filter supports dynamic values and none matching', () => {
   assert.deepEqual(logic.applyFilters(sample, state).map((i) => i.title), ['A', 'B']);
 });
 
-test('export button enablement and stale-safe behavior', () => {
-  assert.equal(logic.isExportEnabled(null), false);
-  assert.equal(logic.isExportEnabled(undefined), false);
-  assert.equal(logic.isExportEnabled({ items: [] }), true);
-});
-
 test('normalizes legacy provider keys from persisted state', () => {
   assert.equal(logic.canonicalProviderFilterKey('autres'), '__others__');
   assert.equal(logic.canonicalProviderFilterKey('others'), '__others__');

@@ -173,20 +173,20 @@ test('stats filter applier toggles graph values in include mode only', () => {
 });
 
 test('loadLibrary resolves score feature from runtime config only', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /enableScore = resolveScoreEnabled\(\);/, 'loadLibrary should resolve score from centralized config-driven helper');
   assert.doesNotMatch(block, /data\.meta/, 'loadLibrary should not depend on library meta payload');
   assert.doesNotMatch(block, /data\.config/, 'loadLibrary should not depend on embedded config payload');
 });
 
 test('loadLibrary restores active tab only after data is loaded', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /window\.MMLState\.isLoaded\s*=\s*true;/, 'loadLibrary should mark state as loaded before tab switch');
   assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
 });
 
 test('loadLibrary loads from SQLite API and treats empty library as a first-run state', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /const lib = await _fetchLibraryWithRetry\(\);/, 'loadLibrary should fetch library data through API retry helper');
   assert.match(appSource, /const libraryUrl = '\/api\/library\?availability='/, 'library fetch helper should include availability param');
   assert.match(appSource, /Date\.now\(\)/, 'library fetch helper should include cache-busting timestamp');
@@ -373,7 +373,7 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
 
 test('recommendations load lazily after initial library render', () => {
   assert.match(appSource, /let recommendationsLoadPromise = null;/, 'recommendations should guard concurrent lazy loads');
-  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(loadLibraryBlock, /if \(currentTab === 'recommendations'\) await ensureRecommendationsLoaded\(\);/, 'initial load should fetch recommendations only when restoring recommendations tab');
   assert.doesNotMatch(loadLibraryBlock, /await loadRecommendations\(\);/, 'initial library load should not always fetch recommendations');
   const switchBlock = functionBlock(appSource, 'switchTab', 'render');
