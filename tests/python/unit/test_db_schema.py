@@ -265,6 +265,60 @@ class DatabaseSchemaTest(unittest.TestCase):
 
             self.assertTrue(db_schema.EXPECTED_INDEXES.issubset({row["name"] for row in rows}))
 
+    def test_critical_query_plans_use_indexes_not_temp_btree(self):
+        """Verify that EXPLAIN QUERY PLAN for hot queries never falls back to a temp B-tree."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mymedialibrary.db")
+
+            def plan_details(sql, params=()):
+                return [
+                    row["detail"]
+                    for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+                ]
+
+            # /api/library — available media (hottest query)
+            details = plan_details(
+                "SELECT * FROM media m WHERE m.is_available = 1 ORDER BY m.title, m.id"
+            )
+            self.assertFalse(
+                any("TEMP B-TREE" in d for d in details),
+                f"/api/library still uses TEMP B-TREE: {details}",
+            )
+            self.assertTrue(
+                any("idx_media_is_available_title_id" in d for d in details),
+                f"/api/library not using idx_media_is_available_title_id: {details}",
+            )
+
+            # /api/recommendations — ORDER BY priority, recommendation_type, id
+            details = plan_details(
+                """
+                SELECT r.id, r.media_id, r.recommendation_type, r.priority
+                FROM recommendations r
+                LEFT JOIN media m ON m.id = r.media_id
+                ORDER BY r.priority, r.recommendation_type, r.id
+                """
+            )
+            self.assertFalse(
+                any("TEMP B-TREE" in d for d in details),
+                f"recommendations export still uses TEMP B-TREE: {details}",
+            )
+            self.assertTrue(
+                any("idx_recommendations_order" in d for d in details),
+                f"recommendations export not using idx_recommendations_order: {details}",
+            )
+
+            # mark_media_unavailable — category + is_available filter
+            details = plan_details(
+                "UPDATE media SET is_available=0 WHERE category=? AND id NOT IN (?,?) AND is_available=1",
+                ("Films", "a", "b"),
+            )
+            self.assertTrue(
+                any("idx_media_category_is_available" in d for d in details),
+                f"mark_unavailable not using idx_media_category_is_available: {details}",
+            )
+
+            conn.close()
+
     def test_media_uses_stable_text_ids_for_json_compatibility(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mymedialibrary.db")

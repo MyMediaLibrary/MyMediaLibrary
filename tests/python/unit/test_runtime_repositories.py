@@ -1132,5 +1132,160 @@ class LoadPhaseAffectingConfigTest(unittest.TestCase):
             self.assertEqual(result["folders"][0]["name"], "/movies")
 
 
+class MediaRepositoryPayloadStructureTest(unittest.TestCase):
+    """Verify that reconstructed items contain canonical fields and no legacy duplicates."""
+
+    _REMOVED_DUPLICATES = frozenset({
+        "media_type",      # dup of "type"
+        "overview",        # dup of "plot"
+        "poster_path",     # dup of "poster"
+        "size_total",      # dup of "size_b"
+        "video_codec",     # dup of "codec"
+        "audio_language_group",  # dup of "audio_languages_simple"
+        "first_seen_at",   # dup of "added_at"
+        "quality_score",   # dup of "quality.score"
+    })
+    _SEASON_REMOVED_DUPLICATES = frozenset({
+        "season_number",   # dup of "season"
+        "size_total",      # dup of "size_b"
+        "video_codec",     # dup of "codec"
+        "quality_score",   # dup of "quality.score"
+    })
+    _REQUIRED_CANONICAL = frozenset({
+        "id", "type", "title", "plot", "poster", "size_b", "codec",
+        "audio_languages_simple", "added_at", "is_available",
+    })
+
+    def _make_db_with_item(self) -> pathlib.Path:
+        tmp = tempfile.mkdtemp()
+        db_path = pathlib.Path(tmp) / "mml.db"
+        conn = db.initialize_database(db_path)
+        conn.execute(
+            """
+            INSERT INTO media(id, media_type, title, is_available, size_total, overview,
+                              poster_path, audio_language_group, first_seen_at,
+                              video_codec, quality_score, quality_json, providers_fetched)
+            VALUES (?, ?, ?, 1, 2000000000, ?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                "movie:Films:Test",
+                "movie",
+                "Test Movie",
+                "A test plot.",
+                "/images/poster.jpg",
+                "MULTI",
+                "2025-01-01T00:00:00",
+                "H.265",
+                82.0,
+                '{"score":82,"video":30,"audio":14}',
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO seasons(media_id, season_number, size_total, video_codec, quality_score)
+            VALUES (?, 1, 1000000000, 'H.265', 75.0)
+            """,
+            ("movie:Films:Test",),
+        )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_item_has_no_removed_duplicate_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        self.assertEqual(len(doc["items"]), 1)
+        item = doc["items"][0]
+        for field in self._REMOVED_DUPLICATES:
+            self.assertNotIn(field, item, f"Removed duplicate field '{field}' still present in item")
+
+    def test_item_has_required_canonical_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        item = doc["items"][0]
+        for field in self._REQUIRED_CANONICAL:
+            self.assertIn(field, item, f"Required canonical field '{field}' missing from item")
+        self.assertEqual(item["type"], "movie")
+        self.assertEqual(item["plot"], "A test plot.")
+        self.assertEqual(item["poster"], "/images/poster.jpg")
+        self.assertEqual(item["size_b"], 2000000000)
+        self.assertEqual(item["codec"], "H.265")
+        self.assertEqual(item["audio_languages_simple"], "MULTI")
+        self.assertEqual(item["added_at"], "2025-01-01T00:00:00")
+
+    def test_season_has_no_removed_duplicate_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        item = doc["items"][0]
+        self.assertIn("seasons", item)
+        season = item["seasons"][0]
+        for field in self._SEASON_REMOVED_DUPLICATES:
+            self.assertNotIn(field, season, f"Removed duplicate field '{field}' still present in season")
+        self.assertIn("season", season)
+        self.assertIn("size_b", season)
+        self.assertIn("codec", season)
+
+    def test_season_number_key_resolves_via_canonical_season_key(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        season = doc["items"][0]["seasons"][0]
+        self.assertEqual(season["season"], 1)
+        self.assertNotIn("season_number", season)
+
+    def test_batch_loading_no_n_plus_one(self):
+        import sqlite3 as _sqlite3
+
+        class TrackingConnection:
+            def __init__(self, conn):
+                self._conn = conn
+                self.queries: list[str] = []
+
+            def execute(self, sql, params=()):
+                self.queries.append(sql)
+                return self._conn.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        tmp = tempfile.mkdtemp()
+        db_path = pathlib.Path(tmp) / "mml.db"
+        real_conn = db.initialize_database(db_path)
+        media_ids = [f"movie:Films:Film{i}" for i in range(10)]
+        for mid in media_ids:
+            real_conn.execute(
+                "INSERT INTO media(id, media_type, title, is_available, providers_fetched) VALUES (?, 'movie', ?, 1, 0)",
+                (mid, mid.split(":")[-1]),
+            )
+            real_conn.execute(
+                "INSERT INTO seasons(media_id, season_number) VALUES (?, 1)", (mid,)
+            )
+        real_conn.commit()
+
+        tracker = TrackingConnection(real_conn)
+        media_repository.export_library(tracker, availability="available")
+        real_conn.close()
+
+        season_queries = [q for q in tracker.queries if "FROM seasons" in q]
+        provider_queries = [q for q in tracker.queries if "FROM media_providers" in q]
+        self.assertEqual(len(season_queries), 1, f"Expected 1 batch season query, got: {season_queries}")
+        self.assertEqual(len(provider_queries), 1, f"Expected 1 batch provider query, got: {provider_queries}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4648,20 +4648,35 @@ def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
 
+_recommendations_api_cache: dict[tuple, dict] = {}
+
+
 def _recommendations_api_payload(cfg: dict | None = None) -> dict:
+    cache_enabled = cfg is None and Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
+    if cache_enabled:
+        cache_key = (_runtime_db_signature(), "reco")
+        cached = _recommendations_api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     current_cfg = cfg if isinstance(cfg, dict) else load_config()
     enabled = _is_recommendations_enabled(current_cfg)
     if not enabled:
-        return _empty_recommendations_payload(False)
+        payload = _empty_recommendations_payload(False)
+    else:
+        raw = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
+        if not isinstance(raw, dict):
+            payload = _empty_recommendations_payload(True)
+        else:
+            raw["enabled"] = True
+            raw.setdefault("generated_at", None)
+            raw.setdefault("version", 1)
+            if not isinstance(raw.get("items"), list):
+                raw["items"] = []
+            payload = raw
 
-    payload = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
-    if not isinstance(payload, dict):
-        return _empty_recommendations_payload(True)
-    payload["enabled"] = True
-    payload.setdefault("generated_at", None)
-    payload.setdefault("version", 1)
-    if not isinstance(payload.get("items"), list):
-        payload["items"] = []
+    if cache_enabled:
+        _recommendations_api_cache[cache_key] = payload
     return payload
 
 

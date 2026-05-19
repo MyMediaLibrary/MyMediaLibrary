@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 CREATE_TABLES_SQL = (
@@ -308,6 +308,10 @@ CREATE_INDEXES_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_recommendation_rules_enabled ON recommendation_rules(enabled)",
     "CREATE INDEX IF NOT EXISTS idx_score_rules_category ON score_rules(category)",
     "CREATE INDEX IF NOT EXISTS idx_score_rules_lookup ON score_rules(category, group_key, value_key)",
+    # Composite indexes for query plan optimisation (schema v25)
+    "CREATE INDEX IF NOT EXISTS idx_media_is_available_title_id ON media(is_available, title, id)",
+    "CREATE INDEX IF NOT EXISTS idx_media_category_is_available ON media(category, is_available)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_order ON recommendations(priority, recommendation_type, id)",
 )
 
 

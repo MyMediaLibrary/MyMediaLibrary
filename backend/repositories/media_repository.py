@@ -133,7 +133,7 @@ def _batch_providers(conn: sqlite3.Connection, media_ids: list[str]) -> dict[str
         FROM media_providers mp
         JOIN providers p ON p.id = mp.provider_id
         WHERE mp.media_id IN ({placeholders}) AND (p.is_ignored IS NULL OR p.is_ignored = 0)
-        ORDER BY mp.media_id, p.id
+        ORDER BY mp.media_id, mp.provider_id
         """,
         media_ids,
     ).fetchall()
@@ -160,7 +160,6 @@ def _reconstruct_item(
     item: dict[str, Any] = {
         "id": media_id,
         "type": row["media_type"],
-        "media_type": row["media_type"],
         "title": row["title"],
         "raw": row["raw_name"],
         "category": row["category"],
@@ -172,22 +171,17 @@ def _reconstruct_item(
         "tvdb_id": str(row["tvdb_id"]) if row["tvdb_id"] is not None else None,
         "imdb_id": row["imdb_id"],
         "plot": row["overview"],
-        "overview": row["overview"],
         "poster": row["poster_path"],
-        "poster_path": row["poster_path"],
         "genres": genres,
         "file_count": row["file_count"],
         "size_b": row["size_total"],
-        "size_total": row["size_total"],
         "runtime_min": row["runtime_min"],
         "runtime_min_avg": row["runtime_min_avg"],
         "quality": quality,
-        "quality_score": row["quality_score"],
         "width": row["width"],
         "height": row["height"],
         "resolution": row["resolution"],
         "codec": row["video_codec"],
-        "video_codec": row["video_codec"],
         "video_bitrate": row["video_bitrate"],
         "audio_codec": row["audio_codec"],
         "audio_codec_raw": row["audio_codec_raw"],
@@ -195,7 +189,6 @@ def _reconstruct_item(
         "audio_channels": row["audio_channels"],
         "audio_languages": audio_languages,
         "audio_languages_simple": row["audio_language_group"],
-        "audio_language_group": row["audio_language_group"],
         "subtitle_languages": subtitle_languages,
         "framerate": row["framerate"],
         "container": row["container"],
@@ -207,7 +200,6 @@ def _reconstruct_item(
         "is_available": bool(row["is_available"]),
         "last_seen_at": row["last_seen_at"],
         "added_at": row["first_seen_at"],
-        "first_seen_at": row["first_seen_at"],
         "last_scanned_at": row["last_scanned_at"],
         "filename": filename,
         "filename_history": filename_history if isinstance(filename_history, list) else [],
@@ -225,20 +217,16 @@ def _reconstruct_season(row: Any) -> dict[str, Any]:
     quality_score = row["quality_score"]
     return {
         "season": row["season_number"],
-        "season_number": row["season_number"],
         "title": row["title"],
         "episodes_count": row["episodes_count"],
         "size_b": row["size_total"],
-        "size_total": row["size_total"],
         "runtime_min": row["runtime_min"],
         "runtime_min_avg": row["runtime_min_avg"],
         "quality": {"score": quality_score} if quality_score is not None else None,
-        "quality_score": quality_score,
         "width": row["width"],
         "height": row["height"],
         "resolution": row["resolution"],
         "codec": row["video_codec"],
-        "video_codec": row["video_codec"],
         "audio_codec": row["audio_codec"],
         "audio_channels": row["audio_channels"],
         "audio_languages": audio_languages,

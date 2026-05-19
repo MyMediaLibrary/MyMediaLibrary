@@ -115,6 +115,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 24:
             _apply_v24_scan_runs_structured(conn)
             current_version = 24
+        if current_version < 25:
+            _apply_v25_performance_indexes(conn)
+            current_version = 25
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -551,6 +554,43 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v25_performance_indexes(conn: sqlite3.Connection) -> None:
+    """Add composite indexes to eliminate temp B-trees on the hottest query paths.
+
+    Three indexes are added (all idempotent via IF NOT EXISTS):
+    - media(is_available, title, id) — covers the WHERE+ORDER BY in /api/library
+    - media(category, is_available)  — covers mark_media_unavailable WHERE clause
+    - recommendations(priority, recommendation_type, id) — covers ORDER BY in export
+    """
+    tables = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "media" in tables:
+        media_cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+        if {"is_available", "title", "id"}.issubset(media_cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_media_is_available_title_id"
+                " ON media(is_available, title, id)"
+            )
+        if {"category", "is_available"}.issubset(media_cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_media_category_is_available"
+                " ON media(category, is_available)"
+            )
+    if "recommendations" in tables:
+        rec_cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+        if {"priority", "recommendation_type", "id"}.issubset(rec_cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_recommendations_order"
+                " ON recommendations(priority, recommendation_type, id)"
+            )
+    log.info("[DB] v25: added performance composite indexes")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (25,))
 
 
 def _apply_v24_scan_runs_structured(conn: sqlite3.Connection) -> None:
