@@ -4199,6 +4199,8 @@ def _make_recorder(trigger_type: str, mode: str, phase_plan: str | None = None) 
     if ScanRunRecorder is None:
         class _Noop:
             def start(self): return self
+            def start_phase(self, *a, **kw): pass
+            def finish_phase(self, *a, **kw): pass
             def record_phase(self, *a, **kw): pass
             def complete(self): pass
             def fail(self, *a, **kw): pass
