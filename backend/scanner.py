@@ -3949,10 +3949,8 @@ def run_reset() -> None:
                 conn.execute("DELETE FROM media")
                 conn.execute("DELETE FROM recommendations")
                 conn.execute("DELETE FROM scan_runs")
-                if media_repository is not None:
-                    media_repository.clear_library_snapshot(conn)
             conn.close()
-            log.info("[reset] Cleared %d items from SQLite (media, recommendations, scan_runs, snapshot)", count)
+            log.info("[reset] Cleared %d items from SQLite (media, recommendations, scan_runs)", count)
         except Exception as exc:
             log.error("[reset] Failed to clear SQLite data: %s", exc)
     else:

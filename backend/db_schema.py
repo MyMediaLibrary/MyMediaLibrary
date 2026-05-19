@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 
 CREATE_TABLES_SQL = (
@@ -88,10 +88,8 @@ CREATE_TABLES_SQL = (
         title TEXT NOT NULL,
         raw_name TEXT,
         category TEXT,
-        original_title TEXT,
         year INTEGER,
         folder TEXT,
-        root_path TEXT,
         path TEXT,
         tmdb_id INTEGER,
         tvdb_id INTEGER,

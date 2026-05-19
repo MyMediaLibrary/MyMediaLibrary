@@ -2682,5 +2682,43 @@ class V26MigrationTest(unittest.TestCase):
             conn.close()  # should not raise
 
 
+class V27MigrationTest(unittest.TestCase):
+    def test_v27_drops_dead_columns_on_fresh_db(self):
+        """Fresh DB must not contain original_title or root_path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertNotIn("original_title", cols)
+            self.assertNotIn("root_path", cols)
+
+    def test_v27_drops_dead_columns_on_legacy_db(self):
+        """Migration on a DB that still has the old columns must drop them."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = pathlib.Path(tmpdir) / "mml.db"
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                "CREATE TABLE media ("
+                "id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, "
+                "original_title TEXT, root_path TEXT, is_available INTEGER NOT NULL DEFAULT 1)"
+            )
+            conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("PRAGMA user_version = 26")
+            conn.commit()
+            db_migrations.migrate(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertNotIn("original_title", cols)
+            self.assertNotIn("root_path", cols)
+
+    def test_v27_migration_idempotent(self):
+        """Running migration twice must not fail."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations.migrate(conn)
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

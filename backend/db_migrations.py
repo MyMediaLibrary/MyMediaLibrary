@@ -121,6 +121,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 26:
             _apply_v26_seerr_tracking(conn)
             current_version = 26
+        if current_version < 27:
+            _apply_v27_drop_dead_media_columns(conn)
+            current_version = 27
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -573,6 +576,27 @@ def _apply_v26_seerr_tracking(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media ADD COLUMN seerr_status TEXT")
     log.info("[DB] v26: added seerr_last_fetched_at, seerr_status to media")
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (26,))
+
+
+def _apply_v27_drop_dead_media_columns(conn: sqlite3.Connection) -> None:
+    """Drop media columns that were never written and have no consumers.
+
+    media.original_title — declared in the initial schema, never populated via
+                           upsert, never read by the API or frontend.
+    media.root_path      — same: always NULL since it was never included in
+                           _MEDIA_COLUMNS / _media_params.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (27,))
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+    for col in ("original_title", "root_path"):
+        if col in cols:
+            conn.execute(f"ALTER TABLE media DROP COLUMN {col}")
+    log.info("[DB] v27: dropped media.original_title, media.root_path")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (27,))
 
 
 def _apply_v25_performance_indexes(conn: sqlite3.Connection) -> None:

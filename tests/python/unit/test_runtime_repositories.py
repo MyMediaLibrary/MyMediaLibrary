@@ -783,7 +783,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                     conn.execute("DELETE FROM media")
                     conn.execute("DELETE FROM recommendations")
                     conn.execute("DELETE FROM scan_runs")
-                    media_repository.clear_library_snapshot(conn)
                 count_after = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
                 self.assertEqual(count_after, 0)
             finally:

@@ -19,9 +19,6 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
-_LIBRARY_DOCUMENT_KEY = "runtime_library_document"
-
-
 def load_library(json_path: str | Path, db_path: str | Path | None = None, availability: str = "available") -> dict[str, Any] | None:
     """Load the media library from SQLite only.
 
@@ -165,7 +162,6 @@ def _reconstruct_item(
         "category": row["category"],
         "year": row["year"],
         "folder": row["folder"],
-        "root_path": row["root_path"],
         "path": row["path"],
         "tmdb_id": str(row["tmdb_id"]) if row["tmdb_id"] is not None else None,
         "tvdb_id": str(row["tvdb_id"]) if row["tvdb_id"] is not None else None,
@@ -243,11 +239,6 @@ def _reconstruct_season(row: Any) -> dict[str, Any]:
 
 def replace_library(conn: sqlite3.Connection, document: dict[str, Any]) -> None:
     _save_library_payload(conn, _normalize_library_document(document), replace=True)
-
-
-def clear_library_snapshot(conn: sqlite3.Connection) -> None:
-    """Remove the runtime library snapshot from app_config (called during full reset)."""
-    conn.execute("DELETE FROM app_config WHERE key = ?", (_LIBRARY_DOCUMENT_KEY,))
 
 
 def mark_media_unavailable(
@@ -407,29 +398,6 @@ def _season_params(media_id: str, season_number: int, season: dict[str, Any]) ->
         season.get("audio_language_group") or season.get("audio_languages_simple"),
         _to_json(season.get("subtitle_languages") or []),
         season.get("container"),
-    )
-
-
-def _load_document_snapshot(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    row = conn.execute("SELECT value_json FROM app_config WHERE key = ?", (_LIBRARY_DOCUMENT_KEY,)).fetchone()
-    payload = _from_json(row["value_json"], None) if row else None
-    if not isinstance(payload, dict):
-        return None
-    if not isinstance(payload.get("items"), list):
-        return None
-    return payload
-
-
-def _store_document_snapshot(conn: sqlite3.Connection, document: dict[str, Any]) -> None:
-    conn.execute(
-        """
-        INSERT INTO app_config(key, value_json, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(key) DO UPDATE SET
-            value_json = excluded.value_json,
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (_LIBRARY_DOCUMENT_KEY, _to_json(document)),
     )
 
 

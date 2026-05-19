@@ -56,7 +56,6 @@ except Exception:
 log = logging.getLogger("scanner")
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
-MEDIA_PROBE_CACHE_PATH = str(runtime_paths.MEDIA_PROBE_CACHE_JSON)
 
 MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v",
