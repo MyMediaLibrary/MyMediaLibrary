@@ -2967,50 +2967,56 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                 sq2.pop("level", None)
                 sq2.pop("base_score", None)
                 sq2.pop("score_details", None)
-                video_details = sq2.get("video_details")
-                if isinstance(video_details, dict):
-                    vd2 = {
-                        "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
-                        "codec": _safe_int(video_details.get("codec"), 0) or 0,
-                        "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
-                    }
+                # Thin format: only `score` present (DB stores quality_score only for seasons).
+                # No video_details / audio_details available → preserve score, skip full
+                # normalization (there is nothing to verify or recompute).
+                if not isinstance(sq2.get("video_details"), dict) and sq2.get("video") is None:
+                    s["quality"] = {"score": _safe_int(sq2.get("score"), 0) or 0}
                 else:
-                    vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
-                audio_details = sq2.get("audio_details")
-                if isinstance(audio_details, dict):
-                    ad2 = {
-                        "codec": _safe_int(audio_details.get("codec"), 0) or 0,
-                        "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+                    video_details = sq2.get("video_details")
+                    if isinstance(video_details, dict):
+                        vd2 = {
+                            "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                            "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                            "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+                        }
+                    else:
+                        vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
+                    audio_details = sq2.get("audio_details")
+                    if isinstance(audio_details, dict):
+                        ad2 = {
+                            "codec": _safe_int(audio_details.get("codec"), 0) or 0,
+                            "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+                        }
+                    else:
+                        ad2 = {"codec": 0, "channels": 0}
+                    sq_audio = _safe_int(sq2.get("audio"), 0) or 0
+                    sq_languages = _safe_int(sq2.get("languages"), 0) or 0
+                    sq_size = _safe_int(sq2.get("size"), 0) or 0
+                    sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
+                    sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
+                    sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
+                    sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
+                    normalized_sq = {
+                        "video_details": vd2,
+                        "audio_details": ad2,
+                        "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
+                        "audio": sq_audio,
+                        "languages": sq_languages,
+                        "size": sq_size,
+                        "video_w": round(sq_video_w, 4),
+                        "audio_w": round(sq_audio_w, 4),
+                        "languages_w": round(sq_languages_w, 4),
+                        "size_w": round(sq_size_w, 4),
                     }
-                else:
-                    ad2 = {"codec": 0, "channels": 0}
-                sq_audio = _safe_int(sq2.get("audio"), 0) or 0
-                sq_languages = _safe_int(sq2.get("languages"), 0) or 0
-                sq_size = _safe_int(sq2.get("size"), 0) or 0
-                sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
-                sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
-                sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
-                sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
-                normalized_sq = {
-                    "video_details": vd2,
-                    "audio_details": ad2,
-                    "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
-                    "audio": sq_audio,
-                    "languages": sq_languages,
-                    "size": sq_size,
-                    "video_w": round(sq_video_w, 4),
-                    "audio_w": round(sq_audio_w, 4),
-                    "languages_w": round(sq_languages_w, 4),
-                    "size_w": round(sq_size_w, 4),
-                }
-                normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
-                if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
-                    log.warning(
-                        "[score] Normalized inconsistent season quality for item %r season=%s",
-                        clean.get("title"),
-                        s.get("season"),
-                    )
-                s["quality"] = normalized_sq
+                    normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
+                    if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
+                        log.warning(
+                            "[score] Normalized inconsistent season quality for item %r season=%s",
+                            clean.get("title"),
+                            s.get("season"),
+                        )
+                    s["quality"] = normalized_sq
             sanitized_seasons.append(s)
         clean["seasons"] = sanitized_seasons
     return clean

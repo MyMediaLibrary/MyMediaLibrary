@@ -617,5 +617,95 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertEqual(clean["seasons"][0]["quality"]["audio_details"]["channels"], 8)
 
 
+    def test_sanitize_season_thin_quality_preserved_without_warning(self):
+        """Thin DB format {"score": N} on a season must be preserved and must not warn.
+
+        _reconstruct_season() stores only quality_score in the DB.  When loaded
+        back for Phase 4 the season quality is {"score": N}.  The sanitizer must
+        not treat this as "inconsistent" (it is a valid compact representation).
+        """
+        item = {
+            "type": "tv",
+            "title": "Test Show",
+            "seasons": [
+                {"season": 1, "quality": {"score": 75}},
+                {"season": 2, "quality": {"score": 0}},
+                {"season": 3, "quality": None},           # no quality at all
+            ],
+        }
+        import logging
+        with self.assertLogs("scanner", level="WARNING") as log_cm:
+            # Trigger an unrelated warning so assertLogs doesn't fail on no output
+            import logging
+            logging.getLogger("scanner").warning("_sentinel_for_assertlogs")
+            clean = scanner._sanitize_item_for_library_json(item)
+
+        # No "Normalized inconsistent season quality" warning must have been emitted
+        season_warnings = [m for m in log_cm.output if "inconsistent season quality" in m]
+        self.assertEqual(season_warnings, [],
+                         "Thin {'score': N} format must not trigger inconsistency warning")
+
+        # Score must be preserved (not zeroed out)
+        self.assertEqual(clean["seasons"][0]["quality"]["score"], 75)
+        self.assertEqual(clean["seasons"][1]["quality"]["score"], 0)
+        self.assertIsNone(clean["seasons"][2]["quality"])
+
+    def test_sanitize_season_full_quality_inconsistency_still_warns(self):
+        """A season with a full quality block whose video sum doesn't match must still warn."""
+        item = {
+            "type": "tv",
+            "title": "Bad Show",
+            "seasons": [{
+                "season": 1,
+                "quality": {
+                    "video_details": {"resolution": 20, "codec": 10, "hdr": 0},
+                    "audio_details": {"codec": 6, "channels": 8},
+                    "video": 999,  # intentionally wrong — should be 30
+                    "audio": 14,
+                    "languages": 10,
+                    "size": 5,
+                    "video_w": 30.0,
+                    "audio_w": 9.3333,
+                    "languages_w": 10.0,
+                    "size_w": 5.0,
+                    "score": 54,
+                },
+            }],
+        }
+        with self.assertLogs("scanner", level="WARNING") as log_cm:
+            scanner._sanitize_item_for_library_json(item)
+
+        season_warnings = [m for m in log_cm.output if "inconsistent season quality" in m]
+        self.assertGreater(len(season_warnings), 0,
+                           "Full quality block with wrong video sum must still trigger warning")
+
+    def test_sanitize_season_thin_quality_score_not_zeroed_during_phase4_iteration(self):
+        """Phase 4 iterates by category: _sanitize_library_document must not zero out season
+        quality_score for categories not yet scored in the current iteration."""
+        data = {
+            "items": [
+                {
+                    "id": "tv:Cat1:ShowA", "type": "tv", "title": "Show A",
+                    "category": "Cat1",
+                    "seasons": [{"season": 1, "quality": {"score": 60}}],
+                },
+                {
+                    "id": "tv:Cat2:ShowB", "type": "tv", "title": "Show B",
+                    "category": "Cat2",
+                    "seasons": [{"season": 1, "quality": {"score": 80}}],
+                },
+            ]
+        }
+        # Simulate: category Cat1 scored, then _sanitize_library_document called on all items
+        scanner._sanitize_library_document(data)
+
+        scores = {item["title"]: item["seasons"][0]["quality"]["score"]
+                  for item in data["items"]}
+        self.assertEqual(scores["Show A"], 60,
+                         "Thin season quality must survive _sanitize_library_document unchanged")
+        self.assertEqual(scores["Show B"], 80,
+                         "Thin season quality must survive _sanitize_library_document unchanged")
+
+
 if __name__ == "__main__":
     unittest.main()
