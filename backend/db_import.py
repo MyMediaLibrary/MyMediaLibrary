@@ -1241,6 +1241,8 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         item.get("first_seen_at"),
         item.get("last_scanned_at"),
         _to_json(item["filename"]) if item.get("filename") is not None else None,
+        item.get("seerr_last_fetched_at"),
+        item.get("seerr_status"),
     )
 
 
@@ -1252,17 +1254,18 @@ video_codec, video_bitrate, audio_codec, audio_codec_raw, audio_bitrate,
 audio_channels, audio_languages_json, audio_language_group,
 subtitle_languages_json, framerate, container, hdr, hdr_type, dolby_vision,
 providers_fetched, quality_json, last_seen_at,
-is_available, first_seen_at, last_scanned_at, filename
+is_available, first_seen_at, last_scanned_at, filename,
+seerr_last_fetched_at, seerr_status
 """
 
 _MEDIA_INSERT_IGNORE_SQL = f"""
 INSERT OR IGNORE INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 43)})
+VALUES ({",".join(["?"] * 45)})
 """
 
 _MEDIA_UPSERT_SQL = f"""
 INSERT INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 43)})
+VALUES ({",".join(["?"] * 45)})
 ON CONFLICT(id) DO UPDATE SET
     media_type = excluded.media_type,
     title = excluded.title,
@@ -1306,5 +1309,7 @@ ON CONFLICT(id) DO UPDATE SET
     is_available = excluded.is_available,
     first_seen_at = COALESCE(first_seen_at, excluded.first_seen_at),
     last_scanned_at = excluded.last_scanned_at,
-    filename = excluded.filename
+    filename = excluded.filename,
+    seerr_last_fetched_at = COALESCE(excluded.seerr_last_fetched_at, seerr_last_fetched_at),
+    seerr_status = COALESCE(excluded.seerr_status, seerr_status)
 """

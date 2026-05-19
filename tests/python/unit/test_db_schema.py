@@ -2665,5 +2665,22 @@ class V24MigrationTest(unittest.TestCase):
             self.assertNotIn("phases", cols)
 
 
+class V26MigrationTest(unittest.TestCase):
+    def test_v26_adds_seerr_columns_to_existing_media(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertIn("seerr_last_fetched_at", cols)
+            self.assertIn("seerr_status", cols)
+
+    def test_v26_migration_idempotent(self):
+        """Running migration twice must not fail."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            db_migrations.migrate(conn)
+            conn.close()  # should not raise
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -196,6 +196,8 @@ def _reconstruct_item(
         "hdr_type": row["hdr_type"],
         "dolby_vision": bool(row["dolby_vision"]) if row["dolby_vision"] is not None else None,
         "providers_fetched": bool(row["providers_fetched"]),
+        "seerr_last_fetched_at": row["seerr_last_fetched_at"],
+        "seerr_status": row["seerr_status"],
         "providers": providers,
         "is_available": bool(row["is_available"]),
         "last_seen_at": row["last_seen_at"],

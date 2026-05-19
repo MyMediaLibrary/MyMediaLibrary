@@ -118,6 +118,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 25:
             _apply_v25_performance_indexes(conn)
             current_version = 25
+        if current_version < 26:
+            _apply_v26_seerr_tracking(conn)
+            current_version = 26
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -554,6 +557,22 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v26_seerr_tracking(conn: sqlite3.Connection) -> None:
+    """Add seerr_last_fetched_at and seerr_status to media for NOT_FOUND TTL retry."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (26,))
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+    if "seerr_last_fetched_at" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN seerr_last_fetched_at TEXT")
+    if "seerr_status" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN seerr_status TEXT")
+    log.info("[DB] v26: added seerr_last_fetched_at, seerr_status to media")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (26,))
 
 
 def _apply_v25_performance_indexes(conn: sqlite3.Connection) -> None:

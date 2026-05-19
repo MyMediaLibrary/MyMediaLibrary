@@ -881,6 +881,7 @@ _fetch_providers_sampled = False  # log raw response once per run
 # Sentinel returned when Seerr call fails (vs [] = success with no FR providers)
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Seerr enrichment
+_SEERR_NOT_FOUND_TTL_DAYS = 30
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 _PROVIDER_ENRICH_GROUP = "flatrate"
 
@@ -3188,8 +3189,10 @@ def scan_media_item(
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous SQLite library snapshot — overwritten by later enabled phases.
-        "providers":         _normalize_providers(prev.get("providers")),
-        "providers_fetched": prev.get("providers_fetched", False),
+        "providers":              _normalize_providers(prev.get("providers")),
+        "providers_fetched":      prev.get("providers_fetched", False),
+        "seerr_last_fetched_at":  prev.get("seerr_last_fetched_at"),
+        "seerr_status":           prev.get("seerr_status"),
     }
     if is_tv:
         item["size_b"] = int(series_agg.get("size_b") or size_b)
@@ -3477,6 +3480,16 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
             return False
         if force:
             return True
+        # Retry NOT_FOUND items after TTL — new titles appear in Seerr over time
+        if item.get("seerr_status") == "not_found":
+            last = item.get("seerr_last_fetched_at")
+            if last:
+                try:
+                    age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(last.replace("Z", "+00:00"))).days
+                    return age_days >= _SEERR_NOT_FOUND_TTL_DAYS
+                except Exception:
+                    pass
+            return False
         return not item.get("providers_fetched")
 
     to_enrich = [i for i in items if needs_enrich(i)]
@@ -3484,8 +3497,9 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
     log.info(f"{_phase_prefix('3')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        _log_phase_complete("3", time.monotonic() - _t0, "0 item(s)")
-        return "0 item(s)"
+        early_summary = f"0 enriched / {skipped} skipped" if skipped else "0 item(s)"
+        _log_phase_complete("3", time.monotonic() - _t0, early_summary)
+        return early_summary
 
     by_cat = defaultdict(list)
     for item in to_enrich:
@@ -3563,6 +3577,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
         cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
         cat_started_at = time.monotonic()
+        _now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
@@ -3570,19 +3585,24 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
                 item, providers = future.result()
                 if providers is _JSR_NOT_FOUND:
                     # Item not in Seerr — mark as fetched (no FR providers)
-                    item["providers"]         = []
-                    item["providers_fetched"] = True
+                    item["providers"]             = []
+                    item["providers_fetched"]     = True
+                    item["seerr_status"]          = "not_found"
+                    item["seerr_last_fetched_at"] = _now_iso
                     not_found_count += 1
                     not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 if providers is _FETCH_ERROR:
                     # Seerr unreachable — leave providers_fetched False, retry next run
+                    # Transient error — do NOT update seerr_status/seerr_last_fetched_at
                     failed_count += 1
                     failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 # Store cleaned raw provider names from Seerr.
-                item["providers"] = _normalize_providers([p["raw_name"] for p in (providers or [])])
-                item["providers_fetched"] = True
+                item["providers"]             = _normalize_providers([p["raw_name"] for p in (providers or [])])
+                item["providers_fetched"]     = True
+                item["seerr_status"]          = "ok"
+                item["seerr_last_fetched_at"] = _now_iso
                 enriched += 1
                 total_providers = len(providers or [])
                 log.debug(f"{_phase_prefix('3')} {item['title']} — {total_providers} provider(s)")
@@ -3600,9 +3620,10 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
         log.warning(f"{_phase_prefix('3')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
-    parts = [f"{enriched} OK"]
-    if not_found_count: parts.append(f"{not_found_count} not found")
+    parts = [f"{enriched} enriched"]
+    if not_found_count: parts.append(f"{not_found_count} not_found")
     if failed_count:    parts.append(_count_label(failed_count, "error"))
+    if skipped:         parts.append(f"{skipped} skipped")
     summary3 = " / ".join(parts)
     _log_phase_complete("3", elapsed, summary3)
     return summary3
