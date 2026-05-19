@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 CREATE_TABLES_SQL = (
@@ -205,15 +205,35 @@ CREATE_TABLES_SQL = (
     """,
     """
     CREATE TABLE IF NOT EXISTS scan_runs (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trigger_type TEXT,
         mode TEXT,
-        phases TEXT,
+        phase_plan TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
         started_at TEXT NOT NULL,
-        finished_at TEXT,
-        duration_seconds REAL,
-        status TEXT NOT NULL,
-        summary_json TEXT,
-        error TEXT
+        completed_at TEXT,
+        total_duration_sec REAL,
+        error TEXT,
+        phase1_enabled INTEGER NOT NULL DEFAULT 0,
+        phase1_duration_sec REAL,
+        phase1_summary TEXT,
+        phase2_enabled INTEGER NOT NULL DEFAULT 0,
+        phase2_duration_sec REAL,
+        phase2_summary TEXT,
+        phase3_enabled INTEGER NOT NULL DEFAULT 0,
+        phase3_duration_sec REAL,
+        phase3_summary TEXT,
+        phase4_enabled INTEGER NOT NULL DEFAULT 0,
+        phase4_duration_sec REAL,
+        phase4_summary TEXT,
+        phase5_enabled INTEGER NOT NULL DEFAULT 0,
+        phase5_duration_sec REAL,
+        phase5_summary TEXT,
+        score_only_enabled INTEGER NOT NULL DEFAULT 0,
+        score_only_duration_sec REAL,
+        score_only_summary TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """

@@ -2485,5 +2485,131 @@ class V23MigrationTest(unittest.TestCase):
                 self.assertIn(col, cols, f"missing column: {col}")
 
 
+class V24MigrationTest(unittest.TestCase):
+    """Schema v24: scan_runs — typed per-phase columns, no JSON blobs."""
+
+    def _make_v23_db_with_scan_runs(self, path: pathlib.Path) -> None:
+        """Build a minimal v23 DB with scan_runs using the old schema."""
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA user_version = 23")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_rules (id INTEGER PRIMARY KEY, category TEXT NOT NULL, group_key TEXT NOT NULL, value_key TEXT NOT NULL, score_value REAL NOT NULL, UNIQUE(category, group_key, value_key))")
+        conn.execute("CREATE TABLE score_size_profiles (id INTEGER PRIMARY KEY, media_type TEXT NOT NULL, resolution_key TEXT NOT NULL, codec_key TEXT NOT NULL, min_gb REAL NOT NULL, max_gb REAL NOT NULL, UNIQUE(media_type, resolution_key, codec_key))")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, media_type TEXT, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE media (id TEXT PRIMARY KEY, media_type TEXT NOT NULL, title TEXT NOT NULL, is_available INTEGER NOT NULL DEFAULT 1, providers_fetched INTEGER NOT NULL DEFAULT 0, quality_json TEXT)")
+        conn.execute("CREATE TABLE seasons (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL, season_number INTEGER NOT NULL, UNIQUE(media_id, season_number))")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE media_probe_cache (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL, filename TEXT, probe_ok INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("""
+            CREATE TABLE scan_runs (
+                id INTEGER PRIMARY KEY,
+                mode TEXT,
+                phases TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_seconds REAL,
+                status TEXT NOT NULL,
+                summary_json TEXT,
+                error TEXT
+            )
+        """)
+        for v in range(1, 24):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        conn.execute(
+            "INSERT INTO scan_runs(mode, phases, started_at, finished_at, duration_seconds, status, summary_json)"
+            " VALUES ('default', '1,2,3', '2026-01-01T00:00:00', '2026-01-01T01:00:00', 3600.0, 'completed', '{\"ok\":1}')"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_v24_drops_json_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v23_db_with_scan_runs(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            self.assertNotIn("summary_json", cols)
+            self.assertNotIn("phases", cols)
+
+    def test_v24_renames_legacy_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v23_db_with_scan_runs(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            self.assertNotIn("finished_at", cols)
+            self.assertNotIn("duration_seconds", cols)
+            self.assertIn("completed_at", cols)
+            self.assertIn("total_duration_sec", cols)
+
+    def test_v24_adds_per_phase_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v23_db_with_scan_runs(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            for phase in ("phase1", "phase2", "phase3", "phase4", "phase5", "score_only"):
+                for suffix in ("_enabled", "_duration_sec", "_summary"):
+                    self.assertIn(f"{phase}{suffix}", cols, f"missing: {phase}{suffix}")
+
+    def test_v24_adds_trigger_type_and_phase_plan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v23_db_with_scan_runs(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            self.assertIn("trigger_type", cols)
+            self.assertIn("phase_plan", cols)
+            self.assertIn("created_at", cols)
+            self.assertIn("updated_at", cols)
+
+    def test_v24_preserves_existing_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v23_db_with_scan_runs(path)
+            conn = db.initialize_database(path)
+            count = conn.execute("SELECT COUNT(*) FROM scan_runs").fetchone()[0]
+            row = conn.execute("SELECT mode, status, total_duration_sec FROM scan_runs").fetchone()
+            conn.close()
+            self.assertEqual(count, 1)
+            self.assertEqual(row["mode"], "default")
+            self.assertEqual(row["status"], "completed")
+            self.assertAlmostEqual(row["total_duration_sec"], 3600.0, places=1)
+
+    def test_v24_is_idempotent_on_fresh_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("summary_json", cols)
+            self.assertNotIn("phases", cols)
+            self.assertIn("trigger_type", cols)
+            self.assertIn("phase1_enabled", cols)
+
+    def test_v24_fresh_db_no_json_columns(self):
+        """Fresh DB must have no JSON columns in scan_runs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+            conn.close()
+            for col in cols:
+                self.assertFalse(col.endswith("_json"), f"JSON column found: {col}")
+            self.assertNotIn("phases", cols)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -112,6 +112,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 23:
             _apply_v23_media_drop_json_blobs(conn)
             current_version = 23
+        if current_version < 24:
+            _apply_v24_scan_runs_structured(conn)
+            current_version = 24
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -548,6 +551,63 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v24_scan_runs_structured(conn: sqlite3.Connection) -> None:
+    """Replace scan_runs JSON blob columns with typed per-phase columns.
+
+    Renames finished_at → completed_at and duration_seconds → total_duration_sec,
+    drops the summary_json and phases TEXT blobs, adds trigger_type, phase_plan,
+    per-phase (1-5 + score_only) columns, and created_at/updated_at.
+    Idempotent: all steps are guarded by PRAGMA table_info checks.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scan_runs'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (24,))
+        return
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(scan_runs)").fetchall()}
+
+    # Rename legacy columns (SQLite 3.25+)
+    if "finished_at" in cols and "completed_at" not in cols:
+        conn.execute("ALTER TABLE scan_runs RENAME COLUMN finished_at TO completed_at")
+        cols.discard("finished_at")
+        cols.add("completed_at")
+    if "duration_seconds" in cols and "total_duration_sec" not in cols:
+        conn.execute("ALTER TABLE scan_runs RENAME COLUMN duration_seconds TO total_duration_sec")
+        cols.discard("duration_seconds")
+        cols.add("total_duration_sec")
+
+    # Add new scalar columns (CURRENT_TIMESTAMP not allowed in ALTER TABLE default)
+    for col, defn in [
+        ("trigger_type", "TEXT"),
+        ("phase_plan", "TEXT"),
+        ("completed_at", "TEXT"),
+        ("total_duration_sec", "REAL"),
+        ("created_at", "TEXT NOT NULL DEFAULT ''"),
+        ("updated_at", "TEXT NOT NULL DEFAULT ''"),
+    ]:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE scan_runs ADD COLUMN {col} {defn}")
+
+    # Add per-phase columns
+    for phase in ("phase1", "phase2", "phase3", "phase4", "phase5", "score_only"):
+        for col, defn in [
+            (f"{phase}_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            (f"{phase}_duration_sec", "REAL"),
+            (f"{phase}_summary", "TEXT"),
+        ]:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE scan_runs ADD COLUMN {col} {defn}")
+
+    # Drop old JSON/text blob columns
+    for col in ("summary_json", "phases"):
+        if col in cols:
+            conn.execute(f"ALTER TABLE scan_runs DROP COLUMN {col}")
+
+    log.info("[DB] v24: scan_runs restructured — typed per-phase columns, no JSON blobs")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (24,))
 
 
 def _apply_v23_media_drop_json_blobs(conn: sqlite3.Connection) -> None:
