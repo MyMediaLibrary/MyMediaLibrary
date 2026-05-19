@@ -3282,8 +3282,8 @@ def run_quick(only_category: str | None = None) -> str:
     if score_feature_enabled:
         log.debug("%s Score disabled for phase 1; final quality is computed in phase 3", _phase_prefix("1"))
     _, effective_score_config, _ = get_effective_score_config(cfg)
-    jsr_for_counts = _jsr_cfg()
-    seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
+    # Phase 1 = filesystem + NFO only. No network calls are allowed.
+    # Seerr expected-episode counts belong to Phase 3 (ENRICH).
 
     categories = build_categories_from_config(cfg)
 
@@ -3322,7 +3322,6 @@ def run_quick(only_category: str | None = None) -> str:
     scanned_paths = set()
     tv_series_scanned = 0
     tv_episodes_scanned = 0
-    tv_series_with_seerr_counts = 0
 
     active_cats = [c for c in categories if not only_category or c["name"] == only_category]
     n_cats = len(active_cats)
@@ -3352,7 +3351,6 @@ def run_quick(only_category: str | None = None) -> str:
                 prev,
                 enable_score=score_enabled,
                 score_config=effective_score_config,
-                jsr_for_counts=jsr_for_counts if cat["type"] == "tv" and seerr_counts_active else None,
             )
             # Disk-state timestamps — COALESCE in upsert SQL preserves first_seen_at
             item["is_available"] = 1
@@ -3362,7 +3360,6 @@ def run_quick(only_category: str | None = None) -> str:
             items.append(item)
             tv_series_scanned += int(item.get("_scan_tv_series_scanned") or 0)
             tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
-            tv_series_with_seerr_counts += int(1 if item.get("_scan_tv_seerr_counts") else 0)
             scanned_paths.add(item_path)
             if item.get("id"):
                 scanned_ids.add(item["id"])
@@ -3454,11 +3451,6 @@ def run_quick(only_category: str | None = None) -> str:
         f"{_phase_prefix('1')} Series summary: {_count_label(series_count, 'series', 'series')} analyzed / "
         f"{_count_label(series_episode_count, 'episode')} scanned"
     )
-    if seerr_counts_active:
-        log.debug(
-            f"{_phase_prefix('1')} TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
-        )
-
     summary1 = f"{_count_label(len(items), 'item')} total ({size_str})"
     _log_phase_complete("1", elapsed, summary1)
     return summary1
