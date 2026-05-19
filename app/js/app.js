@@ -768,6 +768,14 @@ let allItems=[], categories=[], groups=[];
     window.MMLState.isLoaded  = false;
     window.MMLState.hasError  = false;
     window.MMLState.isLibraryMissing = false;
+    // Apply persisted availability before the first fetch so the API request uses the correct value.
+    // restoreState() runs later (after data is loaded and filters rendered) and would be too late.
+    try {
+      const _ps = JSON.parse(localStorage.getItem('mediaState') || '{}');
+      if (_ps.activeAvailability && ['available', 'absent', 'all'].includes(_ps.activeAvailability)) {
+        activeAvailability = _ps.activeAvailability;
+      }
+    } catch (_) {}
     await Promise.all([loadConfig(), loadProvidersCatalog(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language

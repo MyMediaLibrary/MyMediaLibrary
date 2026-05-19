@@ -195,6 +195,30 @@ test('loadLibrary loads from SQLite API and treats empty library as a first-run 
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
 });
 
+test('loadLibrary restores persisted activeAvailability before the first fetch', () => {
+  // The fix: activeAvailability must be read from localStorage BEFORE _fetchLibraryWithRetry()
+  // so the initial API request uses the correct availability value, not the default 'available'.
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
+
+  // 1. The early restore must appear in loadLibrary and apply activeAvailability
+  assert.match(block, /localStorage\.getItem\('mediaState'\)/,
+    'loadLibrary must read mediaState from localStorage before fetching');
+  assert.match(block, /activeAvailability\s*=\s*_ps\.activeAvailability/,
+    'loadLibrary must apply persisted activeAvailability before the fetch');
+
+  // 2. The whitelist validation must be present (no invalid values accepted)
+  assert.match(block, /\['available',\s*'absent',\s*'all'\]\.includes/,
+    'loadLibrary must validate persisted activeAvailability against the allowed set');
+
+  // 3. Early restore must appear BEFORE _fetchLibraryWithRetry (sequential regex match)
+  assert.match(block, /localStorage\.getItem\('mediaState'\)[\s\S]*_fetchLibraryWithRetry\(\)/,
+    'Persisted activeAvailability must be restored BEFORE _fetchLibraryWithRetry() is called');
+
+  // 4. restoreState() (full restore, for filter UI) must still appear in the overall function
+  assert.match(appSource, /function loadLibrary[\s\S]*?restoreState\(\)[\s\S]*?function _isFolderEnabled/,
+    'Full restoreState() must still run inside loadLibrary (it renders filter UI after data is loaded)');
+});
+
 test('user-facing scan copy describes one dynamic phase pipeline', () => {
   const publicCopy = [
     readmeSource,
