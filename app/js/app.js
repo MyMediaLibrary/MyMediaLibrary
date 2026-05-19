@@ -364,11 +364,7 @@ let allItems=[], categories=[], groups=[];
 
   // Helpers: canonicalize provider entries from library items.
   function _pname(p){ return resolveProvider(p).name; }
-  function _plogo(p){
-    const resolved = resolveProvider(p);
-    if (!resolved.logoUrl) console.warn('Unmapped provider:', resolved.rawName || resolved.name);
-    return resolved.logoUrl;
-  }
+  function _plogo(p){ return resolveProvider(p).logoUrl; }
 
   // Active category prefs (null = all active; Set = specific active names)
   let enabledCategories = null;

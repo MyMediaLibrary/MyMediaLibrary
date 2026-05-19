@@ -732,3 +732,29 @@ test('availability filter buttons use data-availability-value, not inline onclic
     'events.js must delegate clicks on [data-availability-value] pills'
   );
 });
+
+test('export JSON button and handler are fully removed from source', () => {
+  assert.doesNotMatch(indexSource, /cfgExportJsonBtn/, 'index.html must not contain cfgExportJsonBtn');
+  assert.doesNotMatch(appSource, /exportLibraryJson/, 'app.js must not contain exportLibraryJson');
+  assert.doesNotMatch(appSource, /libraryExportSource/, 'app.js must not contain libraryExportSource');
+  assert.doesNotMatch(eventsSource, /cfgExportJsonBtn/, 'events.js must not contain cfgExportJsonBtn');
+  const systemFr = frI18n?.settings?.system ?? {};
+  assert.ok(!('export_json' in systemFr), 'fr.json must not have export_json key under settings.system');
+  const systemEn = enI18n?.settings?.system ?? {};
+  assert.ok(!('export_json' in systemEn), 'en.json must not have export_json key under settings.system');
+});
+
+test('_plogo does not call console.warn for missing logos', () => {
+  const block = functionBlock(appSource, '_plogo', '_catVisible');
+  assert.doesNotMatch(block, /console\.warn/, '_plogo must not warn on missing logos');
+});
+
+test('_scoreT and _tMaybe in settings.js do not call t() or console.warn', () => {
+  const tMaybeBlock = functionBlock(settingsSource, '_tMaybe', '_scoreT');
+  assert.doesNotMatch(tMaybeBlock, /\bt\(/, '_tMaybe must not call t() to avoid warn spam');
+  assert.doesNotMatch(tMaybeBlock, /console\.warn/, '_tMaybe must not call console.warn');
+
+  const scoreTBlock = functionBlock(settingsSource, '_scoreT', '_scoreKeyTokenLabel');
+  assert.doesNotMatch(scoreTBlock, /console\.warn/, '_scoreT must not call console.warn');
+  assert.doesNotMatch(scoreTBlock, /\bt\(/, '_scoreT must not call t() directly');
+});

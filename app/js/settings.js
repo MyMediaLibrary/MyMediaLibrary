@@ -116,21 +116,31 @@
     cur[last] = value;
   }
 
+  function _tRaw(key) {
+    const keys = key.split('.');
+    let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
+    if (typeof val !== 'string') {
+      const labelVal = [...keys, 'label'].reduce((obj, k) => obj?.[k], TRANSLATIONS);
+      if (typeof labelVal === 'string') val = labelVal;
+    }
+    return typeof val === 'string' ? val : null;
+  }
+
   function _tMaybe(key) {
-    const value = t(key);
-    return value === key ? null : value;
+    return _tRaw(key);
   }
 
   function _scoreT(key, vars = {}, fallbackFr = '', fallbackEn = '') {
-    let translated = t(key, vars);
-    if (translated === key) {
+    let translated = _tRaw(key);
+    if (translated === null) {
       translated = CURRENT_LANG === 'fr'
         ? (fallbackFr || fallbackEn || key)
         : (fallbackEn || fallbackFr || key);
+    }
+    if (translated && vars && Object.keys(vars).length) {
       Object.entries(vars).forEach(([k, v]) => {
         translated = translated.split(`{${k}}`).join(String(v));
       });
-      console.warn('Using score i18n fallback for key:', key);
     }
     return translated;
   }
