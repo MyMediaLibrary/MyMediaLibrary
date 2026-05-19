@@ -1700,8 +1700,8 @@
     if (prev) prev.style.display = flow.findIndex(step => step.id === current.id) > 0 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
-      else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
+      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.dataset.onbAction = 'launch'; }
+      else                { next.textContent = t('nav.next');        next.dataset.onbAction = 'next'; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
       if (current.id === 'folders') { next.disabled = true; _onbValidateStep1(); }

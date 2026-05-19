@@ -761,3 +761,28 @@ test('_scoreT and _tMaybe in settings.js do not call t() or console.warn', () =>
   assert.doesNotMatch(scoreTBlock, /console\.warn/, '_scoreT must not call console.warn');
   assert.doesNotMatch(scoreTBlock, /\bt\(/, '_scoreT must not call t() directly');
 });
+
+test('onboarding Next button uses data-onb-action to avoid double-fire', () => {
+  const renderBlock = functionBlock(settingsSource, '_onbRender', '_onbStep0HTML');
+  // Fix: _onbRender must NOT assign next.onclick — that was causing double-fire with addEventListener
+  assert.doesNotMatch(renderBlock, /next\.onclick\s*=/, '_onbRender must not assign next.onclick (double-fire bug)');
+  // Instead it sets data-onb-action so the single addEventListener handler can dispatch
+  assert.match(renderBlock, /next\.dataset\.onbAction\s*=/, '_onbRender must set data-onb-action to signal scan vs next');
+
+  // events.js must have exactly ONE handler on onbNextBtn that dispatches via dataset
+  assert.match(eventsSource, /onbNextBtn[\s\S]*addEventListener[\s\S]*onbAction[\s\S]*launch[\s\S]*onbLaunchScan[\s\S]*onbNext/, 'events.js must dispatch Next based on data-onb-action');
+  assert.doesNotMatch(eventsSource, /onbNextBtn[\s\S]*addEventListener[\s\S]*onbNext\s*\)/, 'events.js must not bind onbNext directly as the Next listener');
+});
+
+test('onboarding seerr step is not skipped in forward navigation', () => {
+  // _onbFlow must always include seerr until explicitly skipped
+  const flowBlock = functionBlock(settingsSource, '_onbFlow', '_onbCurrentStep');
+  assert.match(flowBlock, /skippable[\s\S]*_onbSkippedStepIds/, '_onbFlow must gate seerr on the skipped set');
+  // _onbSkipCurrentStep is the only way to add to the skipped set
+  const skipBlock = functionBlock(settingsSource, '_onbSkipCurrentStep', '_onbSkipCurrentStep');
+  // Check that skipped step adds to the set
+  assert.match(settingsSource, /_onbSkippedStepIds\.add\(current\.id\)/, 'only _onbSkipCurrentStep should add to the skipped set');
+  // showOnboarding always resets the skipped set
+  const showBlock = functionBlock(settingsSource, 'showOnboarding', '_onbRender');
+  assert.match(showBlock, /_onbSkippedStepIds\s*=\s*new Set\(\)/, 'showOnboarding must reset the skipped set to guarantee seerr is visible by default');
+});

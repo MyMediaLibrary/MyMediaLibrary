@@ -162,7 +162,11 @@
     document.getElementById('onbPrevBtn')
       ?.addEventListener('click', onbPrev);
     document.getElementById('onbNextBtn')
-      ?.addEventListener('click', onbNext);
+      ?.addEventListener('click', () => {
+        const btn = document.getElementById('onbNextBtn');
+        if (btn?.dataset?.onbAction === 'launch') onbLaunchScan();
+        else onbNext();
+      });
   }
 
   // ── Document-level event delegation ──────────────────────────────────────
