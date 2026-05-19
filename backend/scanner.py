@@ -3194,6 +3194,24 @@ def scan_media_item(
         "seerr_last_fetched_at":  prev.get("seerr_last_fetched_at"),
         "seerr_status":           prev.get("seerr_status"),
     }
+    # Reset Seerr enrichment when the lookup IDs change — a previous providers_fetched=True
+    # used the old IDs and must not suppress a re-fetch with the newly correct ones.
+    if prev:
+        _prev_tmdb = str(prev.get("tmdb_id") or "").strip()
+        _prev_tvdb = str(prev.get("tvdb_id") or "").strip()
+        _new_tmdb  = str(item.get("tmdb_id")  or "").strip()
+        _new_tvdb  = str(item.get("tvdb_id")  or "").strip()
+        if ((_new_tmdb and _new_tmdb != _prev_tmdb) or
+                (_new_tvdb and _new_tvdb != _prev_tvdb)):
+            item["providers_fetched"]     = False
+            item["seerr_status"]          = None
+            item["seerr_last_fetched_at"] = None
+            log.debug(
+                "%s Seerr reset for %r: tmdb %s→%s tvdb %s→%s",
+                _phase_prefix("1"), item.get("title"),
+                _prev_tmdb or "∅", _new_tmdb or "∅",
+                _prev_tvdb or "∅", _new_tvdb or "∅",
+            )
     if is_tv:
         item["size_b"] = int(series_agg.get("size_b") or size_b)
         item["size"] = format_size(item["size_b"])
