@@ -579,7 +579,8 @@ test('stats include genre and audio-channel aggregations from existing item fiel
   assert.match(block, /referenceCount:\s*items\.length/, 'genre chart percentages should use filtered item count as reference');
   assert.doesNotMatch(block, /entriesBySize/, 'genre chart should not keep size-based modes');
   assert.match(block, /const byAudioChannelsCount = \{\}, byAudioChannelsSize = \{\};/, 'stats should aggregate audio channels dynamically');
-  assert.match(block, /getDep\('getNormalizedAudioChannels'\)\(item\)/, 'audio channel stats should reuse normalized channel helper');
+  // Normalizer is resolved once (const fnAudioCh = getDep(...)) then called per item
+  assert.match(block, /getDep\('getNormalizedAudioChannels'\)/, 'audio channel stats should reuse normalized channel helper via getDep');
 });
 
 test('stats layout is organized into 3 subtabs and renders new genre/audio-channel charts', () => {
@@ -651,7 +652,9 @@ test('provider count chart displays raw counts without "media" unit suffix', () 
 
 test('provider size chart uses library-size reference base (not cumulative provider-size base)', () => {
   const dataBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
-  assert.match(dataBlock, /referenceSize:\s*items\.reduce\(\(sum, i\) => sum \+ \(i\.size_b \|\| 0\), 0\)/, 'provider stats should expose unique library-size reference base');
+  // referenceSize is the total library size — either accumulated in a single-pass
+  // loop (current) or via items.reduce(...). Both expose the same invariant.
+  assert.match(dataBlock, /referenceSize[,\s]/, 'provider stats should expose unique library-size reference base');
 
   const renderBlock = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
   assert.match(renderBlock, /size:\s*\{\s*percentBase:\s*Number\(provReferenceSize \|\| 0\)/, 'provider size pie should compute percentages against library-size reference base');

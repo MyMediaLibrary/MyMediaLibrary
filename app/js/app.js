@@ -37,6 +37,16 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+
+  // Per-tick filter caches. Cleared at the start of every onFilter() and
+  // whenever allItems is replaced. All .filter() work is reused across the
+  // 12+ baseItems() calls that happen in a single onFilter() pass.
+  let _baseItemsCache = null;   // Map<except, array>
+  let _filteredItemsCache = null; // array | null
+  function _invalidateFilterCaches() {
+    _baseItemsCache = null;
+    _filteredItemsCache = null;
+  }
   function safeArray(value) {
     return Array.isArray(value) ? value : [];
   }
@@ -786,6 +796,7 @@ let allItems=[], categories=[], groups=[];
     };
     const finishWithEmptyLibrary = () => {
       allItems = [];
+      _invalidateFilterCaches();
       categories = [];
       groups = [];
       window.MMLState.items = allItems;
@@ -830,6 +841,7 @@ let allItems=[], categories=[], groups=[];
       }
       const data = lib.data;
       allItems = safeArray(data.items);
+      _invalidateFilterCaches();
       if (!allItems.length) {
         if (explicitNeedsOnboarding === null && !hasUsableFolders) {
           finishWithOnboarding();
@@ -1124,9 +1136,10 @@ let allItems=[], categories=[], groups=[];
   // ── STATS ────────────────────────────────────────────
   function renderStats(items) {
     const started = perfNow();
-    const bytes=items.reduce((s,i)=>s+(i.size_b||0),0);
-    const files=items.reduce((s,i)=>s+(i.file_count||0),0);
-    const cats=new Set(items.map(i=>i.category)).size;
+    let bytes=0, files=0;
+    const catSet = new Set();
+    for (const i of items) { bytes+=i.size_b||0; files+=i.file_count||0; catSet.add(i.category); }
+    const cats=catSet.size;
     const filtered=items.length < allItems.length;
     const elemLabel=filtered
       ? items.length+'<span style="font-size:11px;font-weight:400;color:var(--muted)"> / '+allItems.length+'</span>'
@@ -1729,6 +1742,7 @@ let allItems=[], categories=[], groups=[];
     saveState();
     // Re-fetch library since filtering is SQL-level
     allItems = [];
+    _invalidateFilterCaches();
     window.MMLState.isLoaded = false;
     loadLibrary();
   }
@@ -1957,6 +1971,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onFilter() {
+    _invalidateFilterCaches();
     const items = filterItems();
     syncTypePills();
     renderStorageBar();
@@ -2091,6 +2106,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function filterItems() {
+    if (_filteredItemsCache !== null) return _filteredItemsCache;
     // Visibility order:
     // 1. Settings — type enabled (enableMovies/enableSeries)
     // 2. Settings — active categories (enabledCategories)
@@ -2172,12 +2188,15 @@ let allItems=[], categories=[], groups=[];
         return inRange;
       });
     }
-    return applySearch(items, q);
+    _filteredItemsCache = applySearch(items, q);
+    return _filteredItemsCache;
   }
 
   // Base for filter rendering: all active filters applied EXCEPT the one being rendered
   // + settings-level visibility always applied + search always applied
   function baseItems(except) {
+    const key = except || '';
+    if (_baseItemsCache !== null && _baseItemsCache.has(key)) return _baseItemsCache.get(key);
     const q = getSearchQuery();
     let items=allItems;
     if (!enableMovies)     items=items.filter(i=>i.type!=='movie');
@@ -2254,7 +2273,10 @@ let allItems=[], categories=[], groups=[];
         return inRange;
       });
     }
-    return applySearch(items, q);
+    const result = applySearch(items, q);
+    if (_baseItemsCache === null) _baseItemsCache = new Map();
+    _baseItemsCache.set(key, result);
+    return result;
   }
 
   // ── RECOMMENDATIONS ─────────────────────────────────
@@ -2766,7 +2788,7 @@ let allItems=[], categories=[], groups=[];
       + shown.map(p => {
           const name=_pname(p), logo=_plogo(p);
           return logo
-            ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
+            ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'" loading="lazy"/></div>'
             : '<span class="tl-provider-name">'+escH(name)+'</span>';
         }).join('')
       + (remaining > 0 ? '<span class="tl-provider-name" title="'+escH(t('stats.others'))+'">+'+remaining+'</span>' : '')
@@ -2816,7 +2838,7 @@ let allItems=[], categories=[], groups=[];
       +_itemVisProviders(item).map(p=>{
         const name=_pname(p), logo=_plogo(p);
         return logo
-          ?'<div class="tbl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
+          ?'<div class="tbl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'" loading="lazy"/></div>'
           :'<span class="tbl-provider-name">'+escH(name)+'</span>';
       }).join('')+'</div>';
   }
