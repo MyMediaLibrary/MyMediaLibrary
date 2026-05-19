@@ -1,6 +1,5 @@
 """Tests for availability filtering in db_export.export_library and media_repository.export_library."""
 
-import json
 import pathlib
 import sys
 import tempfile
@@ -19,20 +18,12 @@ def _make_conn(tmp_dir):
 
 
 def _insert_media(conn, media_id, title, is_available, category="Movies"):
-    data = {
-        "id": media_id,
-        "title": title,
-        "category": category,
-        "type": "movie",
-        "size": "1 GB",
-        "is_available": is_available,
-    }
     conn.execute(
         """
-        INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (media_id, title, category, "movie", 0, 1 if is_available else 0, json.dumps(data)),
+        (media_id, title, category, "movie", 0, 1 if is_available else 0),
     )
     conn.commit()
 
@@ -80,11 +71,10 @@ class TestDbExportLibraryAvailability(unittest.TestCase):
             self.assertTrue(item["is_available"])
 
     def test_is_available_comes_from_db_column(self):
-        # Insert item with stale data_json (is_available=True in JSON but DB has 0)
-        stale_data = {"id": "stale_id", "title": "Stale", "is_available": True, "category": "Movies", "type": "movie", "size": "1 GB"}
+        # Insert item with is_available=0 in DB column
         self.conn.execute(
-            "INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("stale_id", "Stale", "Movies", "movie", 0, 0, json.dumps(stale_data)),
+            "INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available) VALUES (?, ?, ?, ?, ?, ?)",
+            ("stale_id", "Stale", "Movies", "movie", 0, 0),
         )
         self.conn.commit()
 
@@ -93,7 +83,7 @@ class TestDbExportLibraryAvailability(unittest.TestCase):
         ids = {item["id"] for item in result["items"]}
         self.assertIn("stale_id", ids)
 
-        # Find the stale item and verify is_available is False (from DB, not data_json)
+        # is_available must be False as stored in DB column
         stale_item = next(i for i in result["items"] if i["id"] == "stale_id")
         self.assertFalse(stale_item["is_available"])
 

@@ -109,6 +109,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 22:
             _apply_v22_seasons_drop_data_json(conn)
             current_version = 22
+        if current_version < 23:
+            _apply_v23_media_drop_json_blobs(conn)
+            current_version = 23
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -545,6 +548,65 @@ def _apply_v14_recommendation_rules_extract_scalars(conn: sqlite3.Connection) ->
         malformed,
     )
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (14,))
+
+
+def _apply_v23_media_drop_json_blobs(conn: sqlite3.Connection) -> None:
+    """Replace media.data_json + media.providers_json with typed columns.
+
+    Adds providers_fetched (INTEGER) and quality_json (TEXT), migrates values
+    from data_json, then drops both JSON blob columns.
+    Idempotent: all steps are guarded by PRAGMA table_info checks.
+    """
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'").fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (23,))
+        return
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+
+    if "providers_fetched" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN providers_fetched INTEGER NOT NULL DEFAULT 0")
+    if "quality_json" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN quality_json TEXT")
+
+    if "data_json" not in cols and "providers_json" not in cols:
+        log.info("[DB] v23: media JSON blobs already absent, skipped data migration")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (23,))
+        return
+
+    # Migrate providers_fetched and quality_json from data_json where present
+    migrated = 0
+    skipped = 0
+    if "data_json" in cols:
+        rows = conn.execute("SELECT id, data_json FROM media WHERE data_json IS NOT NULL").fetchall()
+        for row in rows:
+            try:
+                item = _json.loads(row["data_json"])
+            except Exception:
+                skipped += 1
+                continue
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+            providers_fetched = 1 if item.get("providers_fetched") else 0
+            quality = item.get("quality")
+            quality_json = _json.dumps(quality, ensure_ascii=False, separators=(",", ":")) if isinstance(quality, dict) and quality else None
+            conn.execute(
+                "UPDATE media SET providers_fetched = ?, quality_json = ? WHERE id = ?",
+                (providers_fetched, quality_json, row["id"]),
+            )
+            migrated += 1
+
+    if "providers_json" in cols:
+        conn.execute("ALTER TABLE media DROP COLUMN providers_json")
+    if "data_json" in cols:
+        conn.execute("ALTER TABLE media DROP COLUMN data_json")
+
+    log.info(
+        "[DB] v23: media JSON blobs dropped — migrated=%d skipped=%d",
+        migrated,
+        skipped,
+    )
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (23,))
 
 
 def _apply_v22_seasons_drop_data_json(conn: sqlite3.Connection) -> None:

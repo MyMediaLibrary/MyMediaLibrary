@@ -312,8 +312,8 @@ class QualityPreservationOnReappearanceTest(unittest.TestCase):
             _run_scan(root, output_path, config_path)
             conn = db.initialize_database(db_path)
             conn.execute(
-                "UPDATE media SET data_json = json_set(data_json, '$.quality', json('{\"score\":88}')) WHERE id = ?",
-                ("movie:Films:Temp Movie",)
+                "UPDATE media SET quality_json = ? WHERE id = ?",
+                ('{"score":88}', "movie:Films:Temp Movie"),
             )
             conn.commit()
             conn.close()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 CREATE_TABLES_SQL = (
@@ -121,8 +121,8 @@ CREATE_TABLES_SQL = (
         hdr INTEGER CHECK (hdr IN (0, 1)),
         hdr_type TEXT,
         dolby_vision INTEGER CHECK (dolby_vision IN (0, 1)),
-        providers_json TEXT,
-        data_json TEXT,
+        providers_fetched INTEGER NOT NULL DEFAULT 0,
+        quality_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TEXT,

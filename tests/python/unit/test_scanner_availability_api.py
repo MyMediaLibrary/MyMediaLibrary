@@ -1,6 +1,5 @@
 """Tests for /api/library availability query parameter handling."""
 
-import json
 import pathlib
 import sys
 import tempfile
@@ -16,20 +15,12 @@ import db  # noqa: E402
 
 
 def _insert_media(conn, media_id, title, is_available, category="Movies"):
-    data = {
-        "id": media_id,
-        "title": title,
-        "category": category,
-        "type": "movie",
-        "size": "1 GB",
-        "is_available": is_available,
-    }
     conn.execute(
         """
-        INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (media_id, title, category, "movie", 0, 1 if is_available else 0, json.dumps(data)),
+        (media_id, title, category, "movie", 0, 1 if is_available else 0),
     )
     conn.commit()
 
@@ -101,15 +92,13 @@ class TestAvailabilityAPIParameter(unittest.TestCase):
             conn.close()
 
     def test_is_available_field_overridden_from_db(self):
-        """is_available in returned items must come from DB column, not data_json."""
+        """is_available in returned items must come from DB column."""
         import db_export
         with tempfile.TemporaryDirectory() as tmp:
             conn = db.initialize_database(pathlib.Path(tmp) / "test.db")
-            # Stale data_json says is_available=True but DB column says 0
-            stale_data = {"id": "stale", "title": "Stale", "is_available": True, "category": "Movies", "type": "movie", "size": "1 GB"}
             conn.execute(
-                "INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("stale", "Stale", "Movies", "movie", 0, 0, json.dumps(stale_data)),
+                "INSERT OR REPLACE INTO media (id, title, category, media_type, size_total, is_available) VALUES (?, ?, ?, ?, ?, ?)",
+                ("stale", "Stale", "Movies", "movie", 0, 0),
             )
             conn.commit()
             result = db_export.export_library(conn, availability="absent")

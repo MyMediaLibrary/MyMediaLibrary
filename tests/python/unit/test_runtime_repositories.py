@@ -354,7 +354,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute(
-                    "SELECT id, media_type, quality_score, resolution, data_json FROM media ORDER BY id"
+                    "SELECT id, media_type, quality_score, resolution, audio_languages_json FROM media ORDER BY id"
                 ).fetchall()
                 seasons = conn.execute("SELECT media_id, season_number, episodes_count, resolution FROM seasons").fetchall()
                 providers = conn.execute("SELECT COUNT(*) FROM media_providers").fetchone()[0]
@@ -366,7 +366,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in rows], [movie["id"], series["id"]])
             self.assertEqual(rows[0]["quality_score"], 91)
             self.assertEqual(rows[0]["resolution"], "1080p")
-            self.assertEqual(json.loads(rows[0]["data_json"])["audio_languages"], ["eng", "fra"])
+            self.assertEqual(json.loads(rows[0]["audio_languages_json"]), ["eng", "fra"])
             self.assertEqual(seasons[0]["media_id"], series["id"])
             self.assertEqual(seasons[0]["episodes_count"], 2)
             self.assertEqual(providers, 1)

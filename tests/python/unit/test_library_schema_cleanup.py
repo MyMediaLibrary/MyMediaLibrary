@@ -497,7 +497,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "type": "tv",
                                 "category": "Tv",
                                 "tmdb_id": "99901",
-                                "tvdb_id": "bad-tvdb",
+                                "tvdb_id": "999999",
                                 "providers": [],
                                 "providers_fetched": False,
                             }

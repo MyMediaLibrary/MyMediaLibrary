@@ -83,18 +83,22 @@ def import_library_if_empty(json_path: str | Path, db_path: str | Path | None = 
 
 def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:
     if availability == "available":
-        where = " WHERE is_available = 1"
+        where = " WHERE m.is_available = 1"
     elif availability == "absent":
-        where = " WHERE is_available = 0"
+        where = " WHERE m.is_available = 0"
     else:
         where = ""
-    rows = conn.execute(f"SELECT data_json, is_available FROM media{where} ORDER BY title, id").fetchall()
-    items = []
-    for row in rows:
-        item = _from_json(row["data_json"], {})
-        if isinstance(item, dict):
-            item["is_available"] = bool(row["is_available"])
-            items.append(item)
+    media_rows = conn.execute(
+        f"SELECT * FROM media m{where} ORDER BY m.title, m.id"
+    ).fetchall()
+    if not media_rows:
+        return _normalize_library_document({"scanned_at": None, "library_path": None, "total_items": 0, "categories": [], "items": []})
+
+    media_ids = [r["id"] for r in media_rows]
+    seasons_by_media = _batch_seasons(conn, media_ids)
+    providers_by_media = _batch_providers(conn, media_ids)
+
+    items = [_reconstruct_item(row, seasons_by_media, providers_by_media) for row in media_rows]
     return _normalize_library_document({
         "scanned_at": None,
         "library_path": None,
@@ -102,6 +106,149 @@ def export_library(conn: sqlite3.Connection, availability: str = "available") ->
         "categories": sorted({item.get("category") for item in items if item.get("category")}),
         "items": items,
     })
+
+
+def _batch_seasons(conn: sqlite3.Connection, media_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    if not media_ids:
+        return {}
+    placeholders = ",".join("?" * len(media_ids))
+    rows = conn.execute(
+        f"SELECT * FROM seasons WHERE media_id IN ({placeholders}) ORDER BY media_id, season_number",
+        media_ids,
+    ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        mid = row["media_id"]
+        result.setdefault(mid, []).append(_reconstruct_season(row))
+    return result
+
+
+def _batch_providers(conn: sqlite3.Connection, media_ids: list[str]) -> dict[str, list[str]]:
+    if not media_ids:
+        return {}
+    placeholders = ",".join("?" * len(media_ids))
+    rows = conn.execute(
+        f"""
+        SELECT mp.media_id, COALESCE(p.mapped_name, p.raw_name) AS display_name
+        FROM media_providers mp
+        JOIN providers p ON p.id = mp.provider_id
+        WHERE mp.media_id IN ({placeholders}) AND (p.is_ignored IS NULL OR p.is_ignored = 0)
+        ORDER BY mp.media_id, p.id
+        """,
+        media_ids,
+    ).fetchall()
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        result.setdefault(row["media_id"], []).append(row["display_name"])
+    return result
+
+
+def _reconstruct_item(
+    row: Any,
+    seasons_by_media: dict[str, list[dict[str, Any]]],
+    providers_by_media: dict[str, list[str]],
+) -> dict[str, Any]:
+    media_id = row["id"]
+    seasons = seasons_by_media.get(media_id, [])
+    providers = providers_by_media.get(media_id, [])
+    quality = _from_json(row["quality_json"], None)
+    audio_languages = _from_json(row["audio_languages_json"], [])
+    subtitle_languages = _from_json(row["subtitle_languages_json"], [])
+    genres = _from_json(row["genres_json"], [])
+    filename = _from_json(row["filename"], None)
+    filename_history = _from_json(row["filename_history"], [])
+    item: dict[str, Any] = {
+        "id": media_id,
+        "type": row["media_type"],
+        "media_type": row["media_type"],
+        "title": row["title"],
+        "raw": row["raw_name"],
+        "category": row["category"],
+        "year": row["year"],
+        "folder": row["folder"],
+        "root_path": row["root_path"],
+        "path": row["path"],
+        "tmdb_id": str(row["tmdb_id"]) if row["tmdb_id"] is not None else None,
+        "tvdb_id": str(row["tvdb_id"]) if row["tvdb_id"] is not None else None,
+        "imdb_id": row["imdb_id"],
+        "plot": row["overview"],
+        "overview": row["overview"],
+        "poster": row["poster_path"],
+        "poster_path": row["poster_path"],
+        "genres": genres,
+        "file_count": row["file_count"],
+        "size_b": row["size_total"],
+        "size_total": row["size_total"],
+        "runtime_min": row["runtime_min"],
+        "runtime_min_avg": row["runtime_min_avg"],
+        "quality": quality,
+        "quality_score": row["quality_score"],
+        "width": row["width"],
+        "height": row["height"],
+        "resolution": row["resolution"],
+        "codec": row["video_codec"],
+        "video_codec": row["video_codec"],
+        "video_bitrate": row["video_bitrate"],
+        "audio_codec": row["audio_codec"],
+        "audio_codec_raw": row["audio_codec_raw"],
+        "audio_bitrate": row["audio_bitrate"],
+        "audio_channels": row["audio_channels"],
+        "audio_languages": audio_languages,
+        "audio_languages_simple": row["audio_language_group"],
+        "audio_language_group": row["audio_language_group"],
+        "subtitle_languages": subtitle_languages,
+        "framerate": row["framerate"],
+        "container": row["container"],
+        "hdr": bool(row["hdr"]) if row["hdr"] is not None else None,
+        "hdr_type": row["hdr_type"],
+        "dolby_vision": bool(row["dolby_vision"]) if row["dolby_vision"] is not None else None,
+        "providers_fetched": bool(row["providers_fetched"]),
+        "providers": providers,
+        "is_available": bool(row["is_available"]),
+        "last_seen_at": row["last_seen_at"],
+        "added_at": row["first_seen_at"],
+        "first_seen_at": row["first_seen_at"],
+        "last_scanned_at": row["last_scanned_at"],
+        "filename": filename,
+        "filename_history": filename_history if isinstance(filename_history, list) else [],
+    }
+    if seasons:
+        item["seasons"] = seasons
+        item["season_count"] = len(seasons)
+        item["episode_count"] = sum(s.get("episodes_count") or 0 for s in seasons)
+    return item
+
+
+def _reconstruct_season(row: Any) -> dict[str, Any]:
+    audio_languages = _from_json(row["audio_languages_json"], [])
+    subtitle_languages = _from_json(row["subtitle_languages_json"], [])
+    quality_score = row["quality_score"]
+    return {
+        "season": row["season_number"],
+        "season_number": row["season_number"],
+        "title": row["title"],
+        "episodes_count": row["episodes_count"],
+        "size_b": row["size_total"],
+        "size_total": row["size_total"],
+        "runtime_min": row["runtime_min"],
+        "runtime_min_avg": row["runtime_min_avg"],
+        "quality": {"score": quality_score} if quality_score is not None else None,
+        "quality_score": quality_score,
+        "width": row["width"],
+        "height": row["height"],
+        "resolution": row["resolution"],
+        "codec": row["video_codec"],
+        "video_codec": row["video_codec"],
+        "audio_codec": row["audio_codec"],
+        "audio_channels": row["audio_channels"],
+        "audio_languages": audio_languages,
+        "audio_languages_simple": row["audio_language_group"],
+        "subtitle_languages": subtitle_languages,
+        "container": row["container"],
+        "hdr": bool(row["hdr"]) if row["hdr"] is not None else None,
+        "hdr_type": row["hdr_type"],
+        "dolby_vision": bool(row["dolby_vision"]) if row["dolby_vision"] is not None else None,
+    }
 
 
 def replace_library(conn: sqlite3.Connection, document: dict[str, Any]) -> None:
@@ -179,7 +326,6 @@ def upsert_media_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
             prev_filename = row["filename"]
     written = db_import.upsert_library_item(conn, item, overwrite=True)
     if written:
-        _sync_media_providers(conn, media_id, item.get("providers"))
         _sync_media_children(conn, media_id, item)
         if prev_filename is not None and prev_filename != new_filename:
             _append_to_filename_history(conn, media_id, prev_filename)
@@ -206,36 +352,6 @@ def _save_library_payload(conn: sqlite3.Connection, document: dict[str, Any], *,
         for item in items:
             if isinstance(item, dict):
                 upsert_media_item(conn, item)
-
-
-def _sync_media_providers(conn: sqlite3.Connection, media_id: str, providers: Any) -> None:
-    if not media_id:
-        return
-    names = []
-    seen = set()
-    for provider in providers or []:
-        name = provider if isinstance(provider, str) else None
-        if isinstance(provider, dict):
-            name = provider.get("name") or provider.get("raw_name") or provider.get("provider_name")
-        if not isinstance(name, str) or not name.strip():
-            continue
-        cleaned = name.strip()
-        if cleaned.casefold() in seen:
-            continue
-        seen.add(cleaned.casefold())
-        names.append(cleaned)
-    conn.execute("DELETE FROM media_providers WHERE media_id = ?", (media_id,))
-    for name in names:
-        conn.execute(
-            "INSERT OR IGNORE INTO providers(raw_name) VALUES (?)",
-            (name,),
-        )
-        provider_id = conn.execute("SELECT id FROM providers WHERE raw_name = ?", (name,)).fetchone()
-        if provider_id is not None:
-            conn.execute(
-                "INSERT OR IGNORE INTO media_providers(media_id, provider_id) VALUES (?, ?)",
-                (media_id, provider_id["id"]),
-            )
 
 
 def _sync_media_children(conn: sqlite3.Connection, media_id: str, item: dict[str, Any]) -> None:

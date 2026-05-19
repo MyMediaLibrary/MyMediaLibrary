@@ -241,14 +241,18 @@ class DatabaseImportTest(unittest.TestCase):
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_library(conn, path)
-            rows = conn.execute("SELECT id, media_type, quality_score, data_json FROM media").fetchall()
+            rows = conn.execute("SELECT id, media_type, quality_score FROM media").fetchall()
+            provider_rows = conn.execute(
+                "SELECT p.raw_name FROM media_providers mp JOIN providers p ON p.id = mp.provider_id WHERE mp.media_id = ?",
+                (item["id"],),
+            ).fetchall()
             conn.close()
 
             self.assertEqual(inserted, 1)
             self.assertEqual(rows[0]["id"], item["id"])
             self.assertEqual(rows[0]["media_type"], "movie")
             self.assertEqual(rows[0]["quality_score"], 87)
-            self.assertEqual(json.loads(rows[0]["data_json"])["providers"], ["Netflix"])
+            self.assertEqual([r["raw_name"] for r in provider_rows], ["Netflix"])
 
     def test_import_is_idempotent_when_replayed(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1012,27 +1012,27 @@ class V15DropDeadColumnsTest(unittest.TestCase):
     """Tests for the v15 migration: drop missing_since, media.quality_json, seasons.quality_json."""
 
     def test_fresh_db_has_no_dropped_columns(self):
-        """A fresh DB must not contain missing_since or quality_json on media/seasons."""
+        """A fresh DB must not contain missing_since (dropped in v15) or quality_json on seasons."""
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             media_cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
             season_cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
             conn.close()
             self.assertNotIn("missing_since", media_cols)
-            self.assertNotIn("quality_json", media_cols)
+            # quality_json was re-added to media in v23 (stores full quality dict)
+            self.assertIn("quality_json", media_cols)
             self.assertNotIn("quality_json", season_cols)
 
     def test_migration_drops_columns_from_existing_db(self):
-        """v15 migration must remove the three dead columns from an existing DB."""
+        """v15 migration must remove missing_since from media and quality_json from seasons."""
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             # Add the dropped columns back to simulate a pre-v15 DB
             with conn:
-                for col in ("missing_since TEXT", "quality_json TEXT"):
-                    try:
-                        conn.execute(f"ALTER TABLE media ADD COLUMN {col}")
-                    except Exception:
-                        pass
+                try:
+                    conn.execute("ALTER TABLE media ADD COLUMN missing_since TEXT")
+                except Exception:
+                    pass
                 try:
                     conn.execute("ALTER TABLE seasons ADD COLUMN quality_json TEXT")
                 except Exception:
@@ -1042,7 +1042,7 @@ class V15DropDeadColumnsTest(unittest.TestCase):
             season_cols = {r[1] for r in conn.execute("PRAGMA table_info(seasons)").fetchall()}
             conn.close()
             self.assertNotIn("missing_since", media_cols)
-            self.assertNotIn("quality_json", media_cols)
+            # quality_json on media is now kept (re-added in v23)
             self.assertNotIn("quality_json", season_cols)
 
     def test_migration_preserves_media_rows(self):
@@ -1050,11 +1050,10 @@ class V15DropDeadColumnsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             with conn:
-                for col in ("missing_since TEXT", "quality_json TEXT"):
-                    try:
-                        conn.execute(f"ALTER TABLE media ADD COLUMN {col}")
-                    except Exception:
-                        pass
+                try:
+                    conn.execute("ALTER TABLE media ADD COLUMN missing_since TEXT")
+                except Exception:
+                    pass
                 conn.execute(
                     "INSERT OR IGNORE INTO media(id, media_type, title) VALUES (?, ?, ?)",
                     ("m:1", "movie", "Inception"),
@@ -1072,8 +1071,8 @@ class V15DropDeadColumnsTest(unittest.TestCase):
             db_migrations._apply_v15_drop_dead_columns(conn)
             conn.close()
 
-    def test_upsert_media_does_not_write_quality_json(self):
-        """upsert_library_item must succeed without referencing quality_json."""
+    def test_upsert_media_writes_quality_json(self):
+        """upsert_library_item must store the quality dict in quality_json and quality_score."""
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
             import db_import
@@ -1086,13 +1085,14 @@ class V15DropDeadColumnsTest(unittest.TestCase):
             with conn:
                 db_import.upsert_library_item(conn, item, overwrite=True)
             row = conn.execute(
-                "SELECT quality_score, data_json FROM media WHERE id = 'movie:Films:Inception'"
+                "SELECT quality_score, quality_json FROM media WHERE id = 'movie:Films:Inception'"
             ).fetchone()
             conn.close()
             self.assertIsNotNone(row)
             self.assertEqual(row["quality_score"], 87.0)
-            data = json.loads(row["data_json"])
-            self.assertEqual(data["quality"]["score"], 87)
+            data = json.loads(row["quality_json"])
+            self.assertEqual(data["score"], 87)
+            self.assertEqual(data["video"], 50)
 
     def test_version_reaches_schema_target(self):
         """After full migration pipeline, user_version equals SCHEMA_VERSION."""
@@ -1710,7 +1710,8 @@ class BootstrapStartupTest(unittest.TestCase):
 
             self.assertEqual(version, db_schema.SCHEMA_VERSION)
             self.assertNotIn("missing_since", media_cols)
-            self.assertNotIn("quality_json", media_cols)
+            # quality_json is re-added in v23 (stores full quality dict)
+            self.assertIn("quality_json", media_cols)
 
     def test_skip_startup_tasks_still_runs_migrations(self):
         """MML_SKIP_DB_STARTUP_TASKS=1 must still apply schema migrations."""
@@ -2346,6 +2347,141 @@ class V22MigrationTest(unittest.TestCase):
             for col in ("media_id", "season_number", "title", "episodes_count",
                         "resolution", "width", "height", "video_codec", "audio_codec",
                         "audio_languages_json", "runtime_min_avg"):
+                self.assertIn(col, cols, f"missing column: {col}")
+
+
+class V23MigrationTest(unittest.TestCase):
+    """Schema v23: media — drop data_json + providers_json, add providers_fetched + quality_json."""
+
+    def _make_v22_db_with_media(self, path: pathlib.Path) -> None:
+        """Build a minimal v22 DB with media rows that still have data_json and providers_json."""
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA user_version = 22")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE auth_settings (id INTEGER PRIMARY KEY CHECK (id=1), auth_enabled INTEGER NOT NULL DEFAULT 0, password_hash TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("CREATE TABLE score_rules (id INTEGER PRIMARY KEY, category TEXT NOT NULL, group_key TEXT NOT NULL, value_key TEXT NOT NULL, score_value REAL NOT NULL, UNIQUE(category, group_key, value_key))")
+        conn.execute("CREATE TABLE score_size_profiles (id INTEGER PRIMARY KEY, media_type TEXT NOT NULL, resolution_key TEXT NOT NULL, codec_key TEXT NOT NULL, min_gb REAL NOT NULL, max_gb REAL NOT NULL, UNIQUE(media_type, resolution_key, codec_key))")
+        conn.execute("CREATE TABLE recommendation_rules (id INTEGER PRIMARY KEY, rule_key TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, media_type TEXT, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("""
+            CREATE TABLE media (
+                id TEXT PRIMARY KEY,
+                media_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                resolution TEXT,
+                quality_score REAL,
+                is_available INTEGER NOT NULL DEFAULT 1,
+                providers_json TEXT,
+                data_json TEXT
+            )
+        """)
+        conn.execute("CREATE TABLE seasons (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL, season_number INTEGER NOT NULL, quality_score REAL, UNIQUE(media_id, season_number))")
+        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, raw_name TEXT NOT NULL UNIQUE, mapped_name TEXT, is_ignored INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("CREATE TABLE media_providers (media_id TEXT, provider_id INTEGER, PRIMARY KEY (media_id, provider_id))")
+        conn.execute("CREATE TABLE recommendations (id TEXT PRIMARY KEY, recommendation_type TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY, mode TEXT, phases TEXT, started_at TEXT NOT NULL, status TEXT NOT NULL)")
+        conn.execute("CREATE TABLE active_sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE media_probe_cache (id INTEGER PRIMARY KEY, media_id TEXT NOT NULL, filename TEXT, probe_ok INTEGER NOT NULL DEFAULT 0)")
+        for v in range(1, 23):
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?)", (v,))
+        # Movie with quality and providers_fetched in data_json
+        conn.execute(
+            "INSERT INTO media(id, media_type, title, resolution, quality_score, providers_json, data_json)"
+            " VALUES ('m1', 'movie', 'Inception', '1080p', 85.0, '[\"Netflix\"]',"
+            " '{\"id\":\"m1\",\"quality\":{\"score\":85,\"video\":50},\"providers_fetched\":true}')"
+        )
+        # TV with NULL data_json
+        conn.execute(
+            "INSERT INTO media(id, media_type, title, resolution, quality_score, providers_json, data_json)"
+            " VALUES ('m2', 'tv', 'Dark', '4K', 91.0, '[]', NULL)"
+        )
+        # Movie with invalid data_json
+        conn.execute(
+            "INSERT INTO media(id, media_type, title, quality_score, providers_json, data_json)"
+            " VALUES ('m3', 'movie', 'Broken', 70.0, NULL, 'not-valid-json')"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_v23_drops_json_blob_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v22_db_with_media(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertNotIn("data_json", cols)
+            self.assertNotIn("providers_json", cols)
+
+    def test_v23_adds_typed_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v22_db_with_media(path)
+            conn = db.initialize_database(path)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertIn("providers_fetched", cols)
+            self.assertIn("quality_json", cols)
+
+    def test_v23_migrates_providers_fetched_and_quality(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v22_db_with_media(path)
+            conn = db.initialize_database(path)
+            rows = {r["id"]: r for r in conn.execute("SELECT id, providers_fetched, quality_json FROM media").fetchall()}
+            conn.close()
+            # m1: providers_fetched=true in data_json → column 1
+            self.assertEqual(rows["m1"]["providers_fetched"], 1)
+            q1 = json.loads(rows["m1"]["quality_json"])
+            self.assertEqual(q1["score"], 85)
+            self.assertEqual(q1["video"], 50)
+            # m2: NULL data_json → providers_fetched=0, quality_json=NULL
+            self.assertEqual(rows["m2"]["providers_fetched"], 0)
+            self.assertIsNone(rows["m2"]["quality_json"])
+            # m3: invalid JSON → skipped → providers_fetched stays 0, quality_json NULL
+            self.assertEqual(rows["m3"]["providers_fetched"], 0)
+            self.assertIsNone(rows["m3"]["quality_json"])
+
+    def test_v23_preserves_media_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            self._make_v22_db_with_media(path)
+            conn = db.initialize_database(path)
+            count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+            row = conn.execute("SELECT resolution, quality_score FROM media WHERE id='m1'").fetchone()
+            conn.close()
+            self.assertEqual(count, 3)
+            self.assertEqual(row["resolution"], "1080p")
+            self.assertEqual(row["quality_score"], 85.0)
+
+    def test_v23_is_idempotent_on_fresh_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "mml.db"
+            conn = db.initialize_database(path)
+            version = db_migrations.get_schema_version(conn)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertEqual(version, db_schema.SCHEMA_VERSION)
+            self.assertNotIn("data_json", cols)
+            self.assertNotIn("providers_json", cols)
+            self.assertIn("providers_fetched", cols)
+            self.assertIn("quality_json", cols)
+
+    def test_v23_fresh_db_schema_target(self):
+        """Fresh DB must have the v23 columns and not the dropped ones."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = db.initialize_database(pathlib.Path(tmpdir) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+            conn.close()
+            self.assertNotIn("data_json", cols)
+            self.assertNotIn("providers_json", cols)
+            self.assertIn("providers_fetched", cols)
+            self.assertIn("quality_json", cols)
+            for col in ("id", "media_type", "title", "resolution", "quality_score",
+                        "audio_languages_json", "subtitle_languages_json", "genres_json",
+                        "is_available", "first_seen_at", "filename", "filename_history"):
                 self.assertIn(col, cols, f"missing column: {col}")
 
 

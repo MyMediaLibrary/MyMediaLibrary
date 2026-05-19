@@ -735,8 +735,40 @@ def upsert_library_item(conn: sqlite3.Connection, item: dict[str, Any], *, overw
     params = _media_params(media_id, item)
     if overwrite:
         conn.execute(_MEDIA_UPSERT_SQL, params)
+        _upsert_media_providers(conn, media_id, item.get("providers"))
         return 1
-    return _insert_count(conn, _MEDIA_INSERT_IGNORE_SQL, params)
+    written = _insert_count(conn, _MEDIA_INSERT_IGNORE_SQL, params)
+    if written:
+        _upsert_media_providers(conn, media_id, item.get("providers"))
+    return written
+
+
+def _upsert_media_providers(conn: sqlite3.Connection, media_id: str, providers: Any) -> None:
+    """Sync item.providers list into media_providers + providers tables."""
+    if not media_id:
+        return
+    names: list[str] = []
+    seen: set[str] = set()
+    for provider in providers or []:
+        name = provider if isinstance(provider, str) else None
+        if isinstance(provider, dict):
+            name = provider.get("name") or provider.get("raw_name") or provider.get("provider_name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        cleaned = name.strip()
+        if cleaned.casefold() in seen:
+            continue
+        seen.add(cleaned.casefold())
+        names.append(cleaned)
+    conn.execute("DELETE FROM media_providers WHERE media_id = ?", (media_id,))
+    for name in names:
+        conn.execute("INSERT OR IGNORE INTO providers(raw_name) VALUES (?)", (name,))
+        row = conn.execute("SELECT id FROM providers WHERE raw_name = ?", (name,)).fetchone()
+        if row is not None:
+            conn.execute(
+                "INSERT OR IGNORE INTO media_providers(media_id, provider_id) VALUES (?, ?)",
+                (media_id, row[0]),
+            )
 
 
 def _import_auth_settings(conn: sqlite3.Connection, value: Any, *, overwrite: bool = False) -> None:
@@ -1202,8 +1234,8 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         1 if item.get("hdr") is True else 0 if item.get("hdr") is False else None,
         item.get("hdr_type"),
         1 if item.get("dolby_vision") is True else 0 if item.get("dolby_vision") is False else None,
-        _to_json(item.get("providers") or []),
-        _to_json(item),
+        1 if item.get("providers_fetched") else 0,
+        _to_json(quality) if quality else None,
         item.get("last_seen_at") or item.get("added_at"),
         1 if item.get("is_available", True) else 0,
         item.get("first_seen_at"),
@@ -1219,7 +1251,7 @@ runtime_min, runtime_min_avg, quality_score, width, height, resolution,
 video_codec, video_bitrate, audio_codec, audio_codec_raw, audio_bitrate,
 audio_channels, audio_languages_json, audio_language_group,
 subtitle_languages_json, framerate, container, hdr, hdr_type, dolby_vision,
-providers_json, data_json, last_seen_at,
+providers_fetched, quality_json, last_seen_at,
 is_available, first_seen_at, last_scanned_at, filename
 """
 
@@ -1267,8 +1299,8 @@ ON CONFLICT(id) DO UPDATE SET
     hdr = excluded.hdr,
     hdr_type = excluded.hdr_type,
     dolby_vision = excluded.dolby_vision,
-    providers_json = excluded.providers_json,
-    data_json = excluded.data_json,
+    providers_fetched = excluded.providers_fetched,
+    quality_json = excluded.quality_json,
     updated_at = CURRENT_TIMESTAMP,
     last_seen_at = excluded.last_seen_at,
     is_available = excluded.is_available,

@@ -6,6 +6,14 @@ import json
 import sqlite3
 from typing import Any
 
+try:
+    from backend.repositories import media_repository as _media_repository
+except Exception:
+    try:
+        from repositories import media_repository as _media_repository  # type: ignore
+    except Exception:
+        _media_repository = None  # type: ignore
+
 
 def export_providers_logo(conn: sqlite3.Connection) -> dict[str, str]:
     """Return {display_name: logo_path} keyed by mapped_name (or raw_name if no mapping)."""
@@ -135,19 +143,18 @@ def export_recommendations(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:
+    if _media_repository is not None:
+        doc = _media_repository.export_library(conn, availability=availability)
+        return {"total_items": doc["total_items"], "items": doc["items"]}
+    # Fallback: minimal column-based reconstruction (no seasons/providers)
     if availability == "available":
         where = " WHERE is_available = 1"
     elif availability == "absent":
         where = " WHERE is_available = 0"
     else:
         where = ""
-    rows = conn.execute(f"SELECT data_json, is_available FROM media{where} ORDER BY title, id").fetchall()
-    items = []
-    for row in rows:
-        item = _from_json(row["data_json"], {})
-        if isinstance(item, dict):
-            item["is_available"] = bool(row["is_available"])
-            items.append(item)
+    rows = conn.execute(f"SELECT id, is_available FROM media{where} ORDER BY title, id").fetchall()
+    items = [{"id": row["id"], "is_available": bool(row["is_available"])} for row in rows]
     return {"total_items": len(items), "items": items}
 
 

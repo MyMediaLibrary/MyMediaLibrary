@@ -89,7 +89,6 @@ class ScoreConfigBackendTest(unittest.TestCase):
                     "audio_languages_simple": "MULTI",
                     "size_b": int(6 * (1024 ** 3)),
                     "quality": {"score": 1},
-                    "custom": "keep",
                 }]
             }), encoding="utf-8")
 
@@ -103,7 +102,9 @@ class ScoreConfigBackendTest(unittest.TestCase):
 
             self.assertEqual(count, 1)
             payload = json.loads(output_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["items"][0]["custom"], "keep")
+            # Verify schema fields are preserved after score recomputation
+            self.assertEqual(payload["items"][0]["id"], "score-m1")
+            self.assertEqual(payload["items"][0]["title"], "Movie")
             self.assertIn("quality", payload["items"][0])
             self.assertGreaterEqual(payload["items"][0]["quality"]["score"], 0)
             self.assertEqual(
