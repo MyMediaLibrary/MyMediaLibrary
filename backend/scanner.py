@@ -3743,6 +3743,7 @@ def run_score_only(trigger_type: str = "manual") -> int:
     recorder = _make_recorder(trigger_type, "score_only")
     with _scan_lock("score_only"):
         recorder.start()
+        recorder.start_phase("score_only")
         _t0 = time.monotonic()
         log.info("[SCAN] %s", _SCAN_SEPARATOR)
         log.info("[SCAN] [SCORE-ONLY] Starting recompute")
@@ -3753,7 +3754,7 @@ def run_score_only(trigger_type: str = "manual") -> int:
             recalculated = recompute_scores_only(effective_score_config)
             elapsed = time.monotonic() - _t0
             log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {_count_label(recalculated, 'item')} scored")
-            recorder.record_phase("score_only", elapsed, f"{_count_label(recalculated, 'item')} scored")
+            recorder.finish_phase("score_only", elapsed, f"{_count_label(recalculated, 'item')} scored")
             recorder.complete()
             return recalculated
         except Exception as exc:
@@ -3842,7 +3843,10 @@ def _resolve_startup_phases(cfg: dict) -> list[int]:
 
 
 def run_phases(
-    phases: list[int], *, only_category: str | None = None
+    phases: list[int],
+    *,
+    only_category: str | None = None,
+    recorder: "ScanRunRecorder | None" = None,
 ) -> list[tuple[str, float, str]]:
     ordered = _normalize_phases(phases)
     if not ordered:
@@ -3850,27 +3854,26 @@ def run_phases(
         return []
     _log_planned_phases(ordered)
     results: list[tuple[str, float, str]] = []
+    _phase_fns = {
+        PHASE_SCAN:            ("1", lambda: run_quick(only_category=only_category)),
+        PHASE_PROBE:           ("2", lambda: run_probe(only_category=only_category)),
+        PHASE_ENRICH:          ("3", lambda: run_enrich(force=True, only_category=only_category)),
+        PHASE_SCORE:           ("4", lambda: run_scoring(only_category=only_category)),
+        PHASE_RECOMMENDATIONS: ("5", lambda: run_recommendations()),
+    }
     for phase in ordered:
-        if phase == PHASE_SCAN:
-            t = time.monotonic()
-            summary = run_quick(only_category=only_category)
-            results.append(("1", time.monotonic() - t, summary or ""))
-        elif phase == PHASE_PROBE:
-            t = time.monotonic()
-            summary = run_probe(only_category=only_category)
-            results.append(("2", time.monotonic() - t, summary or ""))
-        elif phase == PHASE_ENRICH:
-            t = time.monotonic()
-            summary = run_enrich(force=True, only_category=only_category)
-            results.append(("3", time.monotonic() - t, summary or ""))
-        elif phase == PHASE_SCORE:
-            t = time.monotonic()
-            summary = run_scoring(only_category=only_category)
-            results.append(("4", time.monotonic() - t, summary or ""))
-        elif phase == PHASE_RECOMMENDATIONS:
-            t = time.monotonic()
-            summary = run_recommendations()
-            results.append(("5", time.monotonic() - t, summary or ""))
+        entry = _phase_fns.get(phase)
+        if entry is None:
+            continue
+        phase_id, fn = entry
+        if recorder:
+            recorder.start_phase(phase_id)
+        t = time.monotonic()
+        summary = fn()
+        elapsed = time.monotonic() - t
+        if recorder:
+            recorder.finish_phase(phase_id, elapsed, summary or "")
+        results.append((phase_id, elapsed, summary or ""))
     return results
 
 
@@ -5469,8 +5472,9 @@ def main():
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
             if args.quick:
-                phase_durations = run_phases([PHASE_SCAN], only_category=args.category)
+                phase_durations = run_phases([PHASE_SCAN], only_category=args.category, recorder=recorder)
             elif args.score_only:
+                recorder.start_phase("score_only")
                 t_so = time.monotonic()
                 log.info("[SCAN] %s", _SCAN_SEPARATOR)
                 log.info("[SCAN] [SCORE-ONLY] Starting recompute")
@@ -5480,9 +5484,9 @@ def main():
                 _n_scored = recompute_scores_only(_esc)
                 _so_elapsed = time.monotonic() - t_so
                 log.info(f"[SCAN] [SCORE-ONLY] Completed in {_so_elapsed:.1f}s — {_count_label(_n_scored, 'item')} scored")
-                recorder.record_phase("score_only", _so_elapsed, f"{_count_label(_n_scored, 'item')} scored")
+                recorder.finish_phase("score_only", _so_elapsed, f"{_count_label(_n_scored, 'item')} scored")
             elif args.phases:
-                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category)
+                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category, recorder=recorder)
             else:
                 cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
                 if args.origin == "startup":
@@ -5491,10 +5495,7 @@ def main():
                         log.info("[SCAN] Startup: no media scan phase required")
                 else:
                     phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
-                phase_durations = run_phases(phases, only_category=args.category)
-
-            for phase_id, duration, summary in phase_durations:
-                recorder.record_phase(phase_id, duration, summary)
+                phase_durations = run_phases(phases, only_category=args.category, recorder=recorder)
 
             elapsed = time.monotonic() - _t_main
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")

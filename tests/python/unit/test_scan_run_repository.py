@@ -191,5 +191,110 @@ class GetRecentScanRunsTest(unittest.TestCase):
             self.assertNotIn("phases", row)
 
 
+class IncrementalWriteTest(unittest.TestCase):
+    """Phases must be persisted immediately, not only on complete()."""
+
+    def _row(self, db_path: pathlib.Path) -> dict:
+        rows = repo.get_recent_scan_runs(db_path=db_path)
+        self.assertEqual(len(rows), 1)
+        return rows[0]
+
+    def test_start_phase_writes_enabled_before_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="manual", mode="default", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("1")
+            # complete() not yet called
+            row = self._row(db_path)
+            self.assertEqual(row["status"], "running")
+            self.assertEqual(row["phase1_enabled"], 1)
+
+    def test_finish_phase_writes_duration_and_summary_before_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="manual", mode="default", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("1")
+            recorder.finish_phase("1", 4.2, "99 items")
+            # complete() not yet called
+            row = self._row(db_path)
+            self.assertEqual(row["status"], "running")
+            self.assertAlmostEqual(row["phase1_duration_sec"], 4.2, places=2)
+            self.assertEqual(row["phase1_summary"], "99 items")
+
+    def test_subsequent_phases_written_incrementally_on_same_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="cron", mode="default", db_path=db_path)
+            recorder.start()
+            for phase_id, summary in [("1", "50 items"), ("4", "50 scored")]:
+                recorder.start_phase(phase_id)
+                recorder.finish_phase(phase_id, 1.0, summary)
+            # Verify still one row and both phases written
+            conn = db.open_connection(db_path)
+            count = conn.execute("SELECT COUNT(*) FROM scan_runs").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+            row = self._row(db_path)
+            self.assertEqual(row["status"], "running")
+            self.assertEqual(row["phase1_summary"], "50 items")
+            self.assertEqual(row["phase4_summary"], "50 scored")
+
+    def test_fail_after_phase1_keeps_phase1_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="manual", mode="default", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("1")
+            recorder.finish_phase("1", 3.0, "100 items")
+            recorder.start_phase("2")
+            # Phase 2 crashes
+            recorder.fail("probe failed")
+            row = self._row(db_path)
+            self.assertEqual(row["status"], "failed")
+            self.assertEqual(row["error"], "probe failed")
+            # Phase 1 data preserved
+            self.assertEqual(row["phase1_summary"], "100 items")
+            self.assertAlmostEqual(row["phase1_duration_sec"], 3.0, places=2)
+            # Phase 3+ untouched
+            self.assertIsNone(row["phase3_summary"])
+
+    def test_complete_does_not_reset_phase_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="manual", mode="default", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("1")
+            recorder.finish_phase("1", 5.0, "200 items")
+            recorder.complete()
+            row = self._row(db_path)
+            self.assertEqual(row["status"], "completed")
+            self.assertEqual(row["phase1_summary"], "200 items")
+
+    def test_score_only_enabled_written_at_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="save_settings", mode="score_only", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("score_only")
+            row = self._row(db_path)
+            self.assertEqual(row["score_only_enabled"], 1)
+            self.assertIsNone(row["score_only_duration_sec"])
+
+    def test_score_only_summary_written_after_finish_phase(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_db(tmp)
+            recorder = repo.ScanRunRecorder(trigger_type="save_settings", mode="score_only", db_path=db_path)
+            recorder.start()
+            recorder.start_phase("score_only")
+            recorder.finish_phase("score_only", 1.5, "3319 items scored")
+            recorder.complete()
+            row = self._row(db_path)
+            self.assertEqual(row["score_only_summary"], "3319 items scored")
+            self.assertAlmostEqual(row["score_only_duration_sec"], 1.5, places=2)
+            self.assertEqual(row["status"], "completed")
+
+
 if __name__ == "__main__":
     unittest.main()

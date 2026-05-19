@@ -211,7 +211,12 @@ class ScanRunRecorder:
         )
         return self
 
-    def record_phase(self, phase_id: str, duration_sec: float, summary: str = "") -> None:
+    def start_phase(self, phase_id: str) -> None:
+        """Mark a phase as started — writes phaseN_enabled=1 immediately."""
+        mark_phase_enabled(self._run_id, phase_id, db_path=self._db_path)
+
+    def finish_phase(self, phase_id: str, duration_sec: float, summary: str = "") -> None:
+        """Write phase duration and summary immediately after phase completion."""
         mark_phase_completed(
             self._run_id,
             phase_id,
@@ -220,7 +225,12 @@ class ScanRunRecorder:
             db_path=self._db_path,
         )
 
+    def record_phase(self, phase_id: str, duration_sec: float, summary: str = "") -> None:
+        """Convenience: mark enabled + completed in one call (for atomic writes)."""
+        self.finish_phase(phase_id, duration_sec, summary)
+
     def complete(self) -> None:
+        """Finalize the scan: write status=completed, completed_at, total_duration_sec."""
         mark_completed(
             self._run_id,
             total_duration_sec=time.monotonic() - self._t0,
@@ -228,6 +238,7 @@ class ScanRunRecorder:
         )
 
     def fail(self, error: str) -> None:
+        """Mark as failed — preserves all phase data already written."""
         mark_failed(
             self._run_id,
             error=error,
