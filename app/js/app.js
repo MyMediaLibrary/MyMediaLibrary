@@ -37,6 +37,16 @@ function applyTranslations() {
 }
 
 let allItems=[], categories=[], groups=[];
+
+  // Per-tick filter caches. Cleared at the start of every onFilter() and
+  // whenever allItems is replaced. All .filter() work is reused across the
+  // 12+ baseItems() calls that happen in a single onFilter() pass.
+  let _baseItemsCache = null;   // Map<except, array>
+  let _filteredItemsCache = null; // array | null
+  function _invalidateFilterCaches() {
+    _baseItemsCache = null;
+    _filteredItemsCache = null;
+  }
   function safeArray(value) {
     return Array.isArray(value) ? value : [];
   }
@@ -60,11 +70,10 @@ let allItems=[], categories=[], groups=[];
     audio_language: { desktop: 'audioLanguageSection', mobile: 'audioLanguageSectionMobile' },
     score: { desktop: 'qualitySection', mobile: 'qualitySectionMobile' },
   };
-  let libraryExportSource = null; // raw library API payload used for explicit export
   let PROVIDERS_MAP = {};          // {raw_provider_name: display_provider_name|null} from /api/providers-map
   let PROVIDERS_LOGOS = {};        // {display_provider_name: logo_filename} from /api/providers-logo
-  let audioCodecMapping = {};      // loaded from /audiocodec_mapping.json
-  let audioLanguages = {};         // loaded from /audio_languages.json
+  let audioCodecMapping = {};      // loaded from /api/audiocodec-mapping
+  let audioLanguages = {};         // loaded from /api/audio-languages
 
   async function loadProvidersCatalog() {
     try {
@@ -85,16 +94,16 @@ let allItems=[], categories=[], groups=[];
 
   async function loadAudioCodecMapping() {
     try {
-      const res = await fetch('/audiocodec_mapping.json?_=' + Date.now());
+      const res = await fetch('/api/audiocodec-mapping?_=' + Date.now());
       if (res.ok) audioCodecMapping = await res.json();
-    } catch(e) { console.warn('audiocodec_mapping.json load error:', e); }
+    } catch(e) { console.warn('audiocodec-mapping load error:', e); }
   }
 
   async function loadAudioLanguages() {
     try {
-      const res = await fetch('/audio_languages.json?_=' + Date.now());
+      const res = await fetch('/api/audio-languages?_=' + Date.now());
       if (res.ok) audioLanguages = await res.json();
-    } catch(e) { console.warn('audio_languages.json load error:', e); }
+    } catch(e) { console.warn('audio-languages load error:', e); }
   }
 
   function getLanguageDisplay(isoCode) {
@@ -365,11 +374,7 @@ let allItems=[], categories=[], groups=[];
 
   // Helpers: canonicalize provider entries from library items.
   function _pname(p){ return resolveProvider(p).name; }
-  function _plogo(p){
-    const resolved = resolveProvider(p);
-    if (!resolved.logoUrl) console.warn('Unmapped provider:', resolved.rawName || resolved.name);
-    return resolved.logoUrl;
-  }
+  function _plogo(p){ return resolveProvider(p).logoUrl; }
 
   // Active category prefs (null = all active; Set = specific active names)
   let enabledCategories = null;
@@ -493,6 +498,7 @@ let allItems=[], categories=[], groups=[];
   let audioChannelsExclude = false;
   let audioLanguageExclude = false;
   let folderExclude = false;
+  let activeAvailability = 'available'; // 'available' | 'absent' | 'all'
   let qualityExclude = false;
   let technicalFiltersOpenDesktop = false;
   let technicalFiltersOpenMobile = false;
@@ -537,7 +543,6 @@ let allItems=[], categories=[], groups=[];
   }
 
   let appConfig = {};            // loaded from /api/config
-  let appVersionInfo = null;     // loaded from /version.json
   let recommendationsDoc = null;
   let recommendationsLoadPromise = null;
   let recommendationTypeFilters = new Set();
@@ -637,6 +642,7 @@ let allItems=[], categories=[], groups=[];
         scoreMax,
         includeNoScore,
         audioCodecExclude, videoCodecExclude, providerExclude, resolutionExclude, genreExclude, audioChannelsExclude, audioLanguageExclude, folderExclude, qualityExclude,
+        activeAvailability,
         currentTab, currentView,
         searchLib: document.getElementById('searchInput')?.value || '',
         sortVal: document.getElementById('sortSelect')?.value || '',
@@ -693,6 +699,7 @@ let allItems=[], categories=[], groups=[];
       if (s.audioLanguageExclude !== undefined)  audioLanguageExclude  = !!s.audioLanguageExclude;
       if (s.folderExclude !== undefined)         folderExclude         = !!s.folderExclude;
       if (isScoreEnabled() && s.qualityExclude !== undefined) qualityExclude = !!s.qualityExclude;
+      if (s.activeAvailability && ['available', 'absent', 'all'].includes(s.activeAvailability)) activeAvailability = s.activeAvailability;
       if (s.currentView)      setView(s.currentView, true);
       if (s.sortVal) {
         const el = document.getElementById('sortSelect');
@@ -704,6 +711,7 @@ let allItems=[], categories=[], groups=[];
       }
       // Re-render all filter pills with correct active states (no saveState)
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -737,7 +745,6 @@ let allItems=[], categories=[], groups=[];
       const r = await fetch('/version.json?_='+Date.now());
       if (!r.ok) return;
       const v = await r.json();
-      appVersionInfo = v;
       const el = document.getElementById('appVersionStr');
       if (!el) return;
       const parts = ['v' + (v.version || 'dev')];
@@ -761,6 +768,14 @@ let allItems=[], categories=[], groups=[];
     window.MMLState.isLoaded  = false;
     window.MMLState.hasError  = false;
     window.MMLState.isLibraryMissing = false;
+    // Apply persisted availability before the first fetch so the API request uses the correct value.
+    // restoreState() runs later (after data is loaded and filters rendered) and would be too late.
+    try {
+      const _ps = JSON.parse(localStorage.getItem('mediaState') || '{}');
+      if (_ps.activeAvailability && ['available', 'absent', 'all'].includes(_ps.activeAvailability)) {
+        activeAvailability = _ps.activeAvailability;
+      }
+    } catch (_) {}
     await Promise.all([loadConfig(), loadProvidersCatalog(), loadAudioCodecMapping(), loadAudioLanguages()]);
 
     // Load translations for the configured language
@@ -785,12 +800,11 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded = false;
       window.MMLState.hasError = false;
       window.MMLState.isLibraryMissing = false;
-      libraryExportSource = null;
-      updateExportJsonButtonState();
       showOnboarding();
     };
     const finishWithEmptyLibrary = () => {
       allItems = [];
+      _invalidateFilterCaches();
       categories = [];
       groups = [];
       window.MMLState.items = allItems;
@@ -798,10 +812,10 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoaded = true;
       window.MMLState.hasError = false;
       window.MMLState.isLibraryMissing = true;
-      libraryExportSource = null;
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+t('library.run_scan')+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.run_scan');
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -814,7 +828,6 @@ let allItems=[], categories=[], groups=[];
       renderQualityFilter();
       renderStats(filterItems());
       switchTab(currentTab);
-      updateExportJsonButtonState();
     };
     if (explicitNeedsOnboarding === true) {
       finishWithOnboarding();
@@ -836,6 +849,7 @@ let allItems=[], categories=[], groups=[];
       }
       const data = lib.data;
       allItems = safeArray(data.items);
+      _invalidateFilterCaches();
       if (!allItems.length) {
         if (explicitNeedsOnboarding === null && !hasUsableFolders) {
           finishWithOnboarding();
@@ -844,7 +858,6 @@ let allItems=[], categories=[], groups=[];
         }
         return;
       }
-      libraryExportSource = data;
       categories = safeArray(data.categories);
       groups = safeArray(data.groups);
       if (visibleProviders === null) {
@@ -914,6 +927,7 @@ let allItems=[], categories=[], groups=[];
       applyRecommendationsFeatureVisibility();
       if (currentTab === 'recommendations') await ensureRecommendationsLoaded();
       renderStorageBar();
+      renderAvailabilityFilter();
       renderFolderFilter();
       renderGenreFilter();
       renderProviderFilter();
@@ -929,7 +943,6 @@ let allItems=[], categories=[], groups=[];
       window.MMLState.isLoading = false;
       renderStats(filterItems());
       switchTab(currentTab);
-      updateExportJsonButtonState();
     } catch(e) {
       const _is401 = String(e).includes('401');
       if (!_is401) console.error('loadLibrary error:', e);
@@ -937,63 +950,11 @@ let allItems=[], categories=[], groups=[];
       if (_is401) return; // 401: fetch interceptor already showed the login overlay — no error UI
       window.MMLState.hasError = true;
       window.MMLState.isLibraryMissing = false;
-      libraryExportSource = null;
       const _emsg = String(e).includes('404') ? t('library.run_scan') : escH(String(e));
       document.getElementById('library').innerHTML='<div class="empty"><p>'+t('library.not_found')+'</p><small>'+_emsg+'</small></div>';
       document.getElementById('scanInfo').textContent=t('library.scan_error');
-      updateExportJsonButtonState();
     }
   }
-
-  function _dateYmd(d = new Date()) {
-    return [
-      d.getFullYear(),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0')
-    ].join('-');
-  }
-
-  async function _getVersionForExport() {
-    try {
-      const r = await fetch('/version.json?_=' + Date.now());
-      if (r.ok) {
-        const data = await r.json();
-        appVersionInfo = data;
-        return data;
-      }
-    } catch(_) {}
-    return appVersionInfo || { version: 'dev' };
-  }
-
-  async function exportLibraryJson() {
-    if (!libraryExportSource) {
-      alert(t('settings.system.export_unavailable'));
-      return;
-    }
-
-    const exportedAt = new Date();
-    const exportDate = _dateYmd(exportedAt);
-    const versionInfo = await _getVersionForExport();
-    const payload = {
-      exported_at: exportedAt.toISOString(),
-      export_date: exportDate,
-      app_version: versionInfo.version || 'dev',
-      app_version_meta: versionInfo,
-      library: libraryExportSource
-    };
-
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const filename = `mymedialibrary-export-${exportDate}.json`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
 
   // ── CONFIG ───────────────────────────────────────────
   function _isFolderEnabled(folder) {
@@ -1151,7 +1112,7 @@ let allItems=[], categories=[], groups=[];
   async function _fetchLibraryWithRetry() {
     let parseError = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const libraryUrl = '/api/library?_=' + Date.now();
+      const libraryUrl = '/api/library?availability=' + activeAvailability + '&_=' + Date.now();
       const fetchStarted = perfNow();
       const r = await fetch(libraryUrl);
       if (r.status === 404) return { missing: true };
@@ -1183,9 +1144,10 @@ let allItems=[], categories=[], groups=[];
   // ── STATS ────────────────────────────────────────────
   function renderStats(items) {
     const started = perfNow();
-    const bytes=items.reduce((s,i)=>s+(i.size_b||0),0);
-    const files=items.reduce((s,i)=>s+(i.file_count||0),0);
-    const cats=new Set(items.map(i=>i.category)).size;
+    let bytes=0, files=0;
+    const catSet = new Set();
+    for (const i of items) { bytes+=i.size_b||0; files+=i.file_count||0; catSet.add(i.category); }
+    const cats=catSet.size;
     const filtered=items.length < allItems.length;
     const elemLabel=filtered
       ? items.length+'<span style="font-size:11px;font-weight:400;color:var(--muted)"> / '+allItems.length+'</span>'
@@ -1350,12 +1312,6 @@ let allItems=[], categories=[], groups=[];
       if (!btn) return;
       btn.disabled = disabled;
     });
-  }
-
-  function updateExportJsonButtonState() {
-    const btn = document.getElementById('cfgExportJsonBtn');
-    if (!btn) return;
-    btn.disabled = !libraryExportSource;
   }
 
   function resetAllFilters() {
@@ -1767,6 +1723,38 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
+  function renderAvailabilityFilter() {
+    const opts = [
+      { value: 'available', labelKey: 'filters.availability_available' },
+      { value: 'absent',    labelKey: 'filters.availability_absent' },
+      { value: 'all',       labelKey: 'filters.availability_all' },
+    ];
+    ['availabilitySection', 'availabilitySectionMobile'].forEach(function(cid) {
+      const sec = document.getElementById(cid);
+      if (!sec) return;
+      const btns = opts.map(o =>
+        '<button type="button" class="provider-pill'+(activeAvailability === o.value ? ' active' : '')+
+        '" data-availability-value="'+escH(o.value)+'">'+
+        escH(t(o.labelKey))+'</button>'
+      ).join('');
+      sec.style.display = '';
+      sec.innerHTML = '<div class="storage-block"><div class="storage-title">'+escH(t('filters.availability'))+'</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">'+btns+'</div></div>';
+    });
+  }
+
+  function setAvailabilityFilter(value) {
+    if (!['available', 'absent', 'all'].includes(value)) return;
+    if (activeAvailability === value) return;
+    activeAvailability = value;
+    saveState();
+    // Re-fetch library since filtering is SQL-level
+    allItems = [];
+    _invalidateFilterCaches();
+    window.MMLState.isLoaded = false;
+    loadLibrary();
+  }
+
   function renderFolderFilter() {
     const base = baseItems('folder');
     const counts = {};
@@ -1991,9 +1979,11 @@ let allItems=[], categories=[], groups=[];
   }
 
   function onFilter() {
+    _invalidateFilterCaches();
     const items = filterItems();
     syncTypePills();
     renderStorageBar();
+    renderAvailabilityFilter();
     renderFolderFilter();
     renderGenreFilter();
     renderProviderFilter();
@@ -2124,6 +2114,7 @@ let allItems=[], categories=[], groups=[];
   }
 
   function filterItems() {
+    if (_filteredItemsCache !== null) return _filteredItemsCache;
     // Visibility order:
     // 1. Settings — type enabled (enableMovies/enableSeries)
     // 2. Settings — active categories (enabledCategories)
@@ -2205,12 +2196,15 @@ let allItems=[], categories=[], groups=[];
         return inRange;
       });
     }
-    return applySearch(items, q);
+    _filteredItemsCache = applySearch(items, q);
+    return _filteredItemsCache;
   }
 
   // Base for filter rendering: all active filters applied EXCEPT the one being rendered
   // + settings-level visibility always applied + search always applied
   function baseItems(except) {
+    const key = except || '';
+    if (_baseItemsCache !== null && _baseItemsCache.has(key)) return _baseItemsCache.get(key);
     const q = getSearchQuery();
     let items=allItems;
     if (!enableMovies)     items=items.filter(i=>i.type!=='movie');
@@ -2287,7 +2281,10 @@ let allItems=[], categories=[], groups=[];
         return inRange;
       });
     }
-    return applySearch(items, q);
+    const result = applySearch(items, q);
+    if (_baseItemsCache === null) _baseItemsCache = new Map();
+    _baseItemsCache.set(key, result);
+    return result;
   }
 
   // ── RECOMMENDATIONS ─────────────────────────────────
@@ -2799,7 +2796,7 @@ let allItems=[], categories=[], groups=[];
       + shown.map(p => {
           const name=_pname(p), logo=_plogo(p);
           return logo
-            ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
+            ? '<div class="tl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'" loading="lazy"/></div>'
             : '<span class="tl-provider-name">'+escH(name)+'</span>';
         }).join('')
       + (remaining > 0 ? '<span class="tl-provider-name" title="'+escH(t('stats.others'))+'">+'+remaining+'</span>' : '')
@@ -2816,6 +2813,7 @@ let allItems=[], categories=[], groups=[];
     if (item.type!=='tv'&&item.file_count!==undefined&&item.file_count!==1) {
       infoParts.push('<span class="tl-cat">'+(item.file_count>1?t('library.files_pl',{n:item.file_count}):t('library.files',{n:item.file_count}))+'</span>');
     }
+    const isAbsent = item.is_available === false || item.is_available === 0;
     return '<div class="tl-card"'+(plotText?' data-plot="'+escH(plotText)+'"':'')+'>'
       +(qualityBadge?'<div class="tl-quality">'+qualityBadge+'</div>':'')
       + posterBlock(item)
@@ -2826,6 +2824,7 @@ let allItems=[], categories=[], groups=[];
             +(item.year?'<span class="tl-cat">'+escH(String(item.year))+'</span>':'')
             +'<span class="tl-cat">'+escH(item.category)+'</span>'
             +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
+            +(isAbsent?'<span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')
           +'</div>'
           +(infoParts.length ? '<div class="tl-meta-row tl-meta-row-ellipsis">'+infoParts.join('')+'</div>' : '')
         +'</div>'
@@ -2847,7 +2846,7 @@ let allItems=[], categories=[], groups=[];
       +_itemVisProviders(item).map(p=>{
         const name=_pname(p), logo=_plogo(p);
         return logo
-          ?'<div class="tbl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'"/></div>'
+          ?'<div class="tbl-provider" title="'+escH(name)+'"><img src="'+escH(logo)+'" alt="'+escH(name)+'" loading="lazy"/></div>'
           :'<span class="tbl-provider-name">'+escH(name)+'</span>';
       }).join('')+'</div>';
   }
@@ -2855,6 +2854,7 @@ let allItems=[], categories=[], groups=[];
     const hg=items.some(i=>i.group);
     const hp=items.some(i=>i.poster||getEnabledProvidersForItem(i).length);
     const rows=items.map(item=>{
+      const _itemAbsent = item.is_available === false || item.is_available === 0;
       // Mobile info cell: title + meta badges
       const mobileInfo = '<td class="col-mobile-info">'
         +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+escH(item.title)+'</div>'
@@ -2865,6 +2865,7 @@ let allItems=[], categories=[], groups=[];
           +(item.resolution?'<span class="res-badge res-'+escH(item.resolution)+'">'+escH(item.resolution)+'</span>':'')
           +(item.hdr?'<span class="badge badge-hdr">HDR</span>':'')
           +(item.codec?'<span class="badge badge-codec">'+escH(item.codec)+'</span>':'')
+          +(_itemAbsent?'<span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')
         +'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center;max-width:100%;overflow:hidden">'
           +'<span style="font-size:11px;color:var(--muted)">'+escH(item.size)+'</span>'
@@ -2876,7 +2877,7 @@ let allItems=[], categories=[], groups=[];
       return '<tr>'
         +(hp?'<td class="col-poster">'+(item.poster?'<img src="'+escH(item.poster)+'" alt="" loading="lazy" decoding="async"/>':'<div class="ph">🎬</div>')+'</td>':'')
         +mobileInfo
-        +'<td class="col-title">'+escH(item.title)+'</td>'
+        +'<td class="col-title">'+escH(item.title)+(_itemAbsent?' <span class="badge badge-absent">'+escH(t('badge.absent_from_disk'))+'</span>':'')+'</td>'
         +'<td class="col-year">'+escH(String(item.year||'-'))+'</td>'
         +(hg?'<td class="col-group">'+escH(item.group||'-')+'</td>':'')
         +'<td><span class="cat-badge">'+escH(item.category)+'</span></td>'

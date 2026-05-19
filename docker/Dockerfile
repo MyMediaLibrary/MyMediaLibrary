@@ -18,13 +18,8 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /app/backend
 COPY backend/scanner.py /app/scanner.py
 COPY backend/ /app/backend/
-COPY backend/default_config.json /app/defaults/conf/config.json
-COPY app/providers_mapping.json /app/defaults/conf/providers_mapping.json
-COPY app/providers_logo.json /app/defaults/conf/providers_logo.json
-COPY backend/recommendations_rules.json /app/defaults/conf/recommendations_rules.json
 COPY backend/scoring.py /app/scoring.py
 COPY backend/recommendations.py /app/recommendations.py
-COPY backend/inventory_helpers.py /app/inventory_helpers.py
 COPY backend/nfo.py /app/nfo.py
 COPY docker/entrypoint.sh /app/entrypoint.sh
 

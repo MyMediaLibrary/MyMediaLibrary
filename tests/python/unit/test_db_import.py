@@ -19,9 +19,7 @@ from repositories import config_repository  # noqa: E402
 class DatabaseImportTest(unittest.TestCase):
     def make_paths(self, root: pathlib.Path):
         data = root / "data"
-        defaults = root / "defaults" / "conf"
         data.mkdir(parents=True, exist_ok=True)
-        defaults.mkdir(parents=True)
         return types.SimpleNamespace(
             PROVIDERS_LOGO_JSON=data / "providers_logo.json",
             PROVIDERS_MAPPING_JSON=data / "providers_mapping.json",
@@ -29,14 +27,9 @@ class DatabaseImportTest(unittest.TestCase):
             CONFIG_JSON=data / "config.json",
             MEDIA_PROBE_CACHE_JSON=data / "media_probe_cache.json",
             LIBRARY_PROBE_JSON=data / "library_probe.json",
-            INVENTORY_JSON=data / "library_inventory.json",
             RECOMMENDATIONS_JSON=data / "recommendations.json",
             LIBRARY_JSON=data / "library.json",
             SECRETS_FILE=data / ".secrets",
-            DEFAULT_CONFIG_JSON=defaults / "config.json",
-            DEFAULT_PROVIDERS_MAPPING_JSON=defaults / "providers_mapping.json",
-            DEFAULT_PROVIDERS_LOGO_JSON=defaults / "providers_logo.json",
-            DEFAULT_RECOMMENDATIONS_RULES_JSON=defaults / "recommendations_rules.json",
         )
 
     def write_json(self, path: pathlib.Path, payload):
@@ -62,7 +55,7 @@ class DatabaseImportTest(unittest.TestCase):
 
             inserted = db_import.import_providers_mapping(conn, path)
             rows = conn.execute(
-                "SELECT raw_name, mapped_name, is_ignored FROM provider_mappings ORDER BY raw_name"
+                "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
             ).fetchall()
             conn.close()
 
@@ -75,15 +68,33 @@ class DatabaseImportTest(unittest.TestCase):
     def test_import_recommendations_rules_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "recommendations_rules.json"
-            rule = {"id": "low_score", "enabled": True, "conditions": []}
+            rule = {
+                "id": "low_score",
+                "enabled": True,
+                "type": "quality",
+                "priority": "medium",
+                "dedupe_group": "score_low",
+                "severity": 1,
+                "conditions": [{"field": "score", "operator": "<", "value": 60}],
+                "message": {"fr": "Score faible.", "en": "Low score."},
+                "suggested_action": {"fr": "Chercher mieux.", "en": "Look for better."},
+            }
             self.write_json(path, {"version": 1, "rules": [rule]})
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_recommendation_rules(conn, path)
+            exported_rules = db_export.export_recommendation_rules(conn)["rules"]
+            conn.close()
 
             self.assertEqual(inserted, 1)
-            self.assertEqual(db_export.export_recommendation_rules(conn)["rules"], [rule])
-            conn.close()
+            self.assertEqual(len(exported_rules), 1)
+            exported = exported_rules[0]
+            self.assertEqual(exported["id"], "low_score")
+            self.assertEqual(exported["enabled"], True)
+            self.assertEqual(exported["type"], "quality")
+            self.assertEqual(exported["priority"], "medium")
+            self.assertEqual(exported["conditions"], [{"field": "score", "operator": "<", "value": 60}])
+            self.assertEqual(exported["message"], {"fr": "Score faible.", "en": "Low score."})
 
     def test_import_config_json_without_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -102,15 +113,60 @@ class DatabaseImportTest(unittest.TestCase):
 
             inserted = db_import.import_config(conn, path)
             exported = db_export.export_config(conn)
-            score = conn.execute("SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'").fetchone()
-            probe = conn.execute("SELECT value_json FROM scan_settings WHERE id = 'media_probe'").fetchone()
+            score_enabled = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            score_rules = conn.execute(
+                "SELECT category, group_key, value_key, score_value FROM score_rules"
+            ).fetchall()
+            probe_workers = conn.execute("SELECT value_json FROM app_config WHERE key = 'media_probe.workers'").fetchone()
             conn.close()
 
             self.assertGreaterEqual(inserted, 4)
             self.assertIn("folders", exported)
             self.assertEqual(exported["seerr"], {"enabled": True, "url": "https://example.test"})
-            self.assertEqual(score["enabled"], 1)
-            self.assertEqual(json.loads(probe["value_json"])["workers"], 2)
+            self.assertIsNotNone(score_enabled)
+            self.assertEqual(json.loads(score_enabled["value_json"]), True)
+            self.assertTrue(any(
+                r["category"] == "weights" and r["value_key"] == "video" and r["score_value"] == 40
+                for r in score_rules
+            ))
+            self.assertEqual(json.loads(probe_workers["value_json"]), 2)
+
+    def test_export_config_reconstructs_nested_groups_from_flat_keys(self):
+        """export_config must return nested dicts, not raw flat keys like 'system.log_level'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.json"
+            self.write_json(
+                path,
+                {
+                    "system": {"scan_cron": "0 4 * * *", "log_level": "DEBUG",
+                               "needs_onboarding": False, "inventory_enabled": False},
+                    "seerr": {"enabled": True, "url": "http://seerr.local"},
+                    "ui": {"theme": "light", "default_view": "list", "default_sort": "title-asc",
+                           "synopsis_on_hover": False, "accent_color": "#000"},
+                    "recommendations": {"enabled": True},
+                    "media_probe": {"enabled": False, "mode": "compare", "workers": 4, "cache_enabled": True},
+                },
+            )
+            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
+            db_import.import_config(conn, path)
+            exported = db_export.export_config(conn)
+            conn.close()
+
+            # Must be nested dicts, not raw flat keys
+            self.assertIsInstance(exported.get("system"), dict, "system must be a nested dict")
+            self.assertIsInstance(exported.get("seerr"), dict, "seerr must be a nested dict")
+            self.assertIsInstance(exported.get("ui"), dict, "ui must be a nested dict")
+            self.assertIsInstance(exported.get("recommendations"), dict)
+            self.assertIsInstance(exported.get("media_probe"), dict)
+            self.assertEqual(exported["system"]["scan_cron"], "0 4 * * *")
+            self.assertEqual(exported["seerr"]["enabled"], True)
+            self.assertEqual(exported["ui"]["theme"], "light")
+            # No raw flat keys at top level
+            for raw_key in ("system.scan_cron", "seerr.enabled", "ui.theme",
+                            "recommendations.enabled", "media_probe.workers"):
+                self.assertNotIn(raw_key, exported, f"raw flat key '{raw_key}' must not appear in exported config")
 
     def test_import_config_migrates_legacy_score_details(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,56 +191,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(exported["score_configuration"]["weights"]["video"], 48)
             self.assertEqual(exported["score_configuration"]["audio"]["codec"]["aac"], 7)
 
-    def test_import_media_probe_cache_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "media_probe_cache.json"
-            self.write_json(
-                path,
-                {
-                    "version": 1,
-                    "files": {
-                        "/library/movie.mkv": {
-                            "path": "/library/movie.mkv",
-                            "size_b": 123,
-                            "mtime": 42.5,
-                            "probe": {"ok": True, "technical": {"resolution": "1080p"}},
-                        }
-                    },
-                },
-            )
-            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
-
-            inserted = db_import.import_media_probe_cache(conn, path)
-            exported = db_export.export_media_probe_cache(conn)
-            conn.close()
-
-            self.assertEqual(inserted, 1)
-            self.assertEqual(exported["files"]["/library/movie.mkv"]["size_b"], 123)
-            self.assertTrue(exported["files"]["/library/movie.mkv"]["probe"]["ok"])
-
-    def test_import_library_inventory_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "library_inventory.json"
-            item = {
-                "id": "movie:Films:Inception (2010)",
-                "media_type": "movie",
-                "category": "Films",
-                "title": "Inception",
-                "root_folder_path": "/library/Films/Inception (2010)",
-                "status": "present",
-            }
-            self.write_json(path, {"version": 1, "items": [item]})
-            conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
-
-            inserted = db_import.import_library_inventory(conn, path)
-            rows = conn.execute("SELECT id, status, data_json FROM inventory_items").fetchall()
-            conn.close()
-
-            self.assertEqual(inserted, 1)
-            self.assertEqual(rows[0]["id"], item["id"])
-            self.assertEqual(rows[0]["status"], "present")
-            self.assertEqual(json.loads(rows[0]["data_json"])["title"], "Inception")
-
     def test_import_recommendations_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "recommendations.json"
@@ -202,15 +208,19 @@ class DatabaseImportTest(unittest.TestCase):
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_recommendations(conn, path)
-            rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
+            rows = conn.execute(
+                "SELECT id, media_id, priority, rule_id, message_en, suggested_action_en"
+                " FROM recommendations"
+            ).fetchall()
             conn.close()
 
             self.assertEqual(inserted, 1)
             self.assertEqual(rows[0]["id"], rec["id"])
             self.assertIsNone(rows[0]["media_id"])
             self.assertEqual(rows[0]["priority"], "medium")
-            self.assertEqual(json.loads(rows[0]["details_json"])["media_ref"]["id"], "movie:Films:Inception (2010)")
-            self.assertEqual(json.loads(rows[0]["details_json"])["rule_id"], "low_score")
+            self.assertEqual(rows[0]["rule_id"], "low_score")
+            self.assertEqual(rows[0]["message_en"], "Low score")
+            self.assertEqual(rows[0]["suggested_action_en"], "Replace")
 
     def test_import_library_json(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,14 +241,18 @@ class DatabaseImportTest(unittest.TestCase):
             conn = db.initialize_database(pathlib.Path(tmp) / "db.sqlite")
 
             inserted = db_import.import_library(conn, path)
-            rows = conn.execute("SELECT id, media_type, quality_score, data_json FROM media").fetchall()
+            rows = conn.execute("SELECT id, media_type, quality_score FROM media").fetchall()
+            provider_rows = conn.execute(
+                "SELECT p.raw_name FROM media_providers mp JOIN providers p ON p.id = mp.provider_id WHERE mp.media_id = ?",
+                (item["id"],),
+            ).fetchall()
             conn.close()
 
             self.assertEqual(inserted, 1)
             self.assertEqual(rows[0]["id"], item["id"])
             self.assertEqual(rows[0]["media_type"], "movie")
             self.assertEqual(rows[0]["quality_score"], 87)
-            self.assertEqual(json.loads(rows[0]["data_json"])["providers"], ["Netflix"])
+            self.assertEqual([r["raw_name"] for r in provider_rows], ["Netflix"])
 
     def test_import_is_idempotent_when_replayed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,7 +262,7 @@ class DatabaseImportTest(unittest.TestCase):
 
             first = db_import.import_providers_logo(conn, path)
             second = db_import.import_providers_logo(conn, path)
-            count = conn.execute("SELECT COUNT(*) FROM provider_logos").fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM providers WHERE logo_path IS NOT NULL").fetchone()[0]
             conn.close()
 
             self.assertEqual(first, 1)
@@ -288,7 +302,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.write_json(paths.RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low"}]})
             self.write_json(paths.CONFIG_JSON, {"folders": [], "score": {"enabled": False}})
             self.write_json(paths.MEDIA_PROBE_CACHE_JSON, {"version": 1, "files": {}})
-            self.write_json(paths.INVENTORY_JSON, {"version": 1, "items": []})
             self.write_json(paths.RECOMMENDATIONS_JSON, {"version": 1, "items": []})
             self.write_json(paths.LIBRARY_JSON, {"version": 1, "items": []})
 
@@ -310,7 +323,6 @@ class DatabaseImportTest(unittest.TestCase):
                 paths.MEDIA_PROBE_CACHE_JSON,
                 {"version": 1, "files": {"/movie.mkv": {"size_b": 1, "mtime": 2.0, "probe": {"ok": True}}}},
             )
-            self.write_json(paths.INVENTORY_JSON, {"version": 1, "items": [{"id": "inv-1", "status": "present"}]})
             self.write_json(paths.LIBRARY_JSON, {"version": 1, "items": [{"id": "m-1", "type": "movie", "title": "M", "path": "/m"}]})
             self.write_json(paths.RECOMMENDATIONS_JSON, {"version": 1, "items": [{"id": "r-1", "title": "R"}]})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
@@ -320,7 +332,6 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertTrue(all(result.status == "ok" for result in results))
             self.assertFalse(paths.LIBRARY_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_JSON.exists())
-            self.assertFalse(paths.INVENTORY_JSON.exists())
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM media").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0], 1)
             conn.close()
@@ -351,7 +362,7 @@ class DatabaseImportTest(unittest.TestCase):
             config_result = next(result for result in results if result.name == "config")
             self.assertEqual(config_result.status, "ok")
             self.assertEqual(config_result.source_total_count, 4)
-            self.assertEqual(config_result.source_count, 3)
+            self.assertEqual(config_result.source_count, 2)  # folders:[] is empty → not counted
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertTrue(paths.SECRETS_FILE.exists())
             self.assertIn("Import check passed for config.json", "\n".join(logs.output))
@@ -403,15 +414,6 @@ class DatabaseImportTest(unittest.TestCase):
             paths = self.make_paths(root)
             db_path = root / "data" / "mymedialibrary.db"
             self.write_json(
-                paths.DEFAULT_CONFIG_JSON,
-                {
-                    "system": {"log_level": "INFO"},
-                    "folders": [],
-                    "score": {"enabled": False},
-                    "media_probe": {"enabled": False},
-                },
-            )
-            self.write_json(
                 paths.CONFIG_JSON,
                 {
                     "system": {"log_level": "DEBUG", "scan_cron": "*/10 * * * *"},
@@ -430,7 +432,7 @@ class DatabaseImportTest(unittest.TestCase):
             )
             paths.SECRETS_FILE.write_text('{"seerr_apikey":"secret"}', encoding="utf-8")
             conn = db.initialize_database(db_path)
-            db_import.seed_bundled_defaults(conn, paths=paths)
+            db_import.seed_bundled_defaults(conn)
 
             with self.assertLogs("db-import", level="INFO") as logs:
                 results = db_import.migrate_runtime_json_files_at_startup(
@@ -464,16 +466,17 @@ class DatabaseImportTest(unittest.TestCase):
                 paths.CONFIG_JSON,
                 {
                     "system": {"log_level": "DEBUG"},
-                    "folders": [],
+                    "folders": [{"name": "Movies", "type": "movie"}],
                     "score": {"enabled": True},
                     "score_configuration": {"weights": {"video": 40}},
                 },
             )
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
             conn.execute("INSERT INTO app_config(key, value_json) VALUES (?, ?)", ("system", '{"log_level":"INFO"}'))
+            conn.execute("INSERT INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
             conn.execute(
-                "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                ("default", 1, '{"weights":{"video":30}}'),
+                "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                ("weights", "weight", "video", 30),
             )
             conn.commit()
 
@@ -591,14 +594,14 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertFalse(paths.LIBRARY_PROBE_JSON.exists())
             conn.close()
 
-    def test_startup_migration_keeps_json_when_validation_fails(self):
+    def test_startup_migration_with_preexisting_logos_in_db(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = self.make_paths(root)
             self.write_json(paths.PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
             conn.execute(
-                "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                "INSERT INTO providers(raw_name, logo_path) VALUES (?, ?)",
                 ("Disney+", "disney.webp"),
             )
             conn.commit()
@@ -606,8 +609,9 @@ class DatabaseImportTest(unittest.TestCase):
             results = db_import.migrate_runtime_json_files_at_startup(conn, paths=paths)
 
             logo_result = next(result for result in results if result.name == "providers_logo")
-            self.assertEqual(logo_result.status, "warning")
-            self.assertTrue(paths.PROVIDERS_LOGO_JSON.exists())
+            # db_count >= source_count is valid for logos (pre-existing logos are fine)
+            self.assertEqual(logo_result.status, "ok")
+            self.assertFalse(paths.PROVIDERS_LOGO_JSON.exists())
             self.assertEqual(logo_result.source_count, 1)
             self.assertEqual(logo_result.db_count, 2)
             conn.close()
@@ -647,52 +651,56 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertEqual(json.loads(paths.SECRETS_FILE.read_text(encoding="utf-8"))["seerr_apikey"], "secret")
             conn.close()
 
-    def test_seed_bundled_defaults_imports_without_writing_conf_files(self):
+    def test_seed_bundled_defaults_seeds_from_python_defaults_without_json_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = self.make_paths(root)
-            self.write_json(paths.DEFAULT_CONFIG_JSON, {"folders": [], "score": {"enabled": False}})
-            self.write_json(paths.DEFAULT_PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix"})
-            self.write_json(paths.DEFAULT_PROVIDERS_LOGO_JSON, {"Netflix": "netflix.webp"})
-            self.write_json(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, {"version": 1, "rules": [{"id": "low"}]})
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
 
-            rows = db_import.seed_bundled_defaults(conn, paths=paths)
+            rows = db_import.seed_bundled_defaults(conn)
 
-            self.assertGreaterEqual(rows["config"], 1)
-            self.assertEqual(rows["provider_mappings"], 1)
-            self.assertEqual(rows["provider_logos"], 1)
-            self.assertEqual(rows["recommendation_rules"], 1)
+            # Python defaults are seeded without reading any JSON file
+            self.assertGreater(rows["config"], 0)
+            self.assertGreater(rows["providers"], 0)
+            self.assertGreater(rows["recommendation_rules"], 0)
+            # No runtime JSON files should have been created
             self.assertFalse(paths.CONFIG_JSON.exists())
             self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
             self.assertFalse(paths.PROVIDERS_LOGO_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_RULES_JSON.exists())
+            # Verify actual content
+            netflix = conn.execute(
+                "SELECT mapped_name FROM providers WHERE raw_name = 'Netflix'"
+            ).fetchone()
+            self.assertIsNotNone(netflix)
+            self.assertEqual(netflix["mapped_name"], "Netflix")
+            rule_count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
+            self.assertGreaterEqual(rule_count, 16)
             conn.close()
 
     def test_seed_bundled_defaults_is_idempotent_and_preserves_user_customizations(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            paths = self.make_paths(root)
-            self.write_json(paths.DEFAULT_PROVIDERS_MAPPING_JSON, {"Netflix": "Netflix", "Disney+": "Disney+"})
-            conn = db.initialize_database(root / "data" / "mymedialibrary.db")
+            conn = db.initialize_database(root / "mymedialibrary.db")
+            # Pre-insert Netflix with a user-customised mapping
             conn.execute(
-                "INSERT INTO provider_mappings(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                "INSERT INTO providers(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
                 ("Netflix", "NFX-custom", 0),
             )
             conn.commit()
 
-            first = db_import.seed_bundled_defaults(conn, paths=paths)
-            second = db_import.seed_bundled_defaults(conn, paths=paths)
-            rows = conn.execute(
-                "SELECT raw_name, mapped_name FROM provider_mappings ORDER BY raw_name"
-            ).fetchall()
+            first = db_import.seed_bundled_defaults(conn)
+            second = db_import.seed_bundled_defaults(conn)
 
-            self.assertEqual(first["provider_mappings"], 1)
-            self.assertEqual(second["provider_mappings"], 0)
-            self.assertEqual(
-                [(row["raw_name"], row["mapped_name"]) for row in rows],
-                [("Disney+", "Disney+"), ("Netflix", "NFX-custom")],
-            )
+            # User customisation must be preserved
+            netflix = conn.execute(
+                "SELECT mapped_name FROM providers WHERE raw_name = 'Netflix'"
+            ).fetchone()
+            self.assertEqual(netflix["mapped_name"], "NFX-custom")
+            # Second seed must be fully idempotent
+            self.assertEqual(second["providers"], 0)
+            self.assertEqual(second["recommendation_rules"], 0)
+            self.assertEqual(second["config"], 0)
             conn.close()
 
     def test_has_legacy_json_files_detects_only_migration_sources(self):
@@ -738,8 +746,8 @@ class DatabaseImportTest(unittest.TestCase):
             paths = self.make_paths(root)
 
             conn = db.initialize_database(root / "data" / "mymedialibrary.db")
-            # Simulate bootstrapped DB (seeded defaults)
-            db_import.seed_bundled_defaults(conn, paths=paths)
+            # Simulate bootstrapped DB (seeded from Python defaults)
+            db_import.seed_bundled_defaults(conn)
 
             # Write user's legacy JSON files (simulating files left from pre-v0.5.0 install)
             self.write_json(paths.CONFIG_JSON, {
@@ -762,19 +770,17 @@ class DatabaseImportTest(unittest.TestCase):
             self.assertTrue(config_result.removed)
             self.assertFalse(paths.CONFIG_JSON.exists())
 
-            # Folders preserved in SQLite
-            cfg_rows = {row["key"]: row["value_json"] for row in conn.execute("SELECT key, value_json FROM app_config").fetchall()}
-            import json as json_module
-            folders = json_module.loads(cfg_rows["folders"])
-            self.assertEqual(len(folders), 2)
-            folder_types = {f["path"]: f["type"] for f in folders}
+            # Folders preserved in SQLite (now in dedicated folders table)
+            folder_rows = conn.execute("SELECT name, media_type FROM folders").fetchall()
+            self.assertEqual(len(folder_rows), 2)
+            folder_types = {r["name"]: r["media_type"] for r in folder_rows}
             self.assertIn("/library/films", folder_types)
             self.assertEqual(folder_types["/library/films"], "movies")
 
             # Providers and rules migrated and removed
             self.assertFalse(paths.PROVIDERS_MAPPING_JSON.exists())
             self.assertFalse(paths.RECOMMENDATIONS_RULES_JSON.exists())
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM provider_mappings").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1").fetchone()[0], 0)
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0], 0)
 
             # Legacy JSON detection now returns False (files removed)

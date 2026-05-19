@@ -41,9 +41,7 @@ class ScannerRuntimePathsTest(unittest.TestCase):
     def test_scanner_defaults_use_canonical_paths(self):
         self.assertEqual(scanner.LIBRARY_PATH, str(runtime_paths.LIBRARY_DIR))
         self.assertEqual(scanner.OUTPUT_PATH, str(runtime_paths.LIBRARY_JSON))
-        self.assertEqual(scanner.INVENTORY_OUTPUT_PATH, str(runtime_paths.INVENTORY_JSON))
         self.assertEqual(scanner.RECOMMENDATIONS_OUTPUT_PATH, str(runtime_paths.RECOMMENDATIONS_JSON))
-        self.assertEqual(scanner.DEFAULT_CONFIG_PATH, str(runtime_paths.DEFAULT_CONFIG_JSON))
         self.assertEqual(scanner.CONFIG_PATH, str(runtime_paths.CONFIG_JSON))
         self.assertEqual(scanner.SECRETS_PATH, str(runtime_paths.SECRETS_FILE))
         self.assertEqual(scanner.PROVIDERS_MAPPING_RUNTIME_PATH, str(runtime_paths.PROVIDERS_MAPPING_JSON))
@@ -51,6 +49,12 @@ class ScannerRuntimePathsTest(unittest.TestCase):
         self.assertEqual(scanner.RECOMMENDATIONS_RULES_PATH, str(runtime_paths.RECOMMENDATIONS_RULES_JSON))
         self.assertEqual(scanner.SCAN_LOCK_PATH, str(runtime_paths.SCAN_LOCK))
         self.assertEqual(scanner._log_file, str(runtime_paths.SCANNER_LOG))
+        # Removed: DEFAULT_CONFIG_PATH, PROVIDERS_MAPPING_SOURCE_PATH, PROVIDERS_LOGO_SOURCE_PATH,
+        # RECOMMENDATIONS_DEFAULT_RULES_PATH — defaults are now Python constants in backend/defaults/
+        self.assertFalse(hasattr(scanner, "DEFAULT_CONFIG_PATH"))
+        self.assertFalse(hasattr(scanner, "PROVIDERS_MAPPING_SOURCE_PATH"))
+        self.assertFalse(hasattr(scanner, "PROVIDERS_LOGO_SOURCE_PATH"))
+        self.assertFalse(hasattr(scanner, "RECOMMENDATIONS_DEFAULT_RULES_PATH"))
 
     def test_scanner_bootstraps_sqlite_runtime_database(self):
         with patch.object(scanner.sqlite_db, "bootstrap_runtime_database", return_value=True) as bootstrap:
@@ -67,12 +71,8 @@ class ScannerRuntimePathsTest(unittest.TestCase):
     def test_load_config_requires_seeded_sqlite_config_without_creating_conf_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "conf" / "config.json"
-            default_path = pathlib.Path(tmpdir) / "defaults" / "config.json"
-            default_path.parent.mkdir()
-            default_path.write_text('{"system":{"log_level":"DEBUG"},"folders":[]}', encoding="utf-8")
             with patch.object(scanner, "CONFIG_PATH", str(config_path)), \
-                 patch.object(scanner.config_repository, "load_config", return_value=None), \
-                 patch.object(scanner, "DEFAULT_CONFIG_PATH", str(default_path)):
+                 patch.object(scanner.config_repository, "load_config", return_value=None):
                 with self.assertRaises(RuntimeError):
                     scanner.load_config()
 
@@ -124,17 +124,10 @@ class ScannerRuntimePathsTest(unittest.TestCase):
     def test_provider_mapping_and_logo_bootstrap_do_not_copy_defaults_to_conf(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
-            mapping_src = root / "defaults" / "providers_mapping.json"
-            logo_src = root / "defaults" / "providers_logo.json"
             mapping_dst = root / "conf" / "providers_mapping.json"
             logo_dst = root / "conf" / "providers_logo.json"
-            mapping_src.parent.mkdir()
-            mapping_src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
-            logo_src.write_text('{"Netflix":"netflix.webp"}', encoding="utf-8")
 
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(mapping_src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(mapping_dst)), \
-                 patch.object(scanner, "PROVIDERS_LOGO_SOURCE_PATH", str(logo_src)), \
+            with patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(mapping_dst)), \
                  patch.object(scanner, "PROVIDERS_LOGO_PATH", str(logo_dst)), \
                  patch.object(scanner.providers_repository, "load_provider_mappings", return_value={}) as load_mapping, \
                  patch.object(scanner.providers_repository, "load_provider_logos", return_value={}) as load_logos:
@@ -151,15 +144,12 @@ class ScannerRuntimePathsTest(unittest.TestCase):
             root = pathlib.Path(tmpdir)
             recs_path = root / "data" / "recommendations.json"
             rules_path = root / "conf" / "recommendations_rules.json"
-            default_rules_path = root / "defaults" / "recommendations_rules.json"
             recs_path.parent.mkdir()
             rules_path.parent.mkdir()
-            default_rules_path.parent.mkdir()
 
             with patch.object(scanner, "OUTPUT_PATH", str(root / "data" / "library.json")), \
                  patch.object(scanner, "RECOMMENDATIONS_OUTPUT_PATH", str(recs_path)), \
                  patch.object(scanner, "RECOMMENDATIONS_RULES_PATH", str(rules_path)), \
-                 patch.object(scanner, "RECOMMENDATIONS_DEFAULT_RULES_PATH", str(default_rules_path)), \
                  patch.object(scanner, "load_config", return_value={"score": {"enabled": True}, "recommendations": {"enabled": True}}), \
                  patch.object(scanner, "ensure_user_rules") as ensure_rules, \
                  patch.object(scanner, "load_library_document_non_blocking", return_value={"items": []}), \

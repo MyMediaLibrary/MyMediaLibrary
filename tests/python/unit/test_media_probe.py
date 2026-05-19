@@ -4,7 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -12,9 +12,6 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import media_probe  # noqa: E402
 import scanner  # noqa: E402
-from repositories import ffprobe_repository  # noqa: E402
-
-
 def ffprobe_payload(
     *,
     width=1920,
@@ -107,7 +104,6 @@ class MediaProbeTest(unittest.TestCase):
                 library_json_path=self.library_json,
                 output_path=self.probe_json,
                 library_root=self.library_root,
-                cache_path=self.cache_json,
                 **kwargs,
             )
         return json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
@@ -219,7 +215,6 @@ class MediaProbeTest(unittest.TestCase):
                 cfg,
                 library_json_path=self.library_json,
                 library_root=self.library_root,
-                cache_path=self.cache_json,
             )
 
         self.assertEqual(stats["items"], 1)
@@ -268,145 +263,88 @@ class MediaProbeTest(unittest.TestCase):
 
         self.assertEqual(item["video_bitrate"], 5_108_632)
 
-    def test_cache_hit_reuses_probe_without_calling_ffprobe(self):
+    def test_cache_hit_skips_ffprobe(self):
+        """media_probe_cache hit prevents ffprobe from running."""
         self.write_movie_fixture()
-        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
         cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
-        self.cache_json.write_text(
-            json.dumps({"version": 1, "files": {str(movie_path): media_probe._cache_entry_for(movie_path, cached_probe)}}),
-            encoding="utf-8",
-        )
 
-        with patch.object(media_probe.subprocess, "run") as run:
+        mock_repo = MagicMock()
+        mock_repo.get.return_value = cached_probe
+
+        with patch.object(media_probe, "_open_media_probe_cache_repo", return_value=mock_repo), \
+             patch.object(media_probe.subprocess, "run") as run_mock:
             stats = media_probe.generate_library_probe(
                 library_json_path=self.library_json,
-                output_path=self.probe_json,
                 library_root=self.library_root,
-                cache_path=self.cache_json,
             )
 
-        run.assert_not_called()
+        run_mock.assert_not_called()
         self.assertEqual(stats["files_cached"], 1)
         self.assertEqual(stats["files_probed"], 0)
         item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.265")
 
-    def test_sqlite_cache_hit_reuses_probe_without_loading_json_cache(self):
-        self.write_movie_fixture()
-        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
-        db_path = self.data_dir / "mml.db"
-        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
-        stat = movie_path.stat()
-        repo = ffprobe_repository.open_cache(json_path=self.cache_json, db_path=db_path)
-        try:
-            repo.upsert_probe(movie_path, size=stat.st_size, mtime=stat.st_mtime, probe=cached_probe)
-        finally:
-            repo.close()
-        self.cache_json.write_text("{ invalid json", encoding="utf-8")
-
-        with patch.object(
-            media_probe.ffprobe_repository,
-            "open_cache",
-            side_effect=lambda *, json_path: ffprobe_repository.open_cache(json_path=json_path, db_path=db_path),
-        ), patch.object(media_probe, "_load_probe_cache", side_effect=AssertionError("JSON cache should not be loaded")), \
-             patch.object(media_probe.subprocess, "run") as run:
-            stats = media_probe.generate_library_probe(
-                library_json_path=self.library_json,
-                output_path=self.probe_json,
-                library_root=self.library_root,
-                cache_path=self.cache_json,
-            )
-
-        run.assert_not_called()
-        self.assertEqual(stats["files_cached"], 1)
-        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
-        self.assertEqual(item["codec"], "H.265")
-
-    def test_sqlite_cache_miss_writes_database_without_json_rewrite(self):
-        self.write_movie_fixture()
-        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
-        db_path = self.data_dir / "mml.db"
-
-        with patch.object(
-            media_probe.ffprobe_repository,
-            "open_cache",
-            side_effect=lambda *, json_path: ffprobe_repository.open_cache(json_path=json_path, db_path=db_path),
-        ), patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
-            stats = media_probe.generate_library_probe(
-                library_json_path=self.library_json,
-                output_path=self.probe_json,
-                library_root=self.library_root,
-                cache_path=self.cache_json,
-            )
-
-        run.assert_called_once()
-        self.assertEqual(stats["files_probed"], 1)
-        self.assertFalse(self.cache_json.exists())
-        repo = ffprobe_repository.open_cache(json_path=self.cache_json, db_path=db_path)
-        try:
-            stat = movie_path.stat()
-            cached = repo.get(movie_path, size=stat.st_size, mtime=stat.st_mtime)
-        finally:
-            repo.close()
-        self.assertEqual(cached["technical"]["codec"], "H.265")
-
-    def test_cache_miss_calls_ffprobe_and_writes_cache(self):
-        self.write_movie_fixture()
-
-        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
-            stats = media_probe.generate_library_probe(
-                library_json_path=self.library_json,
-                output_path=self.probe_json,
-                library_root=self.library_root,
-                cache_path=self.cache_json,
-            )
-
-        run.assert_called_once()
-        self.assertEqual(stats["files_probed"], 1)
-        self.assertEqual(stats["files_cached"], 0)
-        self.assertFalse(self.cache_json.exists())
-        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
-        repo = ffprobe_repository.open_cache(json_path=self.cache_json)
-        try:
-            stat = movie_path.stat()
-            cached = repo.get(movie_path, size=stat.st_size, mtime=stat.st_mtime)
-        finally:
-            repo.close()
-        self.assertIsNotNone(cached)
-
     def test_cache_reprobes_when_size_or_mtime_changes(self):
+        """Cache is invalidated when file size or mtime changes; hit prevents ffprobe."""
+        import db as _db
+        from repositories import media_probe_cache_repository
+
         self.write_movie_fixture()
         movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
-        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="h264"))):
-            media_probe.generate_library_probe(
-                library_json_path=self.library_json,
-                output_path=self.probe_json,
-                library_root=self.library_root,
-                cache_path=self.cache_json,
-            )
-        movie_path.write_bytes(b"changed")
+        db_path = self.data_dir / "mpc.db"
+        media_id = "movie:Movies:Film"
+        filename = "main.mkv"
 
-        with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="hevc"))) as run:
+        # Create the DB schema and insert the media FK row required by the cache table.
+        conn = _db.initialize_database(db_path)
+        with conn:
+            conn.execute(
+                "INSERT INTO media(id, media_type, title) VALUES (?, ?, ?)",
+                (media_id, "movie", "Film"),
+            )
+        conn.close()
+
+        # Seed cache with the current file's probe result
+        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
+        repo = media_probe_cache_repository.open_cache(db_path=db_path)
+        repo.upsert(media_id, filename, movie_path, cached_probe)
+        repo.close()
+
+        def open_repo():
+            return media_probe_cache_repository.open_cache(db_path=db_path)
+
+        # Cache hit: file unchanged → ffprobe not called
+        with patch.object(media_probe, "_open_media_probe_cache_repo", side_effect=open_repo), \
+             patch.object(media_probe.subprocess, "run") as run_mock:
             stats = media_probe.generate_library_probe(
                 library_json_path=self.library_json,
-                output_path=self.probe_json,
                 library_root=self.library_root,
-                cache_path=self.cache_json,
             )
 
-        run.assert_called_once()
-        self.assertEqual(stats["files_probed"], 1)
+        run_mock.assert_not_called()
+        self.assertEqual(stats["files_cached"], 1)
+        self.assertEqual(stats["files_probed"], 0)
         item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
         self.assertEqual(item["codec"], "H.265")
+
+        # Invalidate: file content changes (different size + new mtime)
+        movie_path.write_bytes(b"changed content - different size triggers cache miss")
+
+        # Cache miss: file changed → ffprobe called, result stored in cache
+        with patch.object(media_probe, "_open_media_probe_cache_repo", side_effect=open_repo), \
+             patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="h264"))) as run_mock:
+            stats = media_probe.generate_library_probe(
+                library_json_path=self.library_json,
+                library_root=self.library_root,
+            )
+
+        run_mock.assert_called_once()
+        self.assertEqual(stats["files_probed"], 1)
+        item = json.loads(self.library_json.read_text(encoding="utf-8"))["items"][0]
+        self.assertEqual(item["codec"], "H.264")
 
     def test_cache_disabled_always_calls_ffprobe(self):
         self.write_movie_fixture()
-        movie_path = self.library_root / "Movies" / "Film" / "main.mkv"
-        cached_probe = {"ok": True, "technical": media_probe._technical_from_ffprobe(ffprobe_payload(video_codec="hevc"))}
-        self.cache_json.write_text(
-            json.dumps({"version": 1, "files": {str(movie_path): media_probe._cache_entry_for(movie_path, cached_probe)}}),
-            encoding="utf-8",
-        )
 
         with patch.object(media_probe.subprocess, "run", return_value=completed(ffprobe_payload(video_codec="h264"))) as run:
             stats = media_probe.generate_library_probe(
@@ -414,7 +352,6 @@ class MediaProbeTest(unittest.TestCase):
                 output_path=self.probe_json,
                 library_root=self.library_root,
                 cache_enabled=False,
-                cache_path=self.cache_json,
             )
 
         run.assert_called_once()
@@ -433,7 +370,6 @@ class MediaProbeTest(unittest.TestCase):
                 library_root=self.library_root,
                 workers=99,
                 cache_enabled=False,
-                cache_path=self.cache_json,
             )
 
         self.assertEqual(executor.call_args.kwargs["max_workers"], 8)
@@ -449,7 +385,6 @@ class MediaProbeTest(unittest.TestCase):
                 library_json_path=self.library_json,
                 output_path=self.probe_json,
                 library_root=self.library_root,
-                cache_path=self.cache_json,
             )
 
         self.assertEqual(stats["errors"], 1)
@@ -466,17 +401,16 @@ class MediaProbeTest(unittest.TestCase):
                 output_path=self.probe_json,
                 library_root=self.library_root,
                 cache_enabled=False,
-                cache_path=self.cache_json,
             )
 
         joined = "\n".join(logs.output)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Starting phase — workers=4, cache=disabled", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] (1/1) started", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] completed in", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Starting phase — workers=4, cache=disabled", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] (1/1) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] completed in", joined)
         self.assertIn("1 item / 1 file / 0 errors", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Summary:", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Summary:", joined)
         self.assertIn("1 item / 1 file probed / 0 errors", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Completed in", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Completed in", joined)
 
     def test_category_progress_logs_include_cache_counts_and_duration(self):
         movie_dir = self.library_root / "Movies" / "Film"
@@ -497,18 +431,17 @@ class MediaProbeTest(unittest.TestCase):
                 output_path=self.probe_json,
                 library_root=self.library_root,
                 cache_enabled=True,
-                cache_path=self.cache_json,
             )
 
         self.assertEqual(stats, {"items": 2, "files_total": 2, "files_probed": 2, "files_cached": 0, "errors": 0})
         joined = "\n".join(logs.output)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Starting phase", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Movies] (1/2) started", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Folder [Series] (2/2) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Starting phase", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Movies] (1/2) started", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Folder [Series] (2/2) started", joined)
         self.assertIn("Folder [Movies] completed in", joined)
         self.assertIn("1 item / 1 file / 1 probed / 0 cached / 0 errors", joined)
         self.assertIn("Folder [Series] completed in", joined)
-        self.assertIn("[SCAN] [PHASE 1B] [FFPROBE] Summary:", joined)
+        self.assertIn("[SCAN] [PHASE 2] [FFPROBE] Summary:", joined)
         self.assertIn("2 items / 2 files total / 2 probed / 0 cached / 0 errors", joined)
         self.assertIn("Completed in", joined)
 
@@ -1020,6 +953,129 @@ class MediaProbeTest(unittest.TestCase):
         self.assertEqual(item["seasons"][1]["audio_languages"], ["eng"])
         self.assertEqual(item["seasons"][1]["audio_languages_simple"], "VO")
         self.assertEqual(item["seasons"][1]["subtitle_languages"], ["spa"])
+
+
+class MediaProbeCacheRepositoryTest(unittest.TestCase):
+    """Unit tests for media_probe_cache_repository without probe_data JSON."""
+
+    def _make_db(self, db_path: pathlib.Path, media_id: str) -> None:
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        conn = _db.initialize_database(db_path)
+        with conn:
+            conn.execute(
+                "INSERT INTO media(id, media_type, title) VALUES (?, 'movie', 'Film')", (media_id,)
+            )
+        conn.close()
+
+    def _make_probe(self, codec: str = "H.265", audio_lang: list | None = None) -> dict:
+        return {
+            "ok": True,
+            "technical": {
+                "width": 1920, "height": 1080, "resolution": "1080p",
+                "codec": codec, "hdr": False, "hdr_type": None,
+                "runtime_min": 90, "runtime_min_avg": 90, "video_bitrate": 4000000,
+                "audio_codec": "DTS-HD MA", "audio_codec_raw": "dts",
+                "audio_channels": "5.1",
+                "audio_languages": audio_lang or ["fr"],
+                "subtitle_languages": ["fr", "en"],
+                "audio_bitrate": 1200000, "audio_languages_simple": "VF",
+                "framerate": 23.976, "container": "MKV",
+                "dolby_vision": False, "size_b": 5368709120,
+            },
+        }
+
+    def test_upsert_and_get_round_trip(self):
+        """upsert() + get() returns the same probe dict (no JSON blob involved)."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:test"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"fake content")
+            self._make_db(db_path, media_id)
+            probe_in = self._make_probe()
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNotNone(probe_out)
+            self.assertIs(probe_out["ok"], True)
+            tech = probe_out["technical"]
+            self.assertEqual(tech["width"], 1920)
+            self.assertEqual(tech["codec"], "H.265")
+            self.assertEqual(tech["audio_languages"], ["fr"])
+            self.assertEqual(tech["subtitle_languages"], ["fr", "en"])
+            self.assertIs(tech["hdr"], False)
+            self.assertIs(tech["dolby_vision"], False)
+            self.assertEqual(tech["framerate"], 23.976)
+            self.assertEqual(tech["container"], "MKV")
+
+    def test_cache_miss_when_size_changes(self):
+        """get() returns None after file size changes (cache invalidation)."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:inval"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"v1")
+            self._make_db(db_path, media_id)
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, self._make_probe())
+            repo.close()
+            movie_file.write_bytes(b"v2 different size")
+            repo = mpcr.open_cache(db_path=db_path)
+            result = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNone(result)
+
+    def test_no_probe_data_column_in_schema(self):
+        """After v21, media_probe_cache must not have a probe_data column."""
+        import db as _db
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _db.initialize_database(pathlib.Path(tmp) / "mml.db")
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(media_probe_cache)").fetchall()}
+            conn.close()
+            self.assertNotIn("probe_data", cols)
+            self.assertIn("probe_ok", cols)
+            self.assertIn("audio_languages_json", cols)
+
+    def test_audio_languages_json_stored_as_list(self):
+        """audio_languages must be stored as a JSON array and retrieved as a list."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:lang"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"content")
+            self._make_db(db_path, media_id)
+            probe_in = self._make_probe(audio_lang=["fr", "en", "de"])
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertEqual(probe_out["technical"]["audio_languages"], ["fr", "en", "de"])
+
+    def test_ok_false_probe_stored_and_retrieved(self):
+        """Probes with ok=False must also be cached correctly."""
+        import db as _db
+        from repositories import media_probe_cache_repository as mpcr
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            media_id = "m:err"
+            movie_file = pathlib.Path(tmp) / "movie.mkv"
+            movie_file.write_bytes(b"bad")
+            self._make_db(db_path, media_id)
+            probe_in = {"ok": False, "technical": {}}
+            repo = mpcr.open_cache(db_path=db_path)
+            repo.upsert(media_id, movie_file.name, movie_file, probe_in)
+            probe_out = repo.get(media_id, movie_file.name, movie_file)
+            repo.close()
+            self.assertIsNotNone(probe_out)
+            self.assertIs(probe_out["ok"], False)
 
 
 if __name__ == "__main__":

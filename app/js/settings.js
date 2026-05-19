@@ -37,7 +37,6 @@
   let _onbJsr = { enabled: false, url: '', key: '' };
   let _onbFeatures = {
     synopsisEnabled: false,
-    inventoryEnabled: false,
     mediaProbeEnabled: false,
     scoreEnabled: false,
     recommendationsEnabled: false,
@@ -117,21 +116,31 @@
     cur[last] = value;
   }
 
+  function _tRaw(key) {
+    const keys = key.split('.');
+    let val = keys.reduce((obj, k) => obj?.[k], TRANSLATIONS);
+    if (typeof val !== 'string') {
+      const labelVal = [...keys, 'label'].reduce((obj, k) => obj?.[k], TRANSLATIONS);
+      if (typeof labelVal === 'string') val = labelVal;
+    }
+    return typeof val === 'string' ? val : null;
+  }
+
   function _tMaybe(key) {
-    const value = t(key);
-    return value === key ? null : value;
+    return _tRaw(key);
   }
 
   function _scoreT(key, vars = {}, fallbackFr = '', fallbackEn = '') {
-    let translated = t(key, vars);
-    if (translated === key) {
+    let translated = _tRaw(key);
+    if (translated === null) {
       translated = CURRENT_LANG === 'fr'
         ? (fallbackFr || fallbackEn || key)
         : (fallbackEn || fallbackFr || key);
+    }
+    if (translated && vars && Object.keys(vars).length) {
       Object.entries(vars).forEach(([k, v]) => {
         translated = translated.split(`{${k}}`).join(String(v));
       });
-      console.warn('Using score i18n fallback for key:', key);
     }
     return translated;
   }
@@ -886,7 +895,6 @@
     _rw('cfgScanCron',  sys.scan_cron  || '0 3 * * *');
     _rw('cfgLogLevel',  sys.log_level  || 'INFO');
     _rw('cfgLanguage',  sys.language   || 'fr');
-    _rw('cfgInventoryEnabled', sys.inventory_enabled === true);
     _rw('cfgMediaProbeEnabled', appConfig.media_probe?.enabled === true);
     _rw('cfgAuthEnabled', _isAuthEnabled());
     _rw('cfgAuthPassword', '');
@@ -974,19 +982,17 @@
     const cron = get('cfgScanCron');
     const logLevel = get('cfgLogLevel');
     const lang = get('cfgLanguage');
-    const inventoryEnabled = get('cfgInventoryEnabled');
     const mediaProbeEnabled = get('cfgMediaProbeEnabled');
     const authEnabled = get('cfgAuthEnabled');
     const authPasswordRaw = get('cfgAuthPassword');
     const authConfirmRaw = get('cfgAuthConfirm');
     const enableScoreCfg = get('cfgEnableScore');
     const recommendationsEnabled = get('cfgEnableRecommendations');
-    if (cron !== null || logLevel !== null || lang !== null || inventoryEnabled !== null || enableScoreCfg !== null) {
+    if (cron !== null || logLevel !== null || lang !== null || enableScoreCfg !== null) {
       partial.system = partial.system || {};
       if (cron !== null)     partial.system.scan_cron = cron;
       if (logLevel !== null) partial.system.log_level = logLevel;
       if (lang !== null)     partial.system.language  = lang;
-      if (inventoryEnabled !== null) partial.system.inventory_enabled = inventoryEnabled;
       if (enableScoreCfg !== null) {
         partial.score = partial.score || {};
         partial.score.enabled = enableScoreCfg;
@@ -1648,7 +1654,6 @@
     };
     _onbFeatures = {
       synopsisEnabled: appConfig?.ui?.synopsis_on_hover === true,
-      inventoryEnabled: appConfig?.system?.inventory_enabled === true,
       mediaProbeEnabled: appConfig?.media_probe?.enabled === true,
       scoreEnabled: !!(appConfig?.score?.enabled),
       recommendationsEnabled: !!(appConfig?.score?.enabled && appConfig?.recommendations?.enabled === true),
@@ -1695,8 +1700,8 @@
     if (prev) prev.style.display = flow.findIndex(step => step.id === current.id) > 0 ? '' : 'none';
     if (next) {
       next.style.display = '';
-      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.onclick = onbLaunchScan; }
-      else                { next.textContent = t('nav.next');        next.onclick = onbNext; }
+      if (current.id === 'scan') { next.textContent = t('nav.launch_scan'); next.dataset.onbAction = 'launch'; }
+      else                { next.textContent = t('nav.next');        next.dataset.onbAction = 'next'; }
       // Step 1: disable next until at least 1 folder has movie/tv type
       // Step 2: disable next until Seerr test passes
       if (current.id === 'folders') { next.disabled = true; _onbValidateStep1(); }
@@ -1870,10 +1875,6 @@
         + '<label class="toggle-switch"><input type="checkbox" id="onbSynopsisEnabled"'+(_onbFeatures.synopsisEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
       + '<div class="settings-row">'
-        + '<label class="settings-label">'+t('onboarding.features_inventory_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_inventory_desc')+'</span></label>'
-        + '<label class="toggle-switch"><input type="checkbox" id="onbInventoryEnabled"'+(_onbFeatures.inventoryEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
-      + '</div>'
-      + '<div class="settings-row">'
         + '<label class="settings-label">'+t('onboarding.features_ffprobe_label')+'<br><span style="font-size:12px;color:var(--muted)">'+t('onboarding.features_ffprobe_desc')+'</span></label>'
         + '<label class="toggle-switch"><input type="checkbox" id="onbMediaProbeEnabled"'+(_onbFeatures.mediaProbeEnabled ? ' checked' : '')+'/><span class="toggle-switch-slider"></span></label>'
       + '</div>'
@@ -1929,7 +1930,6 @@
       + '<div>🎞️ FFprobe : '+(_onbFeatures.mediaProbeEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>💡 Recommandations : '+(_onbFeatures.recommendationsEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
-      + '<div>🗂️ Inventaire : '+(_onbFeatures.inventoryEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
       + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
       + '</div>';
   }
@@ -1940,7 +1940,6 @@
     const recommendationsEnabled = scoreEnabled && recommendationsInput?.checked === true;
     _onbFeatures = {
       synopsisEnabled: document.getElementById('onbSynopsisEnabled')?.checked === true,
-      inventoryEnabled: document.getElementById('onbInventoryEnabled')?.checked === true,
       mediaProbeEnabled: document.getElementById('onbMediaProbeEnabled')?.checked === true,
       scoreEnabled,
       recommendationsEnabled,
@@ -2097,7 +2096,7 @@
       ...(!_onbAuth.saved ? { auth: (_onbAuth.enabled
         ? { enabled: true, password: _onbAuth.password, password_confirm: _onbAuth.confirm }
         : { enabled: false }) } : {}),
-      system: { language: _onbLang, inventory_enabled: _onbFeatures.inventoryEnabled, media_probe_enabled: _onbFeatures.mediaProbeEnabled },
+      system: { language: _onbLang, media_probe_enabled: _onbFeatures.mediaProbeEnabled },
       ui: { theme: _onbTheme, synopsis_on_hover: _onbFeatures.synopsisEnabled },
     };
 

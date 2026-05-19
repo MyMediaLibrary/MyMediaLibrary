@@ -20,7 +20,6 @@ class RuntimePathsTest(unittest.TestCase):
         self.assertEqual(paths.LIBRARY_JSON, pathlib.Path("/data/library.json"))
         self.assertEqual(paths.LIBRARY_PROBE_JSON, pathlib.Path("/data/library_probe.json"))
         self.assertEqual(paths.MEDIA_PROBE_CACHE_JSON, pathlib.Path("/data/media_probe_cache.json"))
-        self.assertEqual(paths.INVENTORY_JSON, pathlib.Path("/data/library_inventory.json"))
         self.assertEqual(paths.RECOMMENDATIONS_JSON, pathlib.Path("/data/recommendations.json"))
         self.assertEqual(paths.SCANNER_LOG, pathlib.Path("/data/scanner.log"))
         self.assertEqual(paths.SQLITE_DB, pathlib.Path("/data/mymedialibrary.db"))
@@ -48,14 +47,23 @@ class RuntimePathsTest(unittest.TestCase):
         })
         self.assertEqual(paths.LEGACY_MIGRATIONS[0].source, pathlib.Path("/conf/.secrets"))
 
-    def test_fresh_install_defaults_are_bundled_under_app_defaults_conf(self):
-        self.assertEqual(paths.DEFAULT_CONF_DIR, pathlib.Path("/app/defaults/conf"))
-        defaults = {item.path: item.default_path for item in paths.CONFIG_FILES}
-        self.assertEqual(defaults[pathlib.Path("/data/config.json")], pathlib.Path("/app/defaults/conf/config.json"))
-        self.assertEqual(defaults[pathlib.Path("/data/providers_mapping.json")], pathlib.Path("/app/defaults/conf/providers_mapping.json"))
-        self.assertEqual(defaults[pathlib.Path("/data/providers_logo.json")], pathlib.Path("/app/defaults/conf/providers_logo.json"))
-        self.assertEqual(defaults[pathlib.Path("/data/recommendations_rules.json")], pathlib.Path("/app/defaults/conf/recommendations_rules.json"))
-        self.assertIsNone(defaults[pathlib.Path("/data/.secrets")])
+    def test_fresh_install_defaults_are_python_constants(self):
+        from defaults import (
+            DEFAULT_CONFIG, DEFAULT_PROVIDERS, DEFAULT_PROVIDER_LOGOS,
+            DEFAULT_RECOMMENDATION_RULES, DEFAULT_AUDIO_CODEC_MAPPING,
+            DEFAULT_GENRE_MAPPING, DEFAULT_AUDIO_LANGUAGES,
+        )
+        self.assertIsInstance(DEFAULT_CONFIG, dict)
+        self.assertIn("system", DEFAULT_CONFIG)
+        self.assertGreater(len(DEFAULT_PROVIDERS), 100)
+        self.assertGreater(len(DEFAULT_PROVIDER_LOGOS), 0)
+        self.assertEqual(len(DEFAULT_RECOMMENDATION_RULES), 16)
+        self.assertIsInstance(DEFAULT_AUDIO_CODEC_MAPPING, dict)
+        self.assertIsInstance(DEFAULT_GENRE_MAPPING, dict)
+        self.assertIsInstance(DEFAULT_AUDIO_LANGUAGES, dict)
+        # CONFIG_FILES entries no longer carry a default_path (defaults are Python constants)
+        for item in paths.CONFIG_FILES:
+            self.assertIsNone(item.default_path)
 
 
 if __name__ == "__main__":

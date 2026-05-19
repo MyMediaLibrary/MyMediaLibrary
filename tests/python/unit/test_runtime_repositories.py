@@ -13,8 +13,6 @@ import db  # noqa: E402
 import scanner  # noqa: E402
 from repositories import (  # noqa: E402
     config_repository,
-    ffprobe_repository,
-    inventory_repository,
     media_repository,
     providers_repository,
     recommendations_repository,
@@ -37,12 +35,19 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                     ("system", '{"log_level":"DB","scan_cron":"0 3 * * *"}'),
                 )
                 conn.execute(
-                    "INSERT INTO score_settings(id, enabled, configuration_json) VALUES (?, ?, ?)",
-                    ("default", 1, '{"weights":{"video":40}}'),
+                    "INSERT INTO app_config(key, value_json) VALUES ('score.enabled', 'true')",
                 )
                 conn.execute(
-                    "INSERT INTO scan_settings(id, value_json) VALUES (?, ?)",
-                    ("media_probe", '{"enabled":true,"workers":2}'),
+                    "INSERT INTO score_rules(category, group_key, value_key, score_value) VALUES (?, ?, ?, ?)",
+                    ("weights", "weight", "video", 40),
+                )
+                conn.execute(
+                    "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("media_probe.enabled", "true"),
+                )
+                conn.execute(
+                    "INSERT INTO app_config(key, value_json) VALUES (?, ?)",
+                    ("media_probe.workers", "2"),
                 )
                 conn.commit()
             finally:
@@ -78,13 +83,19 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 app_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
-                score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-                scan_count = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
+                score_rules_count = conn.execute("SELECT COUNT(*) FROM score_rules").fetchone()[0]
+                score_enabled = conn.execute(
+                    "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+                ).fetchone()
+                probe_count = conn.execute(
+                    "SELECT COUNT(*) FROM app_config WHERE key LIKE 'media_probe.%'"
+                ).fetchone()[0]
             finally:
                 conn.close()
             self.assertGreater(app_count, 0)
-            self.assertEqual(score_count, 1)
-            self.assertEqual(scan_count, 1)
+            self.assertGreater(score_rules_count, 0)
+            self.assertIsNotNone(score_enabled)
+            self.assertGreater(probe_count, 0)
 
     def test_config_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -120,6 +131,66 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(cfg["score"], {"enabled": True})
             self.assertEqual(cfg["media_probe"], {"enabled": True, "workers": 2})
 
+    def test_save_config_full_writes_only_flat_keys_no_blobs(self):
+        """save_config must write group.*  flat keys and never recreate group-name blobs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            payload = {
+                "system": {"scan_cron": "0 4 * * *", "log_level": "DEBUG",
+                           "needs_onboarding": False, "inventory_enabled": False},
+                "seerr": {"enabled": True, "url": "http://seerr.local"},
+                "ui": {"theme": "light", "default_view": "list", "default_sort": "title-asc",
+                       "synopsis_on_hover": True, "accent_color": "#000"},
+                "recommendations": {"enabled": True},
+                "media_probe": {"enabled": True, "mode": "compare", "workers": 2, "cache_enabled": False},
+                "folders": ["/movies"],
+                "enable_movies": True,
+            }
+
+            config_repository.save_config(payload, json_path, db_path)
+
+            conn = db.initialize_database(db_path)
+            try:
+                all_keys = {r["key"] for r in conn.execute("SELECT key FROM app_config").fetchall()}
+            finally:
+                conn.close()
+            for group in ("system", "seerr", "ui", "recommendations", "media_probe"):
+                self.assertNotIn(group, all_keys, f"blob key '{group}' must not exist after save_config")
+            for expected in ("system.scan_cron", "system.log_level", "seerr.enabled",
+                             "ui.theme", "recommendations.enabled", "media_probe.enabled"):
+                self.assertIn(expected, all_keys, f"flat key '{expected}' missing after save_config")
+
+    def test_save_config_partial_preserves_other_groups(self):
+        """save_config with a partial payload must not wipe flat keys of absent groups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            db_path = root / "data" / "mml.db"
+            json_path = root / "conf" / "config.json"
+            # Seed a full config first
+            config_repository.save_config({
+                "folders": [], "enable_movies": True,
+                "system": {"scan_cron": "0 3 * * *", "log_level": "INFO",
+                           "needs_onboarding": True, "inventory_enabled": False},
+                "seerr": {"enabled": False, "url": ""},
+                "ui": {"theme": "dark", "default_view": "grid", "default_sort": "title-asc",
+                       "synopsis_on_hover": False, "accent_color": "#7c6aff"},
+                "recommendations": {"enabled": False},
+                "media_probe": {"enabled": False, "mode": "compare", "workers": 4, "cache_enabled": True},
+            }, json_path, db_path)
+
+            # Partial save: only scalar keys — no groups
+            config_repository.save_config({"folders": ["/movies"], "enable_movies": False},
+                                          json_path, db_path)
+
+            cfg = config_repository.load_config(json_path, db_path)
+            self.assertIsNotNone(cfg.get("system"), "system group must survive partial save")
+            self.assertIsNotNone(cfg.get("seerr"), "seerr group must survive partial save")
+            self.assertIsNotNone(cfg.get("ui"), "ui group must survive partial save")
+            self.assertIsNotNone(cfg.get("recommendations"), "recommendations group must survive partial save")
+            self.assertIsNotNone(cfg.get("media_probe"), "media_probe group must survive partial save")
+
     def test_config_sanitizes_sensitive_keys_recursively(self):
         payload = {
             "api_key": "top",
@@ -152,316 +223,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual(enabled["password_hash"], "pbkdf2_sha256$260000$salt$digest")
             self.assertEqual(disabled["auth_enabled"], False)
             self.assertIsNone(disabled["password_hash"])
-
-    def test_ffprobe_cache_hit_and_miss_by_file_signature(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            media_file = root / "library" / "movie.mkv"
-            media_file.parent.mkdir()
-            media_file.write_bytes(b"movie")
-            stat = media_file.stat()
-            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                repo.upsert_probe(
-                    media_file,
-                    size=stat.st_size,
-                    mtime=stat.st_mtime,
-                    probe={"ok": True, "technical": {"resolution": "1080p"}},
-                )
-                hit = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
-                miss = repo.get(media_file, size=stat.st_size + 1, mtime=stat.st_mtime)
-            finally:
-                repo.close()
-
-            self.assertEqual(hit, {"ok": True, "technical": {"resolution": "1080p"}})
-            self.assertIsNone(miss)
-
-    def test_ffprobe_cache_upsert_error(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            media_file = root / "library" / "broken.mkv"
-            media_file.parent.mkdir()
-            media_file.write_bytes(b"broken")
-            stat = media_file.stat()
-            repo = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                repo.upsert_error(media_file, size=stat.st_size, mtime=stat.st_mtime, error="broken file")
-                cached = repo.get(media_file, size=stat.st_size, mtime=stat.st_mtime)
-            finally:
-                repo.close()
-
-            self.assertEqual(cached, {"ok": False, "error": "broken file"})
-
-    def test_ffprobe_cache_imports_json_once_and_is_idempotent(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            cache_json = root / "data" / "media_probe_cache.json"
-            cache_json.parent.mkdir()
-            cache_json.write_text(
-                json.dumps({
-                    "version": 1,
-                    "files": {
-                        "/library/movie.mkv": {
-                            "path": "/library/movie.mkv",
-                            "size_b": 123,
-                            "mtime": 42.5,
-                            "probe": {"ok": True, "technical": {"codec": "H.265"}},
-                        }
-                    },
-                }),
-                encoding="utf-8",
-            )
-
-            first = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            first.close()
-            second = ffprobe_repository.open_cache(json_path=cache_json, db_path=db_path)
-            try:
-                cached = second.get("/library/movie.mkv", size=123, mtime=42.5)
-                count = second.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            finally:
-                second.close()
-
-            self.assertEqual(cached, {"ok": True, "technical": {"codec": "H.265"}})
-            self.assertEqual(count, 1)
-
-    def test_ffprobe_cache_tolerates_absent_and_invalid_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            missing_json = root / "data" / "missing.json"
-            invalid_json = root / "data" / "invalid.json"
-            invalid_json.parent.mkdir()
-            invalid_json.write_text("{ invalid", encoding="utf-8")
-
-            missing_repo = ffprobe_repository.open_cache(json_path=missing_json, db_path=db_path)
-            missing_count = missing_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            missing_repo.close()
-            invalid_repo = ffprobe_repository.open_cache(json_path=invalid_json, db_path=root / "data" / "other.db")
-            invalid_count = invalid_repo.conn.execute("SELECT COUNT(*) FROM ffprobe_cache").fetchone()[0]
-            invalid_repo.close()
-
-            self.assertEqual(missing_count, 0)
-            self.assertEqual(invalid_count, 0)
-
-    def test_ffprobe_cache_requires_sqlite(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            blocked_parent = root / "not-a-directory"
-            blocked_parent.write_text("blocked", encoding="utf-8")
-
-            with self.assertRaises(Exception):
-                ffprobe_repository.open_cache(json_path=root / "cache.json", db_path=blocked_parent / "db.sqlite")
-
-    def test_inventory_loads_sqlite_before_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            json_path = root / "data" / "library_inventory.json"
-            json_path.parent.mkdir()
-            json_path.write_text(
-                json.dumps({"version": 1, "items": [{"id": "movie:Films:Json", "title": "JSON"}]}),
-                encoding="utf-8",
-            )
-            conn = db.initialize_database(db_path)
-            try:
-                inventory_repository.upsert_item(
-                    conn,
-                    {
-                        "id": "movie:Films:Db",
-                        "media_type": "movie",
-                        "title": "DB",
-                        "category": "Films",
-                        "status": "present",
-                    },
-                )
-                conn.commit()
-            finally:
-                conn.close()
-
-            document = inventory_repository.load_inventory(json_path, db_path)
-
-            self.assertEqual([item["title"] for item in document["items"]], ["DB"])
-
-    def test_inventory_imports_json_once_and_is_idempotent(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            json_path = root / "data" / "library_inventory.json"
-            json_path.parent.mkdir()
-            json_path.write_text(
-                json.dumps({
-                    "version": 1,
-                    "items": [
-                        {
-                            "id": "movie:Films:Inception (2010)",
-                            "media_type": "movie",
-                            "title": "Inception",
-                            "category": "Films",
-                            "root_folder_path": "Films/Inception (2010)",
-                            "status": "present",
-                            "first_seen_at": "2026-04-01T00:00:00Z",
-                            "last_seen_at": "2026-04-02T00:00:00Z",
-                            "last_checked_at": "2026-04-02T00:00:00Z",
-                        }
-                    ],
-                }),
-                encoding="utf-8",
-            )
-
-            first = inventory_repository.load_inventory(json_path, db_path)
-            second = inventory_repository.load_inventory(json_path, db_path)
-            conn = db.initialize_database(db_path)
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM inventory_items").fetchone()[0]
-            finally:
-                conn.close()
-
-            self.assertEqual(first, second)
-            self.assertEqual(count, 1)
-            self.assertEqual(first["items"][0]["title"], "Inception")
-
-    def test_inventory_tolerates_absent_and_invalid_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            missing_json = root / "data" / "missing_inventory.json"
-            invalid_json = root / "data" / "invalid_inventory.json"
-            invalid_json.parent.mkdir()
-            invalid_json.write_text("{ invalid", encoding="utf-8")
-
-            missing = inventory_repository.load_inventory(missing_json, root / "data" / "missing.db")
-            invalid = inventory_repository.load_inventory(invalid_json, root / "data" / "invalid.db")
-
-            self.assertIsNone(missing)
-            self.assertIsNone(invalid)
-
-    def test_inventory_requires_sqlite(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            blocked_parent = root / "not-a-directory"
-            blocked_parent.write_text("blocked", encoding="utf-8")
-            json_path = root / "library_inventory.json"
-
-            with self.assertRaises(Exception):
-                inventory_repository.load_inventory(json_path, blocked_parent / "mml.db")
-
-    def test_inventory_save_updates_sqlite_and_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = pathlib.Path(tmpdir)
-            db_path = root / "data" / "mml.db"
-            json_path = root / "data" / "library_inventory.json"
-            document = {
-                "version": 1,
-                "generated_at": "2026-04-02T00:00:00Z",
-                "items": [
-                    {
-                        "id": "movie:Films:Inception (2010)",
-                        "media_type": "movie",
-                        "title": "Inception",
-                        "category": "Films",
-                        "root_folder_path": "Films/Inception (2010)",
-                        "status": "present",
-                        "first_seen_at": "2026-04-01T00:00:00Z",
-                        "last_seen_at": "2026-04-02T00:00:00Z",
-                        "last_checked_at": "2026-04-02T00:00:00Z",
-                    }
-                ],
-            }
-
-            inventory_repository.save_inventory(document, json_path, db_path)
-
-            self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["generated_at"], document["generated_at"])
-            conn = db.initialize_database(db_path)
-            try:
-                row = conn.execute(
-                    "SELECT inventory_key, title, status, path FROM inventory_items"
-                ).fetchone()
-            finally:
-                conn.close()
-            self.assertEqual((row["inventory_key"], row["title"], row["status"], row["path"]), (
-                "movie:Films:Inception (2010)",
-                "Inception",
-                "present",
-                "Films/Inception (2010)",
-            ))
-
-    def test_inventory_upsert_present_preserves_first_seen_and_updates_seen_dates(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
-            conn = db.initialize_database(db_path)
-            try:
-                inventory_repository.upsert_item(
-                    conn,
-                    {
-                        "id": "movie:Films:Inception (2010)",
-                        "title": "Inception",
-                        "status": "present",
-                        "first_seen_at": "2026-04-01T00:00:00Z",
-                        "last_seen_at": "2026-04-01T00:00:00Z",
-                        "last_checked_at": "2026-04-01T00:00:00Z",
-                    },
-                )
-                inventory_repository.upsert_item(
-                    conn,
-                    {
-                        "id": "movie:Films:Inception (2010)",
-                        "title": "Inception",
-                        "status": "present",
-                        "first_seen_at": "2026-05-01T00:00:00Z",
-                        "last_seen_at": "2026-05-01T00:00:00Z",
-                        "last_checked_at": "2026-05-01T00:00:00Z",
-                    },
-                )
-                row = conn.execute(
-                    "SELECT first_seen_at, last_seen_at, last_checked_at, data_json FROM inventory_items"
-                ).fetchone()
-            finally:
-                conn.close()
-
-            data = json.loads(row["data_json"])
-            self.assertEqual(row["first_seen_at"], "2026-04-01T00:00:00Z")
-            self.assertEqual(data["first_seen_at"], "2026-04-01T00:00:00Z")
-            self.assertEqual(row["last_seen_at"], "2026-05-01T00:00:00Z")
-            self.assertEqual(row["last_checked_at"], "2026-05-01T00:00:00Z")
-
-    def test_inventory_mark_missing_preserves_history(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = pathlib.Path(tmpdir) / "data" / "mml.db"
-            conn = db.initialize_database(db_path)
-            try:
-                inventory_repository.mark_present(
-                    conn,
-                    "movie:Films:Inception (2010)",
-                    seen_at="2026-04-01T00:00:00Z",
-                    data={"title": "Inception", "category": "Films"},
-                )
-                inventory_repository.mark_missing(
-                    conn,
-                    "movie:Films:Inception (2010)",
-                    checked_at="2026-05-01T00:00:00Z",
-                )
-                inventory_repository.mark_missing(
-                    conn,
-                    "movie:Films:Inception (2010)",
-                    checked_at="2026-05-02T00:00:00Z",
-                )
-                row = conn.execute(
-                    "SELECT status, first_seen_at, last_seen_at, last_checked_at, missing_since, data_json FROM inventory_items"
-                ).fetchone()
-            finally:
-                conn.close()
-
-            data = json.loads(row["data_json"])
-            self.assertEqual(row["status"], "missing")
-            self.assertEqual(row["first_seen_at"], "2026-04-01T00:00:00Z")
-            self.assertEqual(row["last_seen_at"], "2026-04-01T00:00:00Z")
-            self.assertEqual(row["last_checked_at"], "2026-05-02T00:00:00Z")
-            self.assertEqual(row["missing_since"], "2026-05-01T00:00:00Z")
-            self.assertEqual(data["missing_since"], "2026-05-01T00:00:00Z")
 
     def test_media_library_loads_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -535,7 +296,8 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertIsNone(missing)
             self.assertIsNone(invalid)
 
-    def test_media_library_loads_empty_snapshot_after_json_cleanup(self):
+    def test_media_library_returns_none_when_empty_and_no_json(self):
+        """After replace_library with no items and no JSON file: load_library returns None (no library)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -546,10 +308,9 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             finally:
                 conn.close()
 
+            # No JSON file + empty media table → None (same as fresh install)
             loaded = media_repository.load_library(json_path, db_path)
-
-            self.assertEqual(loaded["items"], [])
-            self.assertEqual(loaded["total_items"], 0)
+            self.assertIsNone(loaded)
 
     def test_media_library_requires_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -593,7 +354,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute(
-                    "SELECT id, media_type, quality_score, resolution, data_json FROM media ORDER BY id"
+                    "SELECT id, media_type, quality_score, resolution, audio_languages_json FROM media ORDER BY id"
                 ).fetchall()
                 seasons = conn.execute("SELECT media_id, season_number, episodes_count, resolution FROM seasons").fetchall()
                 providers = conn.execute("SELECT COUNT(*) FROM media_providers").fetchone()[0]
@@ -605,7 +366,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in rows], [movie["id"], series["id"]])
             self.assertEqual(rows[0]["quality_score"], 91)
             self.assertEqual(rows[0]["resolution"], "1080p")
-            self.assertEqual(json.loads(rows[0]["data_json"])["audio_languages"], ["eng", "fra"])
+            self.assertEqual(json.loads(rows[0]["audio_languages_json"]), ["eng", "fra"])
             self.assertEqual(seasons[0]["media_id"], series["id"])
             self.assertEqual(seasons[0]["episodes_count"], 2)
             self.assertEqual(providers, 1)
@@ -638,30 +399,6 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual([item["id"] for item in loaded["items"]], ["db"])
             self.assertEqual(existing["Films/Db"]["title"], "DB")
 
-    def test_scanner_inventory_load_prefers_repository(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            json_path = pathlib.Path(tmpdir) / "library_inventory.json"
-            json_path.write_text(
-                json.dumps({"version": 1, "items": [{"id": "json", "title": "JSON"}]}),
-                encoding="utf-8",
-            )
-            repo_document = {"version": 1, "items": [{"id": "db", "title": "DB"}]}
-
-            with patch.object(scanner.inventory_repository, "load_inventory", return_value=repo_document):
-                loaded = scanner.load_existing_inventory_document_non_blocking(str(json_path))
-
-            self.assertEqual(loaded, repo_document)
-
-    def test_scanner_inventory_save_uses_repository(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            json_path = pathlib.Path(tmpdir) / "library_inventory.json"
-            document = {"version": 1, "items": [{"id": "db", "title": "DB"}]}
-
-            with patch.object(scanner.inventory_repository, "save_inventory") as save_inventory:
-                scanner.save_inventory_document_non_blocking(document, str(json_path))
-
-            save_inventory.assert_called_once_with(document, str(json_path))
-
     def test_provider_mappings_read_sqlite_before_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
@@ -673,7 +410,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO provider_mappings(raw_name, mapped_name) VALUES (?, ?)",
+                    "INSERT INTO providers(raw_name, mapped_name) VALUES (?, ?)",
                     ("Netflix", "db-value"),
                 )
                 conn.commit()
@@ -684,7 +421,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual(mapping, {"Netflix": "db-value"})
 
-    def test_provider_mappings_import_json_when_sqlite_empty(self):
+    def test_provider_mappings_returns_empty_when_sqlite_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -692,15 +429,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             json_path.parent.mkdir()
             json_path.write_text('{"Netflix":"Netflix","Ignored":null}', encoding="utf-8")
 
+            # No JSON fallback: empty DB → empty result (seed runs at bootstrap, not here)
             mapping = providers_repository.load_provider_mappings(json_path, db_path)
 
-            self.assertEqual(mapping, {"Ignored": None, "Netflix": "Netflix"})
-            conn = db.initialize_database(db_path)
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM provider_mappings").fetchone()[0]
-            finally:
-                conn.close()
-            self.assertEqual(count, 2)
+            self.assertEqual(mapping, {})
 
     def test_provider_mappings_require_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -714,7 +446,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             with self.assertRaises(Exception):
                 providers_repository.load_provider_mappings(json_path, blocked_parent / "mml.db")
 
-    def test_provider_mapping_save_updates_sqlite_and_json(self):
+    def test_provider_mapping_save_updates_sqlite(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -722,11 +454,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             providers_repository.save_provider_mappings({"Netflix": "Netflix", "Raw": None}, json_path, db_path)
 
-            self.assertEqual(json.loads(json_path.read_text(encoding="utf-8")), {"Netflix": "Netflix", "Raw": None})
             conn = db.initialize_database(db_path)
             try:
                 rows = conn.execute(
-                    "SELECT raw_name, mapped_name, is_ignored FROM provider_mappings ORDER BY raw_name"
+                    "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
                 ).fetchall()
             finally:
                 conn.close()
@@ -746,7 +477,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO provider_logos(provider_name, logo_path) VALUES (?, ?)",
+                    "INSERT INTO providers(raw_name, logo_path) VALUES (?, ?)",
                     ("Netflix", "db.webp"),
                 )
                 conn.commit()
@@ -871,7 +602,9 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             conn = db.initialize_database(db_path)
             try:
-                rows = conn.execute("SELECT id, media_id, priority, details_json FROM recommendations").fetchall()
+                rows = conn.execute(
+                    "SELECT id, media_id, priority, message_en FROM recommendations"
+                ).fetchall()
             finally:
                 conn.close()
 
@@ -880,7 +613,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in rows], ["new-rec"])
             self.assertIsNone(rows[0]["media_id"])
             self.assertEqual(rows[0]["priority"], "high")
-            self.assertEqual(json.loads(rows[0]["details_json"])["media_ref"]["id"], "movie:Films:Inception (2010)")
+            self.assertEqual(rows[0]["message_en"], "Low score")
 
     def test_recommendations_upsert_keeps_existing_media_id_when_present(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -949,12 +682,12 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("db-rule", '{"id":"db-rule","enabled":true}', 1),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("db-rule", 1),
                 )
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("disabled-rule", '{"id":"disabled-rule","enabled":false}', 0),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("disabled-rule", 0),
                 )
                 conn.commit()
             finally:
@@ -964,7 +697,7 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual([rule["id"] for rule in rules], ["db-rule"])
 
-    def test_recommendation_rules_import_json_when_sqlite_empty(self):
+    def test_recommendation_rules_returns_empty_when_sqlite_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -975,15 +708,10 @@ class RuntimeRepositoriesTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            # No JSON fallback: empty DB → empty result (seed runs at bootstrap, not here)
             rules = recommendations_repository.load_recommendation_rules(json_path, db_path)
 
-            self.assertEqual([rule["id"] for rule in rules], ["json-rule"])
-            conn = db.initialize_database(db_path)
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
-            finally:
-                conn.close()
-            self.assertEqual(count, 2)
+            self.assertEqual(rules, [])
 
     def test_recommendation_rules_do_not_fallback_when_sqlite_rules_are_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -999,8 +727,8 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 conn.execute(
-                    "INSERT INTO recommendation_rules(rule_key, rule_json, enabled) VALUES (?, ?, ?)",
-                    ("disabled-rule", '{"id":"disabled-rule","enabled":false}', 0),
+                    "INSERT INTO recommendation_rules(rule_key, enabled) VALUES (?, ?)",
+                    ("disabled-rule", 0),
                 )
                 conn.commit()
             finally:
@@ -1010,51 +738,35 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             self.assertEqual(rules, [])
 
-    def test_save_config_preserves_runtime_library_snapshot(self):
-        """Bug fix: save_config must not wipe runtime_library_document from app_config."""
+    def test_save_config_preserves_library_items(self):
+        """save_config must not touch media table rows — library items survive config saves."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
             json_path = root / "data" / "library.json"
             cfg_path = root / "data" / "config.json"
 
-            # Write a library snapshot into app_config
             conn = db.initialize_database(db_path)
             try:
                 media_repository.replace_library(conn, {"items": [{"id": "m1", "title": "Test", "path": "/t", "type": "movie"}]})
-                snapshot_before = conn.execute(
-                    "SELECT value_json FROM app_config WHERE key = 'runtime_library_document'"
-                ).fetchone()
-                self.assertIsNotNone(snapshot_before)
             finally:
                 conn.close()
 
-            # Save user config — must NOT touch runtime_library_document
+            # Save user config — must NOT touch media rows
             config_repository.save_config(
                 {"system": {"log_level": "DEBUG"}, "folders": [], "score": {"enabled": False}},
                 cfg_path,
                 db_path,
             )
 
-            # Snapshot must still be present and unchanged
-            conn = db.initialize_database(db_path)
-            try:
-                snapshot_after = conn.execute(
-                    "SELECT value_json FROM app_config WHERE key = 'runtime_library_document'"
-                ).fetchone()
-                self.assertIsNotNone(snapshot_after)
-                self.assertEqual(snapshot_before["value_json"], snapshot_after["value_json"])
-            finally:
-                conn.close()
-
-            # load_library must still return the snapshot
+            # Library items must still be readable from media table
             loaded = media_repository.load_library(json_path, db_path)
             self.assertIsNotNone(loaded)
             self.assertEqual(len(loaded["items"]), 1)
             self.assertEqual(loaded["items"][0]["id"], "m1")
 
-    def test_reset_clears_runtime_library_snapshot(self):
-        """Bug fix: run_reset must delete runtime_library_document so /api/library returns empty."""
+    def test_reset_clears_library_and_old_items_are_gone(self):
+        """After a full reset (DELETE media), the old items must not be accessible."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             db_path = root / "data" / "mml.db"
@@ -1063,28 +775,20 @@ class RuntimeRepositoriesTest(unittest.TestCase):
             conn = db.initialize_database(db_path)
             try:
                 media_repository.replace_library(conn, {"items": [{"id": "m1", "title": "T", "path": "/t", "type": "movie"}]})
-                # Verify snapshot is present
-                row = conn.execute("SELECT 1 FROM app_config WHERE key = 'runtime_library_document'").fetchone()
-                self.assertIsNotNone(row)
+                # Verify item was added
+                count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+                self.assertEqual(count, 1)
                 # Simulate reset
                 with conn:
                     conn.execute("DELETE FROM media")
                     conn.execute("DELETE FROM recommendations")
-                    conn.execute("DELETE FROM inventory_items")
                     conn.execute("DELETE FROM scan_runs")
-                    media_repository.clear_library_snapshot(conn)
+                count_after = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+                self.assertEqual(count_after, 0)
             finally:
                 conn.close()
 
-            # Snapshot must be gone
-            conn = db.initialize_database(db_path)
-            try:
-                row = conn.execute("SELECT 1 FROM app_config WHERE key = 'runtime_library_document'").fetchone()
-                self.assertIsNone(row)
-            finally:
-                conn.close()
-
-            # load_library must return None (empty library)
+            # load_library must return None (no library source) — old items must be gone
             loaded = media_repository.load_library(json_path, db_path)
             self.assertIsNone(loaded)
 
@@ -1109,6 +813,477 @@ class RuntimeRepositoriesTest(unittest.TestCase):
 
             load.assert_called_once_with(str(rules_path))
             self.assertEqual(rules, [{"id": "db"}])
+
+
+class TargetedSaveTest(unittest.TestCase):
+    """save_score_configuration touches only score tables; save_config sanitizes per-key."""
+
+    def _make_db(self, tmpdir: pathlib.Path) -> pathlib.Path:
+        db_path = tmpdir / "data" / "mml.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.log_level', '\"INFO\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute(
+            "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+            " VALUES ('weights', 'weight', 'video', 50)"
+        )
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies', 'movie', 1)")
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_save_score_configuration_does_not_touch_app_config_scalars(self):
+        """save_score_configuration must not modify system.log_level or other app_config keys."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 30, "audio": 30, "languages": 20, "size": 20}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            log_level = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'system.log_level'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(log_level)
+            self.assertEqual(json.loads(log_level["value_json"]), "INFO")
+
+    def test_save_score_configuration_does_not_touch_folders(self):
+        """save_score_configuration must not truncate or modify the folders table."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 40, "audio": 20, "languages": 20, "size": 20}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            folders = conn.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
+            conn.close()
+            self.assertEqual(folders, 1)
+
+    def test_save_score_configuration_updates_score_enabled(self):
+        """save_score_configuration must update score.enabled in app_config."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(None, score_enabled=False, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertIs(json.loads(row["value_json"]), False)
+
+    def test_save_score_configuration_updates_score_rules(self):
+        """save_score_configuration must overwrite score_rules with new weights."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            config_repository.save_score_configuration(
+                {"weights": {"video": 10, "audio": 10, "languages": 10, "size": 70}},
+                score_enabled=True,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["score_value"], 10)
+
+    def test_save_config_does_not_write_apikey_to_db(self):
+        """save_config must silently drop sensitive subkeys (api_key, token, etc.)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            json_path = pathlib.Path(tmp) / "config.json"
+            config_repository.save_config(
+                {"seerr": {"enabled": True, "url": "https://example.com", "apikey": "TOP_SECRET"}},
+                json_path,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT value_json FROM app_config WHERE key = 'seerr.apikey'"
+            ).fetchone()
+            conn.close()
+            self.assertIsNone(row)
+
+    def test_save_config_never_writes_apikey_to_db(self):
+        """save_config must never persist sensitive subkeys — DB stays clean after write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._make_db(pathlib.Path(tmp))
+            json_path = pathlib.Path(tmp) / "config.json"
+            config_repository.save_config(
+                {"seerr": {"enabled": True, "url": "https://seerr.test", "apikey": "SHOULD_NOT_PERSIST"}},
+                json_path,
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            apikey_row = conn.execute(
+                "SELECT 1 FROM app_config WHERE key = 'seerr.apikey'"
+            ).fetchone()
+            seerr_group = conn.execute(
+                "SELECT key, value_json FROM app_config WHERE key LIKE 'seerr.%'"
+            ).fetchall()
+            conn.close()
+            self.assertIsNone(apikey_row, "seerr.apikey must not be written to DB")
+            # seerr.enabled and seerr.url should be present; apikey must be absent
+            seerr_keys = {r["key"] for r in seerr_group}
+            self.assertIn("seerr.enabled", seerr_keys)
+            self.assertNotIn("seerr.apikey", seerr_keys)
+
+
+class LoadScoreConfigOnlyTest(unittest.TestCase):
+    """load_score_config_only() reads only score tables — no other tables touched."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.log_level', '\"DEBUG\"')")
+        conn.execute("INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value) VALUES ('weights','weight','video',42)")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def test_returns_score_and_score_configuration_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_score_config_only(db_path)
+            self.assertIn("score", result)
+            self.assertIn("score_configuration", result)
+            self.assertIs(result["score"]["enabled"], True)
+
+    def test_does_not_return_system_or_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_score_config_only(db_path)
+            self.assertNotIn("system", result)
+            self.assertNotIn("folders", result)
+            self.assertNotIn("providers_visible", result)
+            self.assertNotIn("seerr", result)
+
+    def test_score_enabled_false_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = db.initialize_database(db_path)
+            conn.commit()
+            conn.close()
+            result = config_repository.load_score_config_only(db_path)
+            self.assertIs(result["score"]["enabled"], False)
+
+
+class SaveConfigPatchTest(unittest.TestCase):
+    """save_config_patch() writes only the payload keys — other tables untouched."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('ui.theme', '\"light\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('ui.default_view', '\"grid\"')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('system.scan_cron', '\"0 3 * * *\"')")
+        conn.execute("INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value) VALUES ('weights','weight','video',50)")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def _read_app_config(self, db_path: pathlib.Path) -> dict:
+        conn = db.initialize_database(db_path)
+        rows = conn.execute("SELECT key, value_json FROM app_config").fetchall()
+        conn.close()
+        return {r["key"]: json.loads(r["value_json"]) for r in rows}
+
+    def test_patch_ui_theme_only_updates_that_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            written = config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            cfg = self._read_app_config(db_path)
+            self.assertEqual(cfg["ui.theme"], "dark")
+            self.assertEqual(cfg["ui.default_view"], "grid")   # untouched
+            self.assertEqual(cfg["system.scan_cron"], "0 3 * * *")  # untouched
+            self.assertIn("ui.theme", written)
+            self.assertNotIn("ui.default_view", written)
+
+    def test_patch_does_not_touch_score_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            conn.close()
+            self.assertEqual(row["score_value"], 50)
+
+    def test_patch_does_not_touch_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch({"ui": {"theme": "dark"}}, db_path=db_path)
+            conn = db.initialize_database(db_path)
+            count = conn.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 1)
+
+    def test_patch_score_configuration_updates_score_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch(
+                {"score_configuration": {"weights": {"video": 10, "audio": 10, "languages": 10, "size": 70}}},
+                db_path=db_path,
+            )
+            conn = db.initialize_database(db_path)
+            row = conn.execute(
+                "SELECT score_value FROM score_rules WHERE category='weights' AND value_key='video'"
+            ).fetchone()
+            ui = conn.execute("SELECT value_json FROM app_config WHERE key='ui.theme'").fetchone()
+            conn.close()
+            self.assertEqual(row["score_value"], 10)
+            self.assertEqual(json.loads(ui["value_json"]), "light")   # untouched
+
+    def test_patch_drops_sensitive_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            config_repository.save_config_patch(
+                {"seerr": {"enabled": True, "url": "https://seerr.test", "apikey": "SECRET"}},
+                db_path=db_path,
+            )
+            cfg = self._read_app_config(db_path)
+            self.assertNotIn("seerr.apikey", cfg)
+            self.assertIn("seerr.enabled", cfg)
+
+    def test_patch_returns_written_flat_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            written = config_repository.save_config_patch(
+                {"ui": {"theme": "dark"}, "system": {"scan_cron": "0 4 * * *"}},
+                db_path=db_path,
+            )
+            self.assertIn("ui.theme", written)
+            self.assertIn("system.scan_cron", written)
+            self.assertNotIn("ui.default_view", written)
+
+
+class LoadPhaseAffectingConfigTest(unittest.TestCase):
+    """load_phase_affecting_config() reads only requested phase-affecting groups."""
+
+    def _make_db(self, db_path: pathlib.Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.initialize_database(db_path)
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('score.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('recommendations.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('media_probe.enabled', 'false')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('seerr.enabled', 'true')")
+        conn.execute("INSERT OR IGNORE INTO app_config(key, value_json) VALUES ('seerr.url', '\"https://seerr.test\"')")
+        conn.execute("INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES ('/movies','movie',1)")
+        conn.commit()
+        conn.close()
+
+    def test_loads_only_requested_groups(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"score"}), db_path=db_path
+            )
+            self.assertIn("score", result)
+            self.assertNotIn("folders", result)
+            self.assertNotIn("seerr", result)
+            self.assertNotIn("media_probe", result)
+
+    def test_empty_phase_keys_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(frozenset(), db_path=db_path)
+            self.assertEqual(result, {})
+
+    def test_recommendations_also_loads_score_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"recommendations"}), db_path=db_path
+            )
+            self.assertIn("recommendations", result)
+            self.assertIn("score", result)  # needed for _is_recommendations_enabled
+
+    def test_loads_folders_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "mml.db"
+            self._make_db(db_path)
+            result = config_repository.load_phase_affecting_config(
+                frozenset({"folders"}), db_path=db_path
+            )
+            self.assertIn("folders", result)
+            self.assertEqual(len(result["folders"]), 1)
+            self.assertEqual(result["folders"][0]["name"], "/movies")
+
+
+class MediaRepositoryPayloadStructureTest(unittest.TestCase):
+    """Verify that reconstructed items contain canonical fields and no legacy duplicates."""
+
+    _REMOVED_DUPLICATES = frozenset({
+        "media_type",      # dup of "type"
+        "overview",        # dup of "plot"
+        "poster_path",     # dup of "poster"
+        "size_total",      # dup of "size_b"
+        "video_codec",     # dup of "codec"
+        "audio_language_group",  # dup of "audio_languages_simple"
+        "first_seen_at",   # dup of "added_at"
+        "quality_score",   # dup of "quality.score"
+    })
+    _SEASON_REMOVED_DUPLICATES = frozenset({
+        "season_number",   # dup of "season"
+        "size_total",      # dup of "size_b"
+        "video_codec",     # dup of "codec"
+        "quality_score",   # dup of "quality.score"
+    })
+    _REQUIRED_CANONICAL = frozenset({
+        "id", "type", "title", "plot", "poster", "size_b", "codec",
+        "audio_languages_simple", "added_at", "is_available",
+    })
+
+    def _make_db_with_item(self) -> pathlib.Path:
+        tmp = tempfile.mkdtemp()
+        db_path = pathlib.Path(tmp) / "mml.db"
+        conn = db.initialize_database(db_path)
+        conn.execute(
+            """
+            INSERT INTO media(id, media_type, title, is_available, size_total, overview,
+                              poster_path, audio_language_group, first_seen_at,
+                              video_codec, quality_score, quality_json, providers_fetched)
+            VALUES (?, ?, ?, 1, 2000000000, ?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                "movie:Films:Test",
+                "movie",
+                "Test Movie",
+                "A test plot.",
+                "/images/poster.jpg",
+                "MULTI",
+                "2025-01-01T00:00:00",
+                "H.265",
+                82.0,
+                '{"score":82,"video":30,"audio":14}',
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO seasons(media_id, season_number, size_total, video_codec, quality_score)
+            VALUES (?, 1, 1000000000, 'H.265', 75.0)
+            """,
+            ("movie:Films:Test",),
+        )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_item_has_no_removed_duplicate_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        self.assertEqual(len(doc["items"]), 1)
+        item = doc["items"][0]
+        for field in self._REMOVED_DUPLICATES:
+            self.assertNotIn(field, item, f"Removed duplicate field '{field}' still present in item")
+
+    def test_item_has_required_canonical_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        item = doc["items"][0]
+        for field in self._REQUIRED_CANONICAL:
+            self.assertIn(field, item, f"Required canonical field '{field}' missing from item")
+        self.assertEqual(item["type"], "movie")
+        self.assertEqual(item["plot"], "A test plot.")
+        self.assertEqual(item["poster"], "/images/poster.jpg")
+        self.assertEqual(item["size_b"], 2000000000)
+        self.assertEqual(item["codec"], "H.265")
+        self.assertEqual(item["audio_languages_simple"], "MULTI")
+        self.assertEqual(item["added_at"], "2025-01-01T00:00:00")
+
+    def test_season_has_no_removed_duplicate_fields(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        item = doc["items"][0]
+        self.assertIn("seasons", item)
+        season = item["seasons"][0]
+        for field in self._SEASON_REMOVED_DUPLICATES:
+            self.assertNotIn(field, season, f"Removed duplicate field '{field}' still present in season")
+        self.assertIn("season", season)
+        self.assertIn("size_b", season)
+        self.assertIn("codec", season)
+
+    def test_season_number_key_resolves_via_canonical_season_key(self):
+        db_path = self._make_db_with_item()
+        conn = db.initialize_database(db_path)
+        try:
+            doc = media_repository.export_library(conn, availability="available")
+        finally:
+            conn.close()
+        season = doc["items"][0]["seasons"][0]
+        self.assertEqual(season["season"], 1)
+        self.assertNotIn("season_number", season)
+
+    def test_batch_loading_no_n_plus_one(self):
+        import sqlite3 as _sqlite3
+
+        class TrackingConnection:
+            def __init__(self, conn):
+                self._conn = conn
+                self.queries: list[str] = []
+
+            def execute(self, sql, params=()):
+                self.queries.append(sql)
+                return self._conn.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        tmp = tempfile.mkdtemp()
+        db_path = pathlib.Path(tmp) / "mml.db"
+        real_conn = db.initialize_database(db_path)
+        media_ids = [f"movie:Films:Film{i}" for i in range(10)]
+        for mid in media_ids:
+            real_conn.execute(
+                "INSERT INTO media(id, media_type, title, is_available, providers_fetched) VALUES (?, 'movie', ?, 1, 0)",
+                (mid, mid.split(":")[-1]),
+            )
+            real_conn.execute(
+                "INSERT INTO seasons(media_id, season_number) VALUES (?, 1)", (mid,)
+            )
+        real_conn.commit()
+
+        tracker = TrackingConnection(real_conn)
+        media_repository.export_library(tracker, availability="available")
+        real_conn.close()
+
+        season_queries = [q for q in tracker.queries if "FROM seasons" in q]
+        provider_queries = [q for q in tracker.queries if "FROM media_providers" in q]
+        self.assertEqual(len(season_queries), 1, f"Expected 1 batch season query, got: {season_queries}")
+        self.assertEqual(len(provider_queries), 1, f"Expected 1 batch provider query, got: {provider_queries}")
 
 
 if __name__ == "__main__":

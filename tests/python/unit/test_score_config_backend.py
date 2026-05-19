@@ -80,6 +80,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
             config_path.parent.mkdir()
             output_path.write_text(json.dumps({
                 "items": [{
+                    "id": "score-m1",
                     "title": "Movie",
                     "type": "movie",
                     "resolution": "1080p",
@@ -88,7 +89,6 @@ class ScoreConfigBackendTest(unittest.TestCase):
                     "audio_languages_simple": "MULTI",
                     "size_b": int(6 * (1024 ** 3)),
                     "quality": {"score": 1},
-                    "custom": "keep",
                 }]
             }), encoding="utf-8")
 
@@ -102,7 +102,9 @@ class ScoreConfigBackendTest(unittest.TestCase):
 
             self.assertEqual(count, 1)
             payload = json.loads(output_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["items"][0]["custom"], "keep")
+            # Verify schema fields are preserved after score recomputation
+            self.assertEqual(payload["items"][0]["id"], "score-m1")
+            self.assertEqual(payload["items"][0]["title"], "Movie")
             self.assertIn("quality", payload["items"][0])
             self.assertGreaterEqual(payload["items"][0]["quality"]["score"], 0)
             self.assertEqual(
@@ -120,6 +122,7 @@ class ScoreConfigBackendTest(unittest.TestCase):
             output_path = pathlib.Path(tmp) / "library.json"
             output_path.write_text(json.dumps({
                 "items": [{
+                    "id": "score-m2",
                     "title": "Movie",
                     "type": "movie",
                     "resolution": "1080p",
@@ -178,7 +181,6 @@ class ScoreConfigBackendTest(unittest.TestCase):
         with patch("scanner.run_quick") as run_quick, \
              patch("scanner.run_enrich") as run_enrich, \
              patch("scanner.run_scoring") as run_scoring, \
-             patch("scanner.run_inventory") as run_inventory, \
              patch("scanner.recompute_scores_only", return_value=0), \
              patch("scanner._scan_lock"), \
              patch("scanner.get_effective_score_config", return_value=({}, scanner.load_score_defaults(), {})):
@@ -187,4 +189,3 @@ class ScoreConfigBackendTest(unittest.TestCase):
         run_quick.assert_not_called()
         run_enrich.assert_not_called()
         run_scoring.assert_not_called()
-        run_inventory.assert_not_called()

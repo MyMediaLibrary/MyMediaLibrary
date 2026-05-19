@@ -13,7 +13,6 @@ Phases:
   1. Filesystem + NFO scan — builds the media library, writes after each folder.
   2. Seerr enrichment — fetches streaming providers, writes after each folder.
   3. Scoring              — computes quality scores, writes after each folder.
-  4. Inventory            — updates SQLite inventory after each folder + final pass.
   5. Recommendations      — replaces generated recommendations in SQLite.
 
 Filters (combinable with any mode):
@@ -63,57 +62,19 @@ except Exception:
         sqlite_db = None  # type: ignore
 
 try:
-    from backend.repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository
+    from backend.repositories import config_repository, media_repository, providers_repository, recommendations_repository
+    from backend.repositories.scan_run_repository import ScanRunRecorder
 except Exception:
     try:
-        from repositories import config_repository, inventory_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
+        from repositories import config_repository, media_repository, providers_repository, recommendations_repository  # type: ignore
+        from repositories.scan_run_repository import ScanRunRecorder  # type: ignore
     except Exception:
         config_repository = None  # type: ignore
-        inventory_repository = None  # type: ignore
         media_repository = None  # type: ignore
         providers_repository = None  # type: ignore
         recommendations_repository = None  # type: ignore
+        ScanRunRecorder = None  # type: ignore
 
-try:
-    from backend.inventory_helpers import (
-        apply_forced_missing_by_categories,
-        cleanup_inventory_transient_fields,
-        mark_disabled_inventory_items_missing,
-        merge_inventory_documents,
-        reconcile_inventory_missing_states,
-    )
-except Exception:
-    try:
-        from inventory_helpers import (
-            apply_forced_missing_by_categories,
-            cleanup_inventory_transient_fields,
-            mark_disabled_inventory_items_missing,
-            merge_inventory_documents,
-            reconcile_inventory_missing_states,
-        )
-    except Exception as e:
-        def merge_inventory_documents(existing_doc: dict, current_doc: dict) -> dict:
-            return current_doc
-
-        def reconcile_inventory_missing_states(document: dict) -> dict:
-            return document
-
-        def cleanup_inventory_transient_fields(document: dict) -> dict:
-            return document
-
-        def mark_disabled_inventory_items_missing(
-            document: dict,
-            disabled_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
-        ) -> dict:
-            return document
-
-        def apply_forced_missing_by_categories(document: dict, categories: set[str] | list[str] | None = None) -> dict:
-            return document
-
-        logging.getLogger("scanner").warning(
-            "[SCAN] inventory_helpers import failed (%s). Inventory helpers disabled; continuing non-blocking.",
-            e,
-        )
 
 try:
     from backend.recommendations import (
@@ -155,7 +116,7 @@ except Exception:
         from media_probe import run_media_probe_document_if_enabled
     except Exception as e:
         logging.getLogger("scanner").warning(
-            "[SCAN] [PHASE 1B] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
+            "[SCAN] [PHASE 2] [FFPROBE] media_probe import failed (%s). Technical scan disabled.",
             e,
         )
 
@@ -171,7 +132,6 @@ def run_media_probe_pipeline_if_enabled(
     library_root: str | Path = runtime_paths.LIBRARY_DIR,
     timeout: float = 5.0,
     only_category: str | None = None,
-    cache_path: str | Path = runtime_paths.MEDIA_PROBE_CACHE_JSON,
 ):
     del output_path
     document = library_document
@@ -185,7 +145,6 @@ def run_media_probe_pipeline_if_enabled(
         library_root=library_root,
         timeout=timeout,
         only_category=only_category,
-        cache_path=cache_path,
     )
 
 # ---------------------------------------------------------------------------
@@ -194,17 +153,12 @@ def run_media_probe_pipeline_if_enabled(
 
 LIBRARY_PATH = str(runtime_paths.LIBRARY_DIR)
 OUTPUT_PATH = str(runtime_paths.LIBRARY_JSON)
-INVENTORY_OUTPUT_PATH = str(runtime_paths.INVENTORY_JSON)
 RECOMMENDATIONS_OUTPUT_PATH = str(runtime_paths.RECOMMENDATIONS_JSON)
-DEFAULT_CONFIG_PATH = str(runtime_paths.DEFAULT_CONFIG_JSON)
-RECOMMENDATIONS_DEFAULT_RULES_PATH = str(runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON)
 RECOMMENDATIONS_RULES_PATH = str(runtime_paths.RECOMMENDATIONS_RULES_JSON)
 CONFIG_PATH = str(runtime_paths.CONFIG_JSON)
 SECRETS_PATH = str(runtime_paths.SECRETS_FILE)
 SCAN_LOCK_PATH = str(runtime_paths.SCAN_LOCK)
-PROVIDERS_MAPPING_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON)
 PROVIDERS_MAPPING_RUNTIME_PATH = str(runtime_paths.PROVIDERS_MAPPING_JSON)
-PROVIDERS_LOGO_SOURCE_PATH = str(runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON)
 PROVIDERS_LOGO_PATH = str(runtime_paths.PROVIDERS_LOGO_JSON)
 logging.basicConfig(
     level=logging.INFO,
@@ -585,6 +539,123 @@ def _redact_config_payload(payload: dict) -> dict:
     return safe_payload
 
 
+_CONFIG_FLAT_GROUPS = frozenset({"system", "seerr", "ui", "recommendations", "media_probe"})
+_CONFIG_SENSITIVE_TOKENS = ("api_key", "apikey", "token", "secret", "password")
+
+
+def _config_flat_keys(d: dict) -> list[str]:
+    """Return sorted flat key names (group.subkey or scalar) from a config dict.
+
+    Omits auth/score/score_configuration/providers_visible and any key whose name
+    contains a sensitive token — values are never included.
+    """
+    _SKIP = {"auth", "score", "score_configuration", "providers_visible"}
+    keys: list[str] = []
+    for k, v in d.items():
+        if k in _SKIP:
+            continue
+        if k in _CONFIG_FLAT_GROUPS and isinstance(v, dict):
+            for sk in v:
+                flat = f"{k}.{sk}"
+                if any(t in flat.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                    continue
+                keys.append(flat)
+        else:
+            if not any(t in str(k).casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                keys.append(str(k))
+    return sorted(keys)
+
+
+def _config_changed_keys(before: dict, after: dict) -> list[str]:
+    """Return sorted flat key names whose values differ between before and after.
+
+    providers_visible is excluded: it maps to providers.is_ignored (not app_config)
+    and is never a loggable save key.
+    """
+    _SKIP = {"auth", "providers_visible"}
+    changed: list[str] = []
+    all_keys = set(before) | set(after)
+    for k in all_keys:
+        if k in _SKIP:
+            continue
+        v_b, v_a = before.get(k), after.get(k)
+        if k == "score":
+            b_en = v_b.get("enabled") if isinstance(v_b, dict) else None
+            a_en = v_a.get("enabled") if isinstance(v_a, dict) else None
+            if b_en != a_en:
+                changed.append("score.enabled")
+        elif k == "score_configuration":
+            if v_b != v_a:
+                changed.append("score_configuration")
+        elif k in _CONFIG_FLAT_GROUPS:
+            b = v_b if isinstance(v_b, dict) else {}
+            a = v_a if isinstance(v_a, dict) else {}
+            for sk in set(b) | set(a):
+                if b.get(sk) != a.get(sk):
+                    flat = f"{k}.{sk}"
+                    if any(t in flat.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                        continue
+                    changed.append(flat)
+        else:
+            if v_b != v_a and not any(t in str(k).casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+                changed.append(str(k))
+    return sorted(changed)
+
+
+def _fmt_config_val(v: object) -> str:
+    """Format a config value for a single-line log entry (no secrets, no JSON quotes)."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return f"[{len(v)} items]"
+    return "(complex)"
+
+
+def _config_changed_summary(before: dict, after: dict) -> str:
+    """Return 'key : new_value, ...' for keys that changed, safe for INFO logging."""
+    keys = _config_changed_keys(before, after)
+    if not keys:
+        return "(no change)"
+    parts = []
+    for flat_key in keys:
+        if flat_key == "score_configuration":
+            parts.append("score_configuration")
+            continue
+        if "." in flat_key:
+            group, subkey = flat_key.split(".", 1)
+            group_val = after.get(group)
+            val = group_val.get(subkey) if isinstance(group_val, dict) else None
+        else:
+            val = after.get(flat_key)
+        parts.append(f"{flat_key} : {_fmt_config_val(val)}")
+    return ", ".join(parts)
+
+
+def _patch_summary(written_keys: list[str], payload: dict) -> str:
+    """Format written flat keys with their new values for INFO log output."""
+    parts = []
+    for flat_key in written_keys:
+        if flat_key == "score_configuration":
+            parts.append("score_configuration")
+            continue
+        if flat_key == "folders":
+            parts.append(f"folders : [{len(payload.get('folders') or [])} items]")
+            continue
+        if "." in flat_key:
+            group, subkey = flat_key.split(".", 1)
+            val = (payload.get(group) or {}).get(subkey)
+        else:
+            val = payload.get(flat_key)
+        if any(t in flat_key.casefold() for t in _CONFIG_SENSITIVE_TOKENS):
+            continue
+        parts.append(f"{flat_key} : {_fmt_config_val(val)}")
+    return ", ".join(parts) if parts else "(no visible change)"
+
+
 def _normalize_seerr_secret_keys(secrets: dict) -> tuple[dict, bool]:
     changed = False
     if not isinstance(secrets, dict):
@@ -810,6 +881,7 @@ _fetch_providers_sampled = False  # log raw response once per run
 # Sentinel returned when Seerr call fails (vs [] = success with no FR providers)
 _FETCH_ERROR    = object()
 _ENRICH_WORKERS = 5  # ThreadPoolExecutor workers for Seerr enrichment
+_SEERR_NOT_FOUND_TTL_DAYS = 30
 _PROVIDER_TYPES = ("flatrate", "free", "ads", "buy", "rent")
 _PROVIDER_ENRICH_GROUP = "flatrate"
 
@@ -934,7 +1006,7 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
     Fetch FR streaming providers from Seerr.
     Returns:
       list[dict]   — success as flat raw provider entries
-                     each dict entry: {raw_name, logo, logo_url}
+                     each dict entry: {raw_name, logo}
       _FETCH_ERROR — Seerr unreachable/error (caller should not set providers_fetched=True)
     """
     global _fetch_providers_sampled
@@ -993,15 +1065,13 @@ def fetch_providers(tmdb_id: str | int, is_tv: bool, jsr: dict | None = None):
             # logoPath (camelCase Seerr) or logo_path (snake_case TMDB passthrough)
             raw_logo = p.get("logoPath") or p.get("logo_path") or p.get("logo")
             if raw_logo and raw_logo.startswith("http"):
-                logo_url  = raw_logo
-                logo      = None  # relative path unknown
+                logo = None  # absolute URL — relative path unknown, not stored
             elif raw_logo:
-                logo_url  = f"https://image.tmdb.org/t/p/w45{raw_logo}"
-                logo      = raw_logo
+                logo = raw_logo
             else:
                 log.warning(f"[providers] No logo field for {raw_name!r} in {media}/{media_id}, raw={p}")
-                logo_url = logo = None
-            result.append({"raw_name": raw_name, "logo": logo, "logo_url": logo_url})
+                logo = None
+            result.append({"raw_name": raw_name, "logo": logo})
     return result
 
 
@@ -1194,10 +1264,6 @@ def migrate_env_to_config() -> None:
     if not sys_cfg.get("log_level"):
         sys_cfg["log_level"] = "INFO"
         changed = True
-    if "inventory_enabled" not in sys_cfg:
-        sys_cfg["inventory_enabled"] = False
-        changed = True
-
     ui_cfg = cfg.setdefault("ui", {})
     if "synopsis_on_hover" not in ui_cfg:
         ui_cfg["synopsis_on_hover"] = False
@@ -1268,6 +1334,50 @@ def count_media_files(path: Path) -> int:
     except PermissionError as e:
         log.warning(f"Permission denied: {e}")
     return count
+
+
+def _extract_filename_movie(media_dir: Path) -> str | None:
+    """Return the name of the largest video file in a movie directory."""
+    best: str | None = None
+    best_size = -1
+    try:
+        for entry in media_dir.iterdir():
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            if entry.suffix.lower() not in MEDIA_EXTENSIONS:
+                continue
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                size = 0
+            if size > best_size:
+                best_size = size
+                best = entry.name
+    except PermissionError:
+        pass
+    return best
+
+
+def _extract_filename_tv(series_dir: Path) -> dict | None:
+    """Return {SNN: {ENN: filename}} for all detected video files in a TV series dir."""
+    result: dict[str, dict[str, str]] = {}
+    try:
+        video_files = sorted(
+            p for p in series_dir.rglob("*")
+            if not p.is_symlink() and p.is_file()
+            and p.suffix.lower() in MEDIA_EXTENSIONS
+            and not p.name.startswith((".", "@"))
+        )
+    except PermissionError:
+        return None
+    for video in video_files:
+        season_num, episode_num = _extract_season_episode_from_name(str(video))
+        if season_num is None or episode_num is None:
+            continue
+        season_key = f"S{season_num:02d}"
+        episode_key = f"E{episode_num:02d}"
+        result.setdefault(season_key, {})[episode_key] = video.name
+    return result or None
 
 
 def format_size(size_bytes: int) -> str:
@@ -2109,146 +2219,14 @@ def _list_video_files(path: Path) -> list[str]:
     return files
 
 
-def _make_inventory_video_file(name: str, now_utc: str) -> dict:
-    return {
-        "name": name,
-        "status": "present",
-        "first_seen_at": now_utc,
-        "last_seen_at": now_utc,
-        "last_checked_at": now_utc,
-    }
-
-
-def build_inventory_item(media_dir: Path, cat: dict, title: str, now_utc: str) -> dict:
-    media_type = "tv" if cat["type"] == "tv" else "movie"
-    item = {
-        "id": _inventory_item_id(media_type, cat["name"], media_dir.name),
-        "media_type": media_type,
-        "category": cat["name"],
-        "title": title,
-        "root_folder_path": str(media_dir),
-        "status": "present",
-        "first_seen_at": now_utc,
-        "last_seen_at": now_utc,
-        "last_checked_at": now_utc,  # always after last_seen_at, before video_files
-        "video_files": [_make_inventory_video_file(vf, now_utc) for vf in _list_video_files(media_dir)],
-    }
-    if media_type == "tv":
-        subfolders: list[dict] = []
-        try:
-            for subdir in sorted(media_dir.iterdir(), key=lambda p: p.name.lower()):
-                if not subdir.is_dir() or subdir.name.startswith((".", "@")):
-                    continue
-                sub_video_files = _list_video_files(subdir)
-                if not sub_video_files:
-                    continue
-                subfolders.append({
-                    "name": subdir.name,
-                    "status": "present",
-                    "first_seen_at": now_utc,
-                    "last_seen_at": now_utc,
-                    "last_checked_at": now_utc,  # always after last_seen_at, before video_files
-                    "video_files": [_make_inventory_video_file(vf, now_utc) for vf in sub_video_files],
-                })
-        except Exception:
-            subfolders = []
-        item["subfolders"] = subfolders
-    return item
-
-
-def build_library_inventory(scanned_entries: list[dict], scan_mode: str, now: datetime | None = None) -> dict:
-    now_dt = now or datetime.now(timezone.utc)
-    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    inventory_items = [
-        build_inventory_item(entry["media_dir"], entry["cat"], entry["title"], now_utc)
-        for entry in scanned_entries
-    ]
-    return {
-        "version": 1,
-        "generated_at": now_utc,
-        "scan_mode": scan_mode,
-        "missing_reconciliation": False,
-        "items": inventory_items,
-    }
-
-
-def write_inventory_json_non_blocking(
-    scanned_entries: list[dict],
-    scan_mode: str,
-    reconcile_missing: bool | None = None,
-    forced_missing_folder_refs: set[tuple[str, str]] | list[tuple[str, str]] | None = None,
-    forced_missing_categories: set[str] | list[str] | None = None,
-) -> None:
-    log.debug("%s Inventory write started", _phase_prefix("4"))
-    try:
-        current_inventory = build_library_inventory(scanned_entries, scan_mode)
-        existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
-        inventory_to_write = current_inventory
-        if existing_inventory is not None:
-            try:
-                inventory_to_write = merge_inventory_documents(existing_inventory, current_inventory)
-            except Exception as e:
-                log.warning(
-                    f"{_phase_prefix('4')} Inventory merge failed: {e}. Falling back to current scan inventory."
-                )
-        should_reconcile_missing = (scan_mode == "full") if reconcile_missing is None else bool(reconcile_missing)
-        if should_reconcile_missing:
-            try:
-                inventory_to_write = reconcile_inventory_missing_states(inventory_to_write)
-                inventory_to_write["missing_reconciliation"] = True
-            except Exception as e:
-                inventory_to_write["missing_reconciliation"] = False
-                log.warning(
-                    f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing with merged inventory."
-                )
-        else:
-            inventory_to_write["missing_reconciliation"] = False
-        if forced_missing_folder_refs:
-            inventory_to_write = mark_disabled_inventory_items_missing(
-                inventory_to_write,
-                forced_missing_folder_refs,
-            )
-        elif forced_missing_categories:
-            inventory_to_write = apply_forced_missing_by_categories(
-                inventory_to_write,
-                forced_missing_categories,
-            )
-        inventory_to_write = cleanup_inventory_transient_fields(inventory_to_write)
-        save_inventory_document_non_blocking(inventory_to_write, INVENTORY_OUTPUT_PATH)
-        log.debug(f"{_phase_prefix('4')} Inventory written successfully: {INVENTORY_OUTPUT_PATH}")
-    except Exception as e:
-        log.warning(f"{_phase_prefix('4')} Inventory write failed: {e}")
-
-
-def load_existing_inventory_document_non_blocking(path: str) -> dict | None:
-    """Load inventory for merge from SQLite."""
-    if inventory_repository is not None:
-        document = inventory_repository.load_inventory(path)
-        if not isinstance(document, dict):
-            return None
-        items = document.get("items", [])
-        if isinstance(items, list):
-            return document
-        if items is not None:
-            raise ValueError("inventory.items must be an array")
-        return None  # items is None — treat as empty
-    log.error("%s SQLite inventory repository unavailable", _phase_prefix("4"))
-    return None
-
-
-def save_inventory_document_non_blocking(document: dict, path: str) -> None:
-    """Persist inventory through SQLite."""
-    if inventory_repository is None:
-        raise RuntimeError("SQLite inventory repository unavailable")
-    inventory_repository.save_inventory(document, path)
-
-
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
 
 def load_existing(output_path: str) -> dict:
-    data = load_library_document_non_blocking(output_path)
+    # Use availability='all' so absent items (is_available=0) are included as prev data.
+    # This preserves quality/enrichment even for items temporarily off-disk.
+    data = load_library_document_non_blocking(output_path, availability="all")
     if not isinstance(data, dict):
         return {}
     try:
@@ -2280,7 +2258,6 @@ def _is_canonical_runtime_json_path(output_path: str | Path) -> bool:
         runtime_paths.PROVIDERS_LOGO_JSON,
         runtime_paths.RECOMMENDATIONS_RULES_JSON,
         runtime_paths.LIBRARY_JSON,
-        runtime_paths.INVENTORY_JSON,
         runtime_paths.RECOMMENDATIONS_JSON,
         runtime_paths.MEDIA_PROBE_CACHE_JSON,
         runtime_paths.LIBRARY_PROBE_JSON,
@@ -2303,10 +2280,10 @@ def _write_json_file_atomic(data: dict, output_path: str | Path) -> None:
         raise
 
 
-def load_library_document_non_blocking(path: str) -> dict | None:
+def load_library_document_non_blocking(path: str, availability: str = "available") -> dict | None:
     """Load library document from SQLite."""
     if media_repository is not None:
-        document = media_repository.load_library(path)
+        document = media_repository.load_library(path, availability=availability)
         if isinstance(document, dict):
             items = document.get("items", [])
             if isinstance(items, list):
@@ -2332,7 +2309,6 @@ _DEFAULT_CONFIG: dict = {
         "scan_cron": "0 3 * * *",
         "log_level": "INFO",
         "needs_onboarding": True,
-        "inventory_enabled": False,
     },
     "folders": [],
     "enable_movies": True,
@@ -2341,7 +2317,6 @@ _DEFAULT_CONFIG: dict = {
         "enabled": False,
         "url": "",
     },
-    "providers_visible": [],
     "ui": {
         "synopsis_on_hover": False,
         "default_view": "grid",
@@ -2366,13 +2341,6 @@ _DEFAULT_CONFIG: dict = {
 
 
 def _load_default_config() -> dict:
-    try:
-        with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return copy.deepcopy(payload)
-    except Exception:
-        pass
     return copy.deepcopy(_DEFAULT_CONFIG)
 
 
@@ -2447,11 +2415,6 @@ def _finalize_needs_onboarding_after_config_update(cfg: dict) -> bool:
         return False
     system["needs_onboarding"] = False
     return True
-
-
-def _is_inventory_enabled(cfg: dict | None) -> bool:
-    system = (cfg or {}).get("system") or {}
-    return system.get("inventory_enabled") is True
 
 
 def _is_score_enabled(cfg: dict | None) -> bool:
@@ -2930,6 +2893,7 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
     clean.pop("runtime", None)
     clean.pop("audio_codec_display", None)
     clean.pop("complete", None)
+    clean.pop("score", None)  # legacy top-level score field superseded by quality dict
     for field in ("audio_codec", "audio_languages_simple", "codec", "resolution"):
         if _is_unknown_sentinel(clean.get(field)):
             clean[field] = None
@@ -3003,50 +2967,56 @@ def _sanitize_item_for_library_json(item: dict) -> dict:
                 sq2.pop("level", None)
                 sq2.pop("base_score", None)
                 sq2.pop("score_details", None)
-                video_details = sq2.get("video_details")
-                if isinstance(video_details, dict):
-                    vd2 = {
-                        "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
-                        "codec": _safe_int(video_details.get("codec"), 0) or 0,
-                        "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
-                    }
+                # Thin format: only `score` present (DB stores quality_score only for seasons).
+                # No video_details / audio_details available → preserve score, skip full
+                # normalization (there is nothing to verify or recompute).
+                if not isinstance(sq2.get("video_details"), dict) and sq2.get("video") is None:
+                    s["quality"] = {"score": _safe_int(sq2.get("score"), 0) or 0}
                 else:
-                    vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
-                audio_details = sq2.get("audio_details")
-                if isinstance(audio_details, dict):
-                    ad2 = {
-                        "codec": _safe_int(audio_details.get("codec"), 0) or 0,
-                        "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+                    video_details = sq2.get("video_details")
+                    if isinstance(video_details, dict):
+                        vd2 = {
+                            "resolution": _safe_int(video_details.get("resolution"), 0) or 0,
+                            "codec": _safe_int(video_details.get("codec"), 0) or 0,
+                            "hdr": _safe_int(video_details.get("hdr"), 0) or 0,
+                        }
+                    else:
+                        vd2 = {"resolution": 0, "codec": 0, "hdr": 0}
+                    audio_details = sq2.get("audio_details")
+                    if isinstance(audio_details, dict):
+                        ad2 = {
+                            "codec": _safe_int(audio_details.get("codec"), 0) or 0,
+                            "channels": _safe_int(audio_details.get("channels"), 0) or 0,
+                        }
+                    else:
+                        ad2 = {"codec": 0, "channels": 0}
+                    sq_audio = _safe_int(sq2.get("audio"), 0) or 0
+                    sq_languages = _safe_int(sq2.get("languages"), 0) or 0
+                    sq_size = _safe_int(sq2.get("size"), 0) or 0
+                    sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
+                    sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
+                    sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
+                    sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
+                    normalized_sq = {
+                        "video_details": vd2,
+                        "audio_details": ad2,
+                        "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
+                        "audio": sq_audio,
+                        "languages": sq_languages,
+                        "size": sq_size,
+                        "video_w": round(sq_video_w, 4),
+                        "audio_w": round(sq_audio_w, 4),
+                        "languages_w": round(sq_languages_w, 4),
+                        "size_w": round(sq_size_w, 4),
                     }
-                else:
-                    ad2 = {"codec": 0, "channels": 0}
-                sq_audio = _safe_int(sq2.get("audio"), 0) or 0
-                sq_languages = _safe_int(sq2.get("languages"), 0) or 0
-                sq_size = _safe_int(sq2.get("size"), 0) or 0
-                sq_video_w = _as_number(sq2.get("video_w"), _as_number(sq2.get("video"), 0.0))
-                sq_audio_w = _as_number(sq2.get("audio_w"), _as_number(sq_audio, 0.0))
-                sq_languages_w = _as_number(sq2.get("languages_w"), _as_number(sq_languages, 0.0))
-                sq_size_w = _as_number(sq2.get("size_w"), _as_number(sq_size, 0.0))
-                normalized_sq = {
-                    "video_details": vd2,
-                    "audio_details": ad2,
-                    "video": int(vd2["resolution"] + vd2["codec"] + vd2["hdr"]),
-                    "audio": sq_audio,
-                    "languages": sq_languages,
-                    "size": sq_size,
-                    "video_w": round(sq_video_w, 4),
-                    "audio_w": round(sq_audio_w, 4),
-                    "languages_w": round(sq_languages_w, 4),
-                    "size_w": round(sq_size_w, 4),
-                }
-                normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
-                if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
-                    log.warning(
-                        "[score] Normalized inconsistent season quality for item %r season=%s",
-                        clean.get("title"),
-                        s.get("season"),
-                    )
-                s["quality"] = normalized_sq
+                    normalized_sq["score"] = int(round(normalized_sq["video_w"] + normalized_sq["audio_w"] + normalized_sq["languages_w"] + normalized_sq["size_w"]))
+                    if _safe_int(sq2.get("video"), normalized_sq["video"]) != normalized_sq["video"] or _safe_int(sq2.get("score"), normalized_sq["score"]) != normalized_sq["score"]:
+                        log.warning(
+                            "[score] Normalized inconsistent season quality for item %r season=%s",
+                            clean.get("title"),
+                            s.get("season"),
+                        )
+                    s["quality"] = normalized_sq
             sanitized_seasons.append(s)
         clean["seasons"] = sanitized_seasons
     return clean
@@ -3106,8 +3076,8 @@ def scan_media_item(
     """
     Build one item dict from filesystem + NFO.
     `prev` is the existing SQLite library item (may be empty dict).
-    `id` is computed using the same helper as inventory so records share
-    identical stable IDs.
+    `id` is computed as `{media_type}:{category}:{folder_name}` — stable across
+    rescans regardless of filename changes.
     """
     raw_name  = media_dir.name
     item_path = str(media_dir.relative_to(root))
@@ -3189,7 +3159,7 @@ def scan_media_item(
     hdr_type_value = (hdr_type_current or prev.get("hdr_type")) if hdr_current else None
 
     item = {
-        # id must be first — identical to inventory ids for cross-table matching
+        # id first — stable key shared across media, media_probe_cache, recommendations
         "id":                lib_id,
         "path":              item_path,
         "title":             title,
@@ -3225,9 +3195,29 @@ def scan_media_item(
         "hdr":               hdr_current,
         "hdr_type":          hdr_type_value,
         # Enriched fields preserved from previous SQLite library snapshot — overwritten by later enabled phases.
-        "providers":         _normalize_providers(prev.get("providers")),
-        "providers_fetched": prev.get("providers_fetched", False),
+        "providers":              _normalize_providers(prev.get("providers")),
+        "providers_fetched":      prev.get("providers_fetched", False),
+        "seerr_last_fetched_at":  prev.get("seerr_last_fetched_at"),
+        "seerr_status":           prev.get("seerr_status"),
     }
+    # Reset Seerr enrichment when the lookup IDs change — a previous providers_fetched=True
+    # used the old IDs and must not suppress a re-fetch with the newly correct ones.
+    if prev:
+        _prev_tmdb = str(prev.get("tmdb_id") or "").strip()
+        _prev_tvdb = str(prev.get("tvdb_id") or "").strip()
+        _new_tmdb  = str(item.get("tmdb_id")  or "").strip()
+        _new_tvdb  = str(item.get("tvdb_id")  or "").strip()
+        if ((_new_tmdb and _new_tmdb != _prev_tmdb) or
+                (_new_tvdb and _new_tvdb != _prev_tvdb)):
+            item["providers_fetched"]     = False
+            item["seerr_status"]          = None
+            item["seerr_last_fetched_at"] = None
+            log.debug(
+                "%s Seerr reset for %r: tmdb %s→%s tvdb %s→%s",
+                _phase_prefix("1"), item.get("title"),
+                _prev_tmdb or "∅", _new_tmdb or "∅",
+                _prev_tvdb or "∅", _new_tvdb or "∅",
+            )
     if is_tv:
         item["size_b"] = int(series_agg.get("size_b") or size_b)
         item["size"] = format_size(item["size_b"])
@@ -3248,15 +3238,27 @@ def scan_media_item(
                 q = dict(preserved_quality)
                 q.pop("level", None)
                 item["quality"] = q  # preserved during phase 1; overwritten by phase 3 when enabled
+    else:
+        # Phase 1 (score disabled): carry forward quality computed by a previous Phase 3 run
+        preserved_quality = prev.get("quality")
+        if isinstance(preserved_quality, dict):
+            q = dict(preserved_quality)
+            q.pop("level", None)
+            item["quality"] = q
     if _is_unknown_sentinel(item.get("audio_codec")):
         item["audio_codec"] = None
     if _is_unknown_sentinel(item.get("audio_languages_simple")):
         item["audio_languages_simple"] = None
+    # Filename map — never influences media_id, used for change tracking / probe cache
+    if is_tv:
+        item["filename"] = _extract_filename_tv(media_dir)
+    else:
+        item["filename"] = _extract_filename_movie(media_dir)
     return item
 
 
 
-def run_quick(only_category: str | None = None) -> None:
+def run_quick(only_category: str | None = None) -> str:
     _t0 = time.monotonic()
     _nfo_stats["ok"] = 0
     _nfo_stats["failed"] = 0
@@ -3266,7 +3268,7 @@ def run_quick(only_category: str | None = None) -> None:
     root = Path(LIBRARY_PATH)
     if not root.exists():
         log.error(f"{_phase_prefix('1')} Library path not found: {LIBRARY_PATH}")
-        return
+        return ""
 
     # One-time migration of legacy env vars → SQLite config
     migrate_env_to_config()
@@ -3286,8 +3288,8 @@ def run_quick(only_category: str | None = None) -> None:
     if score_feature_enabled:
         log.debug("%s Score disabled for phase 1; final quality is computed in phase 3", _phase_prefix("1"))
     _, effective_score_config, _ = get_effective_score_config(cfg)
-    jsr_for_counts = _jsr_cfg()
-    seerr_counts_active = bool(jsr_for_counts.get("enabled") and jsr_for_counts.get("url") and jsr_for_counts.get("apikey"))
+    # Phase 1 = filesystem + NFO only. No network calls are allowed.
+    # Seerr expected-episode counts belong to Phase 3 (ENRICH).
 
     categories = build_categories_from_config(cfg)
 
@@ -3309,9 +3311,8 @@ def run_quick(only_category: str | None = None) -> None:
             else:
                 log.warning("%s No folder configured with type 'movie' or 'tv'", _phase_prefix("1"))
         else:
-            # Folders exist but all are disabled — update inventory to mark them missing
             log.warning("%s All configured folders are disabled — skipping phase", _phase_prefix("1"))
-        return
+        return ""
 
     log.info(f"{_phase_prefix('1')} {len(categories)} configured folder(s): {', '.join(c['name'] for c in categories)}")
     existing = load_existing(OUTPUT_PATH)
@@ -3319,11 +3320,14 @@ def run_quick(only_category: str | None = None) -> None:
     # Preserve previous file content for backward-compatible partial scans
     prev_data: dict = load_library_document_non_blocking(OUTPUT_PATH) or {}
 
+    # Single timestamp shared across all items in this scan run
+    scan_time = datetime.now().isoformat()
+
     items = []
+    scanned_ids: set[str] = set()
     scanned_paths = set()
     tv_series_scanned = 0
     tv_episodes_scanned = 0
-    tv_series_with_seerr_counts = 0
 
     active_cats = [c for c in categories if not only_category or c["name"] == only_category]
     n_cats = len(active_cats)
@@ -3345,7 +3349,7 @@ def run_quick(only_category: str | None = None) -> None:
             # Use the initial snapshot (loaded once before any writes) as source for prev
             prev = existing.get(item_path, {})
 
-            # scan_media_item computes id = _inventory_item_id(...) for inventory joins
+            # scan_media_item computes stable media_id via _inventory_item_id
             item = scan_media_item(
                 media_dir,
                 root,
@@ -3353,40 +3357,43 @@ def run_quick(only_category: str | None = None) -> None:
                 prev,
                 enable_score=score_enabled,
                 score_config=effective_score_config,
-                jsr_for_counts=jsr_for_counts if cat["type"] == "tv" and seerr_counts_active else None,
             )
+            # Disk-state timestamps — COALESCE in upsert SQL preserves first_seen_at
+            item["is_available"] = 1
+            item["last_seen_at"] = scan_time
+            item["last_scanned_at"] = scan_time
+            item["first_seen_at"] = scan_time
             items.append(item)
             tv_series_scanned += int(item.get("_scan_tv_series_scanned") or 0)
             tv_episodes_scanned += int(item.get("_scan_tv_episodes_scanned") or 0)
-            tv_series_with_seerr_counts += int(1 if item.get("_scan_tv_seerr_counts") else 0)
             scanned_paths.add(item_path)
+            if item.get("id"):
+                scanned_ids.add(item["id"])
 
         count = len(items) - cat_items_before
-        # Incremental write after each folder
-        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
         log.info(f'{_phase_prefix("1")} Folder [{cat["folder"]}] completed in {time.monotonic() - cat_started_at:.1f}s — {count} item(s)')
 
     # When filtering by category, preserve items from other categories
     if only_category:
-        preserved = [i for i in existing.values() if i.get("path") not in scanned_paths]
+        # Preserve items from OTHER categories only — same-category absent items are
+        # handled by mark_media_unavailable and must not be upserted with stale state.
+        preserved = [i for i in existing.values() if i.get("category") != only_category]
         log.info(f"{_phase_prefix('1')} Preserving {len(preserved)} item(s) from other categories")
         for i in preserved:
-            if not score_enabled:
-                _strip_score_fields(i)
             # Ensure preserved items use the string id format (may be an old integer id)
             i_media_type = "tv" if i.get("type") == "tv" else "movie"
             i_folder = Path(i.get("path", "")).name
             i["id"] = _inventory_item_id(i_media_type, i.get("category", ""), i_folder)
         items = items + preserved
 
-    if not score_enabled:
-        for item in items:
-            _strip_score_fields(item)
+    if media_repository is not None:
+        marked = media_repository.mark_media_unavailable(OUTPUT_PATH, scanned_ids, only_category)
+        if marked:
+            log.info(f"{_phase_prefix('1')} Marked {marked} media entry(ies) unavailable")
 
-    # Only_category: final write is required to include preserved items from other categories.
-    # Whole-library pipeline: the last per-folder incremental write already captured all items — skip.
-    if only_category:
-        _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
+    # Write snapshot once, after all folders and mark_unavailable.
+    # For only_category: items already merged with preserved items from other categories above.
+    _write_library_snapshot(items, prev_data, score_enabled, OUTPUT_PATH)
 
     size_mb = sum(int(item.get("size_b") or 0) for item in items) / (1024 * 1024)
     size_str = f"{size_mb:.1f} MB"
@@ -3450,59 +3457,102 @@ def run_quick(only_category: str | None = None) -> None:
         f"{_phase_prefix('1')} Series summary: {_count_label(series_count, 'series', 'series')} analyzed / "
         f"{_count_label(series_episode_count, 'episode')} scanned"
     )
-    if seerr_counts_active:
-        log.debug(
-            f"{_phase_prefix('1')} TV Seerr expected-count summary: {tv_series_with_seerr_counts}/{tv_series_scanned} series enriched"
-        )
-
-    _log_phase_complete("1", elapsed, f"{_count_label(len(items), 'item')} total ({size_str})")
-
-    # Inventory update is handled explicitly by phase 4.
+    summary1 = f"{_count_label(len(items), 'item')} total ({size_str})"
+    _log_phase_complete("1", elapsed, summary1)
+    return summary1
 
 
 # ---------------------------------------------------------------------------
 # ENRICH (providers via Seerr)
 # ---------------------------------------------------------------------------
 
-def run_enrich(force: bool = False, only_category: str | None = None) -> None:
+def run_enrich(force: bool = False, only_category: str | None = None) -> str:
     _t0 = time.monotonic()
-    label = "force" if force else "missing only"
+    label = "force" if force else "incremental"
     scope = f" [category: {only_category}]" if only_category else ""
-    _log_phase_start("2", suffix=f" ({label}){scope}")
+    _log_phase_start("3", suffix=f" ({label}){scope}")
 
     jsr = _jsr_cfg()
     if not jsr["enabled"]:
-        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("2"))
-        return
+        log.warning("%s Disabled in SQLite config — skipping phase", _phase_prefix("3"))
+        return ""
     if not jsr["url"] or not jsr["apikey"]:
-        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("2"))
-        return
+        log.warning("%s URL or API key missing — skipping phase", _phase_prefix("3"))
+        return ""
 
     data = load_library_document_non_blocking(OUTPUT_PATH)
     if not isinstance(data, dict):
-        log.error(f"{_phase_prefix('2')} Cannot read {OUTPUT_PATH}")
-        return
+        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
+        return ""
 
     items = data.get("items", [])
 
-    def needs_enrich(item: dict) -> bool:
+    def _enrich_reason(item: dict) -> str | None:
+        """Return the reason this item needs enrichment, or None to skip."""
         if only_category and item.get("category") != only_category:
-            return False
-        # Enrichment can run from IDs or fallback search (requires title).
-        # Keep this broad even in force mode to avoid skipping valid items.
+            return None
+        # Must have at least a title or an ID to attempt enrichment.
         if not item.get("title") and not item.get("tmdb_id") and not item.get("tvdb_id"):
-            return False
+            return None
         if force:
-            return True
-        return not item.get("providers_fetched")
+            return "forced"
+        # Retry NOT_FOUND items after TTL — new titles appear in Seerr over time
+        if item.get("seerr_status") == "not_found":
+            last = item.get("seerr_last_fetched_at")
+            if last:
+                try:
+                    age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(last.replace("Z", "+00:00"))).days
+                    if age_days >= _SEERR_NOT_FOUND_TTL_DAYS:
+                        return "not_found_retry"
+                except Exception:
+                    pass
+            return None  # within TTL — skip
+        if not item.get("providers_fetched"):
+            # Distinguish truly new items from items whose providers_fetched was reset
+            # (e.g. ID change detected in phase 1).
+            if not item.get("seerr_last_fetched_at"):
+                return "new_media"
+            return "providers_missing"
+        return None  # already enriched — skip
 
-    to_enrich = [i for i in items if needs_enrich(i)]
-    skipped   = len(items) - len(to_enrich)
-    log.info(f"{_phase_prefix('2')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
+    # Collect items to enrich and tally skip reasons for the summary log.
+    to_enrich: list[dict] = []
+    reason_counts: dict[str, int] = defaultdict(int)
+    for _item in items:
+        _reason = _enrich_reason(_item)
+        if _reason:
+            to_enrich.append(_item)
+            reason_counts[_reason] += 1
+            log.debug(
+                "%s will enrich %r — reason=%s providers_fetched=%s seerr_status=%s",
+                _phase_prefix("3"),
+                _item.get("title"),
+                _reason,
+                _item.get("providers_fetched"),
+                _item.get("seerr_status"),
+            )
+        else:
+            reason_counts["skipped_cached"] += 1
+
+    skipped = reason_counts["skipped_cached"]
+    log.info(
+        "%s Re-enrich summary: new_media=%d providers_missing=%d not_found_retry=%d "
+        "forced=%d skipped_cached=%d  → %d to process (%d workers)",
+        _phase_prefix("3"),
+        reason_counts["new_media"],
+        reason_counts["providers_missing"],
+        reason_counts["not_found_retry"],
+        reason_counts["forced"],
+        skipped,
+        len(to_enrich),
+        _ENRICH_WORKERS,
+    )
+    log.info(f"{_phase_prefix('3')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
-        _log_phase_complete("2", time.monotonic() - _t0, "0 item(s)")
-        return
+        early_summary = f"0 enriched / {skipped} skipped" if skipped else "0 item(s)"
+        _log_phase_complete("3", time.monotonic() - _t0, early_summary)
+        return early_summary
 
     by_cat = defaultdict(list)
     for item in to_enrich:
@@ -3541,7 +3591,7 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                             item["tmdb_id"] = str(resolved_tmdb)
                         if resolved_tvdb not in (None, ""):
                             log.debug(
-                                f"{_phase_prefix('2')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
+                                f"{_phase_prefix('3')} Resolved TVDB id via search for {item.get('title')!r}: {item.get('tvdb_id')} -> {resolved_tvdb}"
                             )
                             item["tvdb_id"] = str(resolved_tvdb)
                             providers = fetch_providers(item["tvdb_id"], True, jsr)
@@ -3558,13 +3608,13 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
                         resolved_tmdb = resolved_ids.get("tmdb_id")
                         if resolved_tmdb not in (None, ""):
                             log.debug(
-                                f"{_phase_prefix('2')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
+                                f"{_phase_prefix('3')} Resolved TMDB id via search for {item.get('title')!r}: {item.get('tmdb_id')} -> {resolved_tmdb}"
                             )
                             item["tmdb_id"] = str(resolved_tmdb)
                             providers = fetch_providers(item["tmdb_id"], False, jsr)
         except Exception as e:
             log.warning(
-                f"{_phase_prefix('2')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
+                f"{_phase_prefix('3')} Unexpected exception id={item.get('tvdb_id') if is_tv else item.get('tmdb_id')} "
                 f"{item.get('title')!r}: {e}"
             )
             providers = _FETCH_ERROR
@@ -3580,47 +3630,56 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> None:
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_by_cat, 1):
         cat_folder = _cat_folder_by_name.get(cat_name, cat_name)
         cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
+        _now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_enrich_cats}) started — {len(cat_items)} item(s)")
         with ThreadPoolExecutor(max_workers=_ENRICH_WORKERS) as pool:
             futures = {pool.submit(_enrich_one, item): item for item in cat_items}
             for future in as_completed(futures):
                 item, providers = future.result()
                 if providers is _JSR_NOT_FOUND:
                     # Item not in Seerr — mark as fetched (no FR providers)
-                    item["providers"]         = []
-                    item["providers_fetched"] = True
+                    item["providers"]             = []
+                    item["providers_fetched"]     = True
+                    item["seerr_status"]          = "not_found"
+                    item["seerr_last_fetched_at"] = _now_iso
                     not_found_count += 1
                     not_found_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 if providers is _FETCH_ERROR:
                     # Seerr unreachable — leave providers_fetched False, retry next run
+                    # Transient error — do NOT update seerr_status/seerr_last_fetched_at
                     failed_count += 1
                     failed_ids.append(item.get("tvdb_id", "?") if item.get("type") == "tv" else item.get("tmdb_id", "?"))
                     continue
                 # Store cleaned raw provider names from Seerr.
-                item["providers"] = _normalize_providers([p["raw_name"] for p in (providers or [])])
-                item["providers_fetched"] = True
+                item["providers"]             = _normalize_providers([p["raw_name"] for p in (providers or [])])
+                item["providers_fetched"]     = True
+                item["seerr_status"]          = "ok"
+                item["seerr_last_fetched_at"] = _now_iso
                 enriched += 1
                 total_providers = len(providers or [])
-                log.debug(f"{_phase_prefix('2')} {item['title']} — {total_providers} provider(s)")
+                log.debug(f"{_phase_prefix('3')} {item['title']} — {total_providers} provider(s)")
 
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"{_phase_prefix('2')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
     if not_found_count:
         ids_str = ", ".join(str(i) for i in not_found_ids[:20])
         suffix  = f" … (+{len(not_found_ids)-20} more)" if len(not_found_ids) > 20 else ""
-        log.info(f"{_phase_prefix('2')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
+        log.info(f"{_phase_prefix('3')} {not_found_count} item(s) not found — ids: {ids_str}{suffix}")
     if failed_count:
         ids_str = ", ".join(str(i) for i in failed_ids[:20])
         suffix  = f" … (+{len(failed_ids)-20} more)" if len(failed_ids) > 20 else ""
-        log.warning(f"{_phase_prefix('2')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
-    parts = [f"{enriched} OK"]
-    if not_found_count: parts.append(f"{not_found_count} not found")
+        log.warning(f"{_phase_prefix('3')} {failed_count} item(s) not enriched — ids: {ids_str}{suffix}")
+    parts = [f"{enriched} enriched"]
+    if not_found_count: parts.append(f"{not_found_count} not_found")
     if failed_count:    parts.append(_count_label(failed_count, "error"))
-    _log_phase_complete("2", elapsed, " / ".join(parts))
+    if skipped:         parts.append(f"{skipped} skipped")
+    summary3 = " / ".join(parts)
+    _log_phase_complete("3", elapsed, summary3)
+    return summary3
 
 
 # ---------------------------------------------------------------------------
@@ -3704,18 +3763,18 @@ def recompute_scores_only(score_config: dict | None = None) -> int:
     return recalculated
 
 
-def run_scoring(only_category: str | None = None) -> None:
+def run_scoring(only_category: str | None = None) -> str:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
-        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("3"))
-        return
+        log.info("%s Disabled (score.enabled=false) — skipping phase", _phase_prefix("4"))
+        return ""
 
-    _log_phase_start("3")
+    _log_phase_start("4")
     data = load_library_document_non_blocking(OUTPUT_PATH)
     if not isinstance(data, dict):
-        log.error(f"{_phase_prefix('3')} Cannot read {OUTPUT_PATH}")
-        return
+        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
+        return ""
 
     items = data.get("items", [])
     by_cat: dict = defaultdict(list)
@@ -3728,8 +3787,8 @@ def run_scoring(only_category: str | None = None) -> None:
         by_cat[cat_name].append(item)
 
     if not by_cat:
-        _log_phase_complete("3", time.monotonic() - _t0, _count_label(0, "item"))
-        return
+        _log_phase_complete("4", time.monotonic() - _t0, _count_label(0, "item"))
+        return "0 items scored"
 
     # Build category display-name → raw folder name lookup for consistent log labels
     cat_folder_by_name = {c["name"]: c["folder"] for c in build_categories_from_config(cfg)}
@@ -3742,194 +3801,68 @@ def run_scoring(only_category: str | None = None) -> None:
     for cat_idx, (cat_name, cat_items) in enumerate(sorted_score_cats, 1):
         cat_folder = cat_folder_by_name.get(cat_name, cat_name)
         cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('4')} Folder [{cat_folder}] ({cat_idx}/{n_score_cats}) started — {len(cat_items)} item(s)")
         scored_total += recompute_scores_for_items(cat_items, effective_score_config)
         _sanitize_library_document(data)
         write_json(data, OUTPUT_PATH)
-        log.info(f"{_phase_prefix('3')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
+        log.info(f"{_phase_prefix('4')} Folder [{cat_folder}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_items)} item(s)")
 
     elapsed = time.monotonic() - _t0
-    _log_phase_complete("3", elapsed, f"{_count_label(scored_total, 'item')} scored")
+    summary4 = f"{_count_label(scored_total, 'item')} scored"
+    _log_phase_complete("4", elapsed, summary4)
+    return summary4
 
 
-def run_score_only() -> int:
+def run_score_only(trigger_type: str = "manual") -> int:
+    recorder = _make_recorder(trigger_type, "score_only")
     with _scan_lock("score_only"):
+        recorder.start()
+        recorder.start_phase("score_only")
         _t0 = time.monotonic()
         log.info("[SCAN] %s", _SCAN_SEPARATOR)
         log.info("[SCAN] [SCORE-ONLY] Starting recompute")
         log.info("[SCAN] %s", _SCAN_SEPARATOR)
-        defaults, effective_score_config, _ = get_effective_score_config()
-        del defaults  # only used for lazy bootstrap and validation side-effects
-        recalculated = recompute_scores_only(effective_score_config)
-        elapsed = time.monotonic() - _t0
-        log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {_count_label(recalculated, 'item')} scored")
-        return recalculated
-
-
-# ---------------------------------------------------------------------------
-# INVENTORY PHASE
-# ---------------------------------------------------------------------------
-
-def _stamp_last_checked_at(doc: dict, now_utc: str) -> None:
-    """Set last_checked_at = now_utc on all items, subfolders, and video_files in-place."""
-    for item in doc.get("items", []):
-        item["last_checked_at"] = now_utc
-        for vf in item.get("video_files", []):
-            vf["last_checked_at"] = now_utc
-        for sf in item.get("subfolders", []):
-            sf["last_checked_at"] = now_utc
-            for vf in sf.get("video_files", []):
-                vf["last_checked_at"] = now_utc
-
-
-def run_inventory(scan_mode: str = "full", only_category: str | None = None) -> None:
-    _t0 = time.monotonic()
-    cfg = load_config()
-    if not _is_inventory_enabled(cfg):
-        log.info("%s Disabled (system.inventory_enabled=false) — skipping phase", _phase_prefix("4"))
-        return
-
-    _log_phase_start("4")
-    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
-    if not isinstance(lib_data, dict):
-        log.error(f"{_phase_prefix('4')} Cannot read {OUTPUT_PATH}")
-        return
-
-    root = Path(LIBRARY_PATH)
-    now_dt = datetime.now(timezone.utc)
-    now_utc = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-    # Snapshot existing inventory for merge (fixed reference throughout)
-    existing_inventory = load_existing_inventory_document_non_blocking(INVENTORY_OUTPUT_PATH)
-
-    # Disabled folder refs → mark their items missing
-    force_missing_folder_refs = {
-        ("tv" if folder.get("type") == "tv" else "movie", folder["name"].replace("_", " ").replace("-", " ").title())
-        for folder in cfg.get("folders", [])
-        if folder.get("type") in {"movie", "tv"} and not is_folder_enabled(folder)
-    }
-
-    categories = build_categories_from_config(cfg)
-
-    # Path → library item lookup for title resolution
-    items_by_path: dict[str, dict] = {
-        item["path"]: item for item in lib_data.get("items", []) if item.get("path")
-    }
-
-    all_new_items: list[dict] = []
-
-    active_inv_cats = [c for c in categories if not only_category or c["name"] == only_category]
-    n_inv_cats = len(active_inv_cats)
-
-    for cat_idx, cat in enumerate(active_inv_cats, 1):
-        cat_dir = root / cat["folder"]
-        if not cat_dir.exists():
-            log.warning(f"{_phase_prefix('4')} Folder [{cat['folder']}] skipped — not found: {cat_dir}")
-            continue
-
-        cat_started_at = time.monotonic()
-        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] ({cat_idx}/{n_inv_cats}) started — type={cat['type']}")
-        cat_inv_items: list[dict] = []
-        for media_dir in sorted(cat_dir.iterdir()):
-            if not media_dir.is_dir() or media_dir.name.startswith(('.', '@')):
-                continue
-            item_path = str(media_dir.relative_to(root))
-            lib_item = items_by_path.get(item_path, {})
-            title = lib_item.get("title") or media_dir.name
-
-            inv_item = build_inventory_item(media_dir, cat, title, now_utc)
-            cat_inv_items.append(inv_item)
-
-        all_new_items.extend(cat_inv_items)
-
-        # Incremental write: merge scanned-so-far against snapshot
-        partial_doc = {
-            "version": 1,
-            "generated_at": now_utc,
-            "scan_mode": scan_mode,
-            "missing_reconciliation": False,
-            "items": list(all_new_items),
-        }
-        if existing_inventory is not None:
-            merged = merge_inventory_documents(existing_inventory, partial_doc)
-        else:
-            merged = partial_doc
-        merged = cleanup_inventory_transient_fields(merged)
-        save_inventory_document_non_blocking(merged, INVENTORY_OUTPUT_PATH)
-        log.info(f"{_phase_prefix('4')} Folder [{cat['folder']}] completed in {time.monotonic() - cat_started_at:.1f}s — {len(cat_inv_items)} item(s)")
-
-    # Final pass: full merge + optional missing reconciliation
-    final_doc = {
-        "version": 1,
-        "generated_at": now_utc,
-        "scan_mode": scan_mode,
-        "missing_reconciliation": False,
-        "items": list(all_new_items),
-    }
-    if existing_inventory is not None:
-        final_merged = merge_inventory_documents(existing_inventory, final_doc)
-    else:
-        final_merged = final_doc
-
-    if force_missing_folder_refs:
-        final_merged = mark_disabled_inventory_items_missing(final_merged, force_missing_folder_refs)
-
-    should_reconcile = scan_mode == "full" and not only_category
-    if should_reconcile:
         try:
-            final_merged = reconcile_inventory_missing_states(final_merged)
-            final_merged["missing_reconciliation"] = True
-        except Exception as e:
-            final_merged["missing_reconciliation"] = False
-            log.warning(f"{_phase_prefix('4')} Missing reconciliation failed: {e}. Continuing.")
-    else:
-        final_merged["missing_reconciliation"] = False
-
-    # Stamp last_checked_at = now for all items regardless of status
-    _stamp_last_checked_at(final_merged, now_utc)
-    final_merged = cleanup_inventory_transient_fields(final_merged)
-    save_inventory_document_non_blocking(final_merged, INVENTORY_OUTPUT_PATH)
-
-    # Missing summary
-    missing_items = [i for i in final_merged.get("items", []) if i.get("status") == "missing"]
-    if missing_items:
-        names = [i.get("title") or i.get("id", "?") for i in missing_items[:20]]
-        suffix = f" … (+{len(missing_items) - 20} more)" if len(missing_items) > 20 else ""
-        log.info(f"{_phase_prefix('4')} {len(missing_items)} missing item(s)")
-        log.debug(f"{_phase_prefix('4')} Missing items: {', '.join(names)}{suffix}")
-    else:
-        log.info(f"{_phase_prefix('4')} No missing items")
-
-    elapsed = time.monotonic() - _t0
-    _log_phase_complete("4", elapsed, f"{len(all_new_items)} present / {len(missing_items)} missing")
+            defaults, effective_score_config, _ = get_effective_score_config()
+            del defaults
+            recalculated = recompute_scores_only(effective_score_config)
+            elapsed = time.monotonic() - _t0
+            log.info(f"[SCAN] [SCORE-ONLY] Completed in {elapsed:.1f}s — {_count_label(recalculated, 'item')} scored")
+            recorder.finish_phase("score_only", elapsed, f"{_count_label(recalculated, 'item')} scored")
+            recorder.complete()
+            return recalculated
+        except Exception as exc:
+            recorder.fail(str(exc))
+            raise
 
 
 # ---------------------------------------------------------------------------
 # RECOMMENDATIONS PHASE
 # ---------------------------------------------------------------------------
 
-def run_recommendations() -> int:
+def run_recommendations() -> str:
     _t0 = time.monotonic()
     cfg = load_config()
     if not _is_score_enabled(cfg):
         log.info("%s Disabled — score required", _phase_prefix("5"))
-        return 0
+        return ""
     if not _is_recommendations_enabled(cfg):
         log.info("%s Disabled — skipping phase", _phase_prefix("5"))
-        return 0
+        return ""
 
     _log_phase_start("5")
-    lib_data = load_library_document_non_blocking(OUTPUT_PATH)
+    lib_data = load_library_document_non_blocking(OUTPUT_PATH, availability="available")
     if not isinstance(lib_data, dict):
         log.error(f"{_phase_prefix('5')} Cannot read {OUTPUT_PATH}")
         save_recommendations_document_non_blocking([], RECOMMENDATIONS_OUTPUT_PATH)
-        return 0
+        return ""
 
     rules = _load_runtime_recommendation_rules()
     recs = generate_recommendations(lib_data, rules)
     save_recommendations_document_non_blocking(recs, RECOMMENDATIONS_OUTPUT_PATH)
-    _log_phase_complete("5", time.monotonic() - _t0, _count_label(len(recs), "recommendation"))
-    return len(recs)
+    summary5 = _count_label(len(recs), "recommendation")
+    _log_phase_complete("5", time.monotonic() - _t0, summary5)
+    return summary5
 
 
 def load_recommendations_document_non_blocking(path: str) -> dict | None:
@@ -3983,57 +3916,56 @@ def _resolve_startup_phases(cfg: dict) -> list[int]:
     return [PHASE_SCAN]
 
 
-def run_phases(phases: list[int], *, only_category: str | None = None) -> list[tuple[str, float]]:
+def run_phases(
+    phases: list[int],
+    *,
+    only_category: str | None = None,
+    recorder: "ScanRunRecorder | None" = None,
+) -> list[tuple[str, float, str]]:
     ordered = _normalize_phases(phases)
     if not ordered:
         log.info("[SCAN] No phase selected — nothing to run")
         return []
-    planned_phase_ids = _log_planned_phases(ordered)
-    durations: list[tuple[str, float]] = []
+    _log_planned_phases(ordered)
+    results: list[tuple[str, float, str]] = []
+    _phase_fns = {
+        PHASE_SCAN:            ("1", lambda: run_quick(only_category=only_category)),
+        PHASE_PROBE:           ("2", lambda: run_probe(only_category=only_category)),
+        PHASE_ENRICH:          ("3", lambda: run_enrich(only_category=only_category)),
+        PHASE_SCORE:           ("4", lambda: run_scoring(only_category=only_category)),
+        PHASE_RECOMMENDATIONS: ("5", lambda: run_recommendations()),
+    }
     for phase in ordered:
-        if phase == PHASE_SCAN:
-            phase_started_at = time.monotonic()
-            run_quick(only_category=only_category)
-            durations.append(("1", time.monotonic() - phase_started_at))
-            if "1B" in planned_phase_ids:
-                phase_started_at = time.monotonic()
-                _run_media_probe_phase1b(only_category=only_category)
-                durations.append(("1B", time.monotonic() - phase_started_at))
-        elif phase == PHASE_ENRICH:
-            phase_started_at = time.monotonic()
-            run_enrich(force=True, only_category=only_category)
-            durations.append(("2", time.monotonic() - phase_started_at))
-        elif phase == PHASE_SCORE:
-            phase_started_at = time.monotonic()
-            run_scoring(only_category=only_category)
-            durations.append(("3", time.monotonic() - phase_started_at))
-        elif phase == PHASE_INVENTORY:
-            phase_started_at = time.monotonic()
-            scan_mode = "full" if PHASE_SCAN in ordered else "partial"
-            run_inventory(scan_mode=scan_mode, only_category=only_category)
-            durations.append(("4", time.monotonic() - phase_started_at))
-        elif phase == PHASE_RECOMMENDATIONS:
-            phase_started_at = time.monotonic()
-            run_recommendations()
-            durations.append(("5", time.monotonic() - phase_started_at))
-    return durations
+        entry = _phase_fns.get(phase)
+        if entry is None:
+            continue
+        phase_id, fn = entry
+        if recorder:
+            recorder.start_phase(phase_id)
+        t = time.monotonic()
+        summary = fn()
+        elapsed = time.monotonic() - t
+        if recorder:
+            recorder.finish_phase(phase_id, elapsed, summary or "")
+        results.append((phase_id, elapsed, summary or ""))
+    return results
 
 
-def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
+def run_probe(*, only_category: str | None = None) -> str:
     cfg = load_config()
     if not isinstance(cfg.get("media_probe"), dict) or cfg["media_probe"].get("enabled") is not True:
-        return
+        return ""
     if cfg["media_probe"].get("mode", "compare") != "compare":
-        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("1B"), cfg["media_probe"].get("mode"))
-        return
+        log.warning("%s Unsupported mode %r — skipping", _phase_prefix("2"), cfg["media_probe"].get("mode"))
+        return ""
     if not library_document_exists(OUTPUT_PATH):
-        log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
-        return
+        log.info("%s Skipping — media library is empty", _phase_prefix("2"))
+        return ""
     try:
         document = load_library_document_non_blocking(OUTPUT_PATH)
         if not isinstance(document, dict):
-            log.info("%s Skipping — media library is empty", _phase_prefix("1B"))
-            return
+            log.info("%s Skipping — media library is empty", _phase_prefix("2"))
+            return ""
         result = run_media_probe_pipeline_if_enabled(
             cfg,
             library_document=document,
@@ -4045,10 +3977,15 @@ def _run_media_probe_phase1b(*, only_category: str | None = None) -> None:
         if isinstance(result, tuple) and len(result) == 2:
             updated_document, _stats = result
             write_json(updated_document, OUTPUT_PATH)
+            stats = _stats if isinstance(_stats, dict) else {}
+            probed = stats.get("probed", 0)
+            cached = stats.get("cache_hits", 0)
+            return f"{probed} probed, {cached} cache hits" if (probed or cached) else "completed"
         elif result is not None:
-            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("1B"))
+            log.warning("%s Probe pipeline returned unexpected result — skipping library write", _phase_prefix("2"))
     except Exception as e:
-        log.exception("%s Failed: %s", _phase_prefix("1B"), e)
+        log.exception("%s Failed: %s", _phase_prefix("2"), e)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -4064,12 +4001,9 @@ def run_reset() -> None:
                 count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
                 conn.execute("DELETE FROM media")
                 conn.execute("DELETE FROM recommendations")
-                conn.execute("DELETE FROM inventory_items")
                 conn.execute("DELETE FROM scan_runs")
-                if media_repository is not None:
-                    media_repository.clear_library_snapshot(conn)
             conn.close()
-            log.info("[reset] Cleared %d items from SQLite (media, recommendations, inventory, scan_runs, snapshot)", count)
+            log.info("[reset] Cleared %d items from SQLite (media, recommendations, scan_runs)", count)
         except Exception as exc:
             log.error("[reset] Failed to clear SQLite data: %s", exc)
     else:
@@ -4263,27 +4197,26 @@ _cron_job = {
 }
 
 PHASE_SCAN = 1
-PHASE_ENRICH = 2
-PHASE_SCORE = 3
-PHASE_INVENTORY = 4
+PHASE_PROBE = 2
+PHASE_ENRICH = 3
+PHASE_SCORE = 4
 PHASE_RECOMMENDATIONS = 5
-_PHASE_ORDER = [PHASE_SCAN, PHASE_ENRICH, PHASE_SCORE, PHASE_INVENTORY, PHASE_RECOMMENDATIONS]
+_PHASE_ORDER = [PHASE_SCAN, PHASE_PROBE, PHASE_ENRICH, PHASE_SCORE, PHASE_RECOMMENDATIONS]
 VALID_MODES = {"quick", "full", "default", "score_only", "phased"}
 _SCAN_SEPARATOR = "─" * 47
 _SCAN_FINAL_SEPARATOR = "═" * 47
 _PHASE_LABELS = {
     "1": ("FILESYSTEM+NFO", "Filesystem + NFO"),
-    "1B": ("FFPROBE", "FFprobe technical scan"),
-    "2": ("SEERR", "Seerr enrichment"),
-    "3": ("SCORING", "Scoring"),
-    "4": ("INVENTORY", "Inventory"),
+    "2": ("FFPROBE", "FFprobe technical scan"),
+    "3": ("SEERR", "Seerr enrichment"),
+    "4": ("SCORING", "Scoring"),
     "5": ("RECOMMENDATIONS", "Recommendations"),
 }
 _PHASE_ID_BY_NUMBER = {
     PHASE_SCAN: "1",
-    PHASE_ENRICH: "2",
-    PHASE_SCORE: "3",
-    PHASE_INVENTORY: "4",
+    PHASE_PROBE: "2",
+    PHASE_ENRICH: "3",
+    PHASE_SCORE: "4",
     PHASE_RECOMMENDATIONS: "5",
 }
 
@@ -4314,6 +4247,20 @@ def _count_label(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {singular if count == 1 else plural}"
 
 
+def _make_recorder(trigger_type: str, mode: str, phase_plan: str | None = None) -> "ScanRunRecorder":
+    """Return a ScanRunRecorder, or a no-op stub if the repository is unavailable."""
+    if ScanRunRecorder is None:
+        class _Noop:
+            def start(self): return self
+            def start_phase(self, *a, **kw): pass
+            def finish_phase(self, *a, **kw): pass
+            def record_phase(self, *a, **kw): pass
+            def complete(self): pass
+            def fail(self, *a, **kw): pass
+        return _Noop()  # type: ignore
+    return ScanRunRecorder(trigger_type=trigger_type, mode=mode, phase_plan=phase_plan)
+
+
 def _log_planned_phases(ordered: list[int]) -> list[str]:
     expanded = []
     for phase in ordered:
@@ -4321,13 +4268,15 @@ def _log_planned_phases(ordered: list[int]) -> list[str]:
         if not phase_id:
             continue
         expanded.append(phase_id)
-        if phase == PHASE_SCAN and _is_media_probe_phase_enabled():
-            expanded.append("1B")
     log.info("[SCAN] Planned phases:")
     for phase_id in expanded:
-        label = phase_id.lower() if phase_id == "1B" else phase_id
-        log.info("[SCAN]   %-2s -> %s", label, _phase_display_name(phase_id))
+        log.info("[SCAN]   %-2s -> %s", phase_id, _phase_display_name(phase_id))
     return expanded
+
+
+def _is_media_probe_enabled(cfg: dict | None) -> bool:
+    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
+    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
 
 
 def _is_media_probe_phase_enabled() -> bool:
@@ -4335,20 +4284,16 @@ def _is_media_probe_phase_enabled() -> bool:
         cfg = load_config()
     except Exception:
         return False
-    probe = cfg.get("media_probe") if isinstance(cfg, dict) else None
-    return isinstance(probe, dict) and probe.get("enabled") is True and probe.get("mode", "compare") == "compare"
+    return _is_media_probe_enabled(cfg)
 
 
 def _phases_display_csv(phases: list[int]) -> str:
     expanded = []
-    include_probe = _is_media_probe_phase_enabled()
     for phase in _normalize_phases(phases):
         phase_id = _PHASE_ID_BY_NUMBER.get(phase)
         if not phase_id:
             continue
-        expanded.append(phase_id.lower() if phase_id == "1B" else phase_id)
-        if phase == PHASE_SCAN and include_probe:
-            expanded.append("1b")
+        expanded.append(phase_id)
     return ",".join(expanded)
 
 
@@ -4437,12 +4382,12 @@ def _phase_plan_from_config(
     phases: list[int] = []
     if include_phase1 and _has_configured_media_folders(cfg):
         phases.append(PHASE_SCAN)
+    if _is_media_probe_enabled(cfg):
+        phases.append(PHASE_PROBE)
     if _is_seerr_enrichment_active(cfg, secrets=secrets):
         phases.append(PHASE_ENRICH)
     if _is_score_enabled(cfg):
         phases.append(PHASE_SCORE)
-    if _is_inventory_enabled(cfg):
-        phases.append(PHASE_INVENTORY)
     if _is_recommendations_enabled(cfg):
         phases.append(PHASE_RECOMMENDATIONS)
     return _normalize_phases(phases)
@@ -4478,9 +4423,9 @@ def _compute_phases_for_config_change(
     next_secrets = secrets_after if isinstance(secrets_after, dict) else _load_secrets()
 
     folders_changed = _folder_scan_signature(prev_cfg.get("folders")) != _folder_scan_signature(new_cfg.get("folders"))
+    probe_changed = _is_media_probe_enabled(prev_cfg) != _is_media_probe_enabled(new_cfg)
     seerr_changed = _seerr_runtime_state(prev_cfg, prev_secrets) != _seerr_runtime_state(new_cfg, next_secrets)
     score_changed = _is_score_enabled(prev_cfg) != _is_score_enabled(new_cfg)
-    inventory_changed = _is_inventory_enabled(prev_cfg) != _is_inventory_enabled(new_cfg)
     recommendations_changed = _is_recommendations_enabled(prev_cfg) != _is_recommendations_enabled(new_cfg)
 
     phases: list[int] = []
@@ -4491,12 +4436,12 @@ def _compute_phases_for_config_change(
         if PHASE_SCAN not in phases:
             phases.insert(0, PHASE_SCAN)
     else:
+        if probe_changed and _is_media_probe_enabled(new_cfg):
+            phases.append(PHASE_PROBE)
         if seerr_changed:
             phases.append(PHASE_ENRICH)
         if score_changed:
             phases.append(PHASE_SCORE)
-        if inventory_changed:
-            phases.append(PHASE_INVENTORY)
         if recommendations_changed:
             if _is_score_enabled(new_cfg):
                 phases.append(PHASE_SCORE)
@@ -4747,10 +4692,9 @@ def _start_post_save_scan_if_idle(mode: str, phases: list[int]) -> bool:
 
 _SCAN_PHASE_STATE = {
     "1": "filesystem",
-    "1B": "ffprobe",
-    "2": "seerr",
-    "3": "scoring",
-    "4": "inventory",
+    "2": "ffprobe",
+    "3": "seerr",
+    "4": "scoring",
     "5": "recommendations",
 }
 
@@ -4778,27 +4722,39 @@ def _empty_recommendations_payload(enabled: bool) -> dict:
     return {"enabled": bool(enabled), "generated_at": None, "version": 1, "items": []}
 
 
+_recommendations_api_cache: dict[tuple, dict] = {}
+
+
 def _recommendations_api_payload(cfg: dict | None = None) -> dict:
+    cache_enabled = cfg is None and Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
+    if cache_enabled:
+        cache_key = (_runtime_db_signature(), "reco")
+        cached = _recommendations_api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     current_cfg = cfg if isinstance(cfg, dict) else load_config()
     enabled = _is_recommendations_enabled(current_cfg)
     if not enabled:
-        return _empty_recommendations_payload(False)
+        payload = _empty_recommendations_payload(False)
+    else:
+        raw = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
+        if not isinstance(raw, dict):
+            payload = _empty_recommendations_payload(True)
+        else:
+            raw["enabled"] = True
+            raw.setdefault("generated_at", None)
+            raw.setdefault("version", 1)
+            if not isinstance(raw.get("items"), list):
+                raw["items"] = []
+            payload = raw
 
-    payload = load_recommendations_document_non_blocking(RECOMMENDATIONS_OUTPUT_PATH)
-    if not isinstance(payload, dict):
-        return _empty_recommendations_payload(True)
-    payload["enabled"] = True
-    payload.setdefault("generated_at", None)
-    payload.setdefault("version", 1)
-    if not isinstance(payload.get("items"), list):
-        payload["items"] = []
+    if cache_enabled:
+        _recommendations_api_cache[cache_key] = payload
     return payload
 
 
-_library_api_cache: dict[str, object] = {
-    "signature": None,
-    "payload": None,
-}
+_library_api_cache: dict[tuple, dict] = {}
 
 
 def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
@@ -4819,24 +4775,25 @@ def _runtime_db_signature() -> tuple[tuple[str, int, int], ...]:
     return tuple(signature)
 
 
-def _library_api_payload() -> dict:
+def _library_api_payload(availability: str = "available") -> dict:
     started = time.perf_counter()
     cache_enabled = Path(OUTPUT_PATH) == runtime_paths.LIBRARY_JSON
     signature = _runtime_db_signature()
-    if cache_enabled and _library_api_cache.get("signature") == signature and isinstance(_library_api_cache.get("payload"), dict):
-        payload = _library_api_cache["payload"]
+    cache_key = (signature, availability)
+    if cache_enabled and cache_key in _library_api_cache:
+        payload = _library_api_cache[cache_key]
         items = payload.get("items") if isinstance(payload.get("items"), list) else []
-        log.debug("[perf] /api/library cache=hit items=%s duration_ms=%.1f", len(items), (time.perf_counter() - started) * 1000)
+        log.debug("[perf] /api/library cache=hit availability=%s items=%s duration_ms=%.1f", availability, len(items), (time.perf_counter() - started) * 1000)
         return payload
 
     load_started = time.perf_counter()
-    payload = load_library_document_non_blocking(OUTPUT_PATH)
+    payload = load_library_document_non_blocking(OUTPUT_PATH, availability=availability)
     load_ms = (time.perf_counter() - load_started) * 1000
     if not isinstance(payload, dict):
         payload = {"items": [], "categories": [], "total_items": 0}
         if cache_enabled:
-            _library_api_cache.update({"signature": signature, "payload": payload})
-        log.debug("[perf] /api/library cache=miss sql_ms=%.1f items=0 duration_ms=%.1f", load_ms, (time.perf_counter() - started) * 1000)
+            _library_api_cache[cache_key] = payload
+        log.debug("[perf] /api/library cache=miss availability=%s sql_ms=%.1f items=0 duration_ms=%.1f", availability, load_ms, (time.perf_counter() - started) * 1000)
         return payload
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
     categories = payload.get("categories")
@@ -4850,9 +4807,10 @@ def _library_api_payload() -> dict:
     payload["categories"] = categories
     payload["total_items"] = len(items)
     if cache_enabled:
-        _library_api_cache.update({"signature": signature, "payload": payload})
+        _library_api_cache[cache_key] = payload
     log.debug(
-        "[perf] /api/library cache=miss sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        "[perf] /api/library cache=miss availability=%s sql_ms=%.1f items=%s categories=%s duration_ms=%.1f",
+        availability,
         load_ms,
         len(items),
         len(categories),
@@ -5045,7 +5003,9 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             ok = library_document_exists(OUTPUT_PATH)
             self._json(200 if ok else 503, {"status": "ok" if ok else "degraded"})
         elif path == "/api/library":
-            self._json(200, _library_api_payload())
+            _avail_raw = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("availability", ["available"])[0]
+            _availability = _avail_raw if _avail_raw in ("available", "absent", "all") else "available"
+            self._json(200, _library_api_payload(availability=_availability))
         elif path == "/api/config":
             cfg = load_config()
             cfg, changed = _ensure_needs_onboarding(cfg)
@@ -5068,8 +5028,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 changed = True
             if changed:
                 save_config(cfg)
-                cfg = load_config()
-                cfg, _ = _ensure_needs_onboarding(cfg)
+                # cfg is already the normalized state that was just written — no reload needed.
             # Mask API key — never expose the real value to the frontend
             out = copy.deepcopy(cfg)
             out["needs_onboarding"] = _derive_needs_onboarding(cfg, config_exists=_config_file_exists())
@@ -5107,8 +5066,32 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
             self._json(200, _load_runtime_provider_mapping())
         elif path == "/api/providers-logo":
             self._json(200, _load_runtime_provider_logos())
+        elif path == "/api/audio-languages":
+            try:
+                from backend.defaults.audio_language_defaults import DEFAULT_AUDIO_LANGUAGES
+            except Exception:
+                from defaults.audio_language_defaults import DEFAULT_AUDIO_LANGUAGES  # type: ignore
+            self._json(200, DEFAULT_AUDIO_LANGUAGES)
+        elif path == "/api/audiocodec-mapping":
+            try:
+                from backend.defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING
+            except Exception:
+                from defaults.audio_codec_defaults import DEFAULT_AUDIO_CODEC_MAPPING  # type: ignore
+            self._json(200, DEFAULT_AUDIO_CODEC_MAPPING)
         elif path == "/api/recommendations":
             self._json(200, _recommendations_api_payload())
+        elif path == "/api/scans/history":
+            try:
+                from repositories.scan_run_repository import get_recent_scan_runs  # type: ignore
+            except Exception:
+                try:
+                    from backend.repositories.scan_run_repository import get_recent_scan_runs
+                except Exception:
+                    get_recent_scan_runs = None  # type: ignore
+            if get_recent_scan_runs is None:
+                self._json(503, {"error": "scan history unavailable"})
+            else:
+                self._json(200, {"items": get_recent_scan_runs(limit=50)})
         else:
             self._json(404, {"error": "not found"})
 
@@ -5130,26 +5113,33 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 self._json(400, err)
                 return
 
-            cfg = load_config()
+            # Load ONLY score tables + score.enabled — no folders, providers, seerr, etc.
+            cfg = config_repository.load_score_config_only()
+            score_config_before = cfg.get("score_configuration")
             merged = merge_score_config(defaults, payload.get("score"))
             effective, _ = validate_score_config(merged, defaults=defaults)
             cfg["score_configuration"] = effective
             cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
             if score_changed:
                 log.info("[score] Score configuration normalized during PUT /api/settings/score")
-            save_config(cfg)
+            score_config_changed = score_config_before != cfg.get("score_configuration")
+            config_repository.save_score_configuration(
+                cfg.get("score_configuration"),
+                _is_score_enabled(cfg),
+            )
+            log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0
             mode = "config_only"
             scan_skipped = None
-            if _is_score_enabled(cfg):
+            if _is_score_enabled(cfg) and score_config_changed:
                 if _is_scan_running():
                     _log_post_save_scan_skipped()
                     mode = "scan_skipped"
                     scan_skipped = "running"
                 else:
                     try:
-                        recalculated = run_score_only()
+                        recalculated = run_score_only(trigger_type="save_settings")
                         mode = "score_only"
                     except BlockingIOError:
                         _log_post_save_scan_skipped()
@@ -5184,12 +5174,18 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
     def _handle_score_settings_reset(self) -> None:
         try:
             defaults = load_score_defaults()
-            cfg = load_config()
+            cfg = config_repository.load_score_config_only()
+            score_config_before = cfg.get("score_configuration")
             cfg["score_configuration"] = copy.deepcopy(defaults)
             cfg, score_changed, _ = normalize_score_configuration_sections(cfg)
             if score_changed:
                 log.info("[score] Score configuration normalized during POST /api/settings/score/reset")
-            save_config(cfg)
+            score_config_changed = score_config_before != cfg.get("score_configuration")
+            config_repository.save_score_configuration(
+                cfg.get("score_configuration"),
+                _is_score_enabled(cfg),
+            )
+            log.info("[config] Saved: %s", "score_configuration" if score_config_changed else "(no change)")
 
             recalculated = 0
             mode = "config_only"
@@ -5201,7 +5197,7 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     scan_skipped = "running"
                 else:
                     try:
-                        recalculated = run_score_only()
+                        recalculated = run_score_only(trigger_type="save_settings")
                         mode = "score_only"
                     except BlockingIOError:
                         _log_post_save_scan_skipped()
@@ -5342,6 +5338,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/config":
             if not isinstance(payload, dict):
                 self._json(400, {"error": "payload must be a JSON object"}); return
+
+            # ── Translate legacy enable_score field ──────────────────────────
             system_payload = payload.get("system")
             if isinstance(system_payload, dict) and "enable_score" in system_payload:
                 score_payload = payload.setdefault("score", {})
@@ -5350,10 +5348,8 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 system_payload.pop("enable_score", None)
                 if not system_payload:
                     payload.pop("system", None)
-            cfg = load_config()
-            safe_payload = _redact_config_payload(payload)
-            log.info("[config] Received: %s", json.dumps(safe_payload))
 
+            # ── Handle secrets (auth, seerr apikey) ──────────────────────────
             secrets_before = _load_secrets()
             secrets_after = dict(secrets_before)
             try:
@@ -5363,20 +5359,40 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                 return
             jsr_key_action = _apply_seerr_secret_update(payload, secrets_after)
 
-            merged = deep_merge(cfg, payload)
-            merged, _ = _ensure_needs_onboarding(merged, config_exists=True)
-            normalize_folder_enabled_flags(merged, drop_visible=True)
-            merged, _ = normalize_seerr_config(merged)
-            merged, _, _ = normalize_score_configuration_sections(merged)
-            merged, _ = normalize_recommendations_configuration(merged)
-            _finalize_needs_onboarding_after_config_update(merged)
-            # Ensure apikey never persists in SQLite config
-            if "seerr" in merged:
-                merged["seerr"].pop("apikey", None)
-                merged["seerr"].pop("clear_apikey", None)
-            merged.pop("jellyseerr", None)
-            save_config(merged)
-            if secrets_after != secrets_before:
+            # ── Track which top-level keys were sent ─────────────────────────
+            original_keys = frozenset(payload)
+
+            # ── Normalize payload keys in place ──────────────────────────────
+            normalize_folder_enabled_flags(payload, drop_visible=True)
+            payload.pop("jellyseerr", None)
+            if "seerr" in original_keys:
+                payload, _ = normalize_seerr_config(payload)
+                if isinstance(payload.get("seerr"), dict):
+                    payload["seerr"].pop("apikey", None)
+                    payload["seerr"].pop("clear_apikey", None)
+            if "score" in original_keys or "score_configuration" in original_keys:
+                payload, _, _ = normalize_score_configuration_sections(payload)
+            if "recommendations" in original_keys:
+                payload, _ = normalize_recommendations_configuration(payload)
+            if "folders" in original_keys or "system" in original_keys:
+                _finalize_needs_onboarding_after_config_update(payload)
+
+            # ── Build the dict to save (only keys from original payload) ─────
+            to_save = {k: payload[k] for k in original_keys if k in payload}
+
+            # ── Load phase-affecting config from DB (only what's needed) ─────
+            _PHASE_KEYS = frozenset({"folders", "media_probe", "seerr", "score", "recommendations"})
+            phase_keys_in_payload = _PHASE_KEYS & original_keys
+            secrets_changed = secrets_before != secrets_after
+            if phase_keys_in_payload or secrets_changed:
+                cfg_before = config_repository.load_phase_affecting_config(phase_keys_in_payload)
+            else:
+                cfg_before = {}
+
+            # ── Patch-based save ─────────────────────────────────────────────
+            written_keys = config_repository.save_config_patch(to_save)
+
+            if secrets_changed:
                 try:
                     _write_secrets(secrets_after)
                     _sync_auth_settings_to_db(secrets_after)
@@ -5384,33 +5400,38 @@ class _ScanHandler(http.server.BaseHTTPRequestHandler):
                     self._json(500, {"ok": False, "error": {"code": "SECRETS_WRITE_FAILED", "message": str(e)}})
                     return
 
+            # ── Log ──────────────────────────────────────────────────────────
             if jsr_key_action == "updated":
                 log.info("[config] Seerr API key updated")
             elif jsr_key_action == "preserved":
                 log.info("[config] Seerr API key preserved")
             elif jsr_key_action == "cleared":
                 log.info("[config] Seerr API key cleared (explicit request)")
-            else:
-                log.info("[config] Seerr API key not modified")
             if auth_action == "updated":
                 log.info("[config] Authentication password updated")
             elif auth_action == "disabled":
                 log.info("[config] Authentication disabled")
 
-            log.info("[config] Saved")
-            # Apply log_level change immediately without restart
-            new_level = merged.get("system", {}).get("log_level") or merged.get("log_level") or ""
+            if written_keys:
+                log.info("[config] Saved: %s", _patch_summary(written_keys, to_save))
+            else:
+                log.debug("[config] Saved: (no change)")
+
+            # ── Immediate side-effects ───────────────────────────────────────
+            new_level = (to_save.get("system") or {}).get("log_level") or to_save.get("log_level") or ""
             if new_level:
                 _set_global_log_level(new_level)
 
-            if isinstance(payload.get("system"), dict) and "scan_cron" in payload["system"]:
-                sync_user_scan_cron(merged, reason="config update")
+            if isinstance(to_save.get("system"), dict) and "scan_cron" in to_save["system"]:
+                sync_user_scan_cron(to_save, reason="config update")
 
+            # ── Phase calculation (partial before/after) ─────────────────────
+            cfg_after = dict(cfg_before)
+            for k in phase_keys_in_payload:
+                cfg_after[k] = to_save.get(k)
             phases = _compute_phases_for_config_change(
-                cfg,
-                merged,
-                secrets_before=secrets_before,
-                secrets_after=secrets_after,
+                cfg_before, cfg_after,
+                secrets_before=secrets_before, secrets_after=secrets_after,
             )
             response = {"ok": True, "phases": phases}
             if phases:
@@ -5521,10 +5542,18 @@ def main():
         lock_mode = "default"
         mode_label = "dynamic pipeline"
 
+    _phase_plan_str = (
+        "score_only" if args.score_only
+        else _phases_display_csv(_parse_phases_csv(args.phases)) if args.phases
+        else "1" if args.quick
+        else None
+    )
+    recorder = _make_recorder(args.origin, lock_mode, phase_plan=_phase_plan_str)
     try:
         with _scan_lock(lock_mode):
+            recorder.start()
             _t_main = time.monotonic()
-            phase_durations: list[tuple[str, float]] = []
+            phase_durations: list[tuple[str, float, str]] = []
             if args.origin == "cron":
                 log.info("[SCAN] Starting scheduled scan (dynamic pipeline)")
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
@@ -5532,11 +5561,21 @@ def main():
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
 
             if args.quick:
-                phase_durations = run_phases([PHASE_SCAN], only_category=args.category)
+                phase_durations = run_phases([PHASE_SCAN], only_category=args.category, recorder=recorder)
             elif args.score_only:
-                run_score_only()
+                recorder.start_phase("score_only")
+                t_so = time.monotonic()
+                log.info("[SCAN] %s", _SCAN_SEPARATOR)
+                log.info("[SCAN] [SCORE-ONLY] Starting recompute")
+                log.info("[SCAN] %s", _SCAN_SEPARATOR)
+                _defaults, _esc, _ = get_effective_score_config()
+                del _defaults
+                _n_scored = recompute_scores_only(_esc)
+                _so_elapsed = time.monotonic() - t_so
+                log.info(f"[SCAN] [SCORE-ONLY] Completed in {_so_elapsed:.1f}s — {_count_label(_n_scored, 'item')} scored")
+                recorder.finish_phase("score_only", _so_elapsed, f"{_count_label(_n_scored, 'item')} scored")
             elif args.phases:
-                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category)
+                phase_durations = run_phases(_parse_phases_csv(args.phases), only_category=args.category, recorder=recorder)
             else:
                 cfg_for_plan = _prepare_startup_configuration() if args.origin == "startup" else load_config()
                 if args.origin == "startup":
@@ -5545,21 +5584,22 @@ def main():
                         log.info("[SCAN] Startup: no media scan phase required")
                 else:
                     phases = _phase_plan_from_config(cfg_for_plan, include_phase1=True)
-                phase_durations = run_phases(phases, only_category=args.category)
+                phase_durations = run_phases(phases, only_category=args.category, recorder=recorder)
 
             elapsed = time.monotonic() - _t_main
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
             log.info(f"[SCAN] Scan completed in {elapsed:.1f}s")
             if phase_durations:
                 log.info("[SCAN] Phase durations:")
-                for phase_id, duration in phase_durations:
+                for phase_id, duration, _ in phase_durations:
                     log.info(
                         "[SCAN]   Phase %-2s (%s): %.1fs",
-                        phase_id.lower() if phase_id == "1B" else phase_id,
+                        phase_id,
                         _phase_display_name(phase_id).replace(" + ", "+"),
                         duration,
                     )
             log.info(f"[SCAN] {_SCAN_FINAL_SEPARATOR}")
+            recorder.complete()
 
     except BlockingIOError:
         if args.origin == "startup":
@@ -5569,6 +5609,9 @@ def main():
         else:
             log.warning("[SCAN] Scan already running — refusing new scan request")
         sys.exit(1)
+    except Exception as exc:
+        recorder.fail(str(exc))
+        raise
 
 
 if __name__ == "__main__":

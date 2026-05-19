@@ -26,11 +26,12 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertNotIn("LIBRARY_PATH", self.compose)
         self.assertNotRegex(self.compose, r":/tmp\b|:/tmp:")
 
-    def test_dockerfile_embeds_conf_defaults_without_user_config_or_secret(self):
-        self.assertIn("/app/defaults/conf/config.json", self.dockerfile)
-        self.assertIn("/app/defaults/conf/providers_mapping.json", self.dockerfile)
-        self.assertIn("/app/defaults/conf/providers_logo.json", self.dockerfile)
-        self.assertIn("/app/defaults/conf/recommendations_rules.json", self.dockerfile)
+    def test_dockerfile_uses_python_defaults_without_bundled_json_conf(self):
+        # Defaults are Python constants in backend/defaults/ — no JSON COPY needed
+        self.assertNotIn("/app/defaults/conf/config.json", self.dockerfile)
+        self.assertNotIn("/app/defaults/conf/providers_mapping.json", self.dockerfile)
+        self.assertNotIn("/app/defaults/conf/providers_logo.json", self.dockerfile)
+        self.assertNotIn("/app/defaults/conf/recommendations_rules.json", self.dockerfile)
         self.assertIn("ffmpeg", self.dockerfile)
         self.assertRegex(self.dockerfile, r"apk add --no-cache .*sqlite")
         self.assertIn("COPY backend/ /app/backend/", self.dockerfile)
@@ -79,7 +80,7 @@ class DockerStorageLayoutGuardsTest(unittest.TestCase):
         self.assertRegex(self.nginx, r"location ~ \^/\(data\|conf\)")
 
     def test_no_runtime_json_audit_script_passes(self):
-        script = ROOT / "scripts" / "audit-no-runtime-json.sh"
+        script = ROOT / "tests" / "scripts" / "audit-no-runtime-json.sh"
         self.assertTrue(script.exists())
         result = subprocess.run(
             [str(script)],

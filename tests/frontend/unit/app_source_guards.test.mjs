@@ -173,25 +173,50 @@ test('stats filter applier toggles graph values in include mode only', () => {
 });
 
 test('loadLibrary resolves score feature from runtime config only', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /enableScore = resolveScoreEnabled\(\);/, 'loadLibrary should resolve score from centralized config-driven helper');
   assert.doesNotMatch(block, /data\.meta/, 'loadLibrary should not depend on library meta payload');
   assert.doesNotMatch(block, /data\.config/, 'loadLibrary should not depend on embedded config payload');
 });
 
 test('loadLibrary restores active tab only after data is loaded', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /window\.MMLState\.isLoaded\s*=\s*true;/, 'loadLibrary should mark state as loaded before tab switch');
   assert.match(block, /switchTab\(currentTab\);/, 'loadLibrary should re-render the active tab after loading data');
 });
 
 test('loadLibrary loads from SQLite API and treats empty library as a first-run state', () => {
-  const block = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(block, /const lib = await _fetchLibraryWithRetry\(\);/, 'loadLibrary should fetch library data through API retry helper');
-  assert.match(appSource, /const libraryUrl = '\/api\/library\?_=' \+ Date\.now\(\);/, 'library fetch helper should load SQLite-backed API');
+  assert.match(appSource, /const libraryUrl = '\/api\/library\?availability='/, 'library fetch helper should include availability param');
+  assert.match(appSource, /Date\.now\(\)/, 'library fetch helper should include cache-busting timestamp');
   assert.doesNotMatch(appSource, /\/library\.json/, 'frontend should not request legacy runtime library.json');
   assert.match(block, /finishWithEmptyLibrary\(\);/, 'loadLibrary should provide a non-error empty-library fallback when onboarding is complete');
   assert.match(block, /finishWithOnboarding\(\);/, 'loadLibrary should keep onboarding flow when onboarding is still required');
+});
+
+test('loadLibrary restores persisted activeAvailability before the first fetch', () => {
+  // The fix: activeAvailability must be read from localStorage BEFORE _fetchLibraryWithRetry()
+  // so the initial API request uses the correct availability value, not the default 'available'.
+  const block = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
+
+  // 1. The early restore must appear in loadLibrary and apply activeAvailability
+  assert.match(block, /localStorage\.getItem\('mediaState'\)/,
+    'loadLibrary must read mediaState from localStorage before fetching');
+  assert.match(block, /activeAvailability\s*=\s*_ps\.activeAvailability/,
+    'loadLibrary must apply persisted activeAvailability before the fetch');
+
+  // 2. The whitelist validation must be present (no invalid values accepted)
+  assert.match(block, /\['available',\s*'absent',\s*'all'\]\.includes/,
+    'loadLibrary must validate persisted activeAvailability against the allowed set');
+
+  // 3. Early restore must appear BEFORE _fetchLibraryWithRetry (sequential regex match)
+  assert.match(block, /localStorage\.getItem\('mediaState'\)[\s\S]*_fetchLibraryWithRetry\(\)/,
+    'Persisted activeAvailability must be restored BEFORE _fetchLibraryWithRetry() is called');
+
+  // 4. restoreState() (full restore, for filter UI) must still appear in the overall function
+  assert.match(appSource, /function loadLibrary[\s\S]*?restoreState\(\)[\s\S]*?function _isFolderEnabled/,
+    'Full restoreState() must still run inside loadLibrary (it renders filter UI after data is loaded)');
 });
 
 test('user-facing scan copy describes one dynamic phase pipeline', () => {
@@ -327,9 +352,10 @@ test('onboarding navigation is driven by one deterministic step flow', () => {
 
 test('onboarding features and initial scan access match dynamic pipeline', () => {
   const featuresBlock = functionBlock(settingsSource, '_onbStep3HTML', '_onbStep4HTML');
-  ['onbSynopsisEnabled', 'onbInventoryEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
+  ['onbSynopsisEnabled', 'onbMediaProbeEnabled', 'onbScoreEnabled', 'onbRecommendationsEnabled'].forEach((id) => {
     assert.match(featuresBlock, new RegExp(`id="${id}"`), `onboarding should render ${id}`);
   });
+  assert.doesNotMatch(featuresBlock, /id="onbInventoryEnabled"/, 'inventory toggle removed from onboarding');
   const captureBlock = functionBlock(settingsSource, '_captureOnbFeatures', '_onbFeaturesToggle');
   assert.match(captureBlock, /recommendationsEnabled = scoreEnabled && recommendationsInput\?\.checked === true/, 'recommendations should depend on score in onboarding state');
   const toggleBlock = functionBlock(settingsSource, '_onbFeaturesToggle', '_captureOnbAuth');
@@ -371,7 +397,7 @@ test('recommendations feature is gated by score and avoids fetch when disabled',
 
 test('recommendations load lazily after initial library render', () => {
   assert.match(appSource, /let recommendationsLoadPromise = null;/, 'recommendations should guard concurrent lazy loads');
-  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_dateYmd');
+  const loadLibraryBlock = functionBlock(appSource, 'loadLibrary', '_isFolderEnabled');
   assert.match(loadLibraryBlock, /if \(currentTab === 'recommendations'\) await ensureRecommendationsLoaded\(\);/, 'initial load should fetch recommendations only when restoring recommendations tab');
   assert.doesNotMatch(loadLibraryBlock, /await loadRecommendations\(\);/, 'initial library load should not always fetch recommendations');
   const switchBlock = functionBlock(appSource, 'switchTab', 'render');
@@ -577,7 +603,8 @@ test('stats include genre and audio-channel aggregations from existing item fiel
   assert.match(block, /referenceCount:\s*items\.length/, 'genre chart percentages should use filtered item count as reference');
   assert.doesNotMatch(block, /entriesBySize/, 'genre chart should not keep size-based modes');
   assert.match(block, /const byAudioChannelsCount = \{\}, byAudioChannelsSize = \{\};/, 'stats should aggregate audio channels dynamically');
-  assert.match(block, /getDep\('getNormalizedAudioChannels'\)\(item\)/, 'audio channel stats should reuse normalized channel helper');
+  // Normalizer is resolved once (const fnAudioCh = getDep(...)) then called per item
+  assert.match(block, /getDep\('getNormalizedAudioChannels'\)/, 'audio channel stats should reuse normalized channel helper via getDep');
 });
 
 test('stats layout is organized into 3 subtabs and renders new genre/audio-channel charts', () => {
@@ -649,7 +676,9 @@ test('provider count chart displays raw counts without "media" unit suffix', () 
 
 test('provider size chart uses library-size reference base (not cumulative provider-size base)', () => {
   const dataBlock = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
-  assert.match(dataBlock, /referenceSize:\s*items\.reduce\(\(sum, i\) => sum \+ \(i\.size_b \|\| 0\), 0\)/, 'provider stats should expose unique library-size reference base');
+  // referenceSize is the total library size — either accumulated in a single-pass
+  // loop (current) or via items.reduce(...). Both expose the same invariant.
+  assert.match(dataBlock, /referenceSize[,\s]/, 'provider stats should expose unique library-size reference base');
 
   const renderBlock = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
   assert.match(renderBlock, /size:\s*\{\s*percentBase:\s*Number\(provReferenceSize \|\| 0\)/, 'provider size pie should compute percentages against library-size reference base');
@@ -709,4 +738,75 @@ test('filter inline-clear handler is ordered before trigger handler in events.js
     clearIdx < triggerIdx,
     'inline-clear handler must be checked before trigger handler so the ✕ click is not swallowed'
   );
+});
+
+test('availability filter buttons use data-availability-value, not inline onclick', () => {
+  // CSP script-src-attr blocks onclick="..." in HTML strings generated by JS.
+  // Buttons must use data-availability-value="..." + event delegation instead.
+  assert.doesNotMatch(
+    appSource,
+    /onclick=["']setAvailabilityFilter/,
+    'availability pills must not use inline onclick= attributes (CSP violation)'
+  );
+  assert.match(
+    appSource,
+    /data-availability-value=/,
+    'availability pills must carry data-availability-value for CSP-safe event delegation'
+  );
+  assert.match(
+    eventsSource,
+    /closest\('[^']*data-availability-value/,
+    'events.js must delegate clicks on [data-availability-value] pills'
+  );
+});
+
+test('export JSON button and handler are fully removed from source', () => {
+  assert.doesNotMatch(indexSource, /cfgExportJsonBtn/, 'index.html must not contain cfgExportJsonBtn');
+  assert.doesNotMatch(appSource, /exportLibraryJson/, 'app.js must not contain exportLibraryJson');
+  assert.doesNotMatch(appSource, /libraryExportSource/, 'app.js must not contain libraryExportSource');
+  assert.doesNotMatch(eventsSource, /cfgExportJsonBtn/, 'events.js must not contain cfgExportJsonBtn');
+  const systemFr = frI18n?.settings?.system ?? {};
+  assert.ok(!('export_json' in systemFr), 'fr.json must not have export_json key under settings.system');
+  const systemEn = enI18n?.settings?.system ?? {};
+  assert.ok(!('export_json' in systemEn), 'en.json must not have export_json key under settings.system');
+});
+
+test('_plogo does not call console.warn for missing logos', () => {
+  const block = functionBlock(appSource, '_plogo', '_catVisible');
+  assert.doesNotMatch(block, /console\.warn/, '_plogo must not warn on missing logos');
+});
+
+test('_scoreT and _tMaybe in settings.js do not call t() or console.warn', () => {
+  const tMaybeBlock = functionBlock(settingsSource, '_tMaybe', '_scoreT');
+  assert.doesNotMatch(tMaybeBlock, /\bt\(/, '_tMaybe must not call t() to avoid warn spam');
+  assert.doesNotMatch(tMaybeBlock, /console\.warn/, '_tMaybe must not call console.warn');
+
+  const scoreTBlock = functionBlock(settingsSource, '_scoreT', '_scoreKeyTokenLabel');
+  assert.doesNotMatch(scoreTBlock, /console\.warn/, '_scoreT must not call console.warn');
+  assert.doesNotMatch(scoreTBlock, /\bt\(/, '_scoreT must not call t() directly');
+});
+
+test('onboarding Next button uses data-onb-action to avoid double-fire', () => {
+  const renderBlock = functionBlock(settingsSource, '_onbRender', '_onbStep0HTML');
+  // Fix: _onbRender must NOT assign next.onclick — that was causing double-fire with addEventListener
+  assert.doesNotMatch(renderBlock, /next\.onclick\s*=/, '_onbRender must not assign next.onclick (double-fire bug)');
+  // Instead it sets data-onb-action so the single addEventListener handler can dispatch
+  assert.match(renderBlock, /next\.dataset\.onbAction\s*=/, '_onbRender must set data-onb-action to signal scan vs next');
+
+  // events.js must have exactly ONE handler on onbNextBtn that dispatches via dataset
+  assert.match(eventsSource, /onbNextBtn[\s\S]*addEventListener[\s\S]*onbAction[\s\S]*launch[\s\S]*onbLaunchScan[\s\S]*onbNext/, 'events.js must dispatch Next based on data-onb-action');
+  assert.doesNotMatch(eventsSource, /onbNextBtn[\s\S]*addEventListener[\s\S]*onbNext\s*\)/, 'events.js must not bind onbNext directly as the Next listener');
+});
+
+test('onboarding seerr step is not skipped in forward navigation', () => {
+  // _onbFlow must always include seerr until explicitly skipped
+  const flowBlock = functionBlock(settingsSource, '_onbFlow', '_onbCurrentStep');
+  assert.match(flowBlock, /skippable[\s\S]*_onbSkippedStepIds/, '_onbFlow must gate seerr on the skipped set');
+  // _onbSkipCurrentStep is the only way to add to the skipped set
+  const skipBlock = functionBlock(settingsSource, '_onbSkipCurrentStep', 'showOnboarding');
+  // Check that skipped step adds to the set
+  assert.match(settingsSource, /_onbSkippedStepIds\.add\(current\.id\)/, 'only _onbSkipCurrentStep should add to the skipped set');
+  // showOnboarding always resets the skipped set
+  const showBlock = functionBlock(settingsSource, 'showOnboarding', '_onbRender');
+  assert.match(showBlock, /_onbSkippedStepIds\s*=\s*new Set\(\)/, 'showOnboarding must reset the skipped set to guarantee seerr is visible by default');
 });

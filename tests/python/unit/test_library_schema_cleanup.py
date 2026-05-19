@@ -87,6 +87,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Films"],
                         "items": [
                             {
+                                "id": "m1",
                                 "title": "Movie",
                                 "type": "movie",
                                 "category": "Films",
@@ -113,7 +114,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                  patch.object(
                      scanner,
                      "fetch_providers",
-                     return_value=[{"raw_name": "Netflix Standard with Ads", "logo": None, "logo_url": None}],
+                     return_value=[{"raw_name": "Netflix Standard with Ads", "logo": None}],
                  ):
                 scanner.run_enrich(force=True)
 
@@ -140,6 +141,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Films"],
                         "items": [
                             {
+                                "id": "m2",
                                 "title": "Movie",
                                 "type": "movie",
                                 "category": "Films",
@@ -161,10 +163,10 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                      scanner,
                      "fetch_providers",
                      return_value=[
-                         {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None, "logo_url": None},
-                         {"raw_name": "Autres", "logo": None, "logo_url": None},
-                         {"raw_name": "Netflix   ", "logo": None, "logo_url": None},
-                         {"raw_name": "Netflix", "logo": None, "logo_url": None},
+                         {"raw_name": "  HBO   Max. Amazon Channel. ", "logo": None},
+                         {"raw_name": "Autres", "logo": None},
+                         {"raw_name": "Netflix   ", "logo": None},
+                         {"raw_name": "Netflix", "logo": None},
                      ],
                  ):
                 scanner.run_enrich(force=True)
@@ -186,6 +188,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv1",
                                 "title": "Paradise",
                                 "type": "tv",
                                 "category": "Series",
@@ -228,6 +231,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv2",
                                 "title": "Paradise",
                                 "type": "tv",
                                 "category": "Series",
@@ -266,6 +270,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Series"],
                         "items": [
                             {
+                                "id": "tv3",
                                 "title": "Paradise",
                                 "year": "2025",
                                 "type": "tv",
@@ -276,6 +281,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "providers_fetched": False,
                             },
                             {
+                                "id": "tv4",
                                 "title": "Andor",
                                 "year": "2022",
                                 "type": "tv",
@@ -286,6 +292,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                                 "providers_fetched": False,
                             },
                             {
+                                "id": "tv5",
                                 "title": "La Casa de Papel",
                                 "year": "2017",
                                 "type": "tv",
@@ -301,9 +308,9 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
-            providers_hulu = [{"raw_name": "Hulu", "logo": None, "logo_url": None}]
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_disney = [{"raw_name": "Disney+", "logo": None}]
+            providers_hulu = [{"raw_name": "Hulu", "logo": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 mapping = {
@@ -320,24 +327,22 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 }
                 return mapping.get(str(identifier), scanner._JSR_NOT_FOUND)
 
+            # Map by title since parallel processing makes call order non-deterministic.
+            _resolve_map = {
+                "Paradise": {"tmdb_id": "9001", "tvdb_id": "9991"},
+                "Andor": {"tmdb_id": "9002", "tvdb_id": "9992"},
+                "La Casa de Papel": {"tmdb_id": "9003", "tvdb_id": "9993"},
+            }
+
+            def fake_resolve(title, year, is_tv, jsr):
+                return _resolve_map.get(title, scanner._JSR_NOT_FOUND)
+
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
                  patch.object(scanner, "build_categories_from_config", return_value=[]), \
-                 patch.object(
-                     scanner,
-                     "fetch_providers",
-                     side_effect=fake_fetch,
-                 ), \
-                 patch.object(
-                     scanner,
-                     "_resolve_ids_from_search",
-                     side_effect=[
-                         {"tmdb_id": "9001", "tvdb_id": "9991"},
-                         {"tmdb_id": "9002", "tvdb_id": "9992"},
-                         {"tmdb_id": "9003", "tvdb_id": "9993"},
-                     ],
-                 ):
+                 patch.object(scanner, "fetch_providers", side_effect=fake_fetch), \
+                 patch.object(scanner, "_resolve_ids_from_search", side_effect=fake_resolve):
                 scanner.run_enrich(force=True)
 
             payload = json.loads(out_path.read_text(encoding="utf-8"))
@@ -367,6 +372,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Movies"],
                         "items": [
                             {
+                                "id": "m3",
                                 "title": "Back in Action",
                                 "year": "2025",
                                 "type": "movie",
@@ -381,7 +387,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -408,6 +414,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Movies"],
                         "items": [
                             {
+                                "id": "m4",
                                 "title": "Rebel Moon - Partie 1",
                                 "year": "2023",
                                 "type": "movie",
@@ -422,7 +429,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_netflix = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            providers_netflix = [{"raw_name": "Netflix", "logo": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -445,6 +452,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Tv"],
                         "items": [
                             {
+                                "id": "tv6",
                                 "title": "Andor",
                                 "year": "2022",
                                 "type": "tv",
@@ -460,7 +468,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_disney = [{"raw_name": "Disney+", "logo": None, "logo_url": None}]
+            providers_disney = [{"raw_name": "Disney+", "logo": None}]
             jsr_cfg = {"enabled": True, "url": "https://example.test", "apikey": "k"}
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value=jsr_cfg), \
@@ -483,12 +491,13 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                         "categories": ["Tv"],
                         "items": [
                             {
+                                "id": "tv7",
                                 "title": "Debris",
                                 "year": "2021",
                                 "type": "tv",
                                 "category": "Tv",
                                 "tmdb_id": "99901",
-                                "tvdb_id": "bad-tvdb",
+                                "tvdb_id": "999999",
                                 "providers": [],
                                 "providers_fetched": False,
                             }
@@ -498,7 +507,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            providers_apple = [{"raw_name": "Apple TV+", "logo": None, "logo_url": None}]
+            providers_apple = [{"raw_name": "Apple TV+", "logo": None}]
             with patch.object(scanner, "OUTPUT_PATH", str(out_path)), \
                  patch.object(scanner, "_jsr_cfg", return_value={"enabled": True, "url": "https://example.test", "apikey": "k"}), \
                  patch.object(scanner, "load_config", return_value={}), \
@@ -515,11 +524,11 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = pathlib.Path(tmp) / "library.json"
             items = [
-                {"title": "AnimA", "type": "movie", "category": "Animation", "tmdb_id": "1", "providers": [], "providers_fetched": False},
-                {"title": "MovieA", "type": "movie", "category": "Movies", "tmdb_id": "2", "providers": [], "providers_fetched": False},
-                {"title": "ShowA", "type": "movie", "category": "Spectacles", "tmdb_id": "3", "providers": [], "providers_fetched": False},
-                {"title": "TvA", "type": "tv", "category": "Tv", "tvdb_id": "4", "tmdb_id": "40", "providers": [], "providers_fetched": False},
-                {"title": "AnimeA", "type": "tv", "category": "Anime", "tvdb_id": "5", "tmdb_id": "50", "providers": [], "providers_fetched": False},
+                {"id": "m5", "title": "AnimA", "type": "movie", "category": "Animation", "tmdb_id": "1", "providers": [], "providers_fetched": False},
+                {"id": "m6", "title": "MovieA", "type": "movie", "category": "Movies", "tmdb_id": "2", "providers": [], "providers_fetched": False},
+                {"id": "m7", "title": "ShowA", "type": "movie", "category": "Spectacles", "tmdb_id": "3", "providers": [], "providers_fetched": False},
+                {"id": "tv8", "title": "TvA", "type": "tv", "category": "Tv", "tvdb_id": "4", "tmdb_id": "40", "providers": [], "providers_fetched": False},
+                {"id": "tv9", "title": "AnimeA", "type": "tv", "category": "Anime", "tvdb_id": "5", "tmdb_id": "50", "providers": [], "providers_fetched": False},
             ]
             out_path.write_text(
                 json.dumps(
@@ -534,7 +543,7 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            default_providers = [{"raw_name": "Netflix", "logo": None, "logo_url": None}]
+            default_providers = [{"raw_name": "Netflix", "logo": None}]
 
             def fake_fetch(identifier, is_tv, jsr):
                 return default_providers
@@ -606,6 +615,96 @@ class LibrarySchemaCleanupTest(unittest.TestCase):
         self.assertEqual(clean["quality"]["audio_details"]["channels"], 8)
         self.assertEqual(clean["seasons"][0]["quality"]["audio_details"]["codec"], 6)
         self.assertEqual(clean["seasons"][0]["quality"]["audio_details"]["channels"], 8)
+
+
+    def test_sanitize_season_thin_quality_preserved_without_warning(self):
+        """Thin DB format {"score": N} on a season must be preserved and must not warn.
+
+        _reconstruct_season() stores only quality_score in the DB.  When loaded
+        back for Phase 4 the season quality is {"score": N}.  The sanitizer must
+        not treat this as "inconsistent" (it is a valid compact representation).
+        """
+        item = {
+            "type": "tv",
+            "title": "Test Show",
+            "seasons": [
+                {"season": 1, "quality": {"score": 75}},
+                {"season": 2, "quality": {"score": 0}},
+                {"season": 3, "quality": None},           # no quality at all
+            ],
+        }
+        import logging
+        with self.assertLogs("scanner", level="WARNING") as log_cm:
+            # Trigger an unrelated warning so assertLogs doesn't fail on no output
+            import logging
+            logging.getLogger("scanner").warning("_sentinel_for_assertlogs")
+            clean = scanner._sanitize_item_for_library_json(item)
+
+        # No "Normalized inconsistent season quality" warning must have been emitted
+        season_warnings = [m for m in log_cm.output if "inconsistent season quality" in m]
+        self.assertEqual(season_warnings, [],
+                         "Thin {'score': N} format must not trigger inconsistency warning")
+
+        # Score must be preserved (not zeroed out)
+        self.assertEqual(clean["seasons"][0]["quality"]["score"], 75)
+        self.assertEqual(clean["seasons"][1]["quality"]["score"], 0)
+        self.assertIsNone(clean["seasons"][2]["quality"])
+
+    def test_sanitize_season_full_quality_inconsistency_still_warns(self):
+        """A season with a full quality block whose video sum doesn't match must still warn."""
+        item = {
+            "type": "tv",
+            "title": "Bad Show",
+            "seasons": [{
+                "season": 1,
+                "quality": {
+                    "video_details": {"resolution": 20, "codec": 10, "hdr": 0},
+                    "audio_details": {"codec": 6, "channels": 8},
+                    "video": 999,  # intentionally wrong — should be 30
+                    "audio": 14,
+                    "languages": 10,
+                    "size": 5,
+                    "video_w": 30.0,
+                    "audio_w": 9.3333,
+                    "languages_w": 10.0,
+                    "size_w": 5.0,
+                    "score": 54,
+                },
+            }],
+        }
+        with self.assertLogs("scanner", level="WARNING") as log_cm:
+            scanner._sanitize_item_for_library_json(item)
+
+        season_warnings = [m for m in log_cm.output if "inconsistent season quality" in m]
+        self.assertGreater(len(season_warnings), 0,
+                           "Full quality block with wrong video sum must still trigger warning")
+
+    def test_sanitize_season_thin_quality_score_not_zeroed_during_phase4_iteration(self):
+        """Phase 4 iterates by category: _sanitize_library_document must not zero out season
+        quality_score for categories not yet scored in the current iteration."""
+        data = {
+            "items": [
+                {
+                    "id": "tv:Cat1:ShowA", "type": "tv", "title": "Show A",
+                    "category": "Cat1",
+                    "seasons": [{"season": 1, "quality": {"score": 60}}],
+                },
+                {
+                    "id": "tv:Cat2:ShowB", "type": "tv", "title": "Show B",
+                    "category": "Cat2",
+                    "seasons": [{"season": 1, "quality": {"score": 80}}],
+                },
+            ]
+        }
+        # Simulate: category Cat1 scored, then _sanitize_library_document called on all items
+        scanner._sanitize_library_document(data)
+
+        scores = {item["title"]: item["seasons"][0]["quality"]["score"]
+                  for item in data["items"]}
+        self.assertEqual(scores["Show A"], 60,
+                         "Thin season quality must survive _sanitize_library_document unchanged")
+        self.assertEqual(scores["Show B"], 80,
+                         "Thin season quality must survive _sanitize_library_document unchanged")
 
 
 if __name__ == "__main__":

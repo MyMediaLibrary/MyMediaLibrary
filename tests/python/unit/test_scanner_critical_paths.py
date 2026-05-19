@@ -118,23 +118,6 @@ class OnboardingFlagCriticalTest(unittest.TestCase):
         self.assertFalse(scanner._derive_needs_onboarding(cfg, config_exists=False))
 
 
-class InventoryFlagCriticalTest(unittest.TestCase):
-    def test_default_config_inventory_flag_is_disabled(self):
-        self.assertIs(scanner._DEFAULT_CONFIG["system"]["inventory_enabled"], False)
-
-    def test_missing_inventory_flag_falls_back_to_disabled(self):
-        self.assertFalse(scanner._is_inventory_enabled({"system": {}}))
-        self.assertFalse(scanner._is_inventory_enabled({"system": {"inventory_enabled": "true"}}))
-        self.assertTrue(scanner._is_inventory_enabled({"system": {"inventory_enabled": True}}))
-
-    def test_deep_merge_system_inventory_flag_preserves_other_system_fields(self):
-        base = {"system": {"scan_cron": "0 3 * * *", "log_level": "INFO"}}
-        merged = scanner.deep_merge(base, {"system": {"inventory_enabled": True}})
-        self.assertEqual(merged["system"]["scan_cron"], "0 3 * * *")
-        self.assertEqual(merged["system"]["log_level"], "INFO")
-        self.assertTrue(merged["system"]["inventory_enabled"])
-
-
 class ScheduledScanCronCriticalTest(unittest.TestCase):
     def test_cron_matches_every_minute_wildcards(self):
         when = scanner.datetime(2026, 4, 24, 12, 34)
@@ -179,7 +162,7 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             "folders": [{"name": "Movies", "type": "movie", "enabled": True}],
             "seerr": {"enabled": False, "url": ""},
             "score": {"enabled": True},
-            "system": {"inventory_enabled": False},
+            "system": {},
         }
 
         self.assertEqual(scanner._phase_plan_from_config(cfg, include_phase1=True), [scanner.PHASE_SCAN, scanner.PHASE_SCORE])
@@ -254,7 +237,7 @@ class ScheduledScanCronCriticalTest(unittest.TestCase):
             self.assertIn("filesystem", scanner._srv_state["completed_phases"])
             self.assertTrue(scanner._srv_state["initial_library_ready"])
 
-            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 1B] [FFPROBE] Starting phase")
+            scanner._update_scan_phase_state_from_log("[SCAN] [PHASE 2] [FFPROBE] Starting phase")
             self.assertEqual(scanner._srv_state["phase"], "ffprobe")
             self.assertTrue(scanner._srv_state["initial_library_ready"])
             scanner._srv_state.clear()
@@ -273,13 +256,13 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             "cache_enabled": True,
         })
 
-    def test_media_probe_phase1b_disabled_does_not_run(self):
+    def test_media_probe_run_probe_disabled_does_not_run(self):
         with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
-             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe:
-            scanner._run_media_probe_phase1b()
-        run_probe.assert_not_called()
+             patch.object(scanner, "run_media_probe_pipeline_if_enabled") as run_probe_pipeline:
+            scanner.run_probe()
+        run_probe_pipeline.assert_not_called()
 
-    def test_media_probe_phase1b_enabled_runs_before_later_phases(self):
+    def test_media_probe_run_probe_enabled_runs_as_phase_2(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
             library_json = root / "data" / "library.json"
@@ -290,38 +273,38 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             with patch.object(scanner, "OUTPUT_PATH", str(library_json)), \
                  patch.object(scanner, "LIBRARY_PATH", str(root / "library")), \
                  patch.object(scanner, "load_config", return_value=cfg), \
-                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe:
-                scanner._run_media_probe_phase1b(only_category="Movies")
+                 patch.object(scanner, "run_media_probe_pipeline_if_enabled", return_value=(probed_doc, {})) as run_probe_pipeline:
+                scanner.run_probe(only_category="Movies")
 
-            run_probe.assert_called_once()
-            kwargs = run_probe.call_args.kwargs
+            run_probe_pipeline.assert_called_once()
+            kwargs = run_probe_pipeline.call_args.kwargs
             self.assertEqual(kwargs["library_json_path"], str(library_json))
             self.assertEqual(kwargs["only_category"], "Movies")
 
-    def test_run_phases_places_media_probe_between_scan_and_enrich(self):
+    def test_run_phases_places_probe_between_scan_and_enrich(self):
         calls = []
         with patch.object(scanner, "run_quick", side_effect=lambda **_: calls.append("scan")), \
-             patch.object(scanner, "_run_media_probe_phase1b", side_effect=lambda **_: calls.append("probe")), \
+             patch.object(scanner, "run_probe", side_effect=lambda **_: calls.append("probe")), \
              patch.object(scanner, "run_enrich", side_effect=lambda **_: calls.append("enrich")), \
-             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
+             patch.object(scanner, "run_scoring", side_effect=lambda **_: calls.append("score")):
             scanner.run_phases([
                 scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
                 scanner.PHASE_ENRICH,
                 scanner.PHASE_SCORE,
             ])
 
         self.assertEqual(calls, ["scan", "probe", "enrich", "score"])
 
-    def test_run_phases_logs_explicit_phase_1b_plan(self):
+    def test_run_phases_logs_phase_2_probe_plan(self):
         with patch.object(scanner, "run_quick"), \
-             patch.object(scanner, "_run_media_probe_phase1b"), \
+             patch.object(scanner, "run_probe"), \
              patch.object(scanner, "run_enrich"), \
              patch.object(scanner, "run_scoring"), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}), \
              self.assertLogs("scanner", level="INFO") as logs:
             scanner.run_phases([
                 scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
                 scanner.PHASE_ENRICH,
                 scanner.PHASE_SCORE,
             ])
@@ -329,15 +312,14 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertIn("[SCAN] Planned phases:", joined)
         self.assertIn("1  -> Filesystem + NFO", joined)
-        self.assertIn("1b -> FFprobe technical scan", joined)
-        self.assertIn("2  -> Seerr enrichment", joined)
-        self.assertIn("3  -> Scoring", joined)
+        self.assertIn("2  -> FFprobe technical scan", joined)
+        self.assertIn("3  -> Seerr enrichment", joined)
+        self.assertIn("4  -> Scoring", joined)
 
-    def test_run_phases_hides_phase_1b_when_media_probe_disabled(self):
+    def test_run_phases_skips_probe_when_not_in_phases(self):
         with patch.object(scanner, "run_quick"), \
-             patch.object(scanner, "_run_media_probe_phase1b") as run_probe, \
+             patch.object(scanner, "run_probe") as run_probe, \
              patch.object(scanner, "run_enrich"), \
-             patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}), \
              self.assertLogs("scanner", level="INFO") as logs:
             scanner.run_phases([
                 scanner.PHASE_SCAN,
@@ -345,28 +327,27 @@ class ScoreFeatureFlagCriticalTest(unittest.TestCase):
             ])
 
         joined = "\n".join(logs.output)
-        self.assertNotIn("1b -> FFprobe technical scan", joined)
+        self.assertNotIn("FFprobe technical scan", joined)
         run_probe.assert_not_called()
 
-    def test_phases_display_csv_includes_phase_1b_only_when_enabled(self):
-        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": True, "mode": "compare"}}):
-            self.assertEqual(
-                scanner._phases_display_csv([
-                    scanner.PHASE_SCAN,
-                    scanner.PHASE_ENRICH,
-                    scanner.PHASE_SCORE,
-                ]),
-                "1,1b,2,3",
-            )
-        with patch.object(scanner, "load_config", return_value={"media_probe": {"enabled": False, "mode": "compare"}}):
-            self.assertEqual(
-                scanner._phases_display_csv([
-                    scanner.PHASE_SCAN,
-                    scanner.PHASE_ENRICH,
-                    scanner.PHASE_SCORE,
-                ]),
-                "1,2,3",
-            )
+    def test_phases_display_csv(self):
+        self.assertEqual(
+            scanner._phases_display_csv([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_PROBE,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ]),
+            "1,2,3,4",
+        )
+        self.assertEqual(
+            scanner._phases_display_csv([
+                scanner.PHASE_SCAN,
+                scanner.PHASE_ENRICH,
+                scanner.PHASE_SCORE,
+            ]),
+            "1,3,4",
+        )
 
     def test_score_flag_parser_defaults_to_disabled(self):
         self.assertFalse(scanner._is_score_enabled({"score": {}}))
@@ -573,11 +554,8 @@ class SeerrConfigMigrationTest(unittest.TestCase):
 class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
     def test_bootstrap_runtime_mapping_warms_sqlite_without_copying_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
-            src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
-            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
+            with patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)), \
                  patch.object(scanner.providers_repository, "load_provider_mappings", return_value={"Netflix": "Netflix"}) as load:
                 scanner._ensure_runtime_provider_mapping()
             load.assert_called_once_with(str(dst))
@@ -585,26 +563,33 @@ class ProvidersMappingRuntimeBootstrapTest(unittest.TestCase):
 
     def test_upsert_runtime_mapping_adds_missing_raw_providers_with_null(self):
         with tempfile.TemporaryDirectory() as tmp:
-            src = pathlib.Path(tmp) / "providers_mapping.source.json"
             dst = pathlib.Path(tmp) / "providers_mapping.runtime.json"
-            src.write_text('{"Netflix":"Netflix"}', encoding="utf-8")
-            dst.write_text('{"Netflix":"Netflix","Disney+":"Disney+"}', encoding="utf-8")
             items = [
                 {"providers": ["Netflix", "Premiere Max", "Premiere Max"]},
                 {"providers": ["Disney+", "Canal VOD"]},
                 {"providers": []},
             ]
-            with patch.object(scanner, "PROVIDERS_MAPPING_SOURCE_PATH", str(src)), \
-                 patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
+            with patch.object(scanner, "PROVIDERS_MAPPING_RUNTIME_PATH", str(dst)):
                 added = scanner._upsert_runtime_provider_mapping(items)
-            self.assertEqual(added, 2)
+            # DB starts empty: all 4 unique providers are new
+            self.assertEqual(added, 4)
+            # Provider mappings are now stored in SQLite; check DB state
+            import db as _db
+            db_path = pathlib.Path(tmp) / "data" / "mymedialibrary.db"
+            conn = _db.initialize_database(db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT raw_name, mapped_name, is_ignored FROM providers ORDER BY raw_name"
+                ).fetchall()
+            finally:
+                conn.close()
             self.assertEqual(
-                json.loads(dst.read_text(encoding="utf-8")),
+                {row["raw_name"]: None if row["is_ignored"] else row["mapped_name"] for row in rows},
                 {
-                    "Netflix": "Netflix",
-                    "Disney+": "Disney+",
-                    "Premiere Max": None,
                     "Canal VOD": None,
+                    "Disney+": None,
+                    "Netflix": None,
+                    "Premiere Max": None,
                 },
             )
 
@@ -758,6 +743,200 @@ class LibraryWriteSafetyTest(unittest.TestCase):
             scanner.write_json({"items": []}, str(output))
             mode = stat.S_IMODE(output.stat().st_mode)
             self.assertEqual(mode, 0o644)
+
+
+class ConfigLogHelpersTest(unittest.TestCase):
+    """Tests for the config log helpers: _config_flat_keys and _config_changed_keys."""
+
+    def test_flat_keys_single_group_subkey(self):
+        """A partial payload with one group subkey returns that flat key only."""
+        self.assertEqual(scanner._config_flat_keys({"ui": {"theme": "dark"}}), ["ui.theme"])
+
+    def test_flat_keys_multiple_groups(self):
+        """Multiple groups produce all their flat subkeys."""
+        result = scanner._config_flat_keys({
+            "ui": {"theme": "dark", "default_view": "grid"},
+            "system": {"scan_cron": "0 3 * * *"},
+        })
+        self.assertEqual(result, ["system.scan_cron", "ui.default_view", "ui.theme"])
+
+    def test_flat_keys_skips_auth_score(self):
+        """auth, score, score_configuration must never appear in the key list."""
+        result = scanner._config_flat_keys({
+            "auth": {"password": "secret"},
+            "score": {"enabled": True},
+            "score_configuration": {"weights": {}},
+            "ui": {"theme": "dark"},
+        })
+        self.assertNotIn("auth", result)
+        self.assertNotIn("score", result)
+        self.assertIn("ui.theme", result)
+
+    def test_flat_keys_omits_sensitive_subkeys(self):
+        """apikey/token/password subkeys must not appear in log output."""
+        result = scanner._config_flat_keys({"seerr": {"enabled": True, "apikey": "secret"}})
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("seerr.apikey", result)
+
+    def test_flat_keys_scalar_keys(self):
+        """Scalar keys (folders, enable_movies) are included; providers_visible is excluded."""
+        result = scanner._config_flat_keys({"folders": ["/movies"], "enable_movies": True, "providers_visible": ["Netflix"]})
+        self.assertIn("folders", result)
+        self.assertIn("enable_movies", result)
+        self.assertNotIn("providers_visible", result)
+
+    def test_flat_keys_excludes_providers_visible(self):
+        """providers_visible is stored in providers.is_ignored — must not appear as a log key."""
+        result = scanner._config_flat_keys({"providers_visible": ["Netflix", "Prime"], "enable_movies": True})
+        self.assertNotIn("providers_visible", result)
+        self.assertIn("enable_movies", result)
+
+    def test_changed_keys_detects_single_change(self):
+        """Only the key that changed must appear in the diff."""
+        before = {"ui": {"theme": "light", "default_view": "grid"}, "system": {"scan_cron": "0 3 * * *"}}
+        after  = {"ui": {"theme": "dark",  "default_view": "grid"}, "system": {"scan_cron": "0 3 * * *"}}
+        self.assertEqual(scanner._config_changed_keys(before, after), ["ui.theme"])
+
+    def test_changed_keys_empty_when_nothing_changed(self):
+        """No diff must return an empty list."""
+        cfg = {"ui": {"theme": "dark"}, "system": {"scan_cron": "0 3 * * *"}}
+        self.assertEqual(scanner._config_changed_keys(cfg, cfg), [])
+
+    def test_changed_keys_omits_sensitive_names(self):
+        """Keys whose flat name contains a sensitive token must be omitted from diff."""
+        before = {"seerr": {"enabled": False, "apikey": "old"}}
+        after  = {"seerr": {"enabled": True,  "apikey": "new"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("seerr.apikey", result)
+
+    def test_changed_keys_skips_auth(self):
+        """auth changes must never appear in the diff list."""
+        before = {"auth": {"enabled": False}, "ui": {"theme": "light"}}
+        after  = {"auth": {"enabled": True},  "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("auth", result)
+        self.assertIn("ui.theme", result)
+
+    def test_changed_keys_skips_providers_visible(self):
+        """providers_visible is stored in providers.is_ignored — must never appear in the diff."""
+        before = {"providers_visible": None,           "ui": {"theme": "light"}}
+        after  = {"providers_visible": ["Netflix"],    "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("providers_visible", result)
+        self.assertIn("ui.theme", result)
+
+    def test_changed_keys_auth_and_providers_visible_together(self):
+        """Simulates an auth+providers_visible change: neither should appear in the diff."""
+        before = {"auth": {"enabled": False}, "providers_visible": None,        "ui": {"theme": "light"}}
+        after  = {"auth": {"enabled": True},  "providers_visible": ["Netflix"], "ui": {"theme": "light"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertNotIn("auth", result)
+        self.assertNotIn("providers_visible", result)
+        self.assertEqual(result, [])
+
+    def test_changed_keys_detects_score_enabled_change(self):
+        """A change in score.enabled must surface as 'score.enabled' in the diff."""
+        before = {"score": {"enabled": False}, "ui": {"theme": "light"}}
+        after  = {"score": {"enabled": True},  "ui": {"theme": "light"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score.enabled", result)
+        self.assertNotIn("score", result)
+
+    def test_changed_keys_no_change_when_score_enabled_identical(self):
+        """score.enabled unchanged must not appear in the diff."""
+        cfg = {"score": {"enabled": True}, "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(cfg, cfg)
+        self.assertNotIn("score.enabled", result)
+        self.assertEqual(result, [])
+
+    def test_changed_keys_detects_score_configuration_change(self):
+        """A weight change in score_configuration must surface as 'score_configuration'."""
+        before = {"score_configuration": {"weights": {"video": 50, "audio": 20}}}
+        after  = {"score_configuration": {"weights": {"video": 40, "audio": 20}}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score_configuration", result)
+
+    def test_changed_keys_detects_size_profile_change(self):
+        """A size profile change in score_configuration must surface as 'score_configuration'."""
+        before = {"score_configuration": {"size": {"profiles": {"movie": {"1080p": {"hevc": {"min_gb": 2, "max_gb": 10}}}}}}}
+        after  = {"score_configuration": {"size": {"profiles": {"movie": {"1080p": {"hevc": {"min_gb": 3, "max_gb": 10}}}}}}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertIn("score_configuration", result)
+
+    def test_changed_keys_no_change_when_score_configuration_identical(self):
+        """Identical score_configuration must not appear in the diff."""
+        cfg = {"score_configuration": {"weights": {"video": 50}}}
+        result = scanner._config_changed_keys(cfg, cfg)
+        self.assertNotIn("score_configuration", result)
+
+    def test_changed_keys_ui_theme_only(self):
+        """A ui.theme change in isolation must not bleed into score keys."""
+        before = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}, "ui": {"theme": "light"}}
+        after  = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}, "ui": {"theme": "dark"}}
+        result = scanner._config_changed_keys(before, after)
+        self.assertEqual(result, ["ui.theme"])
+
+    def test_changed_summary_score_configuration_no_json(self):
+        """score_configuration change must log the key name only — no JSON dump."""
+        before = {"score_configuration": {"weights": {"video": 50}}}
+        after  = {"score_configuration": {"weights": {"video": 40}}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "score_configuration")
+        self.assertNotIn("{", result)
+        self.assertNotIn("weights", result)
+
+    def test_changed_summary_score_enabled_shows_value(self):
+        """score.enabled change must log 'score.enabled : true/false'."""
+        before = {"score": {"enabled": False}}
+        after  = {"score": {"enabled": True}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "score.enabled : true")
+
+    def test_changed_summary_score_no_change(self):
+        """Identical score payload must still return '(no change)'."""
+        cfg = {"score": {"enabled": True}, "score_configuration": {"weights": {"video": 50}}}
+        self.assertEqual(scanner._config_changed_summary(cfg, cfg), "(no change)")
+
+    def test_changed_summary_includes_new_value(self):
+        """_config_changed_summary must show 'key : new_value' format."""
+        before = {"ui": {"theme": "light"}}
+        after  = {"ui": {"theme": "dark"}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertEqual(result, "ui.theme : dark")
+
+    def test_changed_summary_no_change(self):
+        cfg = {"ui": {"theme": "dark"}}
+        self.assertEqual(scanner._config_changed_summary(cfg, cfg), "(no change)")
+
+    def test_changed_summary_bool_value(self):
+        before = {"seerr": {"enabled": False}}
+        after  = {"seerr": {"enabled": True}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertIn("seerr.enabled : true", result)
+
+    def test_changed_summary_omits_sensitive_values(self):
+        before = {"seerr": {"enabled": False, "apikey": "old"}}
+        after  = {"seerr": {"enabled": True,  "apikey": "new"}}
+        result = scanner._config_changed_summary(before, after)
+        self.assertIn("seerr.enabled", result)
+        self.assertNotIn("apikey", result)
+        self.assertNotIn("old", result)
+        self.assertNotIn("new", result)
+
+    def test_fmt_config_val_types(self):
+        self.assertEqual(scanner._fmt_config_val("dark"), "dark")
+        self.assertEqual(scanner._fmt_config_val(True), "true")
+        self.assertEqual(scanner._fmt_config_val(False), "false")
+        self.assertEqual(scanner._fmt_config_val(4), "4")
+        self.assertEqual(scanner._fmt_config_val([1, 2, 3]), "[3 items]")
+
+    def test_seerr_log_suppressed_when_payload_has_no_seerr_key(self):
+        """_apply_seerr_secret_update must return 'not modified' — no Seerr log should fire."""
+        payload = {"ui": {"theme": "dark"}}
+        secrets = {}
+        action = scanner._apply_seerr_secret_update(payload, secrets)
+        self.assertEqual(action, "not modified")
 
 
 if __name__ == "__main__":

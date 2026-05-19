@@ -11,14 +11,26 @@ from typing import Any
 
 try:
     from backend import db, runtime_paths
+    from backend.scoring import (
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 except Exception:
     import db  # type: ignore
     import runtime_paths  # type: ignore
+    from scoring import (  # type: ignore
+        flatten_score_to_rules,
+        flatten_score_to_size_profiles,
+        reconstruct_score_config_from_rows,
+    )
 
 
 log = logging.getLogger(__name__)
 
-_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "media_probe"}
+_CONFIG_FLAT_GROUPS = ("system", "seerr", "ui", "recommendations", "media_probe")
+# folders and providers_visible go to dedicated tables / providers.is_ignored
+_CONFIG_STRUCTURED_KEYS = {"auth", "score", "score_configuration", "folders", "providers_visible"} | set(_CONFIG_FLAT_GROUPS)
 _CONFIG_IMPORTABLE_KEYS = {
     "system",
     "scan",
@@ -84,11 +96,9 @@ def import_runtime_json_files(
     try:
         report = ImportReport()
         import_providers_logo(conn, paths.PROVIDERS_LOGO_JSON, report)
-        import_providers_mapping(conn, paths.PROVIDERS_MAPPING_JSON, report)
+        import_providers_mapping(conn, paths.PROVIDERS_MAPPING_JSON, report, overwrite=True)
         import_recommendation_rules(conn, paths.RECOMMENDATIONS_RULES_JSON, report)
         import_config(conn, paths.CONFIG_JSON, report)
-        import_media_probe_cache(conn, paths.MEDIA_PROBE_CACHE_JSON, report)
-        import_library_inventory(conn, paths.INVENTORY_JSON, report)
         import_recommendations(conn, paths.RECOMMENDATIONS_JSON, report)
         import_library(conn, paths.LIBRARY_JSON, report)
         return report
@@ -138,39 +148,14 @@ def migrate_runtime_json_files_at_startup(
 def seed_bundled_defaults(
     conn: sqlite3.Connection,
     *,
-    paths=runtime_paths,
     logger: logging.Logger | None = None,
 ) -> dict[str, int]:
-    """Seed bundled defaults directly into SQLite without writing runtime JSON files."""
-
-    active_logger = logger or log
-    seeds = {
-        "config": (Path(paths.DEFAULT_CONFIG_JSON), import_config, "config defaults"),
-        "provider_mappings": (
-            Path(paths.DEFAULT_PROVIDERS_MAPPING_JSON),
-            import_providers_mapping,
-            "provider_mappings",
-        ),
-        "provider_logos": (
-            Path(paths.DEFAULT_PROVIDERS_LOGO_JSON),
-            import_providers_logo,
-            "provider_logos",
-        ),
-        "recommendation_rules": (
-            Path(paths.DEFAULT_RECOMMENDATIONS_RULES_JSON),
-            import_recommendation_rules,
-            "recommendation_rules",
-        ),
-    }
-    rows: dict[str, int] = {}
-    for key, (path, importer, label) in seeds.items():
-        inserted = importer(conn, path)
-        rows[key] = inserted
-        if path.exists():
-            active_logger.info("[DB] Seeded %s from bundled defaults — rows=%s", label, inserted)
-        else:
-            active_logger.info("[DB] Seed skipped — bundled default %s not found", path)
-    return rows
+    """Seed defaults from Python constants into SQLite (idempotent, INSERT OR IGNORE)."""
+    try:
+        from backend import db_seed
+    except Exception:
+        import db_seed  # type: ignore
+    return db_seed.seed_all(conn, logger=logger)
 
 
 def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
@@ -182,7 +167,6 @@ def legacy_json_paths(*, paths=runtime_paths) -> list[Path]:
         Path(paths.PROVIDERS_LOGO_JSON),
         Path(paths.RECOMMENDATIONS_RULES_JSON),
         Path(paths.MEDIA_PROBE_CACHE_JSON),
-        Path(paths.INVENTORY_JSON),
         Path(paths.LIBRARY_JSON),
         Path(paths.RECOMMENDATIONS_JSON),
     ]
@@ -213,15 +197,22 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "name": "providers_mapping",
             "path": Path(paths.PROVIDERS_MAPPING_JSON),
             "source_count": _count_mapping_source,
-            "db_count": lambda conn: _table_count(conn, "provider_mappings"),
-            "import": import_providers_mapping,
+            "db_count": lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM providers WHERE mapped_name IS NOT NULL OR is_ignored = 1"
+            ).fetchone()[0],
+            "import": lambda conn, path: import_providers_mapping(conn, path, overwrite=True),
+            # DB may have more entries from Python seed than user's legacy JSON — that's fine
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "providers_logo",
             "path": Path(paths.PROVIDERS_LOGO_JSON),
             "source_count": _count_mapping_source,
-            "db_count": lambda conn: _table_count(conn, "provider_logos"),
+            "db_count": lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM providers WHERE logo_path IS NOT NULL"
+            ).fetchone()[0],
             "import": import_providers_logo,
+            "valid_when": lambda source_count, db_count: db_count >= source_count,
         },
         {
             "name": "recommendation_rules",
@@ -229,21 +220,8 @@ def _startup_json_specs(paths) -> list[dict[str, Any]]:
             "source_count": _count_rules_source,
             "db_count": lambda conn: _table_count(conn, "recommendation_rules"),
             "import": import_recommendation_rules,
-        },
-        {
-            "name": "media_probe_cache",
-            "path": Path(paths.MEDIA_PROBE_CACHE_JSON),
-            "source_count": _count_files_source,
-            "db_count": lambda conn: _table_count(conn, "ffprobe_cache"),
-            "import": import_media_probe_cache,
+            # DB may have more default rules than user's legacy JSON — that's fine
             "valid_when": lambda source_count, db_count: db_count >= source_count,
-        },
-        {
-            "name": "library_inventory",
-            "path": Path(paths.INVENTORY_JSON),
-            "source_count": _count_items_source,
-            "db_count": lambda conn: _table_count(conn, "inventory_items"),
-            "import": import_library_inventory,
         },
         {
             "name": "library",
@@ -399,6 +377,11 @@ def _remove_obsolete_runtime_files(paths, active_logger: logging.Logger) -> None
 
 
 def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
+    """Import {display_name: logo_path} into the unified providers table.
+
+    Logo key is matched to mapped_name first, then to raw_name as fallback.
+    If no match exists, a new provider row is created with raw_name = key.
+    """
     payload = _read_json(path, "providers_logo", report)
     if not isinstance(payload, dict):
         return 0
@@ -408,19 +391,52 @@ def import_providers_logo(conn: sqlite3.Connection, path: str | Path, report: Im
             if not isinstance(provider_name, str) or not provider_name:
                 continue
             logo_path = logo if isinstance(logo, str) else None
+            if not logo_path:
+                continue
+            # 1. Update by mapped_name (only when logo actually changes)
+            updated = conn.execute(
+                "UPDATE providers SET logo_path = ?, updated_at = CURRENT_TIMESTAMP"
+                " WHERE mapped_name = ? AND logo_path IS NOT ?",
+                (logo_path, provider_name, logo_path),
+            ).rowcount
+            if updated > 0:
+                rows += updated
+                continue
+            if conn.execute("SELECT 1 FROM providers WHERE mapped_name = ?", (provider_name,)).fetchone():
+                continue
+            # 2. Update by raw_name (only when logo actually changes)
+            updated = conn.execute(
+                "UPDATE providers SET logo_path = ?, updated_at = CURRENT_TIMESTAMP"
+                " WHERE raw_name = ? AND logo_path IS NOT ?",
+                (logo_path, provider_name, logo_path),
+            ).rowcount
+            if updated > 0:
+                rows += updated
+                continue
+            if conn.execute("SELECT 1 FROM providers WHERE raw_name = ?", (provider_name,)).fetchone():
+                continue
+            # 3. Insert new provider with just raw_name + logo
             rows += _insert_count(
                 conn,
-                """
-                INSERT OR IGNORE INTO provider_logos(provider_name, logo_path)
-                VALUES (?, ?)
-                """,
+                "INSERT OR IGNORE INTO providers(raw_name, logo_path) VALUES (?, ?)",
                 (provider_name, logo_path),
             )
     _record(report, "providers_logo", rows)
     return rows
 
 
-def import_providers_mapping(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
+def import_providers_mapping(
+    conn: sqlite3.Connection,
+    path: str | Path,
+    report: ImportReport | None = None,
+    *,
+    overwrite: bool = False,
+) -> int:
+    """Import {raw_name: mapped_name|null} into the unified providers table.
+
+    When overwrite=False (default, used by seed), existing rows are preserved.
+    When overwrite=True (used by user-facing save), existing mappings are updated.
+    """
     payload = _read_json(path, "providers_mapping", report)
     if not isinstance(payload, dict):
         return 0
@@ -431,14 +447,24 @@ def import_providers_mapping(conn: sqlite3.Connection, path: str | Path, report:
                 continue
             ignored = mapped_name is None
             mapped = mapped_name if isinstance(mapped_name, str) else None
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO provider_mappings(raw_name, mapped_name, is_ignored)
-                VALUES (?, ?, ?)
-                """,
-                (raw_name, mapped, 1 if ignored else 0),
-            )
+            if overwrite:
+                rows += conn.execute(
+                    """
+                    INSERT INTO providers(raw_name, mapped_name, is_ignored)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(raw_name) DO UPDATE SET
+                        mapped_name = excluded.mapped_name,
+                        is_ignored  = excluded.is_ignored,
+                        updated_at  = CURRENT_TIMESTAMP
+                    """,
+                    (raw_name, mapped, 1 if ignored else 0),
+                ).rowcount
+            else:
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO providers(raw_name, mapped_name, is_ignored) VALUES (?, ?, ?)",
+                    (raw_name, mapped, 1 if ignored else 0),
+                )
     _record(report, "providers_mapping", rows)
     return rows
 
@@ -454,13 +480,30 @@ def import_recommendation_rules(conn: sqlite3.Connection, path: str | Path, repo
             if not isinstance(rule, dict):
                 continue
             rule_key = str(rule.get("id") or rule.get("rule_key") or f"rule_{index}")
+            conditions = rule.get("conditions")
+            msg = rule.get("message") or {}
+            action = rule.get("suggested_action") or {}
             rows += _insert_count(
                 conn,
                 """
-                INSERT OR IGNORE INTO recommendation_rules(rule_key, rule_json, enabled)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO recommendation_rules
+                    (rule_key, rule_type, priority, enabled, dedupe_group, severity,
+                     conditions_json, message_fr, message_en, suggested_action_fr, suggested_action_en)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (rule_key, _to_json(rule), 0 if rule.get("enabled") is False else 1),
+                (
+                    rule_key,
+                    str(rule.get("type") or "") or None,
+                    str(rule.get("priority") or "") or None,
+                    0 if rule.get("enabled") is False else 1,
+                    str(rule.get("dedupe_group") or "") or None,
+                    rule.get("severity"),
+                    _to_json(conditions) if isinstance(conditions, list) else None,
+                    msg.get("fr") or None,
+                    msg.get("en") or None,
+                    action.get("fr") or None,
+                    action.get("en") or None,
+                ),
             )
     _record(report, "recommendation_rules", rows)
     return rows
@@ -492,33 +535,18 @@ def import_config(
         VALUES (?, ?)
         """
     )
-    score_sql = (
+    score_enabled_sql = (
         """
-        INSERT INTO score_settings(id, enabled, configuration_json)
-        VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            enabled = excluded.enabled,
-            configuration_json = excluded.configuration_json,
-            updated_at = CURRENT_TIMESTAMP
-        """
-        if overwrite
-        else """
-        INSERT OR IGNORE INTO score_settings(id, enabled, configuration_json)
-        VALUES (?, ?, ?)
-        """
-    )
-    scan_sql = (
-        """
-        INSERT INTO scan_settings(id, value_json)
-        VALUES (?, ?)
-        ON CONFLICT(id) DO UPDATE SET
+        INSERT INTO app_config(key, value_json)
+        VALUES ('score.enabled', ?)
+        ON CONFLICT(key) DO UPDATE SET
             value_json = excluded.value_json,
             updated_at = CURRENT_TIMESTAMP
         """
         if overwrite
         else """
-        INSERT OR IGNORE INTO scan_settings(id, value_json)
-        VALUES (?, ?)
+        INSERT OR IGNORE INTO app_config(key, value_json)
+        VALUES ('score.enabled', ?)
         """
     )
     with conn:
@@ -544,19 +572,71 @@ def import_config(
                 score_configuration = _deep_merge(legacy_score_configuration, score_configuration)
             rows += _insert_count(
                 conn,
-                score_sql,
-                (
-                    "default",
-                    1 if score.get("enabled") is True else 0,
-                    _to_json(score_configuration),
-                ),
+                score_enabled_sql,
+                (_to_json(score.get("enabled") is True),),
             )
-        if isinstance(payload.get("media_probe"), dict):
-            rows += _insert_count(
-                conn,
-                scan_sql,
-                ("media_probe", _to_json(payload["media_probe"])),
-            )
+            if overwrite:
+                conn.execute("DELETE FROM score_rules")
+                conn.execute("DELETE FROM score_size_profiles")
+            for (category, group_key, value_key, score_value) in flatten_score_to_rules(score_configuration):
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO score_rules(category, group_key, value_key, score_value)"
+                    " VALUES (?, ?, ?, ?)",
+                    (category, group_key, value_key, score_value),
+                )
+            for (media_type, res_key, codec_key, min_gb, max_gb) in flatten_score_to_size_profiles(score_configuration):
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO score_size_profiles"
+                    "(media_type, resolution_key, codec_key, min_gb, max_gb) VALUES (?, ?, ?, ?, ?)",
+                    (media_type, res_key, codec_key, min_gb, max_gb),
+                )
+        # Import folders into dedicated table
+        if isinstance(payload.get("folders"), list):
+            if overwrite:
+                conn.execute("DELETE FROM folders")
+            for folder in payload["folders"]:
+                if not isinstance(folder, dict):
+                    continue
+                name = folder.get("name") or folder.get("path") or ""
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                enabled_raw = folder.get("enabled")
+                if enabled_raw is None:
+                    enabled_raw = folder.get("visible", True)
+                rows += _insert_count(
+                    conn,
+                    "INSERT OR IGNORE INTO folders(name, media_type, enabled) VALUES (?, ?, ?)",
+                    (name.strip(), folder.get("type"), 1 if enabled_raw else 0),
+                )
+        # Import providers_visible → providers.is_ignored (non-empty list only)
+        pv = payload.get("providers_visible")
+        if isinstance(pv, list) and pv:
+            visible_names = {str(n) for n in pv if isinstance(n, str) and n}
+            if visible_names:
+                placeholders = ",".join("?" * len(visible_names))
+                conn.execute(
+                    f"UPDATE providers SET is_ignored = 0, updated_at = CURRENT_TIMESTAMP"
+                    f" WHERE mapped_name IS NOT NULL AND mapped_name IN ({placeholders})",
+                    tuple(visible_names),
+                )
+                conn.execute(
+                    f"UPDATE providers SET is_ignored = 1, updated_at = CURRENT_TIMESTAMP"
+                    f" WHERE mapped_name IS NOT NULL AND mapped_name NOT IN ({placeholders})",
+                    tuple(visible_names),
+                )
+        for group in _CONFIG_FLAT_GROUPS:
+            if isinstance(payload.get(group), dict):
+                for subkey, subval in payload[group].items():
+                    clean = _strip_sensitive_value(subkey, subval)
+                    if clean is _SKIP_VALUE:
+                        continue
+                    rows += _insert_count(
+                        conn,
+                        app_config_sql,
+                        (f"{group}.{subkey}", _to_json(clean)),
+                    )
     _record(report, "config", rows)
     return rows
 
@@ -584,79 +664,6 @@ def sanitize_config_for_db(config: dict[str, Any]) -> dict[str, Any]:
     return sanitize_importable_config(config)
 
 
-def import_media_probe_cache(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
-    payload = _read_json(path, "media_probe_cache", report)
-    files = payload.get("files") if isinstance(payload, dict) else None
-    if not isinstance(files, dict):
-        return 0
-    rows = 0
-    with conn:
-        for file_path, entry in files.items():
-            if not isinstance(file_path, str) or not isinstance(entry, dict):
-                continue
-            probe = entry.get("probe") if isinstance(entry.get("probe"), dict) else {}
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO ffprobe_cache(file_path, size, mtime, status, normalized_json, error)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_path,
-                    _as_int(entry.get("size_b")),
-                    _as_float(entry.get("mtime")),
-                    "ok" if probe.get("ok") else "error",
-                    _to_json(probe),
-                    probe.get("error") if isinstance(probe.get("error"), str) else None,
-                ),
-            )
-    _record(report, "media_probe_cache", rows)
-    return rows
-
-
-def import_library_inventory(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
-    payload = _read_json(path, "library_inventory", report)
-    items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        return 0
-    rows = 0
-    with conn:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            inventory_id = str(item.get("id") or item.get("inventory_key") or item.get("path") or "")
-            if not inventory_id:
-                continue
-            rows += _insert_count(
-                conn,
-                """
-                INSERT OR IGNORE INTO inventory_items(
-                    id, media_id, inventory_key, media_type, title, category, folder, path,
-                    first_seen_at, last_seen_at, last_checked_at, missing_since, status, data_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    inventory_id,
-                    item.get("media_id"),
-                    inventory_id,
-                    item.get("media_type"),
-                    item.get("title"),
-                    item.get("category"),
-                    item.get("root_folder_name") or item.get("folder"),
-                    item.get("root_folder_path") or item.get("path"),
-                    item.get("first_seen_at"),
-                    item.get("last_seen_at"),
-                    item.get("last_checked_at"),
-                    item.get("missing_since"),
-                    item.get("status"),
-                    _to_json(item),
-                ),
-            )
-    _record(report, "library_inventory", rows)
-    return rows
-
-
 def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: ImportReport | None = None) -> int:
     payload = _read_json(path, "recommendations", report)
     items = payload.get("items") if isinstance(payload, dict) else None
@@ -670,29 +677,27 @@ def import_recommendations(conn: sqlite3.Connection, path: str | Path, report: I
             rec_id = str(item.get("id") or f"recommendation:{index}")
             media_ref = item.get("media_ref") if isinstance(item.get("media_ref"), dict) else {}
             media_id = _existing_media_id(conn, media_ref.get("id"))
-            display = item.get("display") if isinstance(item.get("display"), dict) else {}
+            msg = item.get("message") or {}
+            action = item.get("suggested_action") or {}
             rows += _insert_count(
                 conn,
                 """
                 INSERT OR IGNORE INTO recommendations(
-                    id, media_id, recommendation_type, priority, title, reason, rule_id,
-                    dedupe_group, severity, message_json, suggested_action_json, details_json
+                    id, media_id, recommendation_type, priority, rule_id,
+                    message_fr, message_en, suggested_action_fr, suggested_action_en
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec_id,
                     media_id,
                     item.get("recommendation_type") or "unknown",
                     item.get("priority"),
-                    display.get("title") or item.get("title") or rec_id,
-                    item.get("reason"),
                     item.get("rule_id"),
-                    item.get("dedupe_group"),
-                    _as_int(item.get("severity")),
-                    _to_json(item.get("message") or {}),
-                    _to_json(item.get("suggested_action") or {}),
-                    _to_json(item),
+                    msg.get("fr") or None,
+                    msg.get("en") or None,
+                    action.get("fr") or None,
+                    action.get("en") or None,
                 ),
             )
     _record(report, "recommendations", rows)
@@ -710,7 +715,6 @@ def import_library(conn: sqlite3.Connection, path: str | Path, report: ImportRep
             if not isinstance(item, dict):
                 continue
             rows += upsert_library_item(conn, item, overwrite=False)
-        _store_library_document_snapshot(conn, payload)
     _record(report, "library", rows)
     return rows
 
@@ -731,8 +735,40 @@ def upsert_library_item(conn: sqlite3.Connection, item: dict[str, Any], *, overw
     params = _media_params(media_id, item)
     if overwrite:
         conn.execute(_MEDIA_UPSERT_SQL, params)
+        _upsert_media_providers(conn, media_id, item.get("providers"))
         return 1
-    return _insert_count(conn, _MEDIA_INSERT_IGNORE_SQL, params)
+    written = _insert_count(conn, _MEDIA_INSERT_IGNORE_SQL, params)
+    if written:
+        _upsert_media_providers(conn, media_id, item.get("providers"))
+    return written
+
+
+def _upsert_media_providers(conn: sqlite3.Connection, media_id: str, providers: Any) -> None:
+    """Sync item.providers list into media_providers + providers tables."""
+    if not media_id:
+        return
+    names: list[str] = []
+    seen: set[str] = set()
+    for provider in providers or []:
+        name = provider if isinstance(provider, str) else None
+        if isinstance(provider, dict):
+            name = provider.get("name") or provider.get("raw_name") or provider.get("provider_name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        cleaned = name.strip()
+        if cleaned.casefold() in seen:
+            continue
+        seen.add(cleaned.casefold())
+        names.append(cleaned)
+    conn.execute("DELETE FROM media_providers WHERE media_id = ?", (media_id,))
+    for name in names:
+        conn.execute("INSERT OR IGNORE INTO providers(raw_name) VALUES (?)", (name,))
+        row = conn.execute("SELECT id FROM providers WHERE raw_name = ?", (name,)).fetchone()
+        if row is not None:
+            conn.execute(
+                "INSERT OR IGNORE INTO media_providers(media_id, provider_id) VALUES (?, ?)",
+                (media_id, row[0]),
+            )
 
 
 def _import_auth_settings(conn: sqlite3.Connection, value: Any, *, overwrite: bool = False) -> None:
@@ -820,8 +856,16 @@ def _count_config_source(payload: Any) -> int:
             count += 1
     if isinstance(payload.get("score"), dict) or isinstance(payload.get("score_configuration"), dict):
         count += 1
-    if isinstance(payload.get("media_probe"), dict):
+    # folders / providers_visible go to dedicated tables — count only when non-empty
+    folders_val = payload.get("folders")
+    if isinstance(folders_val, list) and folders_val:
         count += 1
+    pv_val = payload.get("providers_visible")
+    if isinstance(pv_val, list) and pv_val:
+        count += 1
+    for group in _CONFIG_FLAT_GROUPS:
+        if isinstance(payload.get(group), dict):
+            count += 1
     return count
 
 
@@ -838,14 +882,33 @@ def _count_config_total_source(payload: Any) -> int:
 
 
 def _count_config_db(conn: sqlite3.Connection) -> int:
+    # Exclude runtime key, flat group prefix keys, and score.* from raw count.
+    # folders and providers_visible are in dedicated tables, not in app_config.
+    group_excludes = " AND ".join(f"key NOT LIKE '{g}.%'" for g in _CONFIG_FLAT_GROUPS)
     app_config = conn.execute(
-        "SELECT COUNT(*) FROM app_config WHERE key != ?",
+        f"SELECT COUNT(*) FROM app_config WHERE key != ? AND key NOT LIKE 'score.%' AND {group_excludes}",
         (_LIBRARY_DOCUMENT_KEY,),
     ).fetchone()[0]
-    score = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-    scan = conn.execute("SELECT COUNT(*) FROM scan_settings").fetchone()[0]
+    # Score (score.enabled in app_config + score_rules/score_size_profiles) counts as 1 unit.
+    score = 1 if (
+        conn.execute("SELECT 1 FROM score_rules LIMIT 1").fetchone()
+        or conn.execute("SELECT 1 FROM app_config WHERE key = 'score.enabled' LIMIT 1").fetchone()
+    ) else 0
+    # Folders table counts as 1 unit if it has rows.
+    folders = 1 if conn.execute("SELECT 1 FROM folders LIMIT 1").fetchone() else 0
+    # providers_visible counts as 1 unit if any provider is explicitly hidden.
+    providers_visible = 1 if conn.execute(
+        "SELECT 1 FROM providers WHERE mapped_name IS NOT NULL AND is_ignored = 1 LIMIT 1"
+    ).fetchone() else 0
     auth = conn.execute("SELECT COUNT(*) FROM auth_settings").fetchone()[0]
-    return int(app_config) + int(score) + int(scan) + int(auth)
+    # Count each flat group as 1 logical unit regardless of how many subkeys it has.
+    group_count = sum(
+        1 for g in _CONFIG_FLAT_GROUPS
+        if conn.execute(
+            "SELECT 1 FROM app_config WHERE key LIKE ? LIMIT 1", (f"{g}.%",)
+        ).fetchone()
+    )
+    return int(app_config) + int(score) + int(folders) + int(providers_visible) + int(auth) + group_count
 
 
 def _validate_config_import(conn: sqlite3.Connection, payload: Any) -> dict[str, Any]:
@@ -925,8 +988,24 @@ def _config_source_document(payload: Any) -> dict[str, Any]:
             else {}
         )
         document["score_configuration"] = _deep_merge(legacy_score_configuration, score_configuration)
-    if isinstance(payload.get("media_probe"), dict):
-        document["media_probe"] = payload["media_probe"]
+    # folders is now in its own table — include normalized form only when non-empty
+    if isinstance(payload.get("folders"), list):
+        normalized_folders = []
+        for f in payload["folders"]:
+            if not isinstance(f, dict):
+                continue
+            name = f.get("name") or f.get("path") or ""
+            if not name:
+                continue
+            enabled_raw = f.get("enabled")
+            if enabled_raw is None:
+                enabled_raw = f.get("visible", True)
+            normalized_folders.append({"name": str(name), "type": f.get("type"), "enabled": bool(enabled_raw)})
+        if normalized_folders:
+            document["folders"] = normalized_folders
+    for group in _CONFIG_FLAT_GROUPS:
+        if isinstance(payload.get(group), dict):
+            document[group] = payload[group]
     return document
 
 
@@ -937,18 +1016,46 @@ def _config_db_document(conn: sqlite3.Connection) -> dict[str, Any]:
         (_LIBRARY_DOCUMENT_KEY,),
     ).fetchall()
     for row in rows:
-        document[row["key"]] = _from_json(row["value_json"], None)
+        key = row["key"]
+        if key.startswith("score."):
+            continue  # handled below as part of score block
+        prefix, sep, _ = key.partition(".")
+        if sep and prefix in set(_CONFIG_FLAT_GROUPS):
+            continue  # handled below
+        document[key] = _from_json(row["value_json"], None)
 
-    score_row = conn.execute(
-        "SELECT enabled, configuration_json FROM score_settings WHERE id = 'default'"
+    score_enabled_row = conn.execute(
+        "SELECT value_json FROM app_config WHERE key = 'score.enabled'"
     ).fetchone()
-    if score_row is not None:
-        document["score"] = {"enabled": bool(score_row["enabled"])}
-        document["score_configuration"] = _from_json(score_row["configuration_json"], {})
+    if score_enabled_row is not None:
+        document["score"] = {"enabled": bool(_from_json(score_enabled_row["value_json"], False))}
+    rule_rows = conn.execute(
+        "SELECT category, group_key, value_key, score_value FROM score_rules ORDER BY id"
+    ).fetchall()
+    profile_rows = conn.execute(
+        "SELECT media_type, resolution_key, codec_key, min_gb, max_gb FROM score_size_profiles ORDER BY id"
+    ).fetchall()
+    document["score_configuration"] = reconstruct_score_config_from_rows(rule_rows, profile_rows)
 
-    scan_rows = conn.execute("SELECT id, value_json FROM scan_settings ORDER BY id").fetchall()
-    for row in scan_rows:
-        document[row["id"]] = _from_json(row["value_json"], {})
+    # Reconstruct folders from dedicated table — only include when non-empty
+    folder_rows = conn.execute("SELECT name, media_type, enabled FROM folders ORDER BY id").fetchall()
+    if folder_rows:
+        document["folders"] = [
+            {"name": r["name"], "type": r["media_type"], "enabled": bool(r["enabled"])}
+            for r in folder_rows
+        ]
+
+    for group in _CONFIG_FLAT_GROUPS:
+        group_rows = conn.execute(
+            "SELECT key, value_json FROM app_config WHERE key LIKE ? ORDER BY key",
+            (f"{group}.%",),
+        ).fetchall()
+        if group_rows:
+            prefix_len = len(group) + 1
+            document[group] = {
+                row["key"][prefix_len:]: _from_json(row["value_json"], None)
+                for row in group_rows
+            }
 
     auth_row = conn.execute("SELECT auth_enabled FROM auth_settings WHERE id = 1").fetchone()
     if auth_row is not None:
@@ -1127,10 +1234,15 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         1 if item.get("hdr") is True else 0 if item.get("hdr") is False else None,
         item.get("hdr_type"),
         1 if item.get("dolby_vision") is True else 0 if item.get("dolby_vision") is False else None,
-        _to_json(item.get("providers") or []),
-        _to_json(quality or {}),
-        _to_json(item),
-        item.get("added_at"),
+        1 if item.get("providers_fetched") else 0,
+        _to_json(quality) if quality else None,
+        item.get("last_seen_at") or item.get("added_at"),
+        1 if item.get("is_available", True) else 0,
+        item.get("first_seen_at"),
+        item.get("last_scanned_at"),
+        _to_json(item["filename"]) if item.get("filename") is not None else None,
+        item.get("seerr_last_fetched_at"),
+        item.get("seerr_status"),
     )
 
 
@@ -1141,17 +1253,19 @@ runtime_min, runtime_min_avg, quality_score, width, height, resolution,
 video_codec, video_bitrate, audio_codec, audio_codec_raw, audio_bitrate,
 audio_channels, audio_languages_json, audio_language_group,
 subtitle_languages_json, framerate, container, hdr, hdr_type, dolby_vision,
-providers_json, quality_json, data_json, last_seen_at
+providers_fetched, quality_json, last_seen_at,
+is_available, first_seen_at, last_scanned_at, filename,
+seerr_last_fetched_at, seerr_status
 """
 
 _MEDIA_INSERT_IGNORE_SQL = f"""
 INSERT OR IGNORE INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 40)})
+VALUES ({",".join(["?"] * 45)})
 """
 
 _MEDIA_UPSERT_SQL = f"""
 INSERT INTO media({_MEDIA_COLUMNS})
-VALUES ({",".join(["?"] * 40)})
+VALUES ({",".join(["?"] * 45)})
 ON CONFLICT(id) DO UPDATE SET
     media_type = excluded.media_type,
     title = excluded.title,
@@ -1188,9 +1302,14 @@ ON CONFLICT(id) DO UPDATE SET
     hdr = excluded.hdr,
     hdr_type = excluded.hdr_type,
     dolby_vision = excluded.dolby_vision,
-    providers_json = excluded.providers_json,
+    providers_fetched = excluded.providers_fetched,
     quality_json = excluded.quality_json,
-    data_json = excluded.data_json,
     updated_at = CURRENT_TIMESTAMP,
-    last_seen_at = excluded.last_seen_at
+    last_seen_at = excluded.last_seen_at,
+    is_available = excluded.is_available,
+    first_seen_at = COALESCE(first_seen_at, excluded.first_seen_at),
+    last_scanned_at = excluded.last_scanned_at,
+    filename = excluded.filename,
+    seerr_last_fetched_at = COALESCE(excluded.seerr_last_fetched_at, seerr_last_fetched_at),
+    seerr_status = COALESCE(excluded.seerr_status, seerr_status)
 """

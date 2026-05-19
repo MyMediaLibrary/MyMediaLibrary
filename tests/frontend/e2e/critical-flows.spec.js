@@ -117,13 +117,12 @@ async function openConfiguredLibrary(page) {
   await expect(page.locator('#library')).toContainText('Film VF');
 }
 
-test('onboarding first run displays and export JSON disabled', async ({ page }) => {
+test('onboarding first run displays', async ({ page }) => {
   await mockCoreRoutes(page, { onboarding: true });
   await page.goto('/index.html');
 
   await expect(page.locator('#onboardingOverlay')).toBeVisible();
   await expect(page.locator('#onboardingOverlay')).not.toContainText('library_inventory.json');
-  await expect(page.locator('#cfgExportJsonBtn')).toBeDisabled();
 });
 
 test('configured app with missing library API shows empty-library state without onboarding', async ({ page }) => {
@@ -172,42 +171,6 @@ test('filters include/exclude and global reset', async ({ page }) => {
   await page.click('#globalFilterResetBtn');
   await expect(page.locator('#globalFilterResetBtn')).toBeDisabled();
 });
-
-test('export JSON present and triggers download only when library is valid', async ({ page }) => {
-  await openConfiguredLibrary(page);
-
-  await page.evaluate(() => {
-    window.__mmlExportClickCount = 0;
-    window.__mmlExportFilename = null;
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    window.__mmlExpectedExportDate = `${y}-${m}-${day}`;
-    const origClick = HTMLAnchorElement.prototype.click;
-    HTMLAnchorElement.prototype.click = function patchedClick() {
-      if (this.download && this.download.startsWith('mymedialibrary-export-')) {
-        window.__mmlExportClickCount += 1;
-        window.__mmlExportFilename = this.download;
-      }
-      return origClick.call(this);
-    };
-  });
-
-  await page.evaluate(() => openSettings());
-  const exportBtn = page.locator('#cfgExportJsonBtn');
-  await expect(exportBtn).toBeEnabled();
-  await page.evaluate(() => exportLibraryJson());
-
-  await expect.poll(async () => page.evaluate(() => window.__mmlExportClickCount)).toBe(1);
-
-  const exportMeta = await page.evaluate(() => ({
-    filename: window.__mmlExportFilename,
-    expectedDate: window.__mmlExpectedExportDate,
-  }));
-  expect(exportMeta.filename).toBe(`mymedialibrary-export-${exportMeta.expectedDate}.json`);
-});
-
 
 test('backend onboarding flag ignores stale localStorage/sessionStorage flags', async ({ page }) => {
   await page.addInitScript(() => {
@@ -263,16 +226,9 @@ test('settings do not expose or persist library root path', async ({ page }) => 
   expect(capturedPayload.library_path).toBeUndefined();
 });
 
-test('inventory toggle is in settings and persists via /api/config', async ({ page }) => {
-  let capturedPayload = null;
-
+test('inventory toggle is removed from settings (v0.5.1)', async ({ page }) => {
   await page.route('**/api/config', async (route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({ json: configuredPayload() });
-      return;
-    }
-    capturedPayload = JSON.parse(route.request().postData() || '{}');
-    await route.fulfill({ json: { ok: true } });
+    await route.fulfill({ json: configuredPayload() });
   });
   await page.route('**/api/library**', async (route) => {
     await route.fulfill({ json: libraryPayload() });
@@ -286,21 +242,8 @@ test('inventory toggle is in settings and persists via /api/config', async ({ pa
   await page.locator('.stab[data-stab="stab-system"]').click();
   await expect(page.locator('#stab-system')).toBeVisible();
 
-  const inventoryToggle = page.locator('#cfgInventoryEnabled');
-  await expect(inventoryToggle).toBeAttached();
-  await expect(inventoryToggle).not.toBeChecked();
-
-  await page.evaluate(() => {
-    const el = document.getElementById('cfgInventoryEnabled');
-    if (!el) return;
-    el.checked = true;
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-  await page.click('#settingsSaveBtn');
-
-  await expect.poll(() => capturedPayload).not.toBeNull();
-  expect(capturedPayload.system.inventory_enabled).toBe(true);
-  expect(capturedPayload.library_path).toBeUndefined();
+  // Inventory toggle must be gone — superseded by media.is_available tracking
+  await expect(page.locator('#cfgInventoryEnabled')).not.toBeAttached();
 });
 
 test('folder active toggle persists using enabled without visible persistence', async ({ page }) => {

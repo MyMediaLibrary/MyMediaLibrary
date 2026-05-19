@@ -39,7 +39,9 @@ def open_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     path = Path(db_path) if db_path is not None else default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(path)
+    # timeout=30: give concurrent writers (e.g. --serve + --origin startup) 30 s to
+    # acquire the write lock rather than raising "database is locked" after 5 s.
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -77,11 +79,13 @@ def bootstrap_runtime_database(
         version = get_schema_version(conn)
         wal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        active_logger.info("[DB] SQLite initialized — path=%s", target)
-        active_logger.info("[DB] Schema version: %s", version)
-        active_logger.info("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
-        active_logger.info("[DB] Foreign keys enabled: %s", bool(foreign_keys))
-        if os.environ.get("MML_SKIP_DB_STARTUP_TASKS") == "1":
+        skip = os.environ.get("MML_SKIP_DB_STARTUP_TASKS") == "1"
+        _log = active_logger.debug if skip else active_logger.info
+        _log("[DB] SQLite initialized — path=%s", target)
+        _log("[DB] Schema version: %s", version)
+        _log("[DB] WAL enabled: %s", str(wal_mode).casefold() == "wal")
+        _log("[DB] Foreign keys enabled: %s", bool(foreign_keys))
+        if skip:
             active_logger.debug("[DB] Startup JSON migration/seed skipped for child process")
             return True
         with _startup_tasks_lock:
@@ -130,10 +134,10 @@ def _has_legacy_json_sources(active_logger: logging.Logger) -> bool:
 def _seed_bundled_defaults(conn: sqlite3.Connection, active_logger: logging.Logger) -> None:
     try:
         try:
-            from backend import db_import
+            from backend import db_seed
         except Exception:
-            import db_import  # type: ignore
-        db_import.seed_bundled_defaults(conn, logger=active_logger)
+            import db_seed  # type: ignore
+        db_seed.seed_all(conn, logger=active_logger)
     except Exception as exc:
         active_logger.warning("[DB] Bundled default seed completed with warnings: %s", exc)
 
@@ -145,10 +149,10 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
         return False
     expected_tables = {
         "app_config",
-        "score_settings",
+        "folders",
+        "score_rules",
         "schema_migrations",
-        "provider_mappings",
-        "provider_logos",
+        "providers",
         "recommendation_rules",
     }
     rows = conn.execute(
@@ -160,17 +164,10 @@ def is_database_bootstrapped(conn: sqlite3.Connection) -> bool:
     if {row["name"] for row in rows} != expected_tables:
         return False
     app_config_count = conn.execute("SELECT COUNT(*) FROM app_config").fetchone()[0]
-    score_count = conn.execute("SELECT COUNT(*) FROM score_settings").fetchone()[0]
-    if app_config_count <= 0 or score_count <= 0:
+    score_count = conn.execute("SELECT COUNT(*) FROM score_rules").fetchone()[0]
+    rules_count = conn.execute("SELECT COUNT(*) FROM recommendation_rules").fetchone()[0]
+    if app_config_count <= 0 or score_count <= 0 or rules_count <= 0:
         return False
-    bundled_defaults = (
-        (runtime_paths.DEFAULT_PROVIDERS_MAPPING_JSON, "provider_mappings"),
-        (runtime_paths.DEFAULT_PROVIDERS_LOGO_JSON, "provider_logos"),
-        (runtime_paths.DEFAULT_RECOMMENDATIONS_RULES_JSON, "recommendation_rules"),
-    )
-    for default_path, table_name in bundled_defaults:
-        if Path(default_path).exists() and conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] <= 0:
-            return False
     return True
 
 
@@ -229,3 +226,17 @@ def _write_startup_marker(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(Exception):
         path.write_text(str(time.time()), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=_sys.stdout,
+    )
+    try:
+        bootstrap_runtime_database()
+    except Exception as _exc:
+        logging.critical("[DB] Bootstrap failed: %s", _exc)
+        _sys.exit(1)

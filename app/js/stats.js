@@ -196,89 +196,170 @@
     const C = window.MMLConstants.CHARTS;
     const NONE_KEY = window.MMLConstants.PROVIDER_NONE_KEY;
 
-    // ── Category (folder) ────────────────────────────────────
+    // Resolve normalizers once (avoids repeated getDep() lookups per item)
+    const fnVideoCodec    = getDep('getNormalizedVideoCodec');
+    const fnAudioCodec    = getDep('getNormalizedAudioCodec');
+    const fnAudioLang     = getDep('getAudioLanguageSimple');
+    const fnGenres        = getDep('getNormalizedGenres');
+    const fnAudioCh       = getDep('getNormalizedAudioChannels');
+    const fnResolution    = getDep('getNormalizedResolution');
+    const fnProvGroups    = getDep('_itemProviderGroups');
+    const fnPname         = getDep('_pname');
+    const fnPlogo         = getDep('_plogo');
+    const fnProvGroupKey  = getDep('_providerGroupKey');
+    const OTHERS_KEY      = getDep('PROVIDER_OTHERS_KEY');
+
+    // Quality tranche setup (needed inside loop)
+    const qc = C.COLORS.QUALITY;
+    const qualityTranches = [
+      { key: 'range_0_20',   min:  0, max:  20, color: qc[0], label: getDep('t')('filters.score.range_0_20')   },
+      { key: 'range_20_40',  min: 21, max:  40, color: qc[1], label: getDep('t')('filters.score.range_20_40')  },
+      { key: 'range_40_60',  min: 41, max:  60, color: qc[2], label: getDep('t')('filters.score.range_40_60')  },
+      { key: 'range_60_80',  min: 61, max:  80, color: qc[3], label: getDep('t')('filters.score.range_60_80')  },
+      { key: 'range_80_100', min: 81, max: 100, color: qc[4], label: getDep('t')('filters.score.range_80_100') },
+    ];
+
+    // Accumulators
     const byCategory = {}, byCategoryCount = {};
-    items.forEach(i => {
-      const c = i.category || i.group || '?';
-      byCategory[c]      = (byCategory[c]      || 0) + (i.size_b || 0);
-      byCategoryCount[c] = (byCategoryCount[c] || 0) + 1;
-    });
+    const byCodec = {}, byCodecCount = {};
+    const byAudioCodec = {}, byAudioCodecCount = {};
+    const byAudioLangCount = {}, byAudioLangSize = {};
+    const byGenreCount = {};
+    const byAudioChannelsCount = {}, byAudioChannelsSize = {};
+    const byRes = {}, byResCount = {};
+    const byProvCount = {}, byProvSize = {}, byProvLogo = {};
+    const allByDay = {};
+    const byYearCount = {};
+    const qualityCounts = [0, 0, 0, 0, 0];
+    let totalScore = 0, scoredCount = 0;
+    let referenceSize = 0, noneCount = 0, noneSize = 0;
+
+    // ── SINGLE PASS over items ───────────────────────────────
+    for (const i of items) {
+      const sizeB = i.size_b || 0;
+      referenceSize += sizeB;
+
+      // Category
+      const cat = i.category || i.group || '?';
+      byCategory[cat]      = (byCategory[cat]      || 0) + sizeB;
+      byCategoryCount[cat] = (byCategoryCount[cat] || 0) + 1;
+
+      // Video codec
+      const vc = fnVideoCodec(i);
+      byCodec[vc]      = (byCodec[vc]      || 0) + sizeB;
+      byCodecCount[vc] = (byCodecCount[vc] || 0) + 1;
+
+      // Audio codec
+      const ac = fnAudioCodec(i);
+      byAudioCodec[ac]      = (byAudioCodec[ac]      || 0) + sizeB;
+      byAudioCodecCount[ac] = (byAudioCodecCount[ac] || 0) + 1;
+
+      // Audio language
+      const al = fnAudioLang(i);
+      byAudioLangCount[al] = (byAudioLangCount[al] || 0) + 1;
+      byAudioLangSize[al]  = (byAudioLangSize[al]  || 0) + sizeB;
+
+      // Genres
+      const itemGenres = fnGenres(i);
+      for (const g of itemGenres) {
+        byGenreCount[g] = (byGenreCount[g] || 0) + 1;
+      }
+
+      // Audio channels
+      const ch = fnAudioCh(i);
+      byAudioChannelsCount[ch] = (byAudioChannelsCount[ch] || 0) + 1;
+      byAudioChannelsSize[ch]  = (byAudioChannelsSize[ch]  || 0) + sizeB;
+
+      // Resolution
+      const r = fnResolution(i);
+      byRes[r]      = (byRes[r]      || 0) + sizeB;
+      byResCount[r] = (byResCount[r] || 0) + 1;
+
+      // Providers
+      const provs = getScopedProviders(i);
+      if (!provs.length) {
+        noneCount++;
+        noneSize += sizeB;
+      } else {
+        const groups = fnProvGroups(i);
+        for (const name of groups) {
+          byProvCount[name] = (byProvCount[name] || 0) + 1;
+          byProvSize[name]  = (byProvSize[name]  || 0) + sizeB;
+        }
+        // Capture first logo per provider group
+        for (const p of provs) {
+          const rawName = fnPname(p);
+          const name    = fnProvGroupKey(rawName);
+          if (name && name !== OTHERS_KEY && !byProvLogo[name]) {
+            byProvLogo[name] = fnPlogo(p) || '';
+          }
+        }
+      }
+
+      // Timeline
+      if (i.added_at) {
+        const d = new Date(i.added_at);
+        const dk = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        if (!allByDay[dk]) allByDay[dk] = { count: 0, size: 0 };
+        allByDay[dk].count++;
+        allByDay[dk].size += sizeB;
+      }
+
+      // Year
+      if (i.year) {
+        const y = String(i.year);
+        byYearCount[y] = (byYearCount[y] || 0) + 1;
+      }
+
+      // Quality
+      if (i.quality) {
+        const s = Number(i.quality.score);
+        if (Number.isFinite(s)) {
+          totalScore += s; scoredCount++;
+          if      (s <= 20) qualityCounts[0]++;
+          else if (s <= 40) qualityCounts[1]++;
+          else if (s <= 60) qualityCounts[2]++;
+          else if (s <= 80) qualityCounts[3]++;
+          else              qualityCounts[4]++;
+        }
+      }
+    }
+
+    // ── Post-processing (sort, shape) ────────────────────────
+
     const category = {
       entriesSize:  Object.entries(byCategory).sort((a,b) => b[1]-a[1]),
       entriesCount: Object.entries(byCategoryCount).sort((a,b) => b[1]-a[1]),
     };
 
-    // ── Video codec ──────────────────────────────────────────
-    const byCodec = {}, byCodecCount = {};
-    items.forEach(i => {
-      const k = getDep('getNormalizedVideoCodec')(i);
-      byCodec[k]      = (byCodec[k]      || 0) + (i.size_b || 0);
-      byCodecCount[k] = (byCodecCount[k] || 0) + 1;
-    });
     const codec = {
       entriesSize:  Object.entries(byCodec).sort((a,b) => b[1]-a[1]),
       entriesCount: Object.entries(byCodecCount).sort((a,b) => b[1]-a[1]),
     };
 
-    // ── Audio codec ──────────────────────────────────────────
-    const byAudioCodec = {}, byAudioCodecCount = {};
-    items.forEach(i => {
-      const k = getDep('getNormalizedAudioCodec')(i);
-      byAudioCodec[k]      = (byAudioCodec[k]      || 0) + (i.size_b || 0);
-      byAudioCodecCount[k] = (byAudioCodecCount[k] || 0) + 1;
-    });
     const audioCodec = {
       entriesSize:  Object.entries(byAudioCodec).sort((a,b) => b[1]-a[1]),
       entriesCount: Object.entries(byAudioCodecCount).sort((a,b) => b[1]-a[1]),
     };
 
-    // ── Audio languages ──────────────────────────────────────
-    const byAudioLangCount = {}, byAudioLangSize = {};
-    items.forEach(i => {
-      const k = getDep('getAudioLanguageSimple')(i);
-      byAudioLangCount[k] = (byAudioLangCount[k] || 0) + 1;
-      byAudioLangSize[k]  = (byAudioLangSize[k]  || 0) + (i.size_b || 0);
-    });
     const audioLang = {
       entriesCount: Object.entries(byAudioLangCount).sort((a,b) => b[1]-a[1]),
       entriesSize:  Object.entries(byAudioLangSize).sort((a,b) => b[1]-a[1]),
       hasData:      Object.keys(byAudioLangCount).length > 0,
     };
 
-    // ── Genres ───────────────────────────────────────────────
-    const byGenreCount = {};
-    items.forEach((item) => {
-      const genres = getDep('getNormalizedGenres')(item);
-      genres.forEach((genre) => {
-        byGenreCount[genre] = (byGenreCount[genre] || 0) + 1;
-      });
-    });
     const genres = {
       entriesCount: buildGenreTopEntries(byGenreCount, items),
       hasData: items.length > 0,
       referenceCount: items.length,
     };
 
-    // ── Audio channels ───────────────────────────────────────
-    const byAudioChannelsCount = {}, byAudioChannelsSize = {};
-    items.forEach((item) => {
-      const channel = getDep('getNormalizedAudioChannels')(item);
-      byAudioChannelsCount[channel] = (byAudioChannelsCount[channel] || 0) + 1;
-      byAudioChannelsSize[channel] = (byAudioChannelsSize[channel] || 0) + (item.size_b || 0);
-    });
     const audioChannels = {
       entriesCount: mapToSortedEntries(byAudioChannelsCount),
-      entriesSize: mapToSortedEntries(byAudioChannelsSize),
+      entriesSize:  mapToSortedEntries(byAudioChannelsSize),
       hasData: Object.keys(byAudioChannelsCount).length > 0,
     };
 
-    // ── Resolution ───────────────────────────────────────────
-    const byRes = {}, byResCount = {};
-    items.forEach(i => {
-      const r = getDep('getNormalizedResolution')(i);
-      byRes[r]      = (byRes[r]      || 0) + (i.size_b || 0);
-      byResCount[r] = (byResCount[r] || 0) + 1;
-    });
     const RES_ORDER = [...C.RESOLUTION_ORDER, NONE_KEY];
     const resRemaining = Object.keys(byRes).filter((r) => !RES_ORDER.includes(r));
     const resolution = {
@@ -292,99 +373,38 @@
       ],
     };
 
-    // ── Providers ────────────────────────────────────────────
-    const groupedProviderCount = getDep('MMLLogic')?.groupedProviderCounts
-      ? getDep('MMLLogic').groupedProviderCounts(items, getDep('_providerGroupKey'), getDep('_pname'))
-      : (() => {
-          const fb = {};
-          items.forEach(i => getDep('_itemProviderGroups')(i).forEach(name => {
-            fb[name] = (fb[name] || 0) + 1;
-          }));
-          return fb;
-        })();
-
     const byProv = {};
-    Object.entries(groupedProviderCount).forEach(([name, count]) => {
-      byProv[name] = { count, logo: '' };
-    });
-    items.forEach(i => getScopedProviders(i).forEach(p => {
-      const rawName = getDep('_pname')(p);
-      const name    = getDep('_providerGroupKey')(rawName);
-      if (!name || !byProv[name] || name === getDep('PROVIDER_OTHERS_KEY')) return;
-      if (!byProv[name].logo) byProv[name].logo = getDep('_plogo')(p);
-    }));
-
-    const byProvSize = {};
-    items.forEach(i => {
-      getDep('_itemProviderGroups')(i).forEach(name => {
-        byProvSize[name] = (byProvSize[name] || 0) + (i.size_b || 0);
-      });
-    });
-
+    for (const name of Object.keys(byProvCount)) {
+      byProv[name] = { count: byProvCount[name], logo: byProvLogo[name] || '' };
+    }
     const providers = {
-      entries:   Object.entries(byProv).sort((a,b) => b[1].count - a[1].count),
-      bySize:    byProvSize,
-      noneCount: items.filter(i => !getScopedProviders(i).length).length,
-      noneSize:  items.filter(i => !getScopedProviders(i).length).reduce((s,i) => s+(i.size_b||0), 0),
+      entries:        Object.entries(byProv).sort((a,b) => b[1].count - a[1].count),
+      bySize:         byProvSize,
+      noneCount,
+      noneSize,
       referenceCount: items.length,
-      referenceSize: items.reduce((sum, i) => sum + (i.size_b || 0), 0),
+      referenceSize,
     };
 
-    // ── Timeline (daily + monthly buckets) ───────────────────
-    const allByDay = {};
-    items.forEach(i => {
-      if (!i.added_at) return;
-      const d   = new Date(i.added_at);
-      const key = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      if (!allByDay[key]) allByDay[key] = { count: 0, size: 0 };
-      allByDay[key].count++;
-      allByDay[key].size += i.size_b || 0;
-    });
     const allByMonth = {};
-    Object.entries(allByDay).forEach(([k,v]) => {
+    for (const [k, v] of Object.entries(allByDay)) {
       const mk = k.slice(0, 7);
       if (!allByMonth[mk]) allByMonth[mk] = { count: 0, size: 0 };
       allByMonth[mk].count += v.count;
       allByMonth[mk].size  += v.size;
-    });
+    }
     const timeline = {
       allByDay,
       allByMonth,
       hasEnoughData: Object.keys(allByMonth).length >= 2,
     };
 
-    // ── Release years ────────────────────────────────────────
-    const byYearCount = {};
-    items.forEach(i => {
-      if (!i.year) return;
-      const y = String(i.year);
-      byYearCount[y] = (byYearCount[y] || 0) + 1;
-    });
     const years = {
       entriesCount: Object.keys(byYearCount)
         .sort((a,b) => Number(a)-Number(b))
         .map(y => [y, byYearCount[y]]),
     };
 
-    // ── Quality score distribution ────────────────────────────
-    const qc = C.COLORS.QUALITY;
-    const qualityTranches = [
-      { key: 'range_0_20',   min:  0, max:  20, color: qc[0], label: getDep('t')('filters.score.range_0_20')   },
-      { key: 'range_20_40',  min: 21, max:  40, color: qc[1], label: getDep('t')('filters.score.range_20_40')  },
-      { key: 'range_40_60',  min: 41, max:  60, color: qc[2], label: getDep('t')('filters.score.range_40_60')  },
-      { key: 'range_60_80',  min: 61, max:  80, color: qc[3], label: getDep('t')('filters.score.range_60_80')  },
-      { key: 'range_80_100', min: 81, max: 100, color: qc[4], label: getDep('t')('filters.score.range_80_100') },
-    ];
-    const qualityCounts = qualityTranches.map(() => 0);
-    let totalScore = 0, scoredCount = 0;
-    items.forEach(i => {
-      if (!i.quality) return;
-      const s = Number(i.quality.score);
-      if (!Number.isFinite(s)) return;
-      totalScore += s; scoredCount++;
-      const idx = qualityTranches.findIndex(tr => s >= tr.min && s <= tr.max);
-      if (idx >= 0) qualityCounts[idx]++;
-    });
     const quality = {
       tranches:    qualityTranches,
       counts:      qualityCounts,

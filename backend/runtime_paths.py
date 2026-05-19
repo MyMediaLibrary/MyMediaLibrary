@@ -1,11 +1,8 @@
 """Canonical runtime paths for MyMediaLibrary.
 
-This module is the single source of truth for v0.5.0 storage layout paths.
-Legacy paths are declared here only so the startup migration can reason about
-them explicitly.
-
-Legacy JSON sources are those that existed in ``/data/`` before the v0.5.0
-SQLite migration.
+This module is the single source of truth for storage layout paths.
+Legacy JSON sources are declared here only so the startup migration can
+reason about them explicitly.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ APP_DIR = Path("/app")
 LIBRARY_JSON = DATA_DIR / "library.json"
 LIBRARY_PROBE_JSON = DATA_DIR / "library_probe.json"
 MEDIA_PROBE_CACHE_JSON = DATA_DIR / "media_probe_cache.json"
-INVENTORY_JSON = DATA_DIR / "library_inventory.json"
 RECOMMENDATIONS_JSON = DATA_DIR / "recommendations.json"
 SCANNER_LOG = DATA_DIR / "scanner.log"
 SQLITE_DB = DATA_DIR / "mymedialibrary.db"
@@ -37,18 +33,12 @@ LEGACY_SECRETS_FILE = LEGACY_CONF_DIR / ".secrets"
 
 SCAN_LOCK = TMP_DIR / "scan.lock"
 
-DEFAULT_CONF_DIR = APP_DIR / "defaults" / "conf"
-DEFAULT_CONFIG_JSON = DEFAULT_CONF_DIR / "config.json"
-DEFAULT_PROVIDERS_MAPPING_JSON = DEFAULT_CONF_DIR / "providers_mapping.json"
-DEFAULT_PROVIDERS_LOGO_JSON = DEFAULT_CONF_DIR / "providers_logo.json"
-DEFAULT_RECOMMENDATIONS_RULES_JSON = DEFAULT_CONF_DIR / "recommendations_rules.json"
-
 MIGRATION_WORK_DIR = DATA_DIR / ".migration"
 
 
 @dataclass(frozen=True)
 class RuntimeFile:
-    """A runtime file and its optional bundled default."""
+    """A legacy runtime JSON file path (used by startup migration only)."""
 
     path: Path
     default_path: Path | None = None
@@ -68,10 +58,10 @@ GENERATED_FILES = (
 )
 
 CONFIG_FILES = (
-    RuntimeFile(CONFIG_JSON, DEFAULT_CONFIG_JSON),
-    RuntimeFile(PROVIDERS_MAPPING_JSON, DEFAULT_PROVIDERS_MAPPING_JSON),
-    RuntimeFile(PROVIDERS_LOGO_JSON, DEFAULT_PROVIDERS_LOGO_JSON),
-    RuntimeFile(RECOMMENDATIONS_RULES_JSON, DEFAULT_RECOMMENDATIONS_RULES_JSON),
+    RuntimeFile(CONFIG_JSON),
+    RuntimeFile(PROVIDERS_MAPPING_JSON),
+    RuntimeFile(PROVIDERS_LOGO_JSON),
+    RuntimeFile(RECOMMENDATIONS_RULES_JSON),
     RuntimeFile(SECRETS_FILE),
 )
 

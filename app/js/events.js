@@ -111,8 +111,6 @@
       ?.addEventListener('input', syncSettingsAuthPasswordState);
     document.getElementById('cfgAuthConfirm')
       ?.addEventListener('input', syncSettingsAuthPasswordState);
-    document.getElementById('cfgExportJsonBtn')
-      ?.addEventListener('click', exportLibraryJson);
     document.getElementById('settingsLogoutBtn')
       ?.addEventListener('click', logoutFromSettings);
     document.getElementById('settingsCloseBtn')
@@ -164,7 +162,11 @@
     document.getElementById('onbPrevBtn')
       ?.addEventListener('click', onbPrev);
     document.getElementById('onbNextBtn')
-      ?.addEventListener('click', onbNext);
+      ?.addEventListener('click', () => {
+        const btn = document.getElementById('onbNextBtn');
+        if (btn?.dataset?.onbAction === 'launch') onbLaunchScan();
+        else onbNext();
+      });
   }
 
   // ── Document-level event delegation ──────────────────────────────────────
@@ -213,6 +215,13 @@
     var typePill = e.target.closest('.provider-pill[data-type]');
     if (typePill) {
       clickType(typePill.dataset.type);
+      return;
+    }
+
+    // Availability filter pills
+    var availPill = e.target.closest('.provider-pill[data-availability-value]');
+    if (availPill) {
+      setAvailabilityFilter(availPill.dataset.availabilityValue);
       return;
     }
 
