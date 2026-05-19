@@ -779,7 +779,7 @@ test('onboarding seerr step is not skipped in forward navigation', () => {
   const flowBlock = functionBlock(settingsSource, '_onbFlow', '_onbCurrentStep');
   assert.match(flowBlock, /skippable[\s\S]*_onbSkippedStepIds/, '_onbFlow must gate seerr on the skipped set');
   // _onbSkipCurrentStep is the only way to add to the skipped set
-  const skipBlock = functionBlock(settingsSource, '_onbSkipCurrentStep', '_onbSkipCurrentStep');
+  const skipBlock = functionBlock(settingsSource, '_onbSkipCurrentStep', 'showOnboarding');
   // Check that skipped step adds to the set
   assert.match(settingsSource, /_onbSkippedStepIds\.add\(current\.id\)/, 'only _onbSkipCurrentStep should add to the skipped set');
   // showOnboarding always resets the skipped set
