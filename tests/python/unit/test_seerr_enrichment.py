@@ -660,5 +660,169 @@ class SeerrTvFallbackTest(unittest.TestCase):
         self.assertTrue(any(c[0] == "12345" for c in calls))
 
 
+# ---------------------------------------------------------------------------
+# Incremental enrichment — run_phases must NOT force-enrich cached items
+# ---------------------------------------------------------------------------
+
+class SeerrIncrementalEnrichTest(unittest.TestCase):
+    """run_phases must call run_enrich without force so cached items are skipped."""
+
+    def _make_library_json(self, items, path):
+        path.write_text(_json.dumps({
+            "scanned_at": "2026-01-01T00:00:00",
+            "library_path": "/library",
+            "total_items": len(items),
+            "categories": [],
+            "items": items,
+        }), encoding="utf-8")
+
+    def test_run_phases_enrich_does_not_force(self):
+        """run_phases must call run_enrich(force=False) so providers_fetched is respected."""
+        captured = {}
+
+        def fake_run_enrich(force=False, only_category=None):
+            captured["force"] = force
+            return "0 enriched / 1 skipped"
+
+        with patch.object(scanner, "run_enrich", side_effect=fake_run_enrich):
+            scanner.run_phases([scanner.PHASE_ENRICH])
+
+        self.assertFalse(captured.get("force"),
+                         "run_phases must call run_enrich(force=False); "
+                         "force=True was the bug causing full re-enrichment every scan")
+
+    def test_second_run_enrich_skips_all_cached(self):
+        """After a first enrichment, a second run_enrich must skip all already-enriched items."""
+        item_cached = {
+            "id": "m:C:Movie", "title": "Movie", "type": "movie", "category": "Films",
+            "tmdb_id": "100",
+            "providers": ["Netflix"], "providers_fetched": True,
+            "seerr_status": "ok", "seerr_last_fetched_at": "2026-05-01T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / "library.json"
+            self._make_library_json([item_cached], out)
+            fetch_calls = []
+            def track_fetch(*a, **kw):
+                fetch_calls.append(a)
+                return []
+            with patch.object(scanner, "OUTPUT_PATH", str(out)), \
+                 patch.object(scanner, "_jsr_cfg",
+                              return_value={"enabled": True, "url": "http://x", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", side_effect=track_fetch), \
+                 patch.object(scanner, "_resolve_ids_from_search",
+                              return_value=scanner._JSR_NOT_FOUND):
+                summary = scanner.run_enrich(force=False)
+
+        self.assertEqual(len(fetch_calls), 0, "No Seerr calls expected for already-enriched items")
+        self.assertIn("skipped", summary)
+
+    def test_new_item_enriched_cached_item_skipped(self):
+        """Mix of new and cached items: only new items trigger Seerr calls."""
+        item_new = {
+            "id": "m:N:New", "title": "New Movie", "type": "movie", "category": "Films",
+            "tmdb_id": "200",
+            "providers": [], "providers_fetched": False,
+            "seerr_status": None, "seerr_last_fetched_at": None,
+        }
+        item_cached = {
+            "id": "m:C:Cached", "title": "Cached Movie", "type": "movie", "category": "Films",
+            "tmdb_id": "300",
+            "providers": ["Netflix"], "providers_fetched": True,
+            "seerr_status": "ok", "seerr_last_fetched_at": "2026-05-01T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / "library.json"
+            self._make_library_json([item_new, item_cached], out)
+            fetch_ids = []
+            def track_fetch(lookup_id, *a, **kw):
+                fetch_ids.append(str(lookup_id))
+                return [{"raw_name": "Disney+", "logo": None}]
+            with patch.object(scanner, "OUTPUT_PATH", str(out)), \
+                 patch.object(scanner, "_jsr_cfg",
+                              return_value={"enabled": True, "url": "http://x", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers", side_effect=track_fetch), \
+                 patch.object(scanner, "_resolve_ids_from_search",
+                              return_value=scanner._JSR_NOT_FOUND):
+                summary = scanner.run_enrich(force=False)
+
+        self.assertEqual(fetch_ids, ["200"], "Only the new item (tmdb=200) should be enriched")
+        self.assertIn("enriched", summary)
+        self.assertIn("skipped", summary)
+
+    def test_enrich_reason_summary_new_media_vs_providers_missing(self):
+        """new_media (never enriched) vs providers_missing (reset after ID change) are counted separately."""
+        item_new = {
+            "id": "m:N:BrandNew", "title": "Brand New", "type": "movie", "category": "Films",
+            "tmdb_id": "401",
+            "providers": [], "providers_fetched": False,
+            "seerr_status": None, "seerr_last_fetched_at": None,  # never enriched
+        }
+        item_reset = {
+            "id": "m:R:Reset", "title": "ID Changed", "type": "movie", "category": "Films",
+            "tmdb_id": "402",
+            "providers": [], "providers_fetched": False,
+            "seerr_status": None, "seerr_last_fetched_at": "2026-01-01T00:00:00Z",  # was enriched
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / "library.json"
+            self._make_library_json([item_new, item_reset], out)
+            with patch.object(scanner, "OUTPUT_PATH", str(out)), \
+                 patch.object(scanner, "_jsr_cfg",
+                              return_value={"enabled": True, "url": "http://x", "apikey": "k"}), \
+                 patch.object(scanner, "load_config", return_value={}), \
+                 patch.object(scanner, "build_categories_from_config", return_value=[]), \
+                 patch.object(scanner, "fetch_providers",
+                              return_value=[{"raw_name": "Netflix", "logo": None}]), \
+                 patch.object(scanner, "_resolve_ids_from_search",
+                              return_value=scanner._JSR_NOT_FOUND):
+                import logging
+                with self.assertLogs("scanner", level="INFO") as log_ctx:
+                    scanner.run_enrich(force=False)
+
+        log_output = "\n".join(log_ctx.output)
+        self.assertIn("new_media=1", log_output)
+        self.assertIn("providers_missing=1", log_output)
+
+    def test_tmdb_id_int_vs_string_no_refresh(self):
+        """tmdb_id=12345 (int in DB → str in prev) must not trigger ID-change reset."""
+        # prev.tmdb_id comes from _reconstruct_item as str("12345")
+        # nfo_meta.tmdb_id is parsed from XML as str "12345"
+        # Both are strings → comparison stable → no reset
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cat_dir = root / "Films"
+            movie_dir = cat_dir / "Movie A"
+            movie_dir.mkdir(parents=True)
+            nfo = movie_dir / "Movie A.nfo"
+            nfo.write_text(
+                '<?xml version="1.0"?><movie>'
+                '<title>Movie A</title>'
+                '<uniqueid type="tmdb">12345</uniqueid>'
+                '</movie>',
+                encoding="utf-8",
+            )
+            # prev already has tmdb_id stored as string (as returned by _reconstruct_item)
+            prev = {
+                "tmdb_id": "12345",  # string — same as NFO
+                "tvdb_id": None,
+                "providers_fetched": True,
+                "seerr_status": "ok",
+                "seerr_last_fetched_at": "2026-01-01T00:00:00Z",
+                "providers": ["Netflix"],
+            }
+            cat = {"name": "Films", "type": "movie", "folder": "Films"}
+            item = scanner.scan_media_item(movie_dir, root, cat, prev)
+
+        self.assertTrue(item.get("providers_fetched"),
+                        "providers_fetched must stay True when tmdb_id is unchanged (int/str stable)")
+
+
 if __name__ == "__main__":
     unittest.main()

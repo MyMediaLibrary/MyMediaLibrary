@@ -3470,7 +3470,7 @@ def run_quick(only_category: str | None = None) -> str:
 
 def run_enrich(force: bool = False, only_category: str | None = None) -> str:
     _t0 = time.monotonic()
-    label = "force" if force else "missing only"
+    label = "force" if force else "incremental"
     scope = f" [category: {only_category}]" if only_category else ""
     _log_phase_start("3", suffix=f" ({label}){scope}")
 
@@ -3489,29 +3489,66 @@ def run_enrich(force: bool = False, only_category: str | None = None) -> str:
 
     items = data.get("items", [])
 
-    def needs_enrich(item: dict) -> bool:
+    def _enrich_reason(item: dict) -> str | None:
+        """Return the reason this item needs enrichment, or None to skip."""
         if only_category and item.get("category") != only_category:
-            return False
-        # Enrichment can run from IDs or fallback search (requires title).
-        # Keep this broad even in force mode to avoid skipping valid items.
+            return None
+        # Must have at least a title or an ID to attempt enrichment.
         if not item.get("title") and not item.get("tmdb_id") and not item.get("tvdb_id"):
-            return False
+            return None
         if force:
-            return True
+            return "forced"
         # Retry NOT_FOUND items after TTL — new titles appear in Seerr over time
         if item.get("seerr_status") == "not_found":
             last = item.get("seerr_last_fetched_at")
             if last:
                 try:
                     age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(last.replace("Z", "+00:00"))).days
-                    return age_days >= _SEERR_NOT_FOUND_TTL_DAYS
+                    if age_days >= _SEERR_NOT_FOUND_TTL_DAYS:
+                        return "not_found_retry"
                 except Exception:
                     pass
-            return False
-        return not item.get("providers_fetched")
+            return None  # within TTL — skip
+        if not item.get("providers_fetched"):
+            # Distinguish truly new items from items whose providers_fetched was reset
+            # (e.g. ID change detected in phase 1).
+            if not item.get("seerr_last_fetched_at"):
+                return "new_media"
+            return "providers_missing"
+        return None  # already enriched — skip
 
-    to_enrich = [i for i in items if needs_enrich(i)]
-    skipped   = len(items) - len(to_enrich)
+    # Collect items to enrich and tally skip reasons for the summary log.
+    to_enrich: list[dict] = []
+    reason_counts: dict[str, int] = defaultdict(int)
+    for _item in items:
+        _reason = _enrich_reason(_item)
+        if _reason:
+            to_enrich.append(_item)
+            reason_counts[_reason] += 1
+            log.debug(
+                "%s will enrich %r — reason=%s providers_fetched=%s seerr_status=%s",
+                _phase_prefix("3"),
+                _item.get("title"),
+                _reason,
+                _item.get("providers_fetched"),
+                _item.get("seerr_status"),
+            )
+        else:
+            reason_counts["skipped_cached"] += 1
+
+    skipped = reason_counts["skipped_cached"]
+    log.info(
+        "%s Re-enrich summary: new_media=%d providers_missing=%d not_found_retry=%d "
+        "forced=%d skipped_cached=%d  → %d to process (%d workers)",
+        _phase_prefix("3"),
+        reason_counts["new_media"],
+        reason_counts["providers_missing"],
+        reason_counts["not_found_retry"],
+        reason_counts["forced"],
+        skipped,
+        len(to_enrich),
+        _ENRICH_WORKERS,
+    )
     log.info(f"{_phase_prefix('3')} {len(to_enrich)} item(s) to process, {skipped} skipped ({_ENRICH_WORKERS} workers)")
 
     if not to_enrich:
@@ -3896,7 +3933,7 @@ def run_phases(
     _phase_fns = {
         PHASE_SCAN:            ("1", lambda: run_quick(only_category=only_category)),
         PHASE_PROBE:           ("2", lambda: run_probe(only_category=only_category)),
-        PHASE_ENRICH:          ("3", lambda: run_enrich(force=True, only_category=only_category)),
+        PHASE_ENRICH:          ("3", lambda: run_enrich(only_category=only_category)),
         PHASE_SCORE:           ("4", lambda: run_scoring(only_category=only_category)),
         PHASE_RECOMMENDATIONS: ("5", lambda: run_recommendations()),
     }
