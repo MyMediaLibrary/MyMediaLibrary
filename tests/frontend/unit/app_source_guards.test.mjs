@@ -810,3 +810,18 @@ test('onboarding seerr step is not skipped in forward navigation', () => {
   const showBlock = functionBlock(settingsSource, 'showOnboarding', '_onbRender');
   assert.match(showBlock, /_onbSkippedStepIds\s*=\s*new Set\(\)/, 'showOnboarding must reset the skipped set to guarantee seerr is visible by default');
 });
+
+test('loadLibrary scan timestamp guards against null — no epoch 1970 regression', () => {
+  // The unguarded form `const d=new Date(data.scanned_at)` (direct assignment without ternary)
+  // must not exist — new Date(null) produces epoch 1970
+  assert.doesNotMatch(appSource, /=\s*new Date\(data\.scanned_at\)\s*;/, 'must not assign new Date(data.scanned_at) directly — null produces epoch 1970');
+
+  // Must guard scanned_at before constructing the Date (ternary check)
+  assert.match(appSource, /data\.scanned_at\s*\?/, 'must check data.scanned_at is truthy before calling new Date()');
+
+  // Must validate the Date before rendering (isNaN guard)
+  assert.match(appSource, /isNaN\(_scanD\.getTime\(\)\)/, 'must reject invalid Date objects via isNaN check');
+
+  // Fallback branch must set plain text (no raw HTML with potentially epoch timestamp)
+  assert.match(appSource, /_scanEl\.textContent\s*=/, 'fallback when no valid timestamp must use textContent, not innerHTML');
+});

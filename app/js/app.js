@@ -916,11 +916,15 @@ let allItems=[], categories=[], groups=[];
         updateGlobalResetButtons
       });
 
-      const d=new Date(data.scanned_at);
       const locale = CURRENT_LANG === 'en' ? 'en-GB' : 'fr-FR';
-      document.getElementById('scanInfo').innerHTML=
-        t('library.last_scan')+' <span class="scan-ts-link" title="Voir le log">'+
-        d.toLocaleDateString(locale)+' '+d.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
+      const _scanD = data.scanned_at ? new Date(data.scanned_at) : null;
+      const _scanEl = document.getElementById('scanInfo');
+      if (_scanD && !isNaN(_scanD.getTime())) {
+        _scanEl.innerHTML = t('library.last_scan')+' <span class="scan-ts-link" title="Voir le log">'+
+          _scanD.toLocaleDateString(locale)+' '+_scanD.toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})+'</span>';
+      } else {
+        _scanEl.textContent = t('library.last_scan');
+      }
       enableScore = resolveScoreEnabled();
       enableRecommendations = resolveRecommendationsEnabled();
       applyScoreFeatureVisibility();

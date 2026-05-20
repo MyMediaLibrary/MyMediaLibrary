@@ -78,6 +78,25 @@ def import_library_if_empty(json_path: str | Path, db_path: str | Path | None = 
         conn.close()
 
 
+def _get_last_scan_at(conn: sqlite3.Connection) -> str | None:
+    """Return the timestamp of the most recent scan from scan_runs.
+
+    Prefers completed_at for finished scans; falls back to started_at for
+    a currently-running scan. Returns None when no scan has ever been recorded.
+    """
+    try:
+        row = conn.execute(
+            "SELECT status, completed_at, started_at FROM scan_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    if row["status"] == "completed" and row["completed_at"]:
+        return row["completed_at"]
+    return row["started_at"] or None
+
+
 def export_library(conn: sqlite3.Connection, availability: str = "available") -> dict[str, Any]:
     if availability == "available":
         where = " WHERE m.is_available = 1"
@@ -85,11 +104,12 @@ def export_library(conn: sqlite3.Connection, availability: str = "available") ->
         where = " WHERE m.is_available = 0"
     else:
         where = ""
+    scanned_at = _get_last_scan_at(conn)
     media_rows = conn.execute(
         f"SELECT * FROM media m{where} ORDER BY m.title, m.id"
     ).fetchall()
     if not media_rows:
-        return _normalize_library_document({"scanned_at": None, "library_path": None, "total_items": 0, "categories": [], "items": []})
+        return _normalize_library_document({"scanned_at": scanned_at, "library_path": None, "total_items": 0, "categories": [], "items": []})
 
     media_ids = [r["id"] for r in media_rows]
     seasons_by_media = _batch_seasons(conn, media_ids)
@@ -97,7 +117,7 @@ def export_library(conn: sqlite3.Connection, availability: str = "available") ->
 
     items = [_reconstruct_item(row, seasons_by_media, providers_by_media) for row in media_rows]
     return _normalize_library_document({
-        "scanned_at": None,
+        "scanned_at": scanned_at,
         "library_path": None,
         "total_items": len(items),
         "categories": sorted({item.get("category") for item in items if item.get("category")}),
@@ -407,7 +427,8 @@ def _normalize_library_document(document: dict[str, Any]) -> dict[str, Any]:
     payload["items"] = [item for item in items if isinstance(item, dict)]
     payload["total_items"] = len(payload["items"])
     payload.setdefault("categories", sorted({item.get("category") for item in payload["items"] if item.get("category")}))
-    payload.setdefault("scanned_at", datetime.now().isoformat())
+    if "scanned_at" not in payload or payload["scanned_at"] is None:
+        payload["scanned_at"] = None
     return payload
 
 
