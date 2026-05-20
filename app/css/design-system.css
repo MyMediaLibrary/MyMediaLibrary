@@ -237,3 +237,18 @@ body {
 .mobile-filters-top     { border-bottom-color: var(--border-soft) }
 .mobile-sheet           { border-top-color: var(--border-soft) }
 .mobile-scan-choice     { border-color: var(--border-soft) }
+
+/* ── QA FIXES ────────────────────────────────────────────────────────── */
+
+/* Scan log panel — border douce (oubli C11, cohérence avec tous les autres panels) */
+.scan-log-panel  { border-color: var(--border-soft) }
+.scan-log-header { border-bottom-color: var(--border-soft) }
+
+/* Settings auth section — border-top douce (cohérence C9, oubli sur #cfgAuthBlock) */
+#cfgAuthBlock { border-top-color: var(--border-soft) }
+
+/* Scan status et lignes log — tokens sémantiques (remplace #34d399 / #ff6a6a hardcodés) */
+.scan-status-dot.done    { background: var(--color-ok) }
+.scan-status-dot.error   { background: var(--color-danger) }
+.scan-log-body .log-ok   { color: var(--color-ok) }
+.scan-log-body .log-err  { color: var(--color-danger) }
