@@ -86,6 +86,50 @@ body {
 }
 
 
+/* ── LAYOUT D2 — Filter rail ─────────────────────────────────────────── */
+
+/* main-content devient un grid : ligne topbar (auto) + ligne contenu (1fr) */
+.main-content {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+}
+
+/* Filter rail — caché par défaut, 280px quand visible */
+.filter-rail {
+  display: none;
+  grid-row: 2;
+  grid-column: 1;
+  width: var(--filter-rail-w);
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+.filter-rail.visible {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Quand le rail est visible : 2 colonnes + main-body en colonne 2 */
+.main-content:has(.filter-rail.visible) {
+  grid-template-columns: var(--filter-rail-w) 1fr;
+}
+
+/* main-body — conteneur scrollable pour les tab-panels */
+.main-body {
+  grid-row: 2;
+  grid-column: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.main-content:has(.filter-rail.visible) .main-body {
+  grid-column: 2;
+}
+
+
 /* ── SIDEBAR ─────────────────────────────────────────────────────────── */
 
 /* Séparateurs plus doux entre zones */
@@ -117,6 +161,7 @@ body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom-color: var(--border-soft);
+  grid-column: 1 / -1;
 }
 
 /* Onglets */
@@ -233,6 +278,13 @@ body {
 
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────── */
+
+/* D2 — restauration layout mobile (main-content redevient block, filter-rail masqué) */
+@media (max-width: 768px) {
+  .main-content { display: block; overflow-y: auto }
+  .filter-rail  { display: none !important }
+  .main-body    { overflow-y: visible; overflow-x: visible }
+}
 
 /* Composants mobile — borders douces (cohérence avec le design desktop) */
 .mobile-topbar          { border-bottom-color: var(--border-soft) }

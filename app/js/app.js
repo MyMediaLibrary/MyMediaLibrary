@@ -2644,6 +2644,9 @@ let allItems=[], categories=[], groups=[];
     // Show/hide sort section in sidebar
     const ss = document.getElementById('sortSection');
     if (ss) ss.style.display = (tab==='library' && currentView==='grid') ? '' : 'none';
+    // Show/hide filter rail (library only)
+    const fr = document.getElementById('filterRail');
+    if (fr) fr.classList.toggle('visible', tab === 'library');
     // Panels
     document.getElementById('libraryPanel').classList.toggle('active',tab==='library');
     document.getElementById('statsPanel').classList.toggle('active',tab==='stats');

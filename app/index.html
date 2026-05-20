@@ -113,51 +113,6 @@
 
   </div>
 
-  <!-- FILTERS WRAPPER (column in sidebar, row in top) -->
-  <div class="sidebar-filters">
-    <!-- TYPE FILTER -->
-    <div class="sidebar-section" id="typeSection">
-      <div class="storage-block">
-        <div class="storage-title" data-i18n="filters.type">Type</div>
-        <div class="provider-filter" id="typeFilter">
-          <div class="provider-pill provider-pill-reset active" data-i18n="filters.type_all">Tous</div>
-          <div class="provider-pill" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
-          <div class="provider-pill" data-type="tv"    data-i18n="filters.type_tv">📺 Séries</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- AVAILABILITY FILTER -->
-    <div class="sidebar-section filter-section" id="availabilitySection"></div>
-
-    <!-- CATEGORY / GROUP FILTERS -->
-    <div class="sidebar-section" id="storageSection" style="display:none"></div>
-    <div class="sidebar-section" id="folderSection" style="display:none"></div>
-    <div class="sidebar-section" id="genreSection" style="display:none"></div>
-
-    <!-- PROVIDER FILTER -->
-    <div class="sidebar-section" id="providerSection" style="display:none"></div>
-
-    <!-- TECHNICAL QUALITY -->
-    <div class="sidebar-section" id="technicalSection" style="display:none">
-      <div class="filters-collapsible">
-        <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtn" aria-expanded="false">
-          <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
-          <span class="filters-collapsible-icon">▾</span>
-        </button>
-        <div class="filters-collapsible-body is-collapsed" id="technicalBody">
-          <div class="sidebar-section" id="resolutionSection" style="display:none"></div>
-          <div class="sidebar-section" id="codecSection" style="display:none"></div>
-          <div class="sidebar-section" id="audioCodecSection" style="display:none"></div>
-          <div class="sidebar-section" id="audioChannelsSection" style="display:none"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="sidebar-section" id="audioLanguageSection" style="display:none"></div>
-    <div class="sidebar-section" id="qualitySection" style="display:none"></div>
-  </div>
-
   <div class="sidebar-bottom">
     <div class="sidebar-section sidebar-global-actions">
       <div class="scan-info" id="scanInfo"></div>
@@ -233,6 +188,53 @@
     </div>
   </div>
 
+<aside class="filter-rail" id="filterRail">
+  <div class="sidebar-filters">
+    <!-- TYPE FILTER -->
+    <div class="sidebar-section" id="typeSection">
+      <div class="storage-block">
+        <div class="storage-title" data-i18n="filters.type">Type</div>
+        <div class="provider-filter" id="typeFilter">
+          <div class="provider-pill provider-pill-reset active" data-i18n="filters.type_all">Tous</div>
+          <div class="provider-pill" data-type="movie" data-i18n="filters.type_movies">🎬 Films</div>
+          <div class="provider-pill" data-type="tv"    data-i18n="filters.type_tv">📺 Séries</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AVAILABILITY FILTER -->
+    <div class="sidebar-section filter-section" id="availabilitySection"></div>
+
+    <!-- CATEGORY / GROUP FILTERS -->
+    <div class="sidebar-section" id="storageSection" style="display:none"></div>
+    <div class="sidebar-section" id="folderSection" style="display:none"></div>
+    <div class="sidebar-section" id="genreSection" style="display:none"></div>
+
+    <!-- PROVIDER FILTER -->
+    <div class="sidebar-section" id="providerSection" style="display:none"></div>
+
+    <!-- TECHNICAL QUALITY -->
+    <div class="sidebar-section" id="technicalSection" style="display:none">
+      <div class="filters-collapsible">
+        <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtn" aria-expanded="false">
+          <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
+          <span class="filters-collapsible-icon">▾</span>
+        </button>
+        <div class="filters-collapsible-body is-collapsed" id="technicalBody">
+          <div class="sidebar-section" id="resolutionSection" style="display:none"></div>
+          <div class="sidebar-section" id="codecSection" style="display:none"></div>
+          <div class="sidebar-section" id="audioCodecSection" style="display:none"></div>
+          <div class="sidebar-section" id="audioChannelsSection" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="audioLanguageSection" style="display:none"></div>
+    <div class="sidebar-section" id="qualitySection" style="display:none"></div>
+  </div>
+</aside>
+<div class="main-body">
+
 <!-- LIBRARY -->
 <div class="tab-panel active" id="libraryPanel">
   <div id="mobileStatsBar" class="mobile-stats-top"></div>
@@ -260,6 +262,7 @@
   </div>
   <div class="scan-log-body" id="scanLogBody"></div>
 </div>
+</div><!-- /main-body -->
 </div><!-- /main-content -->
 </div><!-- /app-layout -->
 
