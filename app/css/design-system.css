@@ -175,12 +175,21 @@ body {
 
 /* ── HEADER / TOPBAR ─────────────────────────────────────────────────── */
 
-/* Fond semi-transparent + frosted glass */
+/* Topbar layout — search centrée entre tabs et contrôles */
 .main-tabs {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom-color: var(--border-soft);
+}
+.main-tabs .sidebar-search-wrap {
+  flex: 1;
+  max-width: 420px;
 }
 
 /* Onglets */
