@@ -725,8 +725,11 @@ let allItems=[], categories=[], groups=[];
       ensureScoreFilterLast();
       applyScoreFeatureVisibility();
       syncTypePills();
-      if (s.currentTab === 'library' || s.currentTab === 'stats' || (s.currentTab === 'recommendations' && isRecommendationsEnabled())) {
-        currentTab = s.currentTab;
+      const validTabs = ['library','stats','recommendations','dashboard','history'];
+      if (validTabs.includes(s.currentTab) && document.getElementById(s.currentTab + 'Panel')) {
+        if (s.currentTab !== 'recommendations' || isRecommendationsEnabled()) {
+          currentTab = s.currentTab;
+        }
       }
       updateGlobalResetButtons();
     } catch(e) {}
@@ -2654,12 +2657,15 @@ let allItems=[], categories=[], groups=[];
     document.getElementById('libraryPanel').classList.toggle('active',tab==='library');
     document.getElementById('statsPanel').classList.toggle('active',tab==='stats');
     document.getElementById('recommendationsPanel')?.classList.toggle('active',tab==='recommendations');
+    document.getElementById('dashboardPanel')?.classList.toggle('active',tab==='dashboard');
+    document.getElementById('historyPanel')?.classList.toggle('active',tab==='history');
     // Nav buttons
-    ['navLibrary','navStats','navRecommendations'].forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const t = id.replace('navLibrary','library').replace('navStats','stats').replace('navRecommendations','recommendations');
-      el.classList.toggle('active', t === tab);
+    const navMap = {
+      navLibrary: 'library', navStats: 'stats', navRecommendations: 'recommendations',
+      navDashboard: 'dashboard', navHistory: 'history',
+    };
+    Object.entries(navMap).forEach(([id, t]) => {
+      document.getElementById(id)?.classList.toggle('active', t === tab);
     });
     if (tab==='library') render();
     else if (tab==='stats') {
@@ -3302,12 +3308,15 @@ let allItems=[], categories=[], groups=[];
     currentMobileTab = tab;
     closeMobileFilters();
     // Update nav buttons
-    ['library','stats','recommendations'].forEach(t => {
-      const btn = document.getElementById('mnav' + t.charAt(0).toUpperCase() + t.slice(1));
-      if (btn) btn.classList.toggle('active', t === tab);
+    const mnavMap = {
+      mnavLibrary: 'library', mnavStats: 'stats', mnavRecommendations: 'recommendations',
+      mnavDashboard: 'dashboard', mnavHistory: 'history',
+    };
+    Object.entries(mnavMap).forEach(([id, t]) => {
+      document.getElementById(id)?.classList.toggle('active', t === tab);
     });
     // Show/hide panels
-    ['libraryPanel','statsPanel','recommendationsPanel'].forEach(id => {
+    ['libraryPanel','statsPanel','recommendationsPanel','dashboardPanel','historyPanel'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.classList.remove('active');
     });
