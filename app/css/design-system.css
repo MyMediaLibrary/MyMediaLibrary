@@ -123,7 +123,24 @@ body {
 
 
 /* ── CARDS ───────────────────────────────────────────────────────────── */
-/* .card, .card-top, .card-title, .card-meta, .meta-tag, .quality-badge */
+
+/* Grid cards — radius 14px + ombre subtile (mockup Claude Design) */
+.card {
+  border-radius: var(--r-lg);
+  border-color: var(--border-soft);
+  box-shadow: var(--shadow);
+}
+.card:hover { box-shadow: var(--shadow-lg) }
+
+/* Timeline cards — cohérence avec grid */
+.tl-card {
+  border-radius: var(--r-lg);
+  border-color: var(--border-soft);
+}
+
+/* Table — séparateurs plus doux */
+.media-table thead tr { border-bottom-color: var(--border-soft) }
+.media-table tbody tr { border-bottom-color: var(--border-soft) }
 
 
 /* ── FILTERS ─────────────────────────────────────────────────────────── */
