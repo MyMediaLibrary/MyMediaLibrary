@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 CREATE_TABLES_SQL = (
@@ -130,6 +130,7 @@ CREATE_TABLES_SQL = (
         first_seen_at TEXT,
         last_scanned_at TEXT,
         added_at TEXT,
+        file_created_at TEXT,
         filename TEXT,
         filename_history TEXT
     )

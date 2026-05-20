@@ -296,9 +296,9 @@
         }
       }
 
-      // Timeline
-      if (i.added_at) {
-        const d = new Date(i.added_at);
+      // Timeline — file_created_at: movie file creation date / newest TV episode date
+      if (i.file_created_at) {
+        const d = new Date(i.file_created_at);
         if (!isNaN(d.getTime())) {
           const dk = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
           if (!allByDay[dk]) allByDay[dk] = { count: 0, size: 0 };

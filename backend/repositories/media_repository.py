@@ -218,6 +218,7 @@ def _reconstruct_item(
         "is_available": bool(row["is_available"]),
         "last_seen_at": row["last_seen_at"],
         "added_at": row["added_at"] or row["first_seen_at"] or row["last_seen_at"],
+        "file_created_at": row["file_created_at"],
         "last_scanned_at": row["last_scanned_at"],
         "filename": filename,
         "filename_history": filename_history if isinstance(filename_history, list) else [],

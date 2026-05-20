@@ -127,6 +127,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 28:
             _apply_v28_media_added_at(conn)
             current_version = 28
+        if current_version < 29:
+            _apply_v29_media_file_created_at(conn)
+            current_version = 29
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -579,6 +582,27 @@ def _apply_v26_seerr_tracking(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media ADD COLUMN seerr_status TEXT")
     log.info("[DB] v26: added seerr_last_fetched_at, seerr_status to media")
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (26,))
+
+
+def _apply_v29_media_file_created_at(conn: sqlite3.Connection) -> None:
+    """Add media.file_created_at — filesystem creation date of the media file(s).
+
+    Movies: creation date of the largest video file in the media directory.
+    TV series: newest creation date across all episode files (last added episode).
+
+    No backfill: rows stay NULL until the next Phase 1 scan populates them.
+    The scanner uses st_birthtime (macOS) or min(st_mtime, st_ctime) (Linux).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (29,))
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+    if "file_created_at" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN file_created_at TEXT")
+    log.info("[DB] v29: added media.file_created_at (filesystem file creation date)")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (29,))
 
 
 def _apply_v28_media_added_at(conn: sqlite3.Connection) -> None:

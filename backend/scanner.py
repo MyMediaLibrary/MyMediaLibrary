@@ -1336,6 +1336,82 @@ def count_media_files(path: Path) -> int:
     return count
 
 
+def _file_created_ts(path: Path) -> float | None:
+    """Return the best-available file creation timestamp as a float.
+
+    macOS: st_birthtime — true inode creation time.
+    Linux/Docker: min(st_mtime, st_ctime) — best proxy.
+      st_mtime is preserved by most download tools and is stable for the
+      content's add date; st_ctime resets on copy/move/permission changes.
+      The minimum picks the oldest known timestamp, which is usually when
+      the file was first placed on disk.
+    """
+    try:
+        st = path.stat()
+        if hasattr(st, "st_birthtime"):
+            return st.st_birthtime
+        return min(st.st_mtime, st.st_ctime)
+    except OSError:
+        return None
+
+
+def _iter_media_files(path: Path):
+    """Yield all media files under `path` recursively (same rules as count_media_files)."""
+    try:
+        for entry in os.scandir(path):
+            if entry.is_symlink() or entry.name.startswith(('.', '@')):
+                continue
+            if entry.is_file(follow_symlinks=False):
+                if Path(entry.name).suffix.lower() in MEDIA_EXTENSIONS:
+                    yield Path(entry.path)
+            elif entry.is_dir(follow_symlinks=False):
+                yield from _iter_media_files(Path(entry.path))
+    except PermissionError:
+        pass
+
+
+def _media_file_created_at(media_dir: Path, is_tv: bool) -> str | None:
+    """Compute file_created_at for a media item.
+
+    Movie: creation timestamp of the largest video file in the directory.
+    TV series: newest creation timestamp across all episode files — tracks
+    the last-added episode, which represents when the series was most recently
+    extended.
+
+    Returns an ISO-8601 datetime string, or None if no media files are found.
+    No Seerr calls. No ffprobe calls. Only stat() syscalls.
+    """
+    if is_tv:
+        newest_ts: float | None = None
+        for media_file in _iter_media_files(media_dir):
+            ts = _file_created_ts(media_file)
+            if ts is not None and (newest_ts is None or ts > newest_ts):
+                newest_ts = ts
+        return datetime.fromtimestamp(newest_ts).isoformat() if newest_ts is not None else None
+    else:
+        best_file: Path | None = None
+        best_size = -1
+        try:
+            for entry in media_dir.iterdir():
+                if entry.is_symlink() or not entry.is_file():
+                    continue
+                if entry.suffix.lower() not in MEDIA_EXTENSIONS:
+                    continue
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = 0
+                if size > best_size:
+                    best_size = size
+                    best_file = entry
+        except PermissionError:
+            pass
+        if best_file is None:
+            return None
+        ts = _file_created_ts(best_file)
+        return datetime.fromtimestamp(ts).isoformat() if ts is not None else None
+
+
 def _extract_filename_movie(media_dir: Path) -> str | None:
     """Return the name of the largest video file in a movie directory."""
     best: str | None = None
@@ -3172,6 +3248,7 @@ def scan_media_item(
         "file_count":        count_media_files(media_dir),
         "added_at":          datetime.fromtimestamp(mtime).isoformat(),
         "added_ts":          int(mtime),
+        "file_created_at":   _media_file_created_at(media_dir, is_tv),
         "poster":            poster,
         "tmdb_id":           tmdb_id,
         "tvdb_id":           tvdb_id,

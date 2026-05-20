@@ -826,18 +826,18 @@ test('loadLibrary scan timestamp guards against null — no epoch 1970 regressio
   assert.match(appSource, /_scanEl\.textContent\s*=/, 'fallback when no valid timestamp must use textContent, not innerHTML');
 });
 
-test('evolution timeline buildStatsData: added_at guarded with isNaN before bucketing', () => {
+test('evolution timeline buildStatsData: file_created_at guarded with isNaN before bucketing', () => {
   const block = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
 
-  // Must check truthy before constructing Date
-  assert.match(block, /if \(i\.added_at\)/, 'timeline must check i.added_at is truthy');
+  // Must use file_created_at — not added_at or first_seen_at
+  assert.match(block, /if \(i\.file_created_at\)/, 'timeline must check i.file_created_at is truthy');
 
   // Must validate the date with isNaN — prevents "NaN-NaN" buckets from corrupting allByMonth
   assert.match(block, /isNaN\(d\.getTime\(\)\)/, 'timeline must discard Invalid Date via isNaN check');
 
-  // The invalid-date guard must be inside the added_at truthy block
-  const addedAtBlock = block.slice(block.indexOf('if (i.added_at)'));
-  assert.match(addedAtBlock, /isNaN\(d\.getTime\(\)\)/, 'isNaN guard must be inside the if (i.added_at) block');
+  // The isNaN guard must be inside the file_created_at truthy block
+  const fcBlock = block.slice(block.indexOf('if (i.file_created_at)'));
+  assert.match(fcBlock, /isNaN\(d\.getTime\(\)\)/, 'isNaN guard must be inside the if (i.file_created_at) block');
 });
 
 test('evolution tab: not-enough-data falls back to a visible message rather than blank tab', () => {
@@ -870,12 +870,13 @@ test('evolution graphs use buildCurveForPeriod with closure over data.timeline',
     'initial curve render must use the 12m period with data.timeline');
 });
 
-test('buildStatsData uses i.added_at (not i.first_seen_at) for evolution timeline', () => {
+test('buildStatsData uses i.file_created_at for evolution timeline (not scan timestamps)', () => {
   const block = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
 
-  // Must use i.added_at — the canonical field backed by media.added_at (filesystem mtime)
-  assert.match(block, /i\.added_at/, 'timeline must read i.added_at');
+  // Must use file_created_at — movie file date / newest TV episode date
+  assert.match(block, /i\.file_created_at/, 'timeline must read i.file_created_at');
 
-  // Must NOT use i.first_seen_at as the direct timeline field — that is a DB-internal scan timestamp
-  assert.doesNotMatch(block, /i\.first_seen_at/, 'timeline must not use i.first_seen_at directly — it is always scan time, not mtime');
+  // Must NOT use i.added_at or i.first_seen_at — both are scan-time proxies, same month for all items
+  assert.doesNotMatch(block, /if \(i\.added_at\)[\s\S]*allByDay/, 'timeline must not bucket on i.added_at');
+  assert.doesNotMatch(block, /i\.first_seen_at/, 'timeline must not use i.first_seen_at directly');
 });
