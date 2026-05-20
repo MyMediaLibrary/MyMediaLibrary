@@ -15,31 +15,20 @@
 
 
 <!-- AUTH OVERLAY -->
-<div id="authOverlay" style="display:none;position:fixed;inset:0;z-index:9999;
-  background:var(--bg);align-items:center;justify-content:center">
-  <div id="authModal" style="background:var(--surface);border:1px solid var(--border);
-    border-radius:16px;padding:36px 40px;width:100%;max-width:360px;
-    box-shadow:0 24px 64px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:20px;
-    animation:modalIn .25s ease">
-    <div style="text-align:center">
-      <div style="font-size:32px;margin-bottom:8px">📼</div>
-      <div style="font-family:var(--font-display);font-weight:800;font-size:20px;letter-spacing:-.3px">MyMediaLibrary</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px" data-i18n="auth.protected">Accès protégé</div>
+<div id="authOverlay" style="display:none">
+  <div id="authModal">
+    <div class="auth-header">
+      <div class="auth-emoji">📼</div>
+      <div class="auth-title">MyMediaLibrary</div>
+      <div class="auth-subtitle" data-i18n="auth.protected">Accès protégé</div>
     </div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <input type="password" id="authInput" data-i18n-placeholder="auth.password" placeholder="Mot de passe" autocomplete="current-password"
-        style="background:var(--bg);border:1px solid var(--border);border-radius:10px;
-        padding:10px 14px;color:var(--text);font-size:14px;outline:none;width:100%;
-        font-family:var(--font-body);transition:border-color .15s"/>
-      <div id="authError" style="display:none;font-size:12px;color:#ff6a6a;text-align:center" data-i18n="auth.wrong">
+    <div class="auth-form">
+      <input type="password" id="authInput" data-i18n-placeholder="auth.password" placeholder="Mot de passe" autocomplete="current-password"/>
+      <div id="authError" style="display:none" data-i18n="auth.wrong">
         Mot de passe incorrect
       </div>
     </div>
-    <button id="authBtn"
-      style="background:var(--accent);border:none;border-radius:10px;color:#fff;
-      font-family:var(--font-display);font-size:13px;font-weight:700;padding:10px;
-      cursor:pointer;transition:filter .15s"
-      data-i18n="auth.enter">
+    <button id="authBtn" data-i18n="auth.enter">
       Entrer
     </button>
   </div>
@@ -81,20 +70,20 @@
 
   <div class="sidebar-top">
   <!-- BRAND + TOGGLE -->
-  <div class="sidebar-brand sidebar-section" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
-    <div style="min-width:0;flex:1">
-      <div class="brand-logo" style="font-size:16px;font-weight:800;font-family:var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📼 MyMediaLibrary</div>
+  <div class="sidebar-brand sidebar-section">
+    <div class="sidebar-brand-inner">
+      <div class="brand-logo">📼 MyMediaLibrary</div>
       <div class="brand-sub" id="brandSub" style="display:none"></div>
     </div>
   </div>
 
   <!-- STATS KPIs -->
-  <div class="sidebar-section" style="width:100%">
+  <div class="sidebar-section">
     <div class="stats-bar" id="statsBar"></div>
   </div>
 
   <!-- SEARCH -->
-  <div class="sidebar-section" style="width:100%">
+  <div class="sidebar-section">
     <div class="sidebar-search-wrap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
@@ -104,9 +93,9 @@
     </div>
   </div>
 
-  <div class="sidebar-section sidebar-sort-reset" style="width:100%">
+  <div class="sidebar-section sidebar-sort-reset">
     <div class="storage-block sort-inline-wrap" id="sortSection">
-      <select class="tab-sort-select" id="sortSelect" style="width:100%;padding-left:10px">
+      <select class="tab-sort-select" id="sortSelect">
         <option value="" disabled selected data-i18n="sort.label">Trier par</option>
         <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
         <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
@@ -127,7 +116,7 @@
   <!-- FILTERS WRAPPER (column in sidebar, row in top) -->
   <div class="sidebar-filters">
     <!-- TYPE FILTER -->
-    <div class="sidebar-section" id="typeSection" style="width:100%">
+    <div class="sidebar-section" id="typeSection">
       <div class="storage-block">
         <div class="storage-title" data-i18n="filters.type">Type</div>
         <div class="provider-filter" id="typeFilter">
@@ -142,39 +131,39 @@
     <div class="sidebar-section filter-section" id="availabilitySection"></div>
 
     <!-- CATEGORY / GROUP FILTERS -->
-    <div class="sidebar-section" id="storageSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="folderSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="genreSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="storageSection" style="display:none"></div>
+    <div class="sidebar-section" id="folderSection" style="display:none"></div>
+    <div class="sidebar-section" id="genreSection" style="display:none"></div>
 
     <!-- PROVIDER FILTER -->
-    <div class="sidebar-section" id="providerSection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="providerSection" style="display:none"></div>
 
     <!-- TECHNICAL QUALITY -->
-    <div class="sidebar-section" id="technicalSection" style="display:none;width:100%">
+    <div class="sidebar-section" id="technicalSection" style="display:none">
       <div class="filters-collapsible">
         <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtn" aria-expanded="false">
           <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
           <span class="filters-collapsible-icon">▾</span>
         </button>
         <div class="filters-collapsible-body is-collapsed" id="technicalBody">
-          <div class="sidebar-section" id="resolutionSection" style="display:none;width:100%"></div>
-          <div class="sidebar-section" id="codecSection" style="display:none;width:100%"></div>
-          <div class="sidebar-section" id="audioCodecSection" style="display:none;width:100%"></div>
-          <div class="sidebar-section" id="audioChannelsSection" style="display:none;width:100%"></div>
+          <div class="sidebar-section" id="resolutionSection" style="display:none"></div>
+          <div class="sidebar-section" id="codecSection" style="display:none"></div>
+          <div class="sidebar-section" id="audioCodecSection" style="display:none"></div>
+          <div class="sidebar-section" id="audioChannelsSection" style="display:none"></div>
         </div>
       </div>
     </div>
 
-    <div class="sidebar-section" id="audioLanguageSection" style="display:none;width:100%"></div>
-    <div class="sidebar-section" id="qualitySection" style="display:none;width:100%"></div>
+    <div class="sidebar-section" id="audioLanguageSection" style="display:none"></div>
+    <div class="sidebar-section" id="qualitySection" style="display:none"></div>
   </div>
 
   <div class="sidebar-bottom">
     <div class="sidebar-section sidebar-global-actions">
-      <div class="scan-info" id="scanInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0">
-        <div class="scan-btn-wrap" id="scanBtnWrap" style="flex:1;min-width:0;overflow:hidden">
-          <button class="scan-btn" id="scanMainBtn" style="width:100%;justify-content:center">
+      <div class="scan-info" id="scanInfo"></div>
+      <div class="sidebar-actions-row">
+        <div class="scan-btn-wrap" id="scanBtnWrap">
+          <button class="scan-btn" id="scanMainBtn">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
               <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
@@ -182,13 +171,13 @@
             <span data-i18n="scan.start">Scanner</span>
           </button>
         </div>
-        <button class="icon-btn" id="sidebarSettingsBtn" style="flex-shrink:0">
+        <button class="icon-btn" id="sidebarSettingsBtn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="icon-btn" id="themeBtn" style="flex-shrink:0">
+        <button class="icon-btn" id="themeBtn">
           <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
             <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
@@ -252,7 +241,7 @@
 
 <!-- STATS PANEL -->
 <div class="tab-panel" id="statsPanel">
-  <div id="statsContent" style="padding:24px 40px 60px;display:flex;flex-direction:column;gap:32px"></div>
+  <div id="statsContent"></div>
 </div>
 
 <!-- RECOMMENDATIONS PANEL -->
@@ -301,7 +290,7 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.library.enable_movies">Afficher les Films</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableMovies"/><span class="toggle-switch-slider"></span></label>
             </div>
@@ -330,22 +319,22 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.system.synopsis">Synopsis au survol</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnablePlot"/><span class="toggle-switch-slider"></span></label>
             </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-note settings-note--mb" data-i18n="settings.system.synopsis_hint">Affiche le synopsis lors du survol d'une tuile</div>
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.system.media_probe_enabled">Analyse technique ffprobe</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgMediaProbeEnabled"/><span class="toggle-switch-slider"></span></label>
             </div>
-            <div class="settings-note" style="margin-bottom:12px" data-i18n="settings.system.media_probe_enabled_hint">Enrichit la bibliothèque avec les données techniques extraites par ffprobe.</div>
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-note settings-note--mb" data-i18n="settings.system.media_probe_enabled_hint">Enrichit la bibliothèque avec les données techniques extraites par ffprobe.</div>
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.system.enable_score">Activer le score de qualité</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableScore"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div class="settings-note" data-i18n="settings.system.enable_score_hint">Quand désactivé, le score n'est plus calculé au scan et disparaît des tris/filtres/stats.</div>
-            <div class="settings-row" style="margin:12px 0 8px">
+            <div class="settings-row settings-row--between">
               <label class="settings-label" data-i18n="settings.system.enable_recommendations">Activer les recommandations</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableRecommendations"/><span class="toggle-switch-slider"></span></label>
             </div>
@@ -362,11 +351,11 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
-            <div id="scoreSettingsStatus" class="settings-note" style="display:none;margin-bottom:10px"></div>
-            <div id="scoreSettingsDisabled" class="settings-note" style="display:none;margin-bottom:10px" data-i18n="settings.score.disabled_in_configuration">Le score qualité est actuellement désactivé dans Configuration.</div>
+            <div id="scoreSettingsStatus" class="settings-note" style="display:none"></div>
+            <div id="scoreSettingsDisabled" class="settings-note" style="display:none" data-i18n="settings.score.disabled_in_configuration">Le score qualité est actuellement désactivé dans Configuration.</div>
             <div id="scoreSettingsContainer"></div>
-            <div id="scoreResetRow" class="settings-row" style="justify-content:flex-end;gap:8px;margin-top:10px;display:none">
-              <button id="scoreResetBtn" class="scan-btn" style="padding:5px 12px;font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.score.reset">Réinitialiser</button>
+            <div id="scoreResetRow" class="settings-row" style="display:none">
+              <button id="scoreResetBtn" class="scan-btn" data-i18n="settings.score.reset">Réinitialiser</button>
             </div>
           </div>
           </div>
@@ -380,7 +369,7 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group settings-subgroup">
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.connections.enable_seerr">Activer Seerr</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgEnableSeerr"/><span class="toggle-switch-slider"></span></label>
             </div>
@@ -392,17 +381,17 @@
             </button>
             <div class="settings-collapsible-body is-collapsed" id="settingsSeerrBody">
               <div id="cfgSeerrFields">
-                <div class="settings-row" style="margin-bottom:8px">
+                <div class="settings-row" settings-row--mb">
                   <label class="settings-label" data-i18n="settings.seerr.url">URL</label>
                   <input type="text" id="cfgSeerrUrl" class="settings-input" placeholder="http://seerr:5055"/>
                 </div>
-                <div class="settings-row" style="margin-bottom:8px">
+                <div class="settings-row" settings-row--mb">
                   <label class="settings-label" data-i18n="settings.seerr.apikey">Clé API</label>
                   <input type="password" id="cfgSeerrKey" class="settings-input" placeholder="••••••••••••" autocomplete="off"/>
                 </div>
                 <div class="settings-row">
-                  <button class="scan-btn" id="cfgJsrTestBtn" style="padding:5px 14px;font-size:12px" data-i18n="settings.seerr.test">Tester la connexion</button>
-                  <span id="cfgJsrTestResult" style="font-size:12px;margin-left:10px"></span>
+                  <button class="scan-btn" id="cfgJsrTestBtn" data-i18n="settings.seerr.test">Tester la connexion</button>
+                  <span id="cfgJsrTestResult"></span>
                 </div>
               </div>
             </div>
@@ -427,14 +416,14 @@
           </button>
           <div class="settings-mobile-section-body is-collapsed">
           <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.system.language">Langue</label>
-              <select id="cfgLanguage" class="settings-input" style="width:auto">
+              <select id="cfgLanguage" class="settings-input">
                 <option value="fr" data-i18n="settings.system.language_option_fr">🇫🇷 Français</option>
                 <option value="en" data-i18n="settings.system.language_option_en">🇬🇧 English</option>
               </select>
             </div>
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.system.accent">Couleur d'accent</label>
               <div class="settings-color-wrap">
                 <input type="color" id="cfgAccentColor"/>
@@ -443,68 +432,68 @@
             </div>
           </div>
           <div class="settings-group">
-            <div class="settings-row" style="margin-bottom:6px">
+            <div class="settings-row settings-row--mb-sm">
               <label class="settings-label" data-i18n="settings.system.cron">Scan automatique (cron)</label>
-              <input type="text" id="cfgScanCron" class="settings-input" data-i18n-placeholder="settings.system.cron_placeholder" placeholder="0 3 * * *" style="width:130px"/>
+              <input type="text" id="cfgScanCron" class="settings-input" data-i18n-placeholder="settings.system.cron_placeholder" placeholder="0 3 * * *"/>
             </div>
-            <div id="cfgCronHint" class="settings-note" style="margin-bottom:12px"></div>
+            <div id="cfgCronHint" class="settings-note"></div>
             <div class="settings-row">
               <label class="settings-label" data-i18n="settings.system.log_level">Niveau de log</label>
-              <select id="cfgLogLevel" class="settings-input" style="width:auto">
+              <select id="cfgLogLevel" class="settings-input">
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>
                 <option value="ERROR">ERROR</option>
               </select>
             </div>
-            <div class="settings-note" style="margin-top:8px" data-i18n="settings.system.log_path">
+            <div class="settings-note settings-note--mt" data-i18n="settings.system.log_path">
               📄 Logs accessibles sur l'hôte : ./data/scanner.log
             </div>
           </div>
-          <div class="settings-group" id="cfgAuthBlock" style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
+          <div class="settings-group" id="cfgAuthBlock">
             <div class="settings-group-title" data-i18n="settings.auth.block_title">Authentification</div>
-            <div class="settings-row" style="margin-bottom:8px">
+            <div class="settings-row" settings-row--mb">
               <label class="settings-label" data-i18n="settings.auth.enabled">Authentification par mot de passe</label>
               <label class="toggle-switch"><input type="checkbox" id="cfgAuthEnabled"/><span class="toggle-switch-slider"></span></label>
             </div>
             <div id="cfgAuthFields" style="display:none">
-              <div class="settings-row" style="margin-bottom:8px">
+              <div class="settings-row" settings-row--mb">
                 <label class="settings-label" data-i18n="settings.auth.new_password">Nouveau mot de passe</label>
                 <input type="password" id="cfgAuthPassword" class="settings-input" autocomplete="new-password"/>
               </div>
-              <div class="settings-row" style="margin-bottom:8px">
+              <div class="settings-row" settings-row--mb">
                 <label class="settings-label" data-i18n="settings.auth.confirm_password">Confirmation</label>
                 <input type="password" id="cfgAuthConfirm" class="settings-input" autocomplete="new-password"/>
               </div>
-              <div id="cfgAuthRules" style="margin-bottom:10px"></div>
+              <div id="cfgAuthRules"></div>
             </div>
-            <div id="cfgAuthStatus" class="settings-note" style="display:none;margin-top:8px"></div>
+            <div id="cfgAuthStatus" class="settings-note" style="display:none"></div>
           </div>
-          <div class="settings-group" style="padding-top:4px">
+          <div class="settings-group settings-group--pt">
             <div class="settings-row">
               <label class="settings-label" data-i18n="settings.system.version">Version</label>
-              <span id="appVersionStr" style="font-family:monospace;font-size:12px;color:var(--muted)">—</span>
+              <span id="appVersionStr">—</span>
             </div>
-            <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div class="settings-links-row">
               <a href="https://github.com/MyMediaLibrary/MyMediaLibrary" target="_blank" rel="noopener" class="settings-ext-link" data-i18n="settings.github_link">Projet GitHub</a>
-              <span style="color:var(--border);user-select:none">·</span>
+              <span class="settings-sep">·</span>
               <a id="settingsDocLink" href="/docs.html?lang=fr" target="_blank" rel="noopener" class="settings-ext-link" data-i18n="settings.doc_link">Documentation</a>
             </div>
           </div>
           </div>
         </div>
 
-        <div class="settings-note" id="settingsServerNote" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px" data-i18n="settings.env_note">
+        <div class="settings-note" id="settingsServerNote" style="display:none" data-i18n="settings.env_note">
           ⚙️ Les valeurs en lecture seule sont configurées via <code>compose.yaml</code>.
         </div>
       </div>
       <div class="settings-footer">
         <div class="settings-footer-left">
-          <button id="settingsLogoutBtn" class="scan-btn" style="padding:6px 16px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.logout">Déconnexion</button>
+          <button id="settingsLogoutBtn" class="scan-btn" data-i18n="settings.logout">Déconnexion</button>
         </div>
         <div class="settings-footer-right">
-          <button id="settingsCloseBtn" class="scan-btn" style="padding:6px 16px;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="settings.close">Fermer</button>
-          <button id="settingsSaveBtn" class="scan-btn" style="padding:6px 16px;display:none" data-i18n="settings.save">Enregistrer</button>
+          <button id="settingsCloseBtn" class="scan-btn" data-i18n="settings.close">Fermer</button>
+          <button id="settingsSaveBtn" class="scan-btn" style="display:none" data-i18n="settings.save">Enregistrer</button>
         </div>
       </div>
     </div>
@@ -522,7 +511,7 @@
       </div>
       <div class="mobile-filters-sort-row">
         <div class="storage-block sort-inline-wrap">
-          <select class="tab-sort-select" id="sortSelectMobile" style="width:100%;padding-left:10px">
+          <select class="tab-sort-select" id="sortSelectMobile">
             <option value="title-asc" data-i18n="sort.title_asc">Titre A-Z</option>
             <option value="title-desc" data-i18n="sort.title_desc">Titre Z-A</option>
             <option value="year-desc" data-i18n="sort.year_desc">Année ↓</option>
@@ -538,7 +527,7 @@
       </div>
     </div>
     <div class="mobile-filters-body">
-      <div id="mobileTypeSection" style="margin-bottom:8px">
+      <div id="mobileTypeSection" class="mobile-filter-item">
         <div class="storage-block">
           <div class="storage-title" data-i18n="filters.type">Type</div>
           <div class="provider-filter" id="typeFilterMobile">
@@ -548,27 +537,27 @@
           </div>
         </div>
       </div>
-      <div id="availabilitySectionMobile" class="filter-section" style="margin-bottom:8px"></div>
-      <div id="storageSectionMobile" style="margin-bottom:8px"></div>
-      <div id="folderSectionMobile" style="margin-bottom:8px"></div>
-      <div id="genreSectionMobile" style="margin-bottom:8px"></div>
-      <div id="providerSectionMobile" style="margin-bottom:8px"></div>
-      <div id="technicalSectionMobile" style="margin-bottom:8px;display:none">
+      <div id="availabilitySectionMobile" class="filter-section mobile-filter-item"></div>
+      <div id="storageSectionMobile" class="mobile-filter-item"></div>
+      <div id="folderSectionMobile" class="mobile-filter-item"></div>
+      <div id="genreSectionMobile" class="mobile-filter-item"></div>
+      <div id="providerSectionMobile" class="mobile-filter-item"></div>
+      <div id="technicalSectionMobile" class="mobile-filter-item" style="display:none">
         <div class="filters-collapsible">
           <button type="button" class="filters-collapsible-trigger" id="technicalToggleBtnMobile" aria-expanded="false">
             <span class="filters-collapsible-title" data-i18n="filters.technical_quality">Qualité technique</span>
             <span class="filters-collapsible-icon">▾</span>
           </button>
           <div class="filters-collapsible-body is-collapsed" id="technicalBodyMobile">
-            <div id="resolutionSectionMobile" style="margin-bottom:8px"></div>
-            <div id="codecSectionMobile" style="margin-bottom:8px"></div>
-            <div id="audioCodecSectionMobile" style="margin-bottom:8px"></div>
-            <div id="audioChannelsSectionMobile" style="margin-bottom:8px"></div>
+            <div id="resolutionSectionMobile" class="mobile-filter-item"></div>
+            <div id="codecSectionMobile" class="mobile-filter-item"></div>
+            <div id="audioCodecSectionMobile" class="mobile-filter-item"></div>
+            <div id="audioChannelsSectionMobile" class="mobile-filter-item"></div>
           </div>
         </div>
       </div>
-      <div id="audioLanguageSectionMobile" style="margin-bottom:8px"></div>
-      <div id="qualitySectionMobile" style="margin-bottom:8px"></div>
+      <div id="audioLanguageSectionMobile" class="mobile-filter-item"></div>
+      <div id="qualitySectionMobile" class="mobile-filter-item"></div>
     </div>
   </div>
   <div id="mobileScanSheet" class="mobile-sheet-backdrop">
@@ -577,7 +566,7 @@
       <button class="mobile-scan-choice" id="mobileScanStartBtn">
         <span class="mobile-scan-choice-title" data-i18n="scan.start">Scanner</span>
       </button>
-      <button class="scan-btn" id="mobileScanCancelBtn" style="justify-content:center;background:var(--bg);border:1px solid var(--border);color:var(--text)" data-i18n="common.cancel">Annuler</button>
+      <button class="scan-btn" id="mobileScanCancelBtn" data-i18n="common.cancel">Annuler</button>
     </div>
   </div>
 
@@ -609,30 +598,21 @@
   <div id="plotTooltip" class="plot-tooltip"></div>
   <div id="scoreTooltip" class="plot-tooltip score-tooltip"></div>
   <button id="mobileBackToTop" class="mobile-backtop">↑</button>
-  <button id="backToTop"
-    style="position:fixed;bottom:24px;right:24px;width:40px;height:40px;border-radius:50%;
-    background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:18px;
-    box-shadow:0 4px 16px rgba(0,0,0,.3);opacity:0;transition:opacity .3s;z-index:250;
-    display:flex;align-items:center;justify-content:center">↑</button>
+  <button id="backToTop">↑</button>
 <!-- ONBOARDING OVERLAY -->
-<div id="onboardingOverlay" style="display:none;position:fixed;inset:0;z-index:9998;
-  background:var(--bg);align-items:center;justify-content:center;padding:20px">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;
-    padding:40px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;
-    box-shadow:0 32px 80px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:24px;
-    animation:modalIn .25s ease;position:relative">
-    <button id="onbThemeToggle" aria-label="Toggle theme"
-      style="position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:border-color .15s">
+<div id="onboardingOverlay" style="display:none">
+  <div class="onboarding-inner">
+    <button id="onbThemeToggle" aria-label="Toggle theme">
       <svg class="onb-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="onb-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
-    <div id="onbSteps" style="display:flex;justify-content:center;gap:8px"></div>
-    <div id="onbPanel" style="min-height:200px"></div>
-    <div style="display:flex;gap:10px;align-items:center">
-      <button id="onbSkipBtn" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:13px" data-i18n="nav.skip">Passer</button>
-      <div style="flex:1"></div>
-      <button id="onbPrevBtn" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;font-size:13px" data-i18n="nav.prev">← Précédent</button>
-      <button id="onbNextBtn" style="padding:8px 20px;border-radius:8px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600" data-i18n="nav.next">Suivant →</button>
+    <div id="onbSteps"></div>
+    <div id="onbPanel"></div>
+    <div class="onboarding-footer">
+      <button id="onbSkipBtn" data-i18n="nav.skip">Passer</button>
+      <div class="onboarding-spacer"></div>
+      <button id="onbPrevBtn" data-i18n="nav.prev">← Précédent</button>
+      <button id="onbNextBtn" data-i18n="nav.next">Suivant →</button>
     </div>
   </div>
 </div>
