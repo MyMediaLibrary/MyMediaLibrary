@@ -365,6 +365,140 @@ body {
 }
 
 
+/* ── DASHBOARD ───────────────────────────────────────────────────────── */
+
+/* KPI blocks — 4-col grid */
+.dashboard-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.kpi-block {
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  padding: var(--space-3);
+  box-shadow: var(--shadow);
+}
+.kpi-block .kpi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em }
+.kpi-block .kpi-value { font-size: 22px; font-weight: 700; font-family: var(--font-mono); color: var(--text) }
+.kpi-block .kpi-foot  { font-size: 11px; color: var(--muted); margin-top: 4px }
+
+/* Cards grid — 3-col */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+/* Carousel */
+.mml-carousel {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: var(--space-2);
+}
+.mml-carousel::-webkit-scrollbar { display: none }
+.mml-carousel-item {
+  flex: 0 0 145px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+
+/* ── HISTORY ─────────────────────────────────────────────────────────── */
+
+/* Scan history table */
+.scan-tbl { width: 100%; border-collapse: collapse; font-size: 13px }
+.scan-tbl th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-weight: 600;
+  text-align: left;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.scan-tbl td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+.scan-tbl tr.expandable { cursor: pointer }
+.scan-tbl tr.expandable:hover td { background: var(--card-h) }
+.scan-tbl tr.is-open td { background: var(--card) }
+
+/* Expand detail row */
+.scan-detail {
+  padding: var(--space-3);
+  background: var(--card);
+  border-bottom: 1px solid var(--border-soft);
+}
+.scan-detail-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: var(--space-3);
+}
+
+/* Phase step inside detail */
+.scan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.scan-step-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.scan-step-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.scan-step-bar-fill.fail { background: var(--color-danger) }
+
+
+/* ── TAB PLACEHOLDER (F1 — avant rendu JS) ───────────────────────────── */
+
+.tab-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  gap: 8px;
+  color: var(--muted);
+}
+.tab-placeholder-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tab-placeholder-desc { font-size: 13px }
+
+
+/* ── RESPONSIVE — Phase F ────────────────────────────────────────────── */
+
+/* Mobile nav: 5 boutons — réduire les labels pour éviter l'overflow */
+@media (max-width: 768px) {
+  .mobile-nav-btn span { font-size: 9px }
+
+  /* Dashboard/History grids: stack sur mobile */
+  .dashboard-kpis  { grid-template-columns: repeat(2, 1fr) }
+  .dashboard-grid  { grid-template-columns: 1fr }
+  .scan-detail-grid { grid-template-columns: 1fr }
+}
+
+
 /* ── QA FIXES ────────────────────────────────────────────────────────── */
 
 /* Scan log panel — border douce (oubli C11, cohérence avec tous les autres panels) */
