@@ -7,7 +7,67 @@
 
 
 /* ── LAYOUT ──────────────────────────────────────────────────────────── */
-/* .app-layout, .main-content */
+
+:root {
+  /* Palette principale */
+  --bg:          #0f1117;
+  --surface:     #171a23;
+  --card:        #1b1f2a;
+  --card-h:      #20242f;
+  --border:      #252b3b;
+  --border-soft: #1e2333;
+  --text:        #eef0f6;
+  --muted:       #7a8197;
+  --tag-bg:      #20242f;
+
+  /* Accent Claude Design (configurable via JS applyAccent) */
+  --accent:     #6ba4e8;
+  --accent-08:  rgba(107,164,232,.08);
+  --accent-20:  rgba(107,164,232,.2);
+  --accent-40:  rgba(107,164,232,.4);
+
+  /* Tokens sémantiques */
+  --color-danger: #ef6464;
+  --color-warn:   #f0a352;
+  --color-ok:     #4cc086;
+
+  /* Typographie */
+  --font-body:    "Helvetica Neue", Helvetica, "Segoe UI", Arial, sans-serif;
+  --font-display: "Helvetica Neue", Helvetica, "Segoe UI", Arial, sans-serif;
+  --font-mono:    "JetBrains Mono", "Fira Code", monospace;
+
+  /* Radius granulaire (--radius:10px reste dans app.css) */
+  --r-sm: 6px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  /* Shadows teintées slate (remplace rgba(0,0,0) de app.css) */
+  --shadow-sm:  0 1px 2px rgba(15,23,42,.04);
+  --shadow-md:  0 2px 8px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04);
+  --shadow:     0 2px 8px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04);
+  --shadow-lg:  0 12px 32px rgba(15,23,42,.14), 0 2px 6px rgba(15,23,42,.06);
+  --shadow-xl:  0 20px 48px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08);
+  --shadow-2xl: 0 32px 80px rgba(15,23,42,.28), 0 8px 24px rgba(15,23,42,.1);
+}
+
+[data-theme="light"] {
+  --bg:          #f5f6f9;
+  --surface:     #ffffff;
+  --card:        #fafbfd;
+  --card-h:      #f0f3f8;
+  --border:      #e3e6ee;
+  --border-soft: #ecedf2;
+  --text:        #131722;
+  --muted:       #8089a0;
+  --tag-bg:      #f3f5f9;
+  --accent:      #3b82f6;
+  --accent-08:   rgba(59,130,246,.08);
+  --accent-20:   rgba(59,130,246,.2);
+  --accent-40:   rgba(59,130,246,.4);
+  --color-danger: #e44848;
+  --color-warn:   #e89234;
+  --color-ok:     #36a36a;
+}
 
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────── */
