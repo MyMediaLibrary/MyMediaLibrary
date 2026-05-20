@@ -187,11 +187,22 @@ body {
 .cross-table td { border-bottom-color: var(--border-soft) }
 
 
-/* ── AUTH — interaction states (migrated from JS event handlers) ─────── */
-/* events.js:30/33 — borderColor set on focus/blur via inline style       */
+/* ── AUTH & ONBOARDING ──────────────────────────────────────────────── */
+
+/* Interaction states migrées depuis events.js (B2) */
 #authInput:focus { border-color: var(--accent) }
-/* events.js:40/43 — filter set on mouseover/mouseout via inline style    */
 #authBtn:hover   { filter: brightness(1.15) }
+
+/* Auth modal — border douce + shadow tokenisée (remplace rgba(0,0,0,.5) hardcodé) */
+#authModal { border-color: var(--border-soft); box-shadow: var(--shadow-2xl) }
+#authInput { border-color: var(--border-soft) }
+#authBtn   { border-radius: 8px }
+#authError { color: var(--color-danger) }
+
+/* Onboarding — border douce + shadow tokenisée (remplace rgba(0,0,0,.6) hardcodé) */
+.onboarding-inner         { border-color: var(--border-soft); box-shadow: var(--shadow-2xl) }
+#onbThemeToggle           { border-color: var(--border-soft) }
+#onbSkipBtn, #onbPrevBtn  { border-color: var(--border-soft) }
 
 
 /* ── SETTINGS ────────────────────────────────────────────────────────── */
