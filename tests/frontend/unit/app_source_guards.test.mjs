@@ -825,3 +825,47 @@ test('loadLibrary scan timestamp guards against null — no epoch 1970 regressio
   // Fallback branch must set plain text (no raw HTML with potentially epoch timestamp)
   assert.match(appSource, /_scanEl\.textContent\s*=/, 'fallback when no valid timestamp must use textContent, not innerHTML');
 });
+
+test('evolution timeline buildStatsData: added_at guarded with isNaN before bucketing', () => {
+  const block = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+
+  // Must check truthy before constructing Date
+  assert.match(block, /if \(i\.added_at\)/, 'timeline must check i.added_at is truthy');
+
+  // Must validate the date with isNaN — prevents "NaN-NaN" buckets from corrupting allByMonth
+  assert.match(block, /isNaN\(d\.getTime\(\)\)/, 'timeline must discard Invalid Date via isNaN check');
+
+  // The invalid-date guard must be inside the added_at truthy block
+  const addedAtBlock = block.slice(block.indexOf('if (i.added_at)'));
+  assert.match(addedAtBlock, /isNaN\(d\.getTime\(\)\)/, 'isNaN guard must be inside the if (i.added_at) block');
+});
+
+test('evolution tab: not-enough-data falls back to a visible message rather than blank tab', () => {
+  const block = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+
+  // Extract just the curveHtml assignment line (from "const curveHtml" to the next "const")
+  const curveHtmlStart = block.indexOf('const curveHtml = data.timeline.hasEnoughData');
+  assert.notEqual(curveHtmlStart, -1, 'curveHtml assignment must exist');
+  const nextConst = block.indexOf('\n    const ', curveHtmlStart + 1);
+  const curveHtmlAssignment = nextConst > 0 ? block.slice(curveHtmlStart, nextConst) : block.slice(curveHtmlStart);
+
+  // The else branch must NOT be an empty string
+  assert.doesNotMatch(curveHtmlAssignment,
+    /:\s*''\s*;/,
+    'curveHtml else branch must not be empty string — blank evolution tab is disallowed');
+
+  // The else branch must render the not_enough_data i18n message
+  assert.match(curveHtmlAssignment, /not_enough_data/,
+    'curveHtml else branch must render stats.not_enough_data when no timeline data');
+
+  // evolutionTabHtml must be assigned from curveHtml which always has content
+  assert.match(block, /const evolutionTabHtml = curveHtml/, 'evolution tab HTML must come from curveHtml');
+});
+
+test('evolution graphs use buildCurveForPeriod with closure over data.timeline', () => {
+  const block = functionBlock(statsSource, 'buildStats', 'renderStatsPanel');
+  assert.match(block, /window\._buildCurveForPeriodGlobal\s*=\s*\(period\) => buildCurveForPeriod\(period, data\.timeline\)/,
+    'curve period switch must use a closure over data.timeline, not a stale reference');
+  assert.match(block, /buildCurveForPeriod\('12m', data\.timeline\)/,
+    'initial curve render must use the 12m period with data.timeline');
+});

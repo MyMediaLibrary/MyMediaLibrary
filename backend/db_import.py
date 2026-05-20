@@ -1238,7 +1238,7 @@ def _media_params(media_id: str, item: dict[str, Any]) -> tuple[Any, ...]:
         _to_json(quality) if quality else None,
         item.get("last_seen_at") or item.get("added_at"),
         1 if item.get("is_available", True) else 0,
-        item.get("first_seen_at"),
+        item.get("first_seen_at") or item.get("added_at"),
         item.get("last_scanned_at"),
         _to_json(item["filename"]) if item.get("filename") is not None else None,
         item.get("seerr_last_fetched_at"),

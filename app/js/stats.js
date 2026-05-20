@@ -299,10 +299,12 @@
       // Timeline
       if (i.added_at) {
         const d = new Date(i.added_at);
-        const dk = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-        if (!allByDay[dk]) allByDay[dk] = { count: 0, size: 0 };
-        allByDay[dk].count++;
-        allByDay[dk].size += sizeB;
+        if (!isNaN(d.getTime())) {
+          const dk = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+          if (!allByDay[dk]) allByDay[dk] = { count: 0, size: 0 };
+          allByDay[dk].count++;
+          allByDay[dk].size += sizeB;
+        }
       }
 
       // Year
@@ -1079,7 +1081,7 @@
           +'</div>'
           +'<div id="curveCharts">'+buildCurveForPeriod('12m', data.timeline)+'</div>'
           +'</div>'
-      : '';
+      : '<p style="color:var(--muted);padding:40px" id="evolutionNoData">'+getDep('t')('stats.not_enough_data')+'</p>';
 
     // ── Final layout ─────────────────────────────────────────
     const generalTabHtml = ''
