@@ -124,6 +124,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if current_version < 27:
             _apply_v27_drop_dead_media_columns(conn)
             current_version = 27
+        if current_version < 28:
+            _apply_v28_media_added_at(conn)
+            current_version = 28
 
         conn.execute(f"PRAGMA user_version = {current_version}")
 
@@ -576,6 +579,32 @@ def _apply_v26_seerr_tracking(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media ADD COLUMN seerr_status TEXT")
     log.info("[DB] v26: added seerr_last_fetched_at, seerr_status to media")
     conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (26,))
+
+
+def _apply_v28_media_added_at(conn: sqlite3.Connection) -> None:
+    """Add media.added_at to store the filesystem mtime (when the file was added to disk).
+
+    This is the canonical date for the Evolution stats timeline.  Unlike
+    first_seen_at (scan time) it varies across months for a real library,
+    so the Evolution graph actually shows meaningful data.
+
+    Backfill from first_seen_at so existing rows get a best-effort date
+    immediately; the scanner will overwrite with real mtimes on the next run.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+    ).fetchone():
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (28,))
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(media)").fetchall()}
+    if "added_at" not in cols:
+        conn.execute("ALTER TABLE media ADD COLUMN added_at TEXT")
+        if "first_seen_at" in cols and "last_seen_at" in cols:
+            conn.execute(
+                "UPDATE media SET added_at = COALESCE(first_seen_at, last_seen_at) WHERE added_at IS NULL"
+            )
+    log.info("[DB] v28: added media.added_at (filesystem mtime anchor for Evolution timeline)")
+    conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (28,))
 
 
 def _apply_v27_drop_dead_media_columns(conn: sqlite3.Connection) -> None:

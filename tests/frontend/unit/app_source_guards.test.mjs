@@ -869,3 +869,13 @@ test('evolution graphs use buildCurveForPeriod with closure over data.timeline',
   assert.match(block, /buildCurveForPeriod\('12m', data\.timeline\)/,
     'initial curve render must use the 12m period with data.timeline');
 });
+
+test('buildStatsData uses i.added_at (not i.first_seen_at) for evolution timeline', () => {
+  const block = functionBlock(statsSource, 'buildStatsData', 'getScopedProviders');
+
+  // Must use i.added_at — the canonical field backed by media.added_at (filesystem mtime)
+  assert.match(block, /i\.added_at/, 'timeline must read i.added_at');
+
+  // Must NOT use i.first_seen_at as the direct timeline field — that is a DB-internal scan timestamp
+  assert.doesNotMatch(block, /i\.first_seen_at/, 'timeline must not use i.first_seen_at directly — it is always scan time, not mtime');
+});
