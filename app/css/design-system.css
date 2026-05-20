@@ -81,7 +81,26 @@ body {
 
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────── */
-/* .sidebar, .sidebar-top, .sidebar-bottom, .sidebar-filters */
+
+/* Séparateurs plus doux entre zones */
+.sidebar        { border-right-color: var(--border-soft) }
+.sidebar-top    { border-bottom-color: var(--border-soft) }
+.sidebar-bottom { border-top-color: var(--border-soft) }
+
+/* Boutons du bas de sidebar */
+.sidebar-bottom .scan-btn {
+  border-radius: 8px;
+  font-weight: 600;
+}
+.sidebar-bottom .icon-btn {
+  border-radius: 8px;
+  background: var(--card);
+  border-color: var(--border-soft);
+}
+.sidebar-bottom .icon-btn:hover {
+  background: var(--card-h);
+  border-color: var(--border);
+}
 
 
 /* ── HEADER / TOPBAR ─────────────────────────────────────────────────── */
