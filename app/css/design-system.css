@@ -195,7 +195,24 @@ body {
 
 
 /* ── SETTINGS ────────────────────────────────────────────────────────── */
-/* .settings-overlay, .settings-modal, .settings-tabs, .stab */
+
+/* Modal container — border douce */
+.settings-modal { border-color: var(--border-soft) }
+
+/* Séparateurs internes — borders douces */
+.settings-header      { border-bottom-color: var(--border-soft) }
+.settings-tabs        { border-bottom-color: var(--border-soft) }
+.settings-group-title { border-bottom-color: var(--border-soft) }
+.settings-footer      { border-top-color: var(--border-soft) }
+
+/* Onglets — active state cohérent avec topbar (C4) */
+.stab.active { background: var(--accent-08) }
+
+/* Inputs — border douce */
+.settings-input { border-color: var(--border-soft) }
+
+/* Collapsibles — border douce */
+.settings-collapsible { border-color: var(--border-soft) }
 
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────── */
