@@ -77,7 +77,10 @@
     var sidebarToggle = document.getElementById('sidebarToggle');
     if (sidebarToggle) {
       sidebarToggle.addEventListener('click', function () {
-        document.getElementById('sidebar')?.classList.toggle('mini');
+        var sidebar = document.getElementById('sidebar');
+        if (!sidebar) return;
+        var nowMini = sidebar.classList.toggle('mini');
+        localStorage.setItem('sidebarMini', nowMini ? '1' : '0');
       });
     }
 

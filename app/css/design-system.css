@@ -138,6 +138,9 @@ body {
   overflow: hidden;
 }
 
+/* Désactive la transition pendant le drag pour un resize fluide */
+.sidebar.is-resizing { transition: none }
+
 /* Mode mini : 56px, icônes seules, !important pour passer outre le style inline du resize IIFE */
 .sidebar.mini {
   width: var(--sidebar-w) !important;

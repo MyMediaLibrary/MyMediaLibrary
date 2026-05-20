@@ -3508,13 +3508,21 @@ let allItems=[], categories=[], groups=[];
   (function(){
     const sidebar = document.getElementById('sidebar');
     const resizer = document.getElementById('sidebarResizer');
-    // Apply saved sidebar width with constraints
-    const savedWidth = parseInt(localStorage.getItem('sidebarWidth') ?? '320');
-    const clampedWidth = Math.min(Math.max(savedWidth, SIDEBAR_MIN), SIDEBAR_MAX);
-    sidebar.style.width = clampedWidth + 'px';
-    sidebar.classList.toggle('mini', clampedWidth <= 56);
+    // Restore mini state (takes precedence over width-based detection)
+    const savedMini = localStorage.getItem('sidebarMini') === '1';
+    if (savedMini) {
+      sidebar.classList.add('mini');
+      sidebar.style.width = SIDEBAR_MIN + 'px';
+    } else {
+      // Apply saved sidebar width with constraints
+      const savedWidth = parseInt(localStorage.getItem('sidebarWidth') ?? '320');
+      const clampedWidth = Math.min(Math.max(savedWidth, SIDEBAR_MIN), SIDEBAR_MAX);
+      sidebar.style.width = clampedWidth + 'px';
+      sidebar.classList.toggle('mini', clampedWidth <= 56);
+    }
     let startX, startW;
     resizer.addEventListener('mousedown', function(e){
+      sidebar.classList.add('is-resizing');
       startX = e.clientX;
       startW = sidebar.offsetWidth;
       resizer.classList.add('dragging');
@@ -3528,6 +3536,7 @@ let allItems=[], categories=[], groups=[];
         sidebar.classList.toggle('mini', w <= 56);
       }
       function onUp(){
+        sidebar.classList.remove('is-resizing');
         resizer.classList.remove('dragging');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
