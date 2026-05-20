@@ -261,7 +261,7 @@ test('settings exposes media probe toggle without using probe output as UI data'
 
 test('auth password is configured through onboarding/settings and never via environment docs', () => {
   assert.match(indexSource, /id="cfgAuthBlock"[\s\S]*data-i18n="settings\.auth\.block_title"/, 'settings should expose an auth section');
-  assert.match(indexSource, /id="cfgAuthBlock"[^>]*border-top:1px solid var\(--border\)/, 'settings auth section should be visually separated');
+  assert.match(appCss, /#cfgAuthBlock[^{]*\{[^}]*border-top/, 'settings auth section should be visually separated via CSS border-top (extracted from inline in phase B1)');
   assert.doesNotMatch(indexSource, /data-target="settingsAuthBody"|id="settingsAuthBody"/, 'settings auth section should not be collapsible');
   assert.match(indexSource, /id="cfgAuthEnabled"/, 'settings should expose an auth enable toggle');
   assert.match(indexSource, /id="cfgAuthPassword"/, 'settings should expose a password change input');
