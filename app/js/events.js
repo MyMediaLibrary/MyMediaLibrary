@@ -45,6 +45,13 @@
     }
 
     // Mobile topbar
+    var mobileSidebarBtn = document.getElementById('mobileSidebarBtn');
+    if (mobileSidebarBtn) {
+      mobileSidebarBtn.addEventListener('click', function () {
+        document.getElementById('sidebar')?.classList.toggle('open');
+        document.getElementById('mobileOverlay')?.classList.toggle('open');
+      });
+    }
     document.getElementById('mobileFilterBtn')
       ?.addEventListener('click', toggleMobileFilters);
     document.getElementById('mobileThemeBtn')
