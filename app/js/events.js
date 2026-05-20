@@ -64,6 +64,14 @@
     document.getElementById('technicalToggleBtnMobile')
       ?.addEventListener('click', function () { toggleTechnicalFilters(true); });
 
+    // Sidebar toggle (mini / expand)
+    var sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener('click', function () {
+        document.getElementById('sidebar')?.classList.toggle('mini');
+      });
+    }
+
     // Sidebar: scan, settings icon, theme icon
     document.getElementById('scanMainBtn')
       ?.addEventListener('click', triggerScan);

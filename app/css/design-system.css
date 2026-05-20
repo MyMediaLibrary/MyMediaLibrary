@@ -129,6 +129,29 @@ body {
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────── */
 
+/* Largeur par défaut pilotée par les tokens D1 (remplace 300px de app.css) */
+.sidebar {
+  width: var(--sidebar-w-open);
+  min-width: var(--sidebar-w-open);
+  max-width: 500px;
+  transition: width .2s ease;
+  overflow: hidden;
+}
+
+/* Mode mini : 56px, icônes seules, !important pour passer outre le style inline du resize IIFE */
+.sidebar.mini {
+  width: var(--sidebar-w) !important;
+  min-width: var(--sidebar-w) !important;
+}
+.sidebar.mini .brand-logo,
+.sidebar.mini .brand-sub,
+.sidebar.mini .sidebar-section .storage-title,
+.sidebar.mini .scan-btn span,
+.sidebar.mini .stat-label,
+.sidebar.mini .stat-val { display: none }
+.sidebar.mini .sidebar-actions-row { justify-content: center }
+.sidebar.mini .scan-btn-wrap { display: none }
+
 /* Séparateurs plus doux entre zones */
 .sidebar        { border-right-color: var(--border-soft) }
 .sidebar-top    { border-bottom-color: var(--border-soft) }

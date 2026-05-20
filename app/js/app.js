@@ -3503,7 +3503,7 @@ let allItems=[], categories=[], groups=[];
   });
 
   // ── SIDEBAR RESIZE ───────────────────────────────────
-  const SIDEBAR_MIN = 300;
+  const SIDEBAR_MIN = 56;
   const SIDEBAR_MAX = 500;
   (function(){
     const sidebar = document.getElementById('sidebar');
@@ -3512,6 +3512,7 @@ let allItems=[], categories=[], groups=[];
     const savedWidth = parseInt(localStorage.getItem('sidebarWidth') ?? '320');
     const clampedWidth = Math.min(Math.max(savedWidth, SIDEBAR_MIN), SIDEBAR_MAX);
     sidebar.style.width = clampedWidth + 'px';
+    sidebar.classList.toggle('mini', clampedWidth <= 56);
     let startX, startW;
     resizer.addEventListener('mousedown', function(e){
       startX = e.clientX;
@@ -3524,6 +3525,7 @@ let allItems=[], categories=[], groups=[];
         const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, newWidth));
         sidebar.style.width = w + 'px';
         localStorage.setItem('sidebarWidth', w);
+        sidebar.classList.toggle('mini', w <= 56);
       }
       function onUp(){
         resizer.classList.remove('dragging');
