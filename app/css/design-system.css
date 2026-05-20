@@ -144,7 +144,23 @@ body {
 
 
 /* ── FILTERS ─────────────────────────────────────────────────────────── */
-/* .provider-pill, .filter-dropdown, .filter-dropdown-panel */
+
+/* Pills — border plus douce */
+.provider-pill { border-color: var(--border-soft) }
+
+/* Dropdowns — radius 14px cohérent avec les cards, border douce */
+.filter-dropdown-trigger   { border-color: var(--border-soft) }
+.filter-dropdown-panel     { border-radius: var(--r-lg); border-color: var(--border-soft) }
+.filter-dropdown-header    { border-bottom-color: var(--border-soft) }
+
+/* Score filter panel — cohérence radius */
+.score-filter-panel        { border-radius: var(--r-lg); border-color: var(--border-soft) }
+
+/* Collapsible trigger — border douce */
+.filters-collapsible-trigger { border-color: var(--border-soft) }
+
+/* Mode exclude — token sémantique à la place de #ff7b7b hardcodé */
+.filter-mode-toggle.is-exclude { border-color: var(--color-danger); color: var(--color-danger) }
 
 
 /* ── STATS ───────────────────────────────────────────────────────────── */
