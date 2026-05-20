@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 29
 
 
 CREATE_TABLES_SQL = (
@@ -129,6 +129,8 @@ CREATE_TABLES_SQL = (
         is_available INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0, 1)),
         first_seen_at TEXT,
         last_scanned_at TEXT,
+        added_at TEXT,
+        file_created_at TEXT,
         filename TEXT,
         filename_history TEXT
     )
