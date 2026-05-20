@@ -1,0 +1,38 @@
+/*
+ * design-system.css
+ * Surcharges progressives du redesign Claude Design.
+ * Chargé après app.css et stats.css — toutes les règles ici ont priorité.
+ * Ne pas modifier app.css pour les changements visuels du nouveau design.
+ */
+
+
+/* ── LAYOUT ──────────────────────────────────────────────────────────── */
+/* .app-layout, .main-content */
+
+
+/* ── SIDEBAR ─────────────────────────────────────────────────────────── */
+/* .sidebar, .sidebar-top, .sidebar-bottom, .sidebar-filters */
+
+
+/* ── HEADER / TOPBAR ─────────────────────────────────────────────────── */
+/* .mobile-topbar, .main-tabs, .tab-btn */
+
+
+/* ── CARDS ───────────────────────────────────────────────────────────── */
+/* .card, .card-top, .card-title, .card-meta, .meta-tag, .quality-badge */
+
+
+/* ── FILTERS ─────────────────────────────────────────────────────────── */
+/* .provider-pill, .filter-dropdown, .filter-dropdown-panel */
+
+
+/* ── STATS ───────────────────────────────────────────────────────────── */
+/* .stats-block, .stat-kpi, .hbar-*, .pie-wrap, .curve-* */
+
+
+/* ── SETTINGS ────────────────────────────────────────────────────────── */
+/* .settings-overlay, .settings-modal, .settings-tabs, .stab */
+
+
+/* ── RESPONSIVE ──────────────────────────────────────────────────────── */
+/* @media overrides for the new design */
