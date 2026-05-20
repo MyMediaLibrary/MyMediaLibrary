@@ -36,6 +36,12 @@
   --font-display: "Helvetica Neue", Helvetica, "Segoe UI", Arial, sans-serif;
   --font-mono:    "JetBrains Mono", "Fira Code", monospace;
 
+  /* Layout Phase D */
+  --sidebar-w:      56px;
+  --sidebar-w-open: 220px;
+  --filter-rail-w:  280px;
+  --topbar-h:       60px;
+
   /* Radius granulaire (--radius:10px reste dans app.css) */
   --r-sm: 6px;
   --r-lg: 14px;
