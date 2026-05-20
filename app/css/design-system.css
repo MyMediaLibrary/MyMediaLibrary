@@ -27,9 +27,12 @@
   --accent-40:  rgba(107,164,232,.4);
 
   /* Tokens sémantiques */
-  --color-danger: #ef6464;
-  --color-warn:   #f0a352;
-  --color-ok:     #4cc086;
+  --color-danger:   #ef6464;
+  --color-warn:     #f0a352;
+  --color-ok:       #4cc086;
+  --color-size:     #4ecdc4;
+  --color-category: #a78bfa;
+  --color-hdr:      #ea580c;
 
   /* Typographie */
   --font-body:    "Helvetica Neue", Helvetica, "Segoe UI", Arial, sans-serif;
@@ -70,9 +73,12 @@
   --accent-08:   rgba(59,130,246,.08);
   --accent-20:   rgba(59,130,246,.2);
   --accent-40:   rgba(59,130,246,.4);
-  --color-danger: #e44848;
-  --color-warn:   #e89234;
-  --color-ok:     #36a36a;
+  --color-danger:   #e44848;
+  --color-warn:     #e89234;
+  --color-ok:       #36a36a;
+  --color-size:     #0d9488;
+  --color-category: #7c3aed;
+  --color-hdr:      #c2410c;
 }
 
 
