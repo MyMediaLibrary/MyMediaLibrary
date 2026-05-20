@@ -1,0 +1,674 @@
+// MyMediaLibrary — Statistiques
+
+function PageStatistiques({ navigate, filters, filterCount, resetFilters }) {
+  const d = window.MML_DATA;
+  const [tab, setTab] = React.useState("generales");
+
+  return (
+    <div data-screen-label="Statistiques">
+      <div className="page-head">
+        <div>
+          <h2>Statistiques</h2>
+          <div className="page-sub">Analyse détaillée de l'inventaire</div>
+        </div>
+        <div className="actions">
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            items={[
+              { value: "generales",  label: "Générales" },
+              { value: "techniques", label: "Techniques" },
+              { value: "evolution",  label: "Évolution" },
+              { value: "recos",      label: "Recommandations" },
+            ]}
+          />
+        </div>
+      </div>
+
+      {filterCount > 0 && (
+        <div className="card" style={{padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10}}>
+          <Icons.filter size={14} style={{color: "var(--accent)"}}/>
+          <span style={{fontSize: 13, color: "var(--text-2)"}}>
+            <strong style={{color: "var(--text)"}}>{filterCount} filtre{filterCount > 1 ? "s" : ""} actif{filterCount > 1 ? "s" : ""}</strong> — les statistiques affichées prennent en compte la sélection courante.
+          </span>
+          <div style={{flex: 1}}/>
+          <button className="btn small" onClick={resetFilters}>
+            <Icons.x size={12}/> Réinitialiser
+          </button>
+        </div>
+      )}
+
+      {tab === "generales" && <StatsGenerales d={d}/>}
+      {tab === "techniques" && <StatsTechniques d={d}/>}
+      {tab === "evolution" && <StatsEvolution d={d}/>}
+      {tab === "recos" && <StatsRecos d={d}/>}
+    </div>
+  );
+}
+
+// Toggleable donut: switches between count and size modes
+function ToggleDonut({ title, count, size, totalEntries }) {
+  const [mode, setMode] = React.useState("count"); // "count" | "size"
+  const data = mode === "count" ? count : size;
+  const fmt = mode === "count"
+    ? (v) => `${v.toLocaleString("fr-FR")}`
+    : (v) => `${v >= 1000 ? (v/1000).toFixed(1)+" TB" : v.toFixed(1)+" GB"}`;
+  // Decorate with display
+  const decorated = data.map(d => ({ ...d, display: fmt(d.value) }));
+  return (
+    <DonutCard
+      title={title}
+      centerLabel="ENTRÉES"
+      centerValue={totalEntries ?? data.length}
+      data={decorated}
+      action={
+        <div className="btn-group">
+          <div className={`seg ${mode === "size" ? "active" : ""}`} onClick={() => setMode("size")}>Taille</div>
+          <div className={`seg ${mode === "count" ? "active" : ""}`} onClick={() => setMode("count")}>Nombre</div>
+        </div>
+      }
+    />
+  );
+}
+
+function StatsGenerales({ d }) {
+  return (
+    <>
+      <div style={{display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 16, marginBottom: 16}}>
+        <ToggleDonut
+          title="Dossiers"
+          count={d.folders.map(f => ({ label: f.label, value: f.items, color: f.color }))}
+          size={d.folders.map(f => ({ label: f.label, value: f.size * 1000 /* GB */, color: f.color }))}
+        />
+
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Genres</div>
+          </div>
+          <BarList
+            data={d.genres.map(g => ({
+              label: g.label, value: g.value,
+              color: `color-mix(in oklch, var(--accent) ${30 + g.pct}%, var(--panel-3))`
+            }))}
+            formatter={(v) => {
+              const it = d.genres.find(x => x.value === v);
+              return `${v.toLocaleString("fr-FR")} (${it?.pct ?? 0}%)`;
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16}}>
+        <ToggleDonut
+          title="Fournisseurs streaming (FR)"
+          count={d.providers}
+          size={[
+            { label: "Netflix",  value: 16800,   color: "var(--chart-2)" },
+            { label: "Disney+",  value: 4900,    color: "var(--chart-3)" },
+            { label: "Apple TV", value: 38,      color: "var(--chart-4)" },
+            { label: "Aucun",    value: 18260,   color: "var(--muted-2)" },
+          ]}
+        />
+
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Score de qualité</div>
+            <span className="muted mono" style={{fontSize: 12}}>Moyen 68,5</span>
+          </div>
+          <BarList data={d.scoreBuckets} total={d.totals.elements}/>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div className="card-title">Années de sortie</div>
+          <div className="btn-group">
+            <div className="seg active">Années</div>
+            <div className="seg">Décennies</div>
+          </div>
+        </div>
+        <YearChart/>
+      </div>
+    </>
+  );
+}
+
+function StatsTechniques({ d }) {
+  return (
+    <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16}}>
+      <ToggleDonut
+        title="Résolution"
+        count={d.resolutions}
+        size={[
+          { label: "4K",    value: 12640, color: "var(--chart-2)" },
+          { label: "1080p", value: 21800, color: "var(--chart-1)" },
+          { label: "720p",  value: 4980,  color: "var(--chart-5)" },
+          { label: "SD",    value: 58,    color: "var(--chart-7)" },
+          { label: "Inconnu", value: 12,  color: "var(--muted-2)" },
+        ]}
+      />
+      <ToggleDonut
+        title="Codec vidéo"
+        count={d.codecs}
+        size={[
+          { label: "H.264",   value: 28400, color: "var(--chart-1)" },
+          { label: "H.265",   value: 10880, color: "var(--chart-5)" },
+          { label: "MPEG-4",  value: 18,    color: "var(--chart-6)" },
+          { label: "Inconnu", value: 8,     color: "var(--muted-2)" },
+        ]}
+      />
+      <ToggleDonut
+        title="Codec audio"
+        count={[
+          { label: "Dolby Digital Plus", value: 1366, color: "var(--chart-1)" },
+          { label: "DTS",                value: 898,  color: "var(--chart-3)" },
+          { label: "Dolby Digital",      value: 855,  color: "var(--chart-4)" },
+          { label: "AAC",                value: 180,  color: "var(--chart-6)" },
+          { label: "Dolby TrueHD",       value: 13,   color: "var(--chart-2)" },
+          { label: "MP3",                value: 6,    color: "var(--chart-5)" },
+          { label: "MP2",                value: 3,    color: "var(--chart-7)" },
+          { label: "Inconnu",            value: 1,    color: "var(--muted-2)" },
+        ]}
+        size={[
+          { label: "Dolby Digital Plus", value: 16400, color: "var(--chart-1)" },
+          { label: "DTS",                value: 12100, color: "var(--chart-3)" },
+          { label: "Dolby Digital",      value: 10300, color: "var(--chart-4)" },
+          { label: "AAC",                value: 720,   color: "var(--chart-6)" },
+          { label: "Dolby TrueHD",       value: 380,   color: "var(--chart-2)" },
+          { label: "MP3",                value: 12,    color: "var(--chart-5)" },
+          { label: "MP2",                value: 6,     color: "var(--chart-7)" },
+          { label: "Inconnu",            value: 3,     color: "var(--muted-2)" },
+        ]}
+      />
+      <ToggleDonut
+        title="Langues audio"
+        count={d.langues}
+        size={[
+          { label: "MULTI",   value: 28200, color: "var(--chart-1)" },
+          { label: "VF",      value: 11600, color: "var(--chart-3)" },
+          { label: "VO",      value: 280,   color: "var(--chart-4)" },
+          { label: "Inconnu", value: 80,    color: "var(--muted-2)" },
+        ]}
+      />
+      <ToggleDonut
+        title="Channels audio"
+        count={[
+          { label: "5.1",    value: 2753, color: "var(--chart-2)" },
+          { label: "2.0",    value: 489,  color: "var(--chart-3)" },
+          { label: "7.1",    value: 76,   color: "var(--chart-5)" },
+          { label: "1.0",    value: 3,    color: "var(--chart-4)" },
+          { label: "Aucun",  value: 1,    color: "var(--muted-2)" },
+        ]}
+        size={[
+          { label: "5.1",    value: 34800, color: "var(--chart-2)" },
+          { label: "2.0",    value: 4200,  color: "var(--chart-3)" },
+          { label: "7.1",    value: 940,   color: "var(--chart-5)" },
+          { label: "1.0",    value: 22,    color: "var(--chart-4)" },
+          { label: "Aucun",  value: 4,     color: "var(--muted-2)" },
+        ]}
+      />
+      <ToggleDonut
+        title="HDR"
+        count={[
+          { label: "SDR",          value: 2971, color: "var(--chart-7)" },
+          { label: "HDR10",        value: 287,  color: "var(--chart-2)" },
+          { label: "Dolby Vision", value: 64,   color: "var(--chart-1)" },
+        ]}
+        size={[
+          { label: "SDR",          value: 26400, color: "var(--chart-7)" },
+          { label: "HDR10",        value: 11200, color: "var(--chart-2)" },
+          { label: "Dolby Vision", value: 2300,  color: "var(--chart-1)" },
+        ]}
+      />
+    </div>
+  );
+}
+
+function StatsEvolution({ d }) {
+  const [periodA, setPeriodA] = React.useState("6m");
+  const [periodB, setPeriodB] = React.useState("6m");
+
+  const periodOptions = [
+    { v: "1m", l: "1 mois" },
+    { v: "6m", l: "6 mois" },
+    { v: "1y", l: "1 an" },
+    { v: "all", l: "Tout" },
+  ];
+
+  return (
+    <>
+      <div style={{display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16}}>
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title-lg">Évolution stockage & médias</div>
+            <PeriodSwitcher value={periodA} onChange={setPeriodA} options={periodOptions}/>
+          </div>
+          <DualLineChart period={periodA}/>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Croissance mensuelle</div>
+          </div>
+          <div className="row" style={{justifyContent: "space-between"}}>
+            <div className="mono" style={{fontSize: 32, fontWeight: 600}}>+1,7 TB</div>
+            <span className="pill ok"><Icons.trendUp size={11}/> +5,4%</span>
+          </div>
+          <div className="muted" style={{fontSize: 12.5, marginTop: 6}}>moyenne sur 6 mois</div>
+          <div className="divider" style={{margin: "16px 0"}}/>
+          <div className="col gap-2">
+            <Row k="Médias ajoutés / mois" v="47"/>
+            <Row k="Médias supprimés / mois" v="12"/>
+            <Row k="Taille moyenne d'un média" v="35,6 GB"/>
+            <Row k="Score moyen — nouveaux" v="74,2"/>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div className="card-title-lg">Ajouts et suppressions</div>
+          <PeriodSwitcher value={periodB} onChange={setPeriodB} options={periodOptions}/>
+        </div>
+        <AddRemoveChart period={periodB}/>
+      </div>
+    </>
+  );
+}
+
+function PeriodSwitcher({ value, onChange, options }) {
+  return (
+    <div className="btn-group">
+      {options.map(o => (
+        <div key={o.v} className={`seg ${value === o.v ? "active" : ""}`} onClick={() => onChange(o.v)}>{o.l}</div>
+      ))}
+    </div>
+  );
+}
+
+function periodLabel(p) {
+  return ({ "1m": "30 derniers jours", "6m": "6 derniers mois", "1y": "12 derniers mois", "all": "Tout l'historique" })[p];
+}
+
+function pointsForPeriod(period) {
+  // generate dummy points
+  if (period === "1m") {
+    const out = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const dt = new Date(today); dt.setDate(today.getDate() - i);
+      const t = Math.sin(i / 4) * 0.5;
+      out.push({
+        label: dt.getDate() + "/" + (dt.getMonth()+1),
+        size: 39.0 + (29-i) * 0.025 + t * 0.02,
+        media: 3270 + (29-i) * 2 + Math.round(t * 4),
+        added: 1 + Math.round(Math.abs(Math.sin(i*0.7)) * 3),
+        removed: Math.round(Math.abs(Math.cos(i*0.5)) * 1.5),
+      });
+    }
+    return out;
+  }
+  if (period === "6m") {
+    return ["Déc", "Jan", "Fév", "Mar", "Avr", "Mai"].map((m, i) => ({
+      label: m,
+      size: 31.4 + i * 1.66,
+      media: 2870 + i * 90,
+      added: 28 + i*4 + Math.round(Math.sin(i)*6),
+      removed: 8 + Math.round(Math.cos(i)*3),
+    }));
+  }
+  if (period === "1y") {
+    return ["Juin","Juil","Août","Sep","Oct","Nov","Déc","Jan","Fév","Mar","Avr","Mai"].map((m, i) => ({
+      label: m,
+      size: 28.0 + i * 1.0 + Math.sin(i)*0.2,
+      media: 2580 + i * 62,
+      added: 24 + Math.round(Math.sin(i*0.8)*8),
+      removed: 6 + Math.round(Math.cos(i*0.6)*3),
+    }));
+  }
+  // all: 3 years quarterly
+  return ["Q3-23","Q4-23","Q1-24","Q2-24","Q3-24","Q4-24","Q1-25","Q2-25"].map((m, i) => ({
+    label: m,
+    size: 15 + i * 3.5,
+    media: 1620 + i * 220,
+    added: 110 + Math.round(Math.sin(i*0.7)*22),
+    removed: 30 + Math.round(Math.cos(i*0.5)*10),
+  }));
+}
+
+function DualLineChart({ period }) {
+  const data = pointsForPeriod(period);
+  const [hover, setHover] = React.useState(null);
+  const W = 720, H = 240;
+  const PL = 50, PR = 56, PT = 18, PB = 26;
+
+  const sizeMax = Math.max(...data.map(p => p.size)) * 1.08;
+  const mediaMax = Math.max(...data.map(p => p.media)) * 1.08;
+
+  const xOf = (i) => PL + (data.length === 1 ? (W - PL - PR)/2 : (i / (data.length - 1)) * (W - PL - PR));
+  const ySize  = (v) => H - PB - (v / sizeMax) * (H - PB - PT);
+  const yMedia = (v) => H - PB - (v / mediaMax) * (H - PB - PT);
+  const yGrid  = (frac) => PT + frac * (H - PT - PB);
+
+  const pathSize  = data.map((p, i) => `${i === 0 ? "M" : "L"} ${xOf(i).toFixed(1)} ${ySize(p.size).toFixed(1)}`).join(" ");
+  const areaSize  = `${pathSize} L ${xOf(data.length-1)} ${H - PB} L ${PL} ${H - PB} Z`;
+  const pathMedia = data.map((p, i) => `${i === 0 ? "M" : "L"} ${xOf(i).toFixed(1)} ${yMedia(p.media).toFixed(1)}`).join(" ");
+
+  const fmtMedia = (v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : Math.round(v).toString();
+  const fmtSize  = (v) => v >= 10 ? `${v.toFixed(0)} TB` : `${v.toFixed(1)} TB`;
+
+  return (
+    <div>
+      <div className="row gap-4" style={{marginBottom: 8, justifyContent: "flex-end"}}>
+        <div className="row gap-2" style={{fontSize: 12}}>
+          <span style={{width: 12, height: 3, background: "var(--chart-3)", borderRadius: 2}}/>
+          <span className="text-2">Médias</span>
+        </div>
+        <div className="row gap-2" style={{fontSize: 12}}>
+          <span style={{width: 12, height: 3, background: "var(--accent)", borderRadius: 2}}/>
+          <span className="text-2">Taille (TB)</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height: 260}}
+           onMouseLeave={() => setHover(null)}>
+        <defs>
+          <linearGradient id="sizeFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28"/>
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+
+        {[0, 1, 2, 3, 4].map(i => (
+          <g key={i}>
+            <line x1={PL} x2={W-PR} y1={yGrid(i/4)} y2={yGrid(i/4)} stroke="var(--border-soft)" strokeDasharray="3 3"/>
+            {/* Left axis — media */}
+            <text x={PL - 8} y={yGrid(i/4) + 3.5} textAnchor="end" fontSize="10.5" fill="var(--chart-3)" fontFamily="var(--font-mono)">
+              {fmtMedia(mediaMax * (1 - i/4))}
+            </text>
+            {/* Right axis — size */}
+            <text x={W - PR + 8} y={yGrid(i/4) + 3.5} textAnchor="start" fontSize="10.5" fill="var(--accent)" fontFamily="var(--font-mono)">
+              {fmtSize(sizeMax * (1 - i/4))}
+            </text>
+          </g>
+        ))}
+
+        <path d={areaSize}  fill="url(#sizeFill)"/>
+        <path d={pathSize}  stroke="var(--accent)"  strokeWidth="2.5" fill="none"/>
+        <path d={pathMedia} stroke="var(--chart-3)" strokeWidth="2.5" fill="none" strokeDasharray="6 4"/>
+
+        {data.map((p, i) => (
+          <g key={i}>
+            <circle cx={xOf(i)} cy={ySize(p.size)}   r="3.5" fill="var(--panel)" stroke="var(--accent)"  strokeWidth="2"/>
+            <circle cx={xOf(i)} cy={yMedia(p.media)} r="3.5" fill="var(--panel)" stroke="var(--chart-3)" strokeWidth="2"/>
+            {(data.length <= 12 || i % Math.ceil(data.length / 12) === 0) &&
+              <text x={xOf(i)} y={H - 8} textAnchor="middle" fontSize="10.5" fill="var(--muted)">{p.label}</text>}
+            <rect x={xOf(i) - 14} y={0} width="28" height={H} fill="transparent"
+              onMouseEnter={() => setHover(i)}/>
+            {hover === i && (
+              <>
+                <line x1={xOf(i)} x2={xOf(i)} y1={PT} y2={H-PB} stroke="var(--accent)" strokeOpacity="0.4" strokeDasharray="2 3"/>
+                <g transform={`translate(${Math.min(xOf(i) + 10, W - PR - 150)}, ${PT + 6})`}>
+                  <rect width="140" height="62" rx="6" fill="var(--panel)" stroke="var(--border)"/>
+                  <text x="10" y="18" fontSize="11" fill="var(--muted)">{p.label}</text>
+                  <circle cx="14" cy="34" r="4" fill="var(--accent)"/>
+                  <text x="24" y="38" fontSize="12" fill="var(--text)" fontFamily="var(--font-mono)">{p.size.toFixed(2)} TB</text>
+                  <circle cx="14" cy="52" r="4" fill="var(--chart-3)"/>
+                  <text x="24" y="56" fontSize="12" fill="var(--text)" fontFamily="var(--font-mono)">{p.media.toLocaleString("fr-FR")} médias</text>
+                </g>
+              </>
+            )}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function AddRemoveChart({ period }) {
+  const data = pointsForPeriod(period);
+  const [hover, setHover] = React.useState(null);
+  const max = Math.max(...data.map(p => Math.max(p.added, p.removed))) * 1.2;
+  const barW = data.length > 30 ? 5 : data.length > 12 ? 10 : 18;
+  const BAR_H = 180;
+  const ticks = [1, 0.75, 0.5, 0.25, 0];
+
+  return (
+    <div>
+      <div className="row gap-4" style={{marginBottom: 8, justifyContent: "flex-end"}}>
+        <div className="row gap-2" style={{fontSize: 12}}>
+          <span style={{width: 12, height: 12, background: "var(--accent)", borderRadius: 3}}/>
+          <span className="text-2">Ajouts</span>
+        </div>
+        <div className="row gap-2" style={{fontSize: 12}}>
+          <span style={{width: 12, height: 12, background: "var(--chart-3)", borderRadius: 3}}/>
+          <span className="text-2">Suppressions</span>
+        </div>
+      </div>
+      <div style={{display: "flex", gap: 8, padding: "10px 6px 4px"}}>
+        {/* Y axis */}
+        <div style={{position: "relative", width: 42, height: BAR_H + 14, flex: "none"}}>
+          {ticks.map((t, i) => (
+            <React.Fragment key={i}>
+              <div className="mono muted" style={{
+                position: "absolute",
+                top: `${t * BAR_H}px`,
+                right: 6,
+                transform: "translateY(-50%)",
+                fontSize: 10.5,
+                whiteSpace: "nowrap",
+              }}>{Math.round(max * (1 - t))}</div>
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* Bars area */}
+        <div style={{display: "flex", alignItems: "flex-end", gap: data.length > 30 ? 4 : 12, flex: 1, height: BAR_H + 14, position: "relative"}}
+             onMouseLeave={() => setHover(null)}>
+          {/* gridlines */}
+          {ticks.map((t, i) => (
+            <div key={i} style={{
+              position: "absolute",
+              left: 0, right: 0,
+              top: `${t * BAR_H}px`,
+              borderTop: "1px dashed var(--border-soft)",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}/>
+          ))}
+          {data.map((d, i) => {
+            const addH = (d.added / max) * BAR_H;
+            const remH = (d.removed / max) * BAR_H;
+            const showLabel = data.length <= 12 || i % Math.ceil(data.length / 10) === 0;
+            return (
+              <div key={i}
+                onMouseEnter={() => setHover(i)}
+                style={{flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, position: "relative", cursor: "pointer", minWidth: 0, zIndex: 1}}>
+                <div className="row gap-1" style={{height: BAR_H, alignItems: "flex-end"}}>
+                  <div style={{width: barW, height: `${addH}px`, background: hover === i ? "var(--accent-hover)" : "var(--accent)", borderRadius: "3px 3px 0 0", transition: "background .12s"}}/>
+                  <div style={{width: barW, height: `${remH}px`, background: hover === i ? "color-mix(in oklch, var(--chart-3) 80%, white)" : "var(--chart-3)", borderRadius: "3px 3px 0 0", transition: "background .12s"}}/>
+                </div>
+                {showLabel
+                  ? <div className="muted" style={{fontSize: 10.5, whiteSpace: "nowrap", height: 14, lineHeight: "14px"}}>{d.label}</div>
+                  : <div style={{height: 14}}/>}
+                {hover === i && (
+                  <div style={{
+                    position: "absolute", bottom: "calc(100% + 4px)", left: "50%", transform: "translateX(-50%)",
+                    background: "var(--panel)", border: "1px solid var(--border)",
+                    borderRadius: 6, padding: "6px 10px",
+                    whiteSpace: "nowrap", zIndex: 5,
+                    boxShadow: "var(--shadow)",
+                    pointerEvents: "none",
+                  }}>
+                    <div className="muted" style={{fontSize: 11, marginBottom: 4}}>{d.label}</div>
+                    <div className="row gap-2" style={{fontSize: 12}}>
+                      <span style={{width: 8, height: 8, background: "var(--accent)", borderRadius: 2}}/>
+                      <span className="mono">+{d.added}</span>
+                    </div>
+                    <div className="row gap-2" style={{fontSize: 12}}>
+                      <span style={{width: 8, height: 8, background: "var(--chart-3)", borderRadius: 2}}/>
+                      <span className="mono">−{d.removed}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatsRecos({ d }) {
+  return (
+    <>
+      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16}}>
+        <DonutCard
+          title="Répartition par priorité"
+          centerLabel="RECOS"
+          data={[
+            { label: "Haute",   value: 366,  color: "var(--danger)" },
+            { label: "Moyenne", value: 1354, color: "var(--warn)" },
+          ]}
+        />
+        <DonutCard
+          title="Répartition par type"
+          centerLabel="RECOS"
+          data={[
+            { label: "Qualité", value: 977, color: "var(--chart-2)" },
+            { label: "Espace",  value: 492, color: "var(--chart-5)" },
+            { label: "Séries",  value: 150, color: "var(--chart-3)" },
+            { label: "Données", value: 52,  color: "var(--chart-7)" },
+            { label: "Langues", value: 49,  color: "var(--chart-4)" },
+          ]}
+        />
+      </div>
+
+      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16}}>
+        <DonutCard
+          title="Nombre de recommandations par média"
+          centerLabel="AVEC RECOS"
+          centerValue={1092}
+          data={[
+            { label: "0 recommandation",  value: 2234, color: "var(--chart-2)" },
+            { label: "1 recommandation",  value: 639,  color: "var(--chart-3)" },
+            { label: "2 recommandations", value: 277,  color: "var(--chart-4)" },
+            { label: "3 recommandations", value: 176,  color: "var(--chart-5)" },
+          ]}
+        />
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Distribution des scores</div>
+          </div>
+          <BarList data={[
+            { label: "21-40",  count: 68,   value: 4,  color: "var(--chart-2)" },
+            { label: "41-60",  count: 1152, value: 67, color: "var(--chart-3)" },
+            { label: "61-80",  count: 496,  value: 29, color: "var(--chart-4)" },
+            { label: "81-100", count: 5,    value: 0,  color: "var(--chart-5)" },
+          ]} formatter={(v, d) => `${d.count} (${v} %)`} max={100} />
+        </div>
+      </div>
+
+      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16}}>
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Médias avec recos par dossier</div>
+          </div>
+          <BarList data={[
+            { label: "Tv Not In Sonarr", value: 100, color: "var(--chart-2)" },
+            { label: "Spectacles",       value: 97,  color: "var(--chart-3)" },
+            { label: "Anime",            value: 85,  color: "var(--chart-4)" },
+            { label: "Tv",               value: 85,  color: "var(--chart-5)" },
+            { label: "Anime Movies",     value: 56,  color: "var(--chart-2)" },
+            { label: "Movies",           value: 17,  color: "var(--chart-3)" },
+            { label: "Animation",        value: 15,  color: "var(--chart-4)" },
+          ]} formatter={(v) => `${v} %`} max={100}/>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Row({ k, v }) {
+  return (
+    <div className="row gap-3" style={{justifyContent: "space-between", fontSize: 13}}>
+      <span className="text-2">{k}</span>
+      <span className="mono" style={{fontWeight: 500}}>{v}</span>
+    </div>
+  );
+}
+
+function StorageLineChart({ data }) {
+  const W = 600, H = 200, P = 30;
+  const max = 45;
+  const points = data.map((p, i) => {
+    const x = P + (i / (data.length - 1)) * (W - P*2);
+    const y = H - P - (p.used / max) * (H - P*2);
+    return [x, y, p];
+  });
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const area = `${path} L ${points[points.length-1][0]} ${H - P} L ${P} ${H - P} Z`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height: 220}}>
+      <defs>
+        <linearGradient id="storFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.35"/>
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      {[0, 1, 2, 3, 4].map(i => (
+        <line key={i} x1={P} x2={W-P} y1={P + (i/4) * (H-P*2)} y2={P + (i/4) * (H-P*2)} stroke="var(--border-soft)" strokeDasharray="3 3"/>
+      ))}
+      <path d={area} fill="url(#storFill)"/>
+      <path d={path} stroke="var(--accent)" strokeWidth="2.5" fill="none"/>
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={p[0]} cy={p[1]} r="4" fill="var(--panel)" stroke="var(--accent)" strokeWidth="2"/>
+          <text x={p[0]} y={H - 8} textAnchor="middle" fontSize="11" fill="var(--muted)">{p[2].month}</text>
+          <text x={p[0]} y={p[1] - 10} textAnchor="middle" fontSize="11" fill="var(--text)" fontFamily="var(--font-mono)">{p[2].used.toFixed(1)}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function YearChart() {
+  // generate 1980 → 2025
+  const years = [];
+  for (let y = 1980; y <= 2025; y++) {
+    const v = Math.round(20 + Math.pow((y - 1980) / 8, 1.6) + Math.sin(y) * 8);
+    years.push({ y, v: Math.max(2, v) });
+  }
+  const max = Math.max(...years.map(p=>p.v));
+  return (
+    <div style={{display: "flex", alignItems: "flex-end", gap: 2, height: 120, paddingTop: 6}}>
+      {years.map(({y, v}) => (
+        <div key={y} style={{flex: 1, height: `${(v/max)*100}%`, background: y >= 2020 ? "var(--accent)" : "color-mix(in oklch, var(--accent) 50%, var(--panel-3))", borderRadius: "2px 2px 0 0"}} title={`${y}: ${v}`}/>
+      ))}
+    </div>
+  );
+}
+
+function MonthlyAddsChart() {
+  const months = ["Déc 24", "Jan 25", "Fév 25", "Mar 25", "Avr 25", "Mai 25"];
+  const data = months.map((m, i) => ({ m, add: 28 + i*4 + Math.round(Math.sin(i)*6), rem: 8 + Math.round(Math.cos(i)*3) }));
+  return (
+    <div style={{display: "flex", gap: 20, alignItems: "flex-end", padding: "10px 0"}}>
+      {data.map((d, i) => (
+        <div key={i} style={{flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6}}>
+          <div className="row gap-1" style={{height: 160, alignItems: "flex-end"}}>
+            <div style={{width: 22, height: `${d.add*2}px`, background: "var(--accent)", borderRadius: "4px 4px 0 0"}}/>
+            <div style={{width: 22, height: `${d.rem*2}px`, background: "var(--chart-3)", borderRadius: "4px 4px 0 0"}}/>
+          </div>
+          <div className="muted" style={{fontSize: 11}}>{d.m}</div>
+        </div>
+      ))}
+      <div className="col gap-2" style={{alignSelf: "center", fontSize: 12}}>
+        <div className="row gap-2"><span style={{width: 12, height: 12, background: "var(--accent)", borderRadius: 3}}/>Ajouts</div>
+        <div className="row gap-2"><span style={{width: 12, height: 12, background: "var(--chart-3)", borderRadius: 3}}/>Suppressions</div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { PageStatistiques });
