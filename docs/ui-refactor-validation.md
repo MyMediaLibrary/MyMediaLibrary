@@ -154,7 +154,8 @@ tests/scripts/check-no-inline-handlers.sh
 # Pas de fichiers JSON runtime dans le repo
 tests/scripts/audit-no-runtime-json.sh
 
-# Pas de style inline non-dynamique dans index.html (vérification manuelle)
-grep -c 'style="' app/index.html   # doit retourner ≤ 33
-grep 'style="' app/index.html | grep -v 'display:none'  # doit être vide
+# Aucun style inline statique dans index.html — doit retourner zéro ligne.
+# Plus robuste qu'un comptage total : les display:none dynamiques peuvent
+# évoluer librement, seuls les styles non-dynamiques sont interdits.
+grep 'style="' app/index.html | grep -v 'display:none'
 ```
