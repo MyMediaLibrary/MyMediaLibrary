@@ -261,7 +261,7 @@
       padding:16px 20px;border-bottom:1px solid var(--border)}
     .settings-title{font-family:var(--font-display);font-weight:700;font-size:15px}
     .settings-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface);flex-shrink:0}
-    .settings-body{padding:20px;display:flex;flex-direction:column;gap:20px;flex:1;overflow-y:auto;min-height:0}
+    .settings-body{padding:20px;display:flex;flex-direction:column;gap:var(--space-5);flex:1;overflow-y:auto;min-height:0}
     .settings-group{display:flex;flex-direction:column;gap:10px}
     .settings-group-title{font-size:11px;font-weight:700;text-transform:uppercase;
       letter-spacing:.08em;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border)}
@@ -395,7 +395,7 @@
 
     select{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);
       font-family:var(--font-body);font-size:13px;padding:11px 14px;outline:none;cursor:pointer;
-      transition:border-color var(--transition);appearance:none;-webkit-appearance:none;padding-right:32px;
+      transition:border-color var(--transition);appearance:none;-webkit-appearance:none;padding-right:var(--space-7);
       background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236e6e8a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
       background-repeat:no-repeat;background-position:right 10px center}
     select:focus{border-color:var(--accent)}
