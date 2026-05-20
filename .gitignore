@@ -61,3 +61,4 @@ coverage/
 *.bak
 *.old
 *.orig
+mymedialibrary.db
