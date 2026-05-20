@@ -25,6 +25,44 @@
       --priority-filter-idle-bg:rgba(255,255,255,.03);
       --priority-filter-idle-text:#cbd5e1;
       --priority-filter-idle-border:#475569;
+
+      /* ── Z-INDEX SCALE ─────────────────────────────────────────────── */
+      --z-base:1;
+      --z-resizer:10;
+      --z-tl-quality:3;
+      --z-tabs:50;
+      --z-dropdown:120;
+      --z-mobile-filters:149;
+      --z-topbar:150;
+      --z-mobile-backtop:180;
+      --z-mobile-nav:200;
+      --z-mobile-sheet:260;
+      --z-backtop:250;
+      --z-tooltip:400;
+      --z-settings:500;
+      --z-scanlog:300;
+      --z-modal:1000;
+      --z-onboarding:9998;
+      --z-auth:9999;
+
+      /* ── SHADOW SCALE ───────────────────────────────────────────────── */
+      --shadow-sm:0 1px 4px rgba(0,0,0,.35);
+      --shadow-md:0 4px 16px rgba(0,0,0,.3);
+      --shadow-lg:0 8px 24px rgba(0,0,0,.25);
+      --shadow-xl:0 12px 40px rgba(0,0,0,.4);
+      --shadow-2xl:0 20px 60px rgba(0,0,0,.4);
+
+      /* ── SPACING SCALE (4px base) ───────────────────────────────────── */
+      --space-1:4px;
+      --space-2:8px;
+      --space-3:12px;
+      --space-4:16px;
+      --space-5:20px;
+      --space-6:24px;
+      --space-7:32px;
+      --space-8:40px;
+      --space-9:48px;
+      --space-10:64px;
     }
     [data-theme="light"] {
       --bg:#f0f0f6; --surface:#f8f8fc; --card:#ffffff; --card-h:#f4f4fa;
