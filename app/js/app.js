@@ -545,6 +545,8 @@ let allItems=[], categories=[], groups=[];
   let appConfig = {};            // loaded from /api/config
   let recommendationsDoc = null;
   let recommendationsLoadPromise = null;
+  let historyDoc = null;
+  let historyLoadPromise = null;
   let recommendationTypeFilters = new Set();
   let recommendationPriorityFilters = new Set();
   let recommendationSort = { key: 'priority', dir: 'desc' };
@@ -1114,6 +1116,27 @@ let allItems=[], categories=[], groups=[];
     }
     await recommendationsLoadPromise;
     return recommendationsDoc;
+  }
+
+  async function loadHistory() {
+    try {
+      const r = await fetch('/api/scans/history?_=' + Date.now());
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const doc = await r.json();
+      historyDoc = Array.isArray(doc?.items) ? doc.items : [];
+    } catch(e) {
+      console.warn('loadHistory error:', e);
+      historyDoc = [];
+    }
+  }
+
+  async function ensureHistoryLoaded() {
+    if (historyDoc !== null) return historyDoc;
+    if (!historyLoadPromise) {
+      historyLoadPromise = loadHistory().finally(() => { historyLoadPromise = null; });
+    }
+    await historyLoadPromise;
+    return historyDoc;
   }
 
   async function _fetchLibraryWithRetry() {
@@ -2635,6 +2658,113 @@ let allItems=[], categories=[], groups=[];
     });
   }
 
+  // ── HISTORY PANEL ────────────────────────────────────
+  function renderHistoryPanel() {
+    const host = document.getElementById('historyContent');
+    if (!host) return;
+    if (historyDoc === null) {
+      host.innerHTML = '<div class="loader"><div class="spinner"></div> <span data-i18n="common.loading">Chargement...</span></div>';
+      ensureHistoryLoaded().then(() => {
+        if (currentTab === 'history') renderHistoryPanel();
+      });
+      return;
+    }
+    host.innerHTML = buildHistoryHTML(historyDoc);
+  }
+
+  function buildHistoryHTML(items) {
+    const PHASES = [
+      { key: 'phase1',     label: 'Filesystem + NFO' },
+      { key: 'phase2',     label: 'Seerr' },
+      { key: 'phase3',     label: 'Scoring' },
+      { key: 'phase4',     label: 'Inventaire' },
+      { key: 'phase5',     label: 'Recommandations' },
+      { key: 'score_only', label: 'Recalcul score' },
+    ];
+
+    function fmtHistDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'})
+           + ' · ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+    }
+    function fmtHistDur(sec) {
+      if (!sec && sec !== 0) return '—';
+      const s = Math.round(sec);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60), r = s % 60;
+      return m + 'm' + (r > 0 ? ' ' + r + 's' : '');
+    }
+    function histStatus(item) {
+      if (item.status === 'running') return 'warn';
+      if (item.status === 'failed') return 'danger';
+      return item.error ? 'warn' : 'ok';
+    }
+    function triggerLabel(raw) {
+      return {cron:'Cron',manual:'Manuel',startup:'Démarrage',save_settings:'Paramètres',api:'API'}[raw] || raw || '—';
+    }
+
+    if (!items.length) {
+      return '<div class="tab-placeholder">'
+           + '<div class="tab-placeholder-title">🕐 Historique des scans</div>'
+           + '<div class="tab-placeholder-desc">Aucun scan enregistré — lancez un premier scan.</div>'
+           + '</div>';
+    }
+
+    const rows = items.slice(0, 50).map(item => {
+      const st = histStatus(item);
+      const stLabel = {ok:'OK',warn:'Avert.',danger:'Erreur'}[st];
+      const trig = triggerLabel(item.trigger_type);
+      const dur = fmtHistDur(item.total_duration_sec);
+      const date = fmtHistDate(item.started_at);
+
+      const activePhases = PHASES.filter(p => item[p.key + '_enabled']);
+      const maxDur = Math.max(1, ...activePhases.map(p => item[p.key + '_duration_sec'] || 0));
+
+      const stepsHTML = activePhases.map(p => {
+        const pDur = item[p.key + '_duration_sec'] || 0;
+        const pct = Math.round((pDur / maxDur) * 100);
+        const sum = item[p.key + '_summary'] || '';
+        return '<div class="scan-step">'
+          + '<span style="min-width:130px;font-size:11px">' + p.label + '</span>'
+          + '<div class="scan-step-bar"><div class="scan-step-bar-fill" style="width:' + pct + '%"></div></div>'
+          + '<span style="min-width:44px;text-align:right;font-size:11px;color:var(--muted)">' + fmtHistDur(pDur) + '</span>'
+          + (sum ? '<span style="font-size:11px;color:var(--muted);margin-left:8px">' + sum + '</span>' : '')
+          + '</div>';
+      }).join('');
+
+      const summaryHTML = '<div style="font-size:12px;display:flex;flex-direction:column;gap:6px">'
+        + '<div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Déclencheur</span><span>' + trig + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Date</span><span>' + date + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Durée</span><span>' + dur + '</span></div>'
+        + (item.error ? '<div style="color:var(--color-danger);font-size:11px;margin-top:4px">' + item.error + '</div>' : '')
+        + '</div>';
+
+      const detailRow = '<tr class="scan-detail-row" data-scan-detail-id="' + item.id + '" style="display:none">'
+        + '<td colspan="6"><div class="scan-detail"><div class="scan-detail-grid">'
+        + '<div><div style="font-weight:600;font-size:12px;margin-bottom:8px">Étapes (' + activePhases.length + ')</div>' + stepsHTML + '</div>'
+        + '<div><div style="font-weight:600;font-size:12px;margin-bottom:8px">Résumé</div>' + summaryHTML + '</div>'
+        + '</div></div></td></tr>';
+
+      return '<tr class="expandable" data-scan-id="' + item.id + '">'
+        + '<td style="color:var(--muted);font-size:11px">' + item.id + '</td>'
+        + '<td style="font-size:12px">' + date + '</td>'
+        + '<td><span class="pill" style="font-size:11px">' + trig + '</span></td>'
+        + '<td><span class="pill ' + st + '" style="font-size:11px">' + stLabel + '</span></td>'
+        + '<td style="font-family:var(--font-mono);font-size:12px">' + dur + '</td>'
+        + '<td style="color:var(--muted);font-size:12px">▸</td>'
+        + '</tr>'
+        + detailRow;
+    }).join('');
+
+    return '<div style="padding:var(--space-3)">'
+      + '<div style="margin-bottom:var(--space-3);font-size:14px;font-weight:600">' + t('nav.history') + ' <span style="color:var(--muted);font-weight:400;font-size:12px">(' + items.length + ')</span></div>'
+      + '<div style="overflow-x:auto"><table class="scan-tbl"><thead><tr>'
+      + '<th>#</th><th>Date</th><th>Déclencheur</th><th>Statut</th><th>Durée</th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '</div>';
+  }
+
   // ── TABS ─────────────────────────────────────────────
   function switchTab(tab) {
     if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
@@ -2684,6 +2814,9 @@ let allItems=[], categories=[], groups=[];
         renderRecommendationsPanel();
         syncRecommendationSummaryStats();
       });
+    }
+    else if (tab === 'history') {
+      renderHistoryPanel();
     }
     saveState();
   }
@@ -3344,6 +3477,9 @@ let allItems=[], categories=[], groups=[];
         renderRecommendationsPanel();
         syncRecommendationSummaryStats();
       });
+    }
+    else if (tab === 'history') {
+      renderHistoryPanel();
     }
   }
 

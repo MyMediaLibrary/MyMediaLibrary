@@ -324,6 +324,17 @@
       return;
     }
 
+    // Scan history row expand/collapse
+    var scanRow = e.target.closest('.scan-tbl tr.expandable');
+    if (scanRow) {
+      var isOpen = scanRow.classList.toggle('is-open');
+      var detailRow = scanRow.nextElementSibling;
+      if (detailRow && detailRow.classList.contains('scan-detail-row')) {
+        detailRow.style.display = isOpen ? 'table-row' : 'none';
+      }
+      return;
+    }
+
     // Library table sort column headers
     var th = e.target.closest('th[data-sort-col]');
     if (th) {
