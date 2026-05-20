@@ -227,4 +227,13 @@ body {
 
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────── */
-/* @media overrides for the new design */
+
+/* Composants mobile — borders douces (cohérence avec le design desktop) */
+.mobile-topbar          { border-bottom-color: var(--border-soft) }
+.mobile-topbar-icon-btn { border-color: var(--border-soft) }
+.mobile-nav             { border-top-color: var(--border-soft) }
+/* Panel filtres : border + shadow tokenisée (remplace 0 8px 24px rgba(0,0,0,.3)) */
+.mobile-filters-panel   { border-bottom-color: var(--border-soft); box-shadow: var(--shadow-lg) }
+.mobile-filters-top     { border-bottom-color: var(--border-soft) }
+.mobile-sheet           { border-top-color: var(--border-soft) }
+.mobile-scan-choice     { border-color: var(--border-soft) }
