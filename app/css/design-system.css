@@ -30,6 +30,13 @@
 /* .stats-block, .stat-kpi, .hbar-*, .pie-wrap, .curve-* */
 
 
+/* ── AUTH — interaction states (migrated from JS event handlers) ─────── */
+/* events.js:30/33 — borderColor set on focus/blur via inline style       */
+#authInput:focus { border-color: var(--accent) }
+/* events.js:40/43 — filter set on mouseover/mouseout via inline style    */
+#authBtn:hover   { filter: brightness(1.15) }
+
+
 /* ── SETTINGS ────────────────────────────────────────────────────────── */
 /* .settings-overlay, .settings-modal, .settings-tabs, .stab */
 
