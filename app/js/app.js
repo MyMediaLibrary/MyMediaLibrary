@@ -3033,7 +3033,7 @@ let allItems=[], categories=[], groups=[];
   // ── STATS PANEL (delegated to stats.js) ──────────────
   // window.MMLStats.renderStatsPanel() is now provided by window.MMLStats
 
-  const _DEFAULT_ACCENT = '#7c6aff';
+  const _DEFAULT_ACCENT = '#6ba4e8';
 
   function _hexToRgba(hex, a) {
     const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
