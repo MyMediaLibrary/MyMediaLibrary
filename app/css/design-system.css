@@ -164,7 +164,27 @@ body {
 
 
 /* ── STATS ───────────────────────────────────────────────────────────── */
-/* .stats-block, .stat-kpi, .hbar-*, .pie-wrap, .curve-* */
+
+/* Blocs stats — ombre subtile + border douce */
+.stats-block       { box-shadow: var(--shadow); border-color: var(--border-soft) }
+.stats-block-title { border-bottom-color: var(--border-soft) }
+
+/* KPI cards — radius cohérent avec cards, border douce */
+.stat-kpi     { border-radius: var(--r-lg); border-color: var(--border-soft) }
+.stat-kpi-val { font-family: var(--font-mono) }
+
+/* Sparkline chart — cohérence radius + ombre */
+.chart-wrap { border-radius: var(--r-lg); border-color: var(--border-soft); box-shadow: var(--shadow) }
+
+/* Stat rows — border douce */
+.stat-row { border-color: var(--border-soft) }
+
+/* Pie switch — border douce */
+.pie-switch-btn { border-color: var(--border-soft) }
+
+/* Cross table — séparateurs doux */
+.cross-table th { border-bottom-color: var(--border-soft) }
+.cross-table td { border-bottom-color: var(--border-soft) }
 
 
 /* ── AUTH — interaction states (migrated from JS event handlers) ─────── */
