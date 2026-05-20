@@ -64,6 +64,15 @@
     document.getElementById('technicalToggleBtnMobile')
       ?.addEventListener('click', function () { toggleTechnicalFilters(true); });
 
+    // Mobile overlay — close sidebar drawer on tap
+    var mobileOverlay = document.getElementById('mobileOverlay');
+    if (mobileOverlay) {
+      mobileOverlay.addEventListener('click', function () {
+        document.getElementById('sidebar')?.classList.remove('open');
+        mobileOverlay.classList.remove('open');
+      });
+    }
+
     // Sidebar toggle (mini / expand)
     var sidebarToggle = document.getElementById('sidebarToggle');
     if (sidebarToggle) {

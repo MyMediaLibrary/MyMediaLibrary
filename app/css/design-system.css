@@ -324,6 +324,38 @@ body {
 .mobile-sheet           { border-top-color: var(--border-soft) }
 .mobile-scan-choice     { border-color: var(--border-soft) }
 
+/* ── MOBILE DRAWERS (D5) ─────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    z-index: var(--z-overlay, 200);
+    width: var(--sidebar-w-open) !important;
+    min-width: var(--sidebar-w-open) !important;
+    display: flex !important;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+}
+
+.mobile-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: calc(var(--z-overlay, 200) - 1);
+}
+.mobile-overlay.open {
+  display: block;
+}
+
+
 /* ── QA FIXES ────────────────────────────────────────────────────────── */
 
 /* Scan log panel — border douce (oubli C11, cohérence avec tous les autres panels) */
