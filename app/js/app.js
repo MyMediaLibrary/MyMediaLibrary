@@ -2765,6 +2765,131 @@ let allItems=[], categories=[], groups=[];
       + '</div>';
   }
 
+  // ── DASHBOARD PANEL ──────────────────────────────────
+  function renderDashboardPanel() {
+    const host = document.getElementById('dashboardContent');
+    if (!host) return;
+    if (historyDoc === null) {
+      host.innerHTML = '<div class="loader"><div class="spinner"></div> <span data-i18n="common.loading">Chargement...</span></div>';
+      ensureHistoryLoaded().then(() => {
+        if (currentTab === 'dashboard') renderDashboardPanel();
+      });
+      return;
+    }
+    host.innerHTML = buildDashboardHTML(allItems, historyDoc, recommendationsDoc);
+  }
+
+  function buildDashboardHTML(items, history, recos) {
+    // ── helpers ──────────────────────────────────────────
+    function histStatus(item) {
+      if (item.status === 'running') return 'warn';
+      if (item.status === 'failed') return 'danger';
+      return item.error ? 'warn' : 'ok';
+    }
+    function histTrigger(raw) {
+      return {cron:'Cron',manual:'Manuel',startup:'Démarrage',save_settings:'Paramètres',api:'API'}[raw] || raw || '—';
+    }
+    function fmtRelDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString('fr-FR', {day:'2-digit',month:'short'})
+           + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+    }
+    function kpi(label, value, foot) {
+      return '<div class="kpi-block">'
+        + '<div class="kpi-label">' + label + '</div>'
+        + '<div class="kpi-value">' + value + '</div>'
+        + (foot ? '<div class="kpi-foot">' + foot + '</div>' : '')
+        + '</div>';
+    }
+
+    // ── KPI calculations ─────────────────────────────────
+    const totalItems = items.length;
+    const totalBytes = items.reduce((s, i) => s + (i.size_b || 0), 0);
+    const scored = items.filter(i => typeof i.score === 'number' && i.score !== null);
+    const avgScore = scored.length
+      ? Math.round(scored.reduce((s, i) => s + i.score, 0) / scored.length)
+      : null;
+    const lastScan = history[0] || null;
+
+    // ── KPI row ──────────────────────────────────────────
+    const kpisHTML = '<div class="dashboard-kpis">'
+      + kpi('Médias', totalItems, totalItems === 0 ? 'Aucun média' : items.filter(i=>i.type==='movie').length + ' films · ' + items.filter(i=>i.type==='tv').length + ' séries')
+      + kpi('Stockage', fmtSize(totalBytes), totalItems ? Math.round(totalBytes / totalItems / 1024 / 1024) + ' Mo / média en moy.' : '')
+      + kpi('Score moyen', avgScore !== null ? avgScore + ' / 100' : 'N/A', scored.length + ' / ' + totalItems + ' évalués')
+      + kpi('Dernier scan',
+          lastScan ? '<span class="pill ' + histStatus(lastScan) + '" style="font-size:13px">' + {ok:'OK',warn:'Avert.',danger:'Erreur'}[histStatus(lastScan)] + '</span>' : '—',
+          lastScan ? fmtRelDate(lastScan.started_at) : 'Aucun scan')
+      + '</div>';
+
+    // ── Empty state ──────────────────────────────────────
+    if (totalItems === 0) {
+      return '<div style="padding:var(--space-3)">' + kpisHTML
+        + '<div class="tab-placeholder"><div class="tab-placeholder-title">Bibliothèque vide</div>'
+        + '<div class="tab-placeholder-desc">Lancez un premier scan pour remplir votre bibliothèque.</div></div>'
+        + '</div>';
+    }
+
+    // ── Recent activity (5 last scans) ───────────────────
+    const recentScans = history.slice(0, 5);
+    const activityRows = recentScans.length
+      ? recentScans.map(h => {
+          const st = histStatus(h);
+          const stLabel = {ok:'OK',warn:'Avert.',danger:'Erreur'}[st];
+          return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-soft);font-size:12px">'
+            + '<span class="pill ' + st + '" style="font-size:10px;min-width:44px;text-align:center">' + stLabel + '</span>'
+            + '<span style="color:var(--muted)">' + fmtRelDate(h.started_at) + '</span>'
+            + '<span>' + histTrigger(h.trigger_type) + '</span>'
+            + '</div>';
+        }).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:8px 0">Aucun scan enregistré</div>';
+
+    const activityCard = '<div class="stats-block" style="padding:var(--space-3)">'
+      + '<div style="font-weight:600;font-size:13px;margin-bottom:10px">Activité récente</div>'
+      + activityRows
+      + '</div>';
+
+    // ── Recommendations summary ───────────────────────────
+    let recoCard;
+    if (!recos || !recos.items || !recos.items.length) {
+      recoCard = '<div class="stats-block" style="padding:var(--space-3)">'
+        + '<div style="font-weight:600;font-size:13px;margin-bottom:10px">Recommandations</div>'
+        + '<div style="color:var(--muted);font-size:12px">Aucune recommandation — activez les recommandations dans les paramètres.</div>'
+        + '</div>';
+    } else {
+      const ri = recos.items;
+      const high = ri.filter(r => r.priority === 'high').length;
+      const quality = ri.filter(r => r.recommendation_type === 'quality').length;
+      const space = ri.filter(r => r.recommendation_type === 'space').length;
+      const langs = ri.filter(r => r.recommendation_type === 'languages').length;
+      const rows2 = [
+        ['Total', ri.length],
+        ['Haute priorité', high],
+        ['Qualité', quality],
+        ['Espace', space],
+        ['Langues', langs],
+      ].map(([label, count]) =>
+        '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-soft)">'
+        + '<span style="color:var(--muted)">' + label + '</span>'
+        + '<span style="font-family:var(--font-mono)">' + count + '</span>'
+        + '</div>'
+      ).join('');
+      recoCard = '<div class="stats-block" style="padding:var(--space-3)">'
+        + '<div style="font-weight:600;font-size:13px;margin-bottom:10px">Recommandations <span style="color:var(--muted);font-weight:400">' + ri.length + '</span></div>'
+        + rows2
+        + '</div>';
+    }
+
+    // ── Assemble ──────────────────────────────────────────
+    return '<div style="padding:var(--space-3)">'
+      + kpisHTML
+      + '<div class="dashboard-grid">'
+      + activityCard
+      + recoCard
+      + '</div>'
+      + '</div>';
+  }
+
   // ── TABS ─────────────────────────────────────────────
   function switchTab(tab) {
     if (tab === 'recommendations' && !isRecommendationsEnabled()) tab = 'library';
@@ -2817,6 +2942,9 @@ let allItems=[], categories=[], groups=[];
     }
     else if (tab === 'history') {
       renderHistoryPanel();
+    }
+    else if (tab === 'dashboard') {
+      renderDashboardPanel();
     }
     saveState();
   }
@@ -3480,6 +3608,9 @@ let allItems=[], categories=[], groups=[];
     }
     else if (tab === 'history') {
       renderHistoryPanel();
+    }
+    else if (tab === 'dashboard') {
+      renderDashboardPanel();
     }
   }
 
