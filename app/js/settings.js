@@ -263,7 +263,7 @@
     }
     status.style.display = '';
     status.textContent = message;
-    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+    status.style.color = isError ? 'var(--color-danger)' : 'var(--muted)';
   }
 
   function _renderScoreInput(path, key, value) {
@@ -832,9 +832,9 @@
     return '<div class="settings-note" style="display:flex;flex-direction:column;gap:4px;margin-top:2px">'
       + ruleRows.map(([key, label]) => {
         const ok = validation.rules[key] === true;
-        return '<div data-auth-rule="'+key+'" style="color:'+(ok ? '#34d399' : 'var(--muted)')+'">'+(ok ? '✓ ' : '• ')+escH(label)+'</div>';
+        return '<div data-auth-rule="'+key+'" style="color:'+(ok ? 'var(--color-ok)' : 'var(--muted)')+'">'+(ok ? '✓ ' : '• ')+escH(label)+'</div>';
       }).join('')
-      + '<div data-auth-rule="confirmation" style="color:'+(validation.confirmationMatches ? '#34d399' : '#ef4444')+'">'
+      + '<div data-auth-rule="confirmation" style="color:'+(validation.confirmationMatches ? 'var(--color-ok)' : 'var(--color-danger)')+'">'
       + (validation.confirmationMatches ? '✓ ' : '• ')+escH(t('settings.auth.rule_confirmation'))+'</div>'
       + '</div>';
   }
@@ -850,7 +850,7 @@
     }
     status.style.display = '';
     status.textContent = message;
-    status.style.color = isError ? '#ef4444' : 'var(--muted)';
+    status.style.color = isError ? 'var(--color-danger)' : 'var(--muted)';
   }
 
   function syncSettingsAuthPasswordState() {
@@ -1091,7 +1091,7 @@
       ).join('');
       html += '<tr style="border-top:1px solid var(--border)'+(isMissing?';opacity:0.5':'')+'">'
         + '<td style="padding:6px 8px;font-family:monospace;font-size:12px">'+escH(f.name)
-          + (isMissing ? '<span style="display:inline;margin-left:6px;font-size:10px;color:#f97316;font-style:italic">'+t('settings.library.missing')+'</span>' : '')
+          + (isMissing ? '<span style="display:inline;margin-left:6px;font-size:10px;color:var(--color-warn);font-style:italic">'+t('settings.library.missing')+'</span>' : '')
           + '</td>'
         + '<td style="padding:6px 8px">'
           + (isMissing
@@ -1248,16 +1248,16 @@
       const d = await r.json();
       if (d.ok) {
         res.textContent = '✓ ' + t('onboarding.jsr_ok');
-        res.style.color = '#34d399';
+        res.style.color = 'var(--color-ok)';
         if (typeof onSuccess === 'function') onSuccess();
         return true;
       }
       res.textContent = '✗ ' + (d.error || t('onboarding.jsr_fail'));
-      res.style.color = '#f97316';
+      res.style.color = 'var(--color-warn)';
       return false;
     } catch (e) {
       res.textContent = '✗ ' + t('onboarding.jsr_fail');
-      res.style.color = '#f97316';
+      res.style.color = 'var(--color-warn)';
       return false;
     } finally {
       if (btn) btn.disabled = false;
@@ -1285,7 +1285,7 @@
     } catch (e) {
       _settingsJsrTestOk = false;
       res.textContent = '✗ ' + (e?.message || t('onboarding.jsr_fail'));
-      res.style.color = '#f97316';
+      res.style.color = 'var(--color-warn)';
     }
   }
 
@@ -1773,7 +1773,7 @@
       html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);'+(isMissing?'opacity:.45':'')+'">'
         + '<span style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escH(f.name)+'">'+escH(f.name)+'</span>'
         + (isMissing
-          ? '<span style="font-size:11px;color:#f97316">'+t('onboarding.folder_missing')+'</span>'
+          ? '<span style="font-size:11px;color:var(--color-warn)">'+t('onboarding.folder_missing')+'</span>'
           : '<select class="'+(cur?'has-value':'')+'" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px" data-onb-folder-idx="'+idx+'">'
             + '<option value="">'+t('onboarding.folder_choose')+'</option>'
             + '<option value="movie"'+(cur==='movie'?' selected':'')+'>'+t('onboarding.folder_movie')+'</option>'
@@ -1925,12 +1925,12 @@
       + '</div>'
       + '<div style="background:var(--bg);border-radius:10px;padding:16px 20px;font-size:13px;line-height:2">'
       + '<div>📁 '+(rows.length ? rows.join(', ') : '<span style="color:var(--muted)">'+t('onboarding.no_configured')+'</span>')+'</div>'
-      + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:#34d399">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
-      + '<div>👁️ Synopsis : '+(_onbFeatures.synopsisEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
-      + '<div>🎞️ FFprobe : '+(_onbFeatures.mediaProbeEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
-      + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
-      + '<div>💡 Recommandations : '+(_onbFeatures.recommendationsEnabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
-      + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:#34d399">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
+      + '<div>🔍 Seerr : '+(_onbJsr.enabled&&_onbJsr.url ? '<span style="color:var(--color-ok)">'+t('onboarding.jsr_active')+' — '+escH(_onbJsr.url)+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.jsr_inactive')+'</span>')+'</div>'
+      + '<div>👁️ Synopsis : '+(_onbFeatures.synopsisEnabled ? '<span style="color:var(--color-ok)">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🎞️ FFprobe : '+(_onbFeatures.mediaProbeEnabled ? '<span style="color:var(--color-ok)">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🏷️ Score : '+(_onbFeatures.scoreEnabled ? '<span style="color:var(--color-ok)">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>💡 Recommandations : '+(_onbFeatures.recommendationsEnabled ? '<span style="color:var(--color-ok)">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.features_disabled')+'</span>')+'</div>'
+      + '<div>🔐 '+t('onboarding.auth_summary')+' : '+(_onbAuth.enabled ? '<span style="color:var(--color-ok)">'+t('onboarding.features_enabled')+'</span>' : '<span style="color:var(--muted)">'+t('onboarding.auth_skipped')+'</span>')+'</div>'
       + '</div>';
   }
 
@@ -2141,7 +2141,7 @@
         + '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>'
         + '<span style="font-family:var(--font-display);font-weight:700;font-size:16px">'+t('onboarding.scanning')+'</span>'
       + '</div>'
-      + '<div id="onbReadyText" style="display:none;margin-bottom:12px;color:#34d399;font-size:13px;font-weight:600">'+t('onboarding.initial_ready')+'</div>'
+      + '<div id="onbReadyText" style="display:none;margin-bottom:12px;color:var(--color-ok);font-size:13px;font-weight:600">'+t('onboarding.initial_ready')+'</div>'
       + '<div id="onbLogBox" style="background:var(--bg);border-radius:8px;padding:10px 12px;font-size:11px;font-family:monospace;color:var(--muted);max-height:220px;overflow-y:auto;line-height:1.6;word-break:break-all"></div>'
       + '<div id="onbDoneBtn" style="display:none;margin-top:16px;text-align:center">'
         + '<button id="onbOpenLibraryBtn" '
@@ -2193,7 +2193,7 @@
         if (initialReady) return;
         if (logBox) {
           const div = document.createElement('div');
-          div.style.color = '#f97316';
+          div.style.color = 'var(--color-warn)';
           div.textContent = '[onboarding] Scan failed, please retry from Scan.';
           logBox.appendChild(div);
         }
