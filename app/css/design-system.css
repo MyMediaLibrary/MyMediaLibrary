@@ -70,6 +70,16 @@
 }
 
 
+/* Body baseline — override du gradient violet hardcodé dans app.css:98 */
+body {
+  font-family: var(--font-body);
+  background-image: radial-gradient(ellipse 80% 40% at 50% -10%, var(--accent-08) 0%, transparent 60%);
+}
+[data-theme="light"] body {
+  background-image: radial-gradient(ellipse 80% 40% at 50% -10%, var(--accent-08) 0%, transparent 60%);
+}
+
+
 /* ── SIDEBAR ─────────────────────────────────────────────────────────── */
 /* .sidebar, .sidebar-top, .sidebar-bottom, .sidebar-filters */
 
