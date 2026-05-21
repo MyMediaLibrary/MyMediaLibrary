@@ -106,6 +106,10 @@
       ?.addEventListener('click', function () { switchTab('stats'); });
     document.getElementById('navRecommendations')
       ?.addEventListener('click', function () { switchTab('recommendations'); });
+    document.getElementById('navDashboard')
+      ?.addEventListener('click', function () { switchTab('dashboard'); });
+    document.getElementById('navHistory')
+      ?.addEventListener('click', function () { switchTab('history'); });
 
     // View toggle + CSV exports
     document.getElementById('gridBtn')
@@ -168,6 +172,10 @@
       ?.addEventListener('click', function () { switchMobileTab('stats'); });
     document.getElementById('mnavRecommendations')
       ?.addEventListener('click', function () { switchMobileTab('recommendations'); });
+    document.getElementById('mnavDashboard')
+      ?.addEventListener('click', function () { switchMobileTab('dashboard'); });
+    document.getElementById('mnavHistory')
+      ?.addEventListener('click', function () { switchMobileTab('history'); });
 
     // Back-to-top buttons
     document.getElementById('mobileBackToTop')
