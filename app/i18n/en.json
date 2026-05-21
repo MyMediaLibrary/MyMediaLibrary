@@ -63,6 +63,8 @@
     "library": "📚 Library",
     "stats": "📊 Statistics",
     "recommendations": "💡 Recommendations",
+    "dashboard": "Dashboard",
+    "history": "History",
     "scan": "Scan"
   },
   "filters": {
@@ -542,8 +544,16 @@
     "library": "Library",
     "stats": "Stats",
     "recommendations": "Recos",
+    "dashboard": "Dashboard",
+    "history": "History",
     "scan_library": "Scan library",
     "toggle_theme": "Dark / light theme"
+  },
+  "dashboard": {
+    "coming_soon": "Coming soon"
+  },
+  "history": {
+    "coming_soon": "Coming soon"
   },
   "table": {
     "title": "Title",
